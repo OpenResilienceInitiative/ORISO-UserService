@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_CREATE_CHAT_BODY;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_SYSTEM_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
@@ -57,10 +58,12 @@ import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -70,6 +73,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 import javax.servlet.http.Cookie;
+import javax.transaction.Transactional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -127,6 +131,9 @@ class UserControllerChatE2EIT {
 
   @Autowired
   private ChatAgencyRepository chatAgencyRepository;
+
+  @Autowired
+  private UserChatRepository chatUserRepository;
 
   @Autowired
   private UserAgencyRepository userAgencyRepository;
@@ -187,6 +194,46 @@ class UserControllerChatE2EIT {
     subscriptionsGetResponse = null;
     groupDeleteResponse = null;
     identityConfig.setDisplayNameAllowedForConsultants(false);
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CREATE_NEW_CHAT)
+  @Transactional
+  void createChatV1_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
+    givenAValidConsultant(true);
+    givenAValidRocketChatSystemUser();
+
+    mockMvc.perform(
+            post("/users/chat/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .header("rcToken", RandomStringUtils.randomAlphabetic(16))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_CREATE_CHAT_BODY)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("groupId", is("rcGroupId")))
+        .andExpect(jsonPath("chatLink").isNotEmpty());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CREATE_NEW_CHAT)
+  @Transactional
+  void createChatV2_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
+    givenAValidConsultant(true);
+    givenAValidRocketChatSystemUser();
+
+    mockMvc.perform(
+            post("/users/chat/v2/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .header("rcToken", RandomStringUtils.randomAlphabetic(16))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_CREATE_CHAT_BODY)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("groupId", is("rcGroupId")))
+        .andExpect(jsonPath("chatLink").isEmpty());
   }
 
   @Test
@@ -404,6 +451,73 @@ class UserControllerChatE2EIT {
     verify(rocketChatRestTemplate).exchange(
         endsWith(urlSuffix), eq(HttpMethod.GET), any(HttpEntity.class), eq(RoomResponse.class)
     );
+  }
+
+  @Test
+  void assignChat_Should_ReturnUnauthorized_When_UserIsMissing() throws Exception {
+    mockMvc.perform(put("/users/chat/{chatId}/assign", 999)
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void assignChat_Should_ReturnNotFound_When_ChatIsNotFound() throws Exception {
+    givenAValidUser(true);
+
+    mockMvc.perform(put("/users/chat/{chatId}/assign", 999)
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void assignChat_Should_ReturnOK() throws Exception {
+    givenAValidUser(true);
+    givenAValidConsultant();
+    givenAValidChat(false);
+
+    mockMvc.perform(put("/users/chat/{chatId}/assign", chat.getId())
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    UserChat storedChatUser = chatUserRepository.findByChatAndUser(chat, user).orElseThrow();
+    assertEquals(storedChatUser.getChat(), chat);
+    assertEquals(storedChatUser.getUser(), user);
+
+    chatUserRepository.delete(storedChatUser);
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void assignChat_Should_ReturnConflict_When_UserIsAlreadyAssigned() throws Exception {
+    givenAValidUser(true);
+    givenAValidConsultant();
+    givenAValidChat(false);
+
+    mockMvc.perform(put("/users/chat/{chatId}/assign", chat.getId())
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    UserChat storedChatUser = chatUserRepository.findByChatAndUser(chat, user).orElseThrow();
+    assertEquals(storedChatUser.getChat(), chat);
+    assertEquals(storedChatUser.getUser(), user);
+
+    mockMvc.perform(put("/users/chat/{chatId}/assign", chat.getId())
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
+
+    chatUserRepository.delete(storedChatUser);
   }
 
   @Test

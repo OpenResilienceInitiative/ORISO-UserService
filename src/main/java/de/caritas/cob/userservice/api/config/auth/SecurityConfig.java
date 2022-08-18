@@ -101,11 +101,15 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/email", "/users/mails/messages/new",
             "/users/password/change", "/users/chat/{chatId:[0-9]+}", "/users/chat/e2e",
             "/users/chat/{chatId:[0-9]+}/join", "/users/chat/{chatId:[0-9]+}/members",
-            "/users/chat/{chatId:[0-9]+}/leave", "/users/consultants/toggleWalkThrough"
+            "/users/chat/{chatId:[0-9]+}/leave", "/users/chat/{chatId:[0-9]+}/assign",
+            "/users/consultants/toggleWalkThrough"
         )
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/users/twoFactorAuth", "/users/2fa/**", "/users/mobile/app/token")
         .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN, USER_DEFAULT, CONSULTANT_DEFAULT)
+        .antMatchers("/users/statistics/registration")
+        .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
+
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/enquiry/new",
             "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
             "/users/askers/consultingType/new", "/users/account", "/users/mobiletoken",
@@ -140,7 +144,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .hasAuthority(USE_FEEDBACK)
         .antMatchers("/users/messages/key")
         .hasAuthority(TECHNICAL_DEFAULT)
-        .antMatchers("/users/chat/new")
+        .antMatchers("/users/chat/new", "/users/chat/v2/new")
         .hasAuthority(CREATE_NEW_CHAT)
         .antMatchers("/users/chat/{chatId:[0-9]+}/start")
         .hasAuthority(START_CHAT)

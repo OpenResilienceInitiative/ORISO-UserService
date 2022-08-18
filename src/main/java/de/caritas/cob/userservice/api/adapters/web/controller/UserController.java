@@ -37,6 +37,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.RegistrationStatisticsListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.RegistrationStatisticsResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
@@ -53,6 +55,7 @@ import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.CreateNewConsultingTypeFacade;
@@ -63,6 +66,7 @@ import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
+import de.caritas.cob.userservice.api.facade.UsersStatisticsFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
@@ -149,6 +153,7 @@ public class UserController implements UsersApi {
   private final @NotNull StartChatFacade startChatFacade;
   private final @NotNull GetChatFacade getChatFacade;
   private final @NotNull JoinAndLeaveChatFacade joinAndLeaveChatFacade;
+  private final @NotNull AssignChatFacade assignChatFacade;
   private final @NotNull CreateChatFacade createChatFacade;
   private final @NotNull StopChatFacade stopChatFacade;
   private final @NotNull GetChatMembersFacade getChatMembersFacade;
@@ -170,6 +175,9 @@ public class UserController implements UsersApi {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+
+  private final @NotNull UsersStatisticsFacade usersStatisticsFacade;
+
 
   /**
    * Creates an user account and returns a 201 CREATED on success.
@@ -208,6 +216,14 @@ public class UserController implements UsersApi {
         .initializeNewConsultingType(newRegistrationDto, user, rocketChatCredentials);
 
     return new ResponseEntity<>(registrationResponse, registrationResponse.getStatus());
+  }
+
+  @Override
+  public ResponseEntity<RegistrationStatisticsListResponseDTO> getRegistrationStatistics() {
+
+    var registrationResponse = usersStatisticsFacade.getRegistrationStatistics();
+
+    return new ResponseEntity<>(registrationResponse, HttpStatus.OK);
   }
 
   /**
@@ -454,6 +470,9 @@ public class UserController implements UsersApi {
     );
 
     accountManager.patchUser(patchMap).orElseThrow();
+    userDtoMapper
+        .preferredLanguageOf(patchUserDTO)
+        .ifPresent(lang -> identityManager.changeLanguage(authenticatedUser.getUserId(), lang));
 
     return ResponseEntity.noContent().build();
   }
@@ -894,15 +913,33 @@ public class UserController implements UsersApi {
 
   /**
    * Creates a new chat with the given details and returns the generated chat link.
+   * <p>The old version (v1) assumed, that the consultant is assigned to exactly one agency.
    *
    * @param chatDTO {@link ChatDTO} (required)
    * @return {@link ResponseEntity} containing {@link CreateChatResponseDTO}
    */
   @Override
-  public ResponseEntity<CreateChatResponseDTO> createChat(@RequestBody ChatDTO chatDTO) {
+  public ResponseEntity<CreateChatResponseDTO> createChatV1(@RequestBody ChatDTO chatDTO) {
 
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    var response = createChatFacade.createChat(chatDTO, callingConsultant);
+    var response = createChatFacade.createChatV1(chatDTO, callingConsultant);
+
+    return new ResponseEntity<>(response, HttpStatus.CREATED);
+  }
+
+  /**
+   * Creates a new chat with the given details and returns the generated chat link.
+   * <p>The new version (v2) creates chat_agency relations for all agencies the consultant is
+   * assigned, but ignores the consulting_type stored in the chat.
+   *
+   * @param chatDTO {@link ChatDTO} (required)
+   * @return {@link ResponseEntity} containing {@link CreateChatResponseDTO}
+   */
+  @Override
+  public ResponseEntity<CreateChatResponseDTO> createChatV2(@RequestBody ChatDTO chatDTO) {
+
+    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
 
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }
@@ -942,6 +979,14 @@ public class UserController implements UsersApi {
         });
 
     return new ResponseEntity<>(response, HttpStatus.OK);
+  }
+
+  @Override
+  public ResponseEntity<Void> assignChat(Long chatId) {
+
+    assignChatFacade.assignChat(chatId, authenticatedUser);
+
+    return new ResponseEntity<>(HttpStatus.OK);
   }
 
   /**

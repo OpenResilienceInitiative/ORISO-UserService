@@ -34,9 +34,12 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_T
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_OFFSET;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_USER_DATA;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_CHAT_NEW;
+import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_CHAT_NEW_V2;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_REGISTER_NEW_CONSULTING_TYPE;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_REGISTER_USER;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ADD_MOBILE_TOKEN;
+import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ASSIGN_CHAT;
+import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ASSIGN_CHAT_WITH_INVALID_PATH_PARAMS;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ASSIGN_SESSION;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ASSIGN_SESSION_INVALID_PARAMS;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_CHAT_START;
@@ -77,6 +80,7 @@ import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VAL
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_USER_REQUEST_BODY_WITH_ENCODED_PASSWORD;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ABSENCE_MESSAGE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CITY;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_ID;
@@ -123,6 +127,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.powermock.reflect.Whitebox.setInternalState;
@@ -172,6 +177,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
+import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.CreateNewConsultingTypeFacade;
@@ -182,6 +188,7 @@ import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
+import de.caritas.cob.userservice.api.facade.UsersStatisticsFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
@@ -439,6 +446,8 @@ public class UserControllerIT {
   @MockBean
   private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @MockBean
+  private AssignChatFacade assignChatFacade;
+  @MockBean
   private CreateChatFacade createChatFacade;
   @MockBean
   private RocketChatService rocketChatService;
@@ -500,6 +509,9 @@ public class UserControllerIT {
   @MockBean
   @SuppressWarnings("unused")
   private KeycloakUserDataProvider keycloakUserDataProvider;
+
+  @MockBean
+  private UsersStatisticsFacade usersStatisticsFacade;
 
   @MockBean
   @SuppressWarnings("unused")
@@ -1950,7 +1962,7 @@ public class UserControllerIT {
         .thenReturn(CONSULTANT_ID);
     when(accountProvider.retrieveValidatedConsultant())
         .thenReturn(TEAM_CONSULTANT);
-    when(createChatFacade.createChat(Mockito.any(), Mockito.any()))
+    when(createChatFacade.createChatV1(Mockito.any(), Mockito.any()))
         .thenThrow(new InternalServerErrorException(""));
 
     mvc.perform(post(PATH_POST_CHAT_NEW)
@@ -1967,13 +1979,60 @@ public class UserControllerIT {
         .thenReturn(CONSULTANT_ID);
     when(accountProvider.retrieveValidatedConsultant())
         .thenReturn(TEAM_CONSULTANT);
-    when(createChatFacade.createChat(Mockito.any(), Mockito.any()))
+    when(createChatFacade.createChatV1(Mockito.any(), Mockito.any()))
         .thenReturn(CREATE_CHAT_RESPONSE_DTO);
 
     mvc.perform(post(PATH_POST_CHAT_NEW)
-        .content(VALID_CREATE_CHAT_BODY)
-        .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON))
+            .content(VALID_CREATE_CHAT_BODY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.CREATED.value()));
+  }
+
+  @Test
+  public void createChatV2_Should_ReturnBadRequest_WhenQueryParamsAreInvalid() throws Exception {
+
+    mvc.perform(post(PATH_POST_CHAT_NEW_V2)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+
+    verifyNoMoreInteractions(chatService);
+    verifyNoMoreInteractions(accountProvider);
+  }
+
+  @Test
+  public void createChatV2_Should_ReturnInternalServerErrorAndLogError_When_ChatCouldNotBeCreated()
+      throws Exception {
+
+    when(authenticatedUser.getUserId())
+        .thenReturn(CONSULTANT_ID);
+    when(accountProvider.retrieveValidatedConsultant())
+        .thenReturn(TEAM_CONSULTANT);
+    when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
+        .thenThrow(new InternalServerErrorException(""));
+
+    mvc.perform(post(PATH_POST_CHAT_NEW_V2)
+            .content(VALID_CREATE_CHAT_BODY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
+  }
+
+  @Test
+  public void createChatV2_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
+
+    when(authenticatedUser.getUserId())
+        .thenReturn(CONSULTANT_ID);
+    when(accountProvider.retrieveValidatedConsultant())
+        .thenReturn(TEAM_CONSULTANT);
+    when(createChatFacade.createChatV2(Mockito.any(), Mockito.any()))
+        .thenReturn(CREATE_CHAT_RESPONSE_DTO);
+
+    mvc.perform(post(PATH_POST_CHAT_NEW_V2)
+            .content(VALID_CREATE_CHAT_BODY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CREATED.value()));
   }
 
@@ -1984,8 +2043,8 @@ public class UserControllerIT {
   public void startChat_Should_ReturnBadRequest_WhenPathParamsAreInvalid() throws Exception {
 
     mvc.perform(put(PATH_PUT_CHAT_START_WITH_INVALID_PATH_PARAMS)
-        .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON))
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
 
     verifyNoMoreInteractions(chatService);
@@ -2063,11 +2122,32 @@ public class UserControllerIT {
   public void getChat_Should_ReturnOk_When_RequestOk() throws Exception {
 
     mvc.perform(get(PATH_GET_CHAT)
-        .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON))
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
     verify(getChatFacade, times(1)).getChat(Mockito.any());
+  }
+
+  @Test
+  public void assignChat_Should_ReturnBadRequest_WhenPathParamsAreInvalid() throws Exception {
+    mvc.perform(put(PATH_PUT_ASSIGN_CHAT_WITH_INVALID_PATH_PARAMS)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(assignChatFacade);
+  }
+
+  @Test
+  public void assignChat_Should_ReturnOk_When_ChatWasAssigned() throws Exception {
+    mvc.perform(put(PATH_PUT_ASSIGN_CHAT)
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(assignChatFacade).assignChat(CHAT_ID, authenticatedUser);
+
   }
 
   /**
@@ -2077,8 +2157,8 @@ public class UserControllerIT {
   public void joinChat_Should_ReturnBadRequest_WhenPathParamsAreInvalid() throws Exception {
 
     mvc.perform(put(PATH_PUT_JOIN_CHAT_WITH_INVALID_PATH_PARAMS)
-        .contentType(MediaType.APPLICATION_JSON)
-        .accept(MediaType.APPLICATION_JSON))
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
 
     verifyNoMoreInteractions(joinAndLeaveChatFacade);
