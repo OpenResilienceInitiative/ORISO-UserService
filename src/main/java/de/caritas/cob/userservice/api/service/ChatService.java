@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.ChatAgency;
@@ -29,6 +28,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -43,7 +43,6 @@ public class ChatService {
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull UserHelper userHelper;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -107,14 +106,17 @@ public class ChatService {
   }
 
   /**
-   * Returns the list of current chats for the provided user (Id).
+   * Returns the list of current chats for the provided userId.
+   *
+   * <p>The chats are collected from the user_agency relation (V1) and the user_chat relation (V2).
    *
    * @param userId the id of the user
    * @return list of user chats as {@link UserSessionResponseDTO}
    */
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
     List<Chat> chats = chatRepository.findByUserId(userId);
-    return chats.stream()
+    List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
+    return Stream.concat(chats.stream(), assignedChats.stream())
         .map(this::convertChatToUserSessionResponseDTO)
         .collect(Collectors.toList());
   }
@@ -238,8 +240,6 @@ public class ChatService {
 
     this.saveChat(chat);
 
-    return new UpdateChatResponseDTO()
-        .groupId(chat.getGroupId())
-        .chatLink(userHelper.generateChatUrl(chat.getId(), chat.getConsultingTypeId()));
+    return new UpdateChatResponseDTO().groupId(chat.getGroupId());
   }
 }
