@@ -17,12 +17,14 @@ import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AgencyApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.ConsultantApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.model.AgencyConsultantSyncRequestDTO;
+import de.caritas.cob.userservice.appointmentservice.generated.web.model.AskerDTO;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -184,5 +186,28 @@ public class AppointmentService {
         this.appointmentAskerServiceApiControllerFactory.createControllerApi();
     addTechnicalUserHeaders(controllerApi.getApiClient());
     controllerApi.deleteAskerData(askerId);
+  }
+
+  public void updateAskerEmail(String askerId, String email) {
+    if (!appointmentFeatureEnabled) {
+      return;
+    }
+    de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi askerApi =
+        this.appointmentAskerServiceApiControllerFactory.createControllerApi();
+    addDefaultHeaders(askerApi.getApiClient());
+    try {
+      de.caritas.cob.userservice.appointmentservice.generated.web.model.AskerDTO askerDTO =
+          new AskerDTO().id(askerId).email(email);
+      askerApi.updateAskerEmail(askerId, askerDTO);
+    } catch (Exception e) {
+      log.error(e.getMessage());
+    }
+  }
+
+  private void addDefaultHeaders(
+      de.caritas.cob.userservice.appointmentservice.generated.ApiClient apiClient) {
+    HttpHeaders headers = this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    tenantHeaderSupplier.addTenantHeader(headers);
+    headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 }

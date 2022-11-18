@@ -101,7 +101,7 @@ public class CreateEnquiryMessageFacade {
                         consultantAgency
                             .getConsultant()
                             .getEmail()
-                            .equals(enquiryData.getAppointmentData().getCounselor()))
+                            .equals(enquiryData.getConsultantEmail()))
                 .collect(Collectors.toList());
       } else {
         agencyList = consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
@@ -129,16 +129,15 @@ public class CreateEnquiryMessageFacade {
 
       if (isAppointmentEnquiryMessage(enquiryData)) {
         messageResponse =
-            messageServiceProvider.postSendAppointmentBookedMessage(
-                rcGroupId, createEnquiryExceptionInformation, enquiryData.getAppointmentData());
+            messageServiceProvider.assignUserToRocketChatGroup(
+                rcGroupId, createEnquiryExceptionInformation);
       } else {
         var rocketChatData =
             new RocketChatData(
                 enquiryData.getMessage(),
                 enquiryData.getRocketChatCredentials(),
                 rcGroupId,
-                enquiryData.getType(),
-                enquiryData.getOrg());
+                enquiryData.getType());
         messageResponse =
             messageServiceProvider.postEnquiryMessage(
                 rocketChatData, createEnquiryExceptionInformation);
@@ -183,7 +182,7 @@ public class CreateEnquiryMessageFacade {
   }
 
   private boolean isAppointmentEnquiryMessage(EnquiryData enquiryData) {
-    return enquiryData.getAppointmentData() != null;
+    return enquiryData.getConsultantEmail() != null;
   }
 
   private void checkIfKeycloakAndRocketChatUsernamesMatch(String rcUserId, User user) {
@@ -333,7 +332,7 @@ public class CreateEnquiryMessageFacade {
     return createRcFeedbackGroup(session, rcGroupId, agencyList);
   }
 
-  private String createRcFeedbackGroup(
+  public String createRcFeedbackGroup(
       Session session, String rcGroupId, List<ConsultantAgency> agencyList)
       throws CreateEnquiryException {
 
