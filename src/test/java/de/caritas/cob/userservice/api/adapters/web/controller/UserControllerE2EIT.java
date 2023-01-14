@@ -99,6 +99,7 @@ import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.net.URI;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1408,6 +1409,32 @@ class UserControllerE2EIT {
                             language.getLanguageCode().toString()))));
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void updateUserDataWithTermsAndConditions() throws Exception {
+    givenAValidConsultant();
+    givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    updateConsultantDTO.setTermsAndConditionsConfirmation(true);
+    updateConsultantDTO.setDataPrivacyConfirmation(true);
+    givenValidRocketChatTechUserResponse();
+    givenValidRocketChatUserInfoResponse();
+
+    mockMvc
+        .perform(
+            put("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updateConsultantDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    var savedConsultant = consultantRepository.findById(consultant.getId());
+    assertEquals(
+        savedConsultant.get().getTermsAndConditionsConfirmation().toLocalDate(), LocalDate.now());
+    assertEquals(savedConsultant.get().getDataPrivacyConfirmation().toLocalDate(), LocalDate.now());
+  }
+
   // FIXME: does not test the "saved monitoring", see next fixme
   @Test
   void registerUserWithoutConsultingIdShouldSaveMonitoringAndPreferredLanguage() throws Exception {
@@ -1644,12 +1671,12 @@ class UserControllerE2EIT {
 
   private void givenAUserDTOWithMainTopic() {
     givenAUserDTO();
-    userDTO.setMainTopicId(0);
+    userDTO.setMainTopicId(0L);
   }
 
   private void givenAUserDTOWithTopics() {
     givenAUserDTO();
-    userDTO.setTopicIds(List.of(0, 1));
+    userDTO.setTopicIds(List.of(0L, 1L));
   }
 
   private long aPositiveLong() {
