@@ -2189,6 +2189,7 @@ components:
       properties:
         id:
           type: integer
+          format: int64
           example: 12132
         name:
           type: string
@@ -2694,6 +2695,14 @@ components:
           example: de, en
           items:
             $ref: '#/components/schemas/LanguageCode'
+        termsAndConditionsConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates has the user accepted new terms and conditions text
+        dataPrivacyConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates does the user accepted new data privacy text
 
     LanguageCode:
       type: string
@@ -2943,6 +2952,7 @@ components:
           type: array
           items:
             type: integer
+            format: int64
           example: [ 12,15 ]
         counsellingRelation:
           type: string

@@ -89,6 +89,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages")
         .permitAll()
+        .antMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
+        .hasAnyAuthority(ANONYMOUS_DEFAULT)
         .antMatchers("/users/data")
         .hasAnyAuthority(
             ANONYMOUS_DEFAULT,
@@ -171,6 +173,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/chat/{chatId:[0-9]+}/update",
             "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
         .hasAuthority(UPDATE_CHAT)
+        .antMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
+        .hasAuthority(TENANT_ADMIN)
         .antMatchers("/useradmin", "/useradmin/**")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/users/consultants/search")
