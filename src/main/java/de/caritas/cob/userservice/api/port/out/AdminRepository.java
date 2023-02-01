@@ -24,12 +24,16 @@ public interface AdminRepository extends CrudRepository<Admin, String> {
               + "    UPPER(a.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.email) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR CONVERT(a.tenantId,char) LIKE CONCAT('%', UPPER(?1), '%')"
               + "  )"
               + " )")
   Page<AdminBase> findAllByInfix(String infix, Admin.AdminType type, Pageable pageable);
 
-  @Query(value = "SELECT a " + "FROM Admin a " + "WHERE " + "id = ?1 AND type = ?2")
+  @Query(value = "SELECT a FROM Admin a WHERE id = ?1 AND type = ?2")
   Optional<Admin> findByIdAndType(String adminId, Admin.AdminType type);
+
+  @Query(value = "SELECT a FROM Admin a WHERE tenantId = ?1 AND type = ?2")
+  List<Admin> findByTenantIdAndType(Long tenantId, Admin.AdminType type);
 
   List<Admin> findAllByIdIn(Set<String> adminIds);
 }
