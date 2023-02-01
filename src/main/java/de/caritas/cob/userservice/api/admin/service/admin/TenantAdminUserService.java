@@ -9,14 +9,16 @@ import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminServ
 import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -30,8 +32,10 @@ public class TenantAdminUserService {
   private final @NonNull UpdateAdminService updateAdminService;
   private final @NonNull DeleteAdminService deleteAdminService;
   private final @NonNull UserServiceMapper userServiceMapper;
+  private final @NonNull TenantService tenantService;
 
-  private final @NonNull AgencyService agencyService;
+  @Value("${multitenancy.enabled}")
+  private boolean multiTenancyEnabled;
 
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     validateCreateAdmin(createTenantAdminDTO);
@@ -65,7 +69,17 @@ public class TenantAdminUserService {
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateUpdateAdmin(updateTenantAdminDTO);
     final Admin updatedAdmin = updateAdminService.updateTenantAdmin(adminId, updateTenantAdminDTO);
-    return AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
+    var responseDTO =
+        AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
+    enrichResponseWithSubdomain(updatedAdmin, responseDTO);
+    return responseDTO;
+  }
+
+  private void enrichResponseWithSubdomain(Admin updatedAdmin, AdminResponseDTO responseDTO) {
+    if (updatedAdmin.getTenantId() != null) {
+      var tenantData = tenantService.getRestrictedTenantData(updatedAdmin.getTenantId());
+      responseDTO.getEmbedded().setTenantSubdomain(tenantData.getSubdomain());
+    }
   }
 
   public void deleteTenantAdmin(final String adminId) {
@@ -80,5 +94,12 @@ public class TenantAdminUserService {
 
     return userServiceMapper.mapOfAdmin(
         adminsPage, fullAdmins, Lists.newArrayList(), Lists.newArrayList());
+  }
+
+  public List<AdminResponseDTO> findTenantAdmins(Long tenantId) {
+    var admins = retrieveAdminService.findTenantAdminsByTenantId(tenantId);
+    return admins.stream()
+        .map(admin -> AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO())
+        .collect(Collectors.toList());
   }
 }
