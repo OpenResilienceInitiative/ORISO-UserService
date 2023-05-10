@@ -540,6 +540,36 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/notifications:
+    get:
+      tags:
+        - user-controller
+      summary: 'Returns notification settings for the currently authenticated user [Authorization:
+        Role: technical-calcom]'
+      operationId: getUserEmailNotifications
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/EmailNotificationsDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/email:
     put:
       tags:
@@ -903,39 +933,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/sessions/monitoring/{sessionId}:
-    put:
-      tags:
-        - user-controller
-      summary: 'Update the monitoring values of a session [Authorization: Role: consultant]'
-      operationId: updateMonitoring
-      parameters:
-        - name: sessionId
-          in: path
-          description: Session Id
-          required: true
-          schema:
-            type: integer
-            format: int64
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/MonitoringDTO'
-        required: true
-      responses:
-        200:
-          description: OK - successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /users/consultants:
     get:
       tags:
@@ -1184,40 +1181,6 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization
         409:
           description: CONFLICT - there was a key in the service
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/sessions/{sessionId}/monitoring:
-    get:
-      tags:
-        - user-controller
-      summary: 'Returns the monitoring for the given session [Authorization: Role:
-        consultant]'
-      operationId: getMonitoring
-      parameters:
-        - name: sessionId
-          in: path
-          description: Session Id
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        200:
-          description: successful operation
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/MonitoringDTO'
-        204:
-          description: successful operation, but no content
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1579,6 +1542,37 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat/{chatId}/verify:
+    put:
+      tags:
+        - user-controller
+      summary: 'Verify consultant has access to this chat [Authorization: Role: consultant]'
+      operationId: verifyCanModerateChat
+      parameters:
+        - name: chatId
+          in: path
+          description: Chat Id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - No permission for chat
+        404:
+          description: NOT FOUND - Chat not found
+        409:
+          description: CONFLICT - Chat has not startet yet
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/{chatId}/members:
     get:
       tags:
@@ -1875,7 +1869,7 @@ components:
   schemas:
     UserDTO:
       allOf:
-        - $ref: '#/components/schemas/MandatorySessionDataDTO'
+        - $ref: '#/components/schemas/SessionDataDTO'
       type: object
       required:
         - username
@@ -1928,22 +1922,6 @@ components:
           $ref: "#/components/schemas/LanguageCode"
 
     SessionDataDTO:
-      allOf:
-        - $ref: '#/components/schemas/MandatorySessionDataDTO'
-      type: object
-      properties:
-        addictiveDrugs:
-          type: string
-          example: 2,4
-          description: comma separated list of addictive drug IDs
-        relation:
-          type: string
-          example: 2
-        gender:
-          type: string
-          example: 0
-
-    MandatorySessionDataDTO:
       type: object
       properties:
         age:
@@ -2155,9 +2133,6 @@ components:
         isTeamSession:
           type: boolean
           example: false
-        monitoring:
-          type: boolean
-          example: true
         registrationType:
           type: string
           example: ANONYMOUS
@@ -2345,9 +2320,6 @@ components:
         isTeamSession:
           type: boolean
           example: false
-        isMonitoring:
-          type: boolean
-          example: true
         age:
           type: integer
           example: 17
@@ -2634,6 +2606,9 @@ components:
           type: string
           example: 2022-12-07T11:51:01
           description: "Datetime stamp when the user accepted data privacy"
+        emailNotifications:
+          $ref: "#/components/schemas/EmailNotificationsDTO"
+
     PatchUserDTO:
       type: object
       description: at least one property must be set
@@ -2668,6 +2643,8 @@ components:
         available:
           description: mark consultant as (not) available for one-on-one chats, no effect on others
           type: boolean
+        emailNotifications:
+          $ref: "#/components/schemas/EmailNotificationsDTO"
 
     UpdateConsultantDTO:
       type: object
@@ -2703,6 +2680,8 @@ components:
           type: boolean
           example: true
           description: Flag that indicates does the user accepted new data privacy text
+        emailNotifications:
+          $ref: "#/components/schemas/EmailNotificationsDTO"
 
     LanguageCode:
       type: string
@@ -2773,12 +2752,6 @@ components:
         token:
           type: string
           example: "8cc2058"
-
-    MonitoringDTO:
-      type: object
-      properties:
-        additionalProperties:
-          $ref: "#/components/schemas/Properties"
 
     Properties:
       type: object
@@ -3077,6 +3050,38 @@ components:
           default: true
           nullable: false
           description: indicates if 2FA is supposed to be encouraged
+
+    EmailNotificationsDTO:
+      type: object
+      required:
+        - emailNotificationsEnabled
+      properties:
+        emailNotificationsEnabled:
+          type: boolean
+          example: true
+          default: false
+        settings:
+           $ref: "#/components/schemas/NotificationsSettingsDTO"
+
+    NotificationsSettingsDTO:
+      type: object
+      properties:
+        initialEnquiryNotificationEnabled:
+          type: boolean
+          example: true
+          default: false
+        newChatMessageNotificationEnabled:
+          type: boolean
+          example: true
+          default: false
+        reassignmentNotificationEnabled:
+          type: boolean
+          example: true
+          default: false
+        appointmentNotificationEnabled:
+          type: boolean
+          example: true
+          default: false
 
     OtpType:
       type: string
