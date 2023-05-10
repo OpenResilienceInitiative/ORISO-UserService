@@ -93,7 +93,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.DESCRIPTIO
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.FIRST_NAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.INACTIVE_CHAT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_ABSENT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_MONITORING;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_NO_TEAM_SESSION;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.LAST_NAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.MASTER_KEY_1;
@@ -118,7 +117,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -149,7 +147,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.MonitoringDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
@@ -193,6 +190,7 @@ import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.EmailNotificationMapper;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
@@ -218,11 +216,11 @@ import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.service.MonitoringService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteSingleRoomAndSessionAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import java.util.ArrayList;
@@ -299,6 +297,8 @@ public class UserControllerIT {
           false,
           LanguageCode.de,
           null,
+          null,
+          false,
           null);
   private final Set<String> ROLES_WITH_USER =
       new HashSet<>(Arrays.asList("dummyRoleA", UserRole.USER.getValue(), "dummyRoleB"));
@@ -312,8 +312,7 @@ public class UserControllerIT {
           .groupId(RC_GROUP_ID)
           .askerRcId(RC_USER_ID)
           .messageDate(MESSAGE_DATE)
-          .isTeamSession(IS_NO_TEAM_SESSION)
-          .monitoring(IS_MONITORING);
+          .isTeamSession(IS_NO_TEAM_SESSION);
   private final AgencyDTO AGENCY_DTO =
       new AgencyDTO()
           .id(AGENCY_ID)
@@ -331,13 +330,8 @@ public class UserControllerIT {
           .session(SESSION_DTO)
           .agency(AGENCY_DTO)
           .consultant(SESSION_CONSULTANT_DTO);
-  private final String PATH_PUT_SESSIONS_MONITORING = "/users/sessions/monitoring/" + SESSION_ID;
-  private final String PATH_GET_MONITORING = "/users/sessions/" + SESSION_ID + "/monitoring";
   protected static final String PATH_GET_PUBLIC_CONSULTANT_DATA =
       "/users/consultants/65c1095e-b977-493a-a34f-064b729d1d6c";
-  private final String VALID_SESSION_MONITORING_REQUEST_BODY =
-      "{\"addictiveDrugs\": { \"drugs\":"
-          + "{\"others\": false} }, \"intervention\": { \"information\": false } }";
   private final String ERROR = "error";
   private final Session SESSION =
       Session.builder()
@@ -355,7 +349,6 @@ public class UserControllerIT {
           .updateDate(nowInUtc())
           .teamSession(false)
           .isPeerChat(false)
-          .monitoring(true)
           .build();
 
   private final Session SESSION_WITHOUT_CONSULTANT =
@@ -373,7 +366,6 @@ public class UserControllerIT {
           .updateDate(nowInUtc())
           .teamSession(false)
           .isPeerChat(false)
-          .monitoring(true)
           .build();
 
   private final Session TEAM_SESSION =
@@ -392,7 +384,6 @@ public class UserControllerIT {
           .updateDate(nowInUtc())
           .teamSession(true)
           .isPeerChat(false)
-          .monitoring(true)
           .build();
 
   private final Session TEAM_SESSION_WITHOUT_GROUP_ID =
@@ -410,7 +401,6 @@ public class UserControllerIT {
           .updateDate(nowInUtc())
           .teamSession(true)
           .isPeerChat(false)
-          .monitoring(true)
           .build();
 
   private final ConsultantResponseDTO CONSULTANT_RESPONSE_DTO =
@@ -427,7 +417,6 @@ public class UserControllerIT {
               AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
   private final Set<String> AUTHORITY_ASSIGN_SESSION =
       new HashSet<>(Collections.singletonList(AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
-  private final MonitoringDTO MONITORING_DTO = new MonitoringDTO();
 
   private final EasyRandom easyRandom = new EasyRandom();
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -444,7 +433,6 @@ public class UserControllerIT {
   private ConsultantImportService consultantImportService;
 
   @MockBean private EmailNotificationFacade emailNotificationFacade;
-  @MockBean private MonitoringService monitoringService;
 
   @MockBean
   @SuppressWarnings("unused")
@@ -535,6 +523,8 @@ public class UserControllerIT {
 
   @MockBean private AdminUserFacade adminUserFacade;
 
+  @MockBean private EmailNotificationMapper emailNotificationMapper;
+
   @Mock private Logger logger;
 
   @Mock private Chat chat;
@@ -545,10 +535,10 @@ public class UserControllerIT {
     drugsMap.put("others", false);
     HashMap<String, Object> addictiveDrugsMap = new HashMap<>();
     addictiveDrugsMap.put("drugs", drugsMap);
-    MONITORING_DTO.addProperties("addictiveDrugs", addictiveDrugsMap);
     setInternalState(UserController.class, "log", logger);
     setInternalState(LogService.class, "LOGGER", logger);
     setInternalState(ApiResponseEntityExceptionHandler.class, "log", logger);
+    TenantContext.clear();
   }
 
   /** Method: registerUser */
@@ -1408,6 +1398,35 @@ public class UserControllerIT {
         .andExpect(status().is(HttpStatus.OK.value()));
   }
 
+  @Test
+  public void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+    when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
+        .thenReturn(new UserDataResponseDTO());
+
+    mvc.perform(
+            get(PATH_USER_DATA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .cookie(RC_TOKEN_COOKIE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.OK.value()));
+  }
+
+  @Test
+  public void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataFromKeycloak()
+      throws Exception {
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
+        .thenReturn(new UserDataResponseDTO());
+
+    mvc.perform(
+            get(PATH_USER_DATA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .cookie(RC_TOKEN_COOKIE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().is(HttpStatus.OK.value()));
+  }
+
   /** Method: getTeamSessionsForAuthenticatedConsultant (role: consultant) */
   @Test
   public void
@@ -1568,187 +1587,6 @@ public class UserControllerIT {
     verify(emailNotificationFacade, atLeastOnce())
         .sendNewMessageNotification(
             RC_GROUP_ID, authenticatedUser.getRoles(), authenticatedUser.getUserId(), null);
-  }
-
-  /** getMonitoring() */
-  @Test
-  public void getMonitoring_Should_ReturnBadRequestAndLogError_WhenSessionNotFound()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.empty());
-
-    mvc.perform(get(PATH_GET_MONITORING).accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.BAD_REQUEST.value()));
-
-    verify(logger).warn(anyString(), any(Object.class));
-  }
-
-  @Test
-  public void getMonitoring_Should_ReturnInternalServerError_WhenSessionServiceThrowsException()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenThrow(new ServiceException(ERROR));
-
-    mvc.perform(get(PATH_GET_MONITORING).accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-  }
-
-  @Test
-  public void
-      getMonitoring_Should_ReturnBadRequestAndLogError_WhenUserHasNoPermissionToAccessSession()
-          throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-
-    mvc.perform(get(PATH_GET_MONITORING).accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.BAD_REQUEST.value()));
-
-    verify(logger).warn(anyString(), eq(null), any(Object.class));
-  }
-
-  @Test
-  public void getMonitoring_Should_ReturnOKAndMonitoring() throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(SESSION.getConsultant().getId());
-    when(monitoringService.getMonitoring(SESSION)).thenReturn(MONITORING_DTO);
-
-    var validMonitoringResponseJson =
-        "{\"addictiveDrugs\": { \"drugs\": {" + "\"others\": false } } }";
-    mvc.perform(get(PATH_GET_MONITORING).accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()))
-        .andExpect(content().json(validMonitoringResponseJson));
-  }
-
-  @Test
-  public void getMonitoring_Should_ReturnNoContent_WhenNoMonitoringFoundForSession()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(SESSION.getConsultant().getId());
-    when(monitoringService.getMonitoring(SESSION)).thenReturn(null);
-
-    mvc.perform(get(PATH_GET_MONITORING).accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.NO_CONTENT.value()));
-  }
-
-  /** updateMonitoring() */
-  @Test
-  public void updateMonitoring_Should_ReturnInternalServerError_WhenSessionServiceThrowsException()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenThrow(new ServiceException(ERROR));
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-  }
-
-  @Test
-  public void
-      updateMonitoring_Should_ReturnInternalServerError_WhenMonitoringServiceThrowsException()
-          throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    doThrow(new ServiceException(ERROR))
-        .when(monitoringService)
-        .updateMonitoring(Mockito.any(), Mockito.any());
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-  }
-
-  @Test
-  public void updateMonitoring_Should_ReturnOK_WhenMonitoringWasUpdatedForSingleSession()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
-  }
-
-  @Test
-  public void updateMonitoring_Should_ReturnOK_WhenMonitoringWasUpdatedForTeamSession()
-      throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(TEAM_SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
-  }
-
-  @Test
-  public void
-      updateMonitoring_Should_ReturnUnauthorized_WhenConsultantIsNotAssignedToSingleSession()
-          throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
-    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID + "notAssignedToAgency");
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.UNAUTHORIZED.value()));
-
-    verify(logger, atLeastOnce()).warn(anyString(), any(Object.class), any(Object.class));
-  }
-
-  @Test
-  public void
-      updateMonitoring_Should_ReturnUnauthorized_WhenConsultantIsNotAssignedToAgencyOfTeamSession()
-          throws Exception {
-
-    var session = easyRandom.nextObject(Session.class);
-    session.setId(TEAM_SESSION.getId());
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(session));
-    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
-    when(accountManager.isTeamAdvisedBy(TEAM_SESSION.getId(), CONSULTANT_ID)).thenReturn(false);
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.UNAUTHORIZED.value()));
-
-    verify(logger, atLeastOnce()).warn(anyString(), any(Object.class), any(Object.class));
-  }
-
-  @Test
-  public void updateMonitoring_Should_ReturnBadRequest_WhenSessionDoesNotExist() throws Exception {
-
-    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.empty());
-
-    mvc.perform(
-            put(PATH_PUT_SESSIONS_MONITORING)
-                .content(VALID_SESSION_MONITORING_REQUEST_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.BAD_REQUEST.value()));
-
-    verify(logger, atLeastOnce()).warn(anyString(), any(Object.class));
   }
 
   /** Method: getConsultants (authority: VIEW_AGENCY_CONSULTANTS) */

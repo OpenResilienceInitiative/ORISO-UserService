@@ -59,6 +59,8 @@ public class AskerDataProviderTest {
 
   @Mock IdentityClientConfig identityClientConfig;
 
+  @Mock EmailNotificationMapper emailNotificationMapper;
+
   @Test
   public void
       retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
@@ -147,7 +149,6 @@ public class AskerDataProviderTest {
     givenAnEmailDummySuffixConfig();
     when(agencyService.getAgencies(any())).thenReturn(Collections.singletonList(AGENCY_DTO_SUCHT));
     LinkedHashMap<String, Object> sessionData = new LinkedHashMap<>();
-    sessionData.put("addictiveDrugs", "3");
     when(sessionDataProvider.getSessionDataMapFromSession(any())).thenReturn(sessionData);
 
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(asSet(GRANTED_AUTHORIZATION_USER));

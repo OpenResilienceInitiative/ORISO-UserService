@@ -31,7 +31,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
-import de.caritas.cob.userservice.api.service.MonitoringService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -42,7 +41,6 @@ import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResp
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +60,6 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull MessageServiceProvider messageServiceProvider;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
-  private final @NonNull MonitoringService monitoringService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserService userService;
@@ -73,8 +70,8 @@ public class CreateEnquiryMessageFacade {
   private String rocketChatSystemUserId;
 
   /**
-   * Creates the private Rocket.Chat group, initializes the session monitoring and saves the enquiry
-   * message in Rocket.Chat.
+   * Creates the private Rocket.Chat group, initializes the session and saves the enquiry message in
+   * Rocket.Chat.
    *
    * @param enquiryData data necessary for creating the enquiry message
    */
@@ -90,23 +87,8 @@ public class CreateEnquiryMessageFacade {
 
       var extendedConsultingTypeResponseDTO =
           consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId());
-
-      List<ConsultantAgency> agencyList;
-
-      if (isAppointmentEnquiryMessage(enquiryData)) {
-        agencyList =
-            consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId()).stream()
-                .filter(
-                    consultantAgency ->
-                        consultantAgency
-                            .getConsultant()
-                            .getEmail()
-                            .equals(enquiryData.getConsultantEmail()))
-                .collect(Collectors.toList());
-      } else {
-        agencyList = consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
-      }
-
+      List<ConsultantAgency> agencyList =
+          consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
       String rcGroupId =
           createRocketChatRoomAndAddUsers(
               session, agencyList, enquiryData.getRocketChatCredentials());
@@ -148,7 +130,7 @@ public class CreateEnquiryMessageFacade {
           enquiryData.getUser(),
           extendedConsultingTypeResponseDTO,
           createEnquiryExceptionInformation);
-      messageServiceProvider.postFurtherStepsOrSaveSessionDataMessageIfConfigured(
+      messageServiceProvider.postFurtherStepsIfConfigured(
           rcGroupId, extendedConsultingTypeResponseDTO, createEnquiryExceptionInformation);
 
       updateSession(
@@ -446,8 +428,6 @@ public class CreateEnquiryMessageFacade {
     if (nonNull(createEnquiryExceptionInformation)) {
       rollbackCreateGroup(createEnquiryExceptionInformation.getRcGroupId(), rocketChatCredentials);
       rollbackCreateGroupAsSystemUser(createEnquiryExceptionInformation.getRcFeedbackGroupId());
-      monitoringService.rollbackInitializeMonitoring(
-          createEnquiryExceptionInformation.getSession());
     }
   }
 
