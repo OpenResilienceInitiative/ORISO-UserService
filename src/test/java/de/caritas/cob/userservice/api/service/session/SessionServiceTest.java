@@ -97,6 +97,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class SessionServiceTest {
 
+  public static final long AGENCY_3 = 3L;
   private final Consultant CONSULTANT =
       new Consultant(
           CONSULTANT_ID,
@@ -127,6 +128,8 @@ class SessionServiceTest {
           false,
           LanguageCode.de,
           null,
+          null,
+          false,
           null);
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Session SESSION = TestConstants.SESSION;
@@ -142,7 +145,6 @@ class SessionServiceTest {
           .updateDate(nowInUtc())
           .teamSession(false)
           .isPeerChat(false)
-          .monitoring(false)
           .build();
 
   private final Session SESSION_WITH_CONSULTANT =
@@ -158,7 +160,6 @@ class SessionServiceTest {
           .updateDate(nowInUtc())
           .teamSession(false)
           .isPeerChat(false)
-          .monitoring(false)
           .build();
 
   private final Session ACCEPTED_SESSION =
@@ -175,7 +176,6 @@ class SessionServiceTest {
           .updateDate(nowInUtc())
           .teamSession(false)
           .isPeerChat(false)
-          .monitoring(false)
           .build();
 
   private final ConsultantAgency CONSULTANT_AGENCY_1 =
@@ -590,7 +590,6 @@ class SessionServiceTest {
     assertEquals(session.getUser().getUserId(), result.getAskerId());
     assertEquals(session.getUser().getRcUserId(), result.getAskerRcId());
     assertEquals(session.getPostcode(), result.getPostcode());
-    assertEquals(session.isMonitoring(), result.getIsMonitoring());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
     assertEquals(session.getGroupId(), result.getGroupId());
     assertEquals(session.getFeedbackGroupId(), result.getFeedbackGroupId());
@@ -651,8 +650,8 @@ class SessionServiceTest {
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY_2);
     session.setUser(USER_WITH_RC_ID);
-    session.setAgencyId(
-        CONSULTANT_WITH_AGENCY_2.getConsultantAgencies().iterator().next().getAgencyId());
+    session.setTeamSession(true);
+    session.setAgencyId(AGENCY_3);
     Long sessionId = session.getId();
     when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
 
@@ -922,6 +921,8 @@ class SessionServiceTest {
         false,
         LanguageCode.de,
         null,
+        null,
+        false,
         null);
   }
 }

@@ -26,12 +26,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageRespo
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.MonitoringDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -75,11 +75,12 @@ import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.EmailNotificationMapper;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EnquiryData;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
@@ -93,7 +94,6 @@ import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.service.MonitoringService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
@@ -108,6 +108,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -117,7 +118,6 @@ import javax.ws.rs.InternalServerErrorException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.collections.MapUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -139,7 +139,6 @@ public class UserController implements UsersApi {
   private final @NotNull CreateEnquiryMessageFacade createEnquiryMessageFacade;
   private final @NotNull ConsultantImportService consultantImportService;
   private final @NotNull EmailNotificationFacade emailNotificationFacade;
-  private final @NotNull MonitoringService monitoringService;
   private final @NotNull AskerImportService askerImportService;
   private final @NotNull SessionListFacade sessionListFacade;
   private final @NotNull ConsultantAgencyService consultantAgencyService;
@@ -175,6 +174,8 @@ public class UserController implements UsersApi {
   private final @NotNull UsersStatisticsFacade usersStatisticsFacade;
 
   private final @NotNull AdminUserFacade adminUserFacade;
+
+  private final @NonNull EmailNotificationMapper emailNotificationMapper;
 
   /**
    * Creates an user account and returns a 201 CREATED on success.
@@ -455,6 +456,32 @@ public class UserController implements UsersApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  @Override
+  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
+
+    Optional<Consultant> consultantByEmail = userAccountProvider.findConsultantByEmail(email);
+    if (consultantByEmail.isPresent()) {
+      return new ResponseEntity<>(getEmailNotifications(consultantByEmail.get()), HttpStatus.OK);
+    } else {
+      Optional<User> userByEmail = userAccountProvider.findUserByEmail(email);
+      if (userByEmail.isPresent()) {
+        return new ResponseEntity<>(getEmailNotifications(userByEmail.get()), HttpStatus.OK);
+      } else {
+        throw new NotFoundException("No adviceseeker nor consultant with given email found.");
+      }
+    }
+  }
+
+  private EmailNotificationsDTO getEmailNotifications(Consultant consultant) {
+    var consultantDTO = consultantDataProvider.retrieveData(consultant);
+    return consultantDTO.getEmailNotifications();
+  }
+
+  private EmailNotificationsDTO getEmailNotifications(User user) {
+    var userDTO = askerDataProvider.retrieveData(user);
+    return userDTO.getEmailNotifications();
+  }
+
   /**
    * Gets the user data for the current logged-in user depending on his user role.
    *
@@ -472,7 +499,7 @@ public class UserController implements UsersApi {
               consultantMap ->
                   partialUserData.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
       partialUserData.setAvailable(messenger.getAvailability(authenticatedUser.getUserId()));
-    } else if (isTenantAdmin()) {
+    } else if (isTenantAdmin() || isAgencyAdmin()) {
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
@@ -493,6 +520,10 @@ public class UserController implements UsersApi {
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
   }
 
+  private boolean isAgencyAdmin() {
+    return authenticatedUser.isAgencySuperAdmin() || authenticatedUser.isRestrictedAgencyAdmin();
+  }
+
   private boolean isTenantAdmin() {
     return authenticatedUser.isSingleTenantAdmin() || authenticatedUser.isTenantSuperAdmin();
   }
@@ -506,7 +537,11 @@ public class UserController implements UsersApi {
             .orElseThrow(
                 () -> new BadRequestException("Invalid payload: at least one property expected"));
 
-    accountManager.patchUser(patchMap).orElseThrow();
+    Optional<Map<String, Object>> patchResponse = accountManager.patchUser(patchMap);
+    if (patchResponse.isEmpty()) {
+      throw new IllegalStateException("patch response not valid");
+    }
+
     userDtoMapper
         .preferredLanguageOf(patchUserDTO)
         .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
@@ -729,71 +764,6 @@ public class UserController implements UsersApi {
     }
 
     return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  /**
-   * Returns the monitoring for the given session.
-   *
-   * @param sessionId Session Id (required)
-   * @return {@link ResponseEntity} containing {@link MonitoringDTO}
-   */
-  @Override
-  public ResponseEntity<MonitoringDTO> getMonitoring(@PathVariable Long sessionId) {
-    var sessionOptional = sessionService.getSession(sessionId);
-    if (sessionOptional.isEmpty()) {
-      log.warn("Bad request: Session with id {} not found", sessionId);
-
-      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-    }
-
-    var session = sessionOptional.get();
-    var userId = authenticatedUser.getUserId();
-    if (!session.isAdvisedBy(userId) && !accountManager.isTeamAdvisedBy(sessionId, userId)) {
-      log.warn(
-          "Bad request: Consultant with id {} has no permission to access session with id {}",
-          userId,
-          sessionId);
-
-      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-    }
-
-    var responseDTO = monitoringService.getMonitoring(session);
-
-    if (nonNull(responseDTO) && MapUtils.isNotEmpty(responseDTO.getProperties())) {
-      return new ResponseEntity<>(responseDTO, HttpStatus.OK);
-    } else {
-      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
-    }
-  }
-
-  /**
-   * Updates the monitoring values of a {@link Session}. Only a consultant which is directly
-   * assigned to the session can update the values (MVP only).
-   *
-   * @param sessionId Session Id (required)
-   * @param monitoring {@link MonitoringDTO} (required)
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> updateMonitoring(
-      @PathVariable Long sessionId, @RequestBody MonitoringDTO monitoring) {
-    var sessionOptional = sessionService.getSession(sessionId);
-    if (sessionOptional.isEmpty()) {
-      log.warn("Bad request: Session with id {} not found", sessionId);
-      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-    }
-
-    var userId = authenticatedUser.getUserId();
-    var session = sessionOptional.get();
-    if (session.isAdvisedBy(userId) || accountManager.isTeamAdvisedBy(sessionId, userId)) {
-      monitoringService.updateMonitoring(session.getId(), monitoring);
-      return new ResponseEntity<>(HttpStatus.OK);
-    }
-
-    var message =
-        "Unauthorized: Consultant with id {} is not authorized to update monitoring of session {}";
-    log.warn(message, userId, sessionId);
-    return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
   }
 
   /**
@@ -1099,9 +1069,13 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> joinChat(@PathVariable Long chatId) {
-
     joinAndLeaveChatFacade.joinChat(chatId, authenticatedUser);
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
 
+  @Override
+  public ResponseEntity<Void> verifyCanModerateChat(@PathVariable Long chatId) {
+    joinAndLeaveChatFacade.verifyCanModerate(chatId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
 

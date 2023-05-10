@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelation
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import java.net.URLDecoder;
@@ -41,6 +43,7 @@ import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -366,9 +369,15 @@ public class UserAdminController implements UseradminApi {
   }
 
   @Override
+  public ResponseEntity<AdminResponseDTO> patchAdminData(PatchAdminDTO patchAdminDTO) {
+    AdminResponseDTO adminResponseDTO = this.adminUserFacade.patchAdminUserData(patchAdminDTO);
+    return new ResponseEntity<>(adminResponseDTO, HttpStatus.OK);
+  }
+
+  @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
       String query, Integer page, Integer perPage, String field, String order) {
-    var decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
     var resultMap =
@@ -382,14 +391,21 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
       String query, Integer page, Integer perPage, String field, String order) {
-    var decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
             decodedInfix, page - 1, perPage, mappedField, isAscending);
     var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
-
     return ResponseEntity.ok(result);
+  }
+
+  private String determineDecodedInfix(String query) {
+    if (EmailValidator.getInstance().isValid(query)) {
+      return EmailUrlDecoder.decodeEmailQuery(query);
+    } else {
+      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    }
   }
 }
