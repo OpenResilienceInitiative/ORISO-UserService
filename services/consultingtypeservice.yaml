@@ -185,9 +185,6 @@ components:
         isAnonymousConversationAllowed:
           type: boolean
           example: false
-        isSetEmailAllowed:
-          type: boolean
-          example: true
         showAskerProfile:
           type: boolean
           example: true
@@ -228,9 +225,6 @@ components:
             sessionDataInitializing:
               allOf:
                 - $ref: '#/components/schemas/SessionDataInitializingDTO'
-            monitoring:
-              allOf:
-                - $ref: '#/components/schemas/MonitoringDTO'
             initializeFeedbackChat:
               type: boolean
               example: true
@@ -370,31 +364,12 @@ components:
     SessionDataInitializingDTO:
       type: object
       properties:
-        addictiveDrugs:
-          type: boolean
-          example: true
         age:
-          type: boolean
-          example: false
-        gender:
-          type: boolean
-          example: true
-        relation:
           type: boolean
           example: false
         state:
           type: boolean
           example: true
-
-    MonitoringDTO:
-      type: object
-      properties:
-        initializeMonitoring:
-          type: boolean
-          example: true
-        monitoringTemplateFile:
-          type: string
-          example: file.json
 
     RolesDTO:
       type: object

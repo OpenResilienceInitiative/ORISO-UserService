@@ -2,17 +2,13 @@ package de.caritas.cob.userservice.api.helper;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ADDICTIVE_DRUGS_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGE_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_U25;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.EMAIL;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.GENDER_VALUE;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_MONITORING;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RELATION_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.STATE_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
@@ -41,7 +37,6 @@ import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.GroupChatDTO;
-import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.MonitoringDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.SessionDataInitializingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.WelcomeMessageDTO;
 import java.util.ArrayList;
@@ -93,6 +88,8 @@ public class SessionDataProviderTest {
           false,
           LanguageCode.de,
           null,
+          null,
+          false,
           null);
   private final Session INITIALIZED_SESSION_SUCHT =
       Session.builder()
@@ -122,26 +119,13 @@ public class SessionDataProviderTest {
           .createDate(nowInUtc())
           .build();
 
-  private final SessionData SESSION_DATA_ADDICTIVE_DRUGS =
-      new SessionData(
-          new Session(),
-          SessionDataType.REGISTRATION,
-          SessionDataKeyRegistration.ADDICTIVE_DRUGS.getValue(),
-          "1");
   private final SessionData SESSION_DATA_AGE =
       new SessionData(
           new Session(),
           SessionDataType.REGISTRATION,
           SessionDataKeyRegistration.AGE.getValue(),
           "2");
-  private final SessionData SESSION_DATA_GENDER =
-      new SessionData(
-          new Session(),
-          SessionDataType.REGISTRATION,
-          SessionDataKeyRegistration.GENDER.getValue(),
-          "3");
-  private final List<SessionData> SESSION_DATA =
-      Arrays.asList(SESSION_DATA_ADDICTIVE_DRUGS, SESSION_DATA_AGE, SESSION_DATA_GENDER);
+  private final List<SessionData> SESSION_DATA = Arrays.asList(SESSION_DATA_AGE);
   private final Session INITIALIZED_SESSION_WITH_SESSION_DATA =
       Session.builder()
           .id(1L)
@@ -155,32 +139,16 @@ public class SessionDataProviderTest {
           .enquiryMessageDate(nowInUtc())
           .sessionData(SESSION_DATA)
           .teamSession(IS_TEAM_SESSION)
-          .monitoring(IS_MONITORING)
           .createDate(nowInUtc())
           .build();
 
   private final SessionDataDTO SESSION_DATA_DTO =
-      new SessionDataDTO()
-          .addictiveDrugs(ADDICTIVE_DRUGS_VALUE)
-          .relation(RELATION_VALUE)
-          .gender(GENDER_VALUE)
-          .age(AGE_VALUE)
-          .state(STATE_VALUE);
+      new SessionDataDTO().age(AGE_VALUE).state(STATE_VALUE);
   private final SessionDataDTO SESSION_DATA_DTO_WITH_NO_AGE_VALUE =
-      new SessionDataDTO()
-          .addictiveDrugs(ADDICTIVE_DRUGS_VALUE)
-          .relation(RELATION_VALUE)
-          .gender(GENDER_VALUE)
-          .state(STATE_VALUE);
+      new SessionDataDTO().state(STATE_VALUE);
   private final SessionDataDTO EMPTY_SESSION_DATA_DTO = new SessionDataDTO();
   private final SessionDataInitializingDTO SESSION_DATA_INITIALIZING_WITH_ALL_SESSION_DATA_ITEMS =
-      new SessionDataInitializingDTO()
-          .addictiveDrugs(true)
-          .age(true)
-          .gender(true)
-          .relation(true)
-          .relation(true)
-          .state(true);
+      new SessionDataInitializingDTO().age(true).state(true);
   private final ExtendedConsultingTypeResponseDTO
       CONSULTING_TYPE_SETTINGS_WITH_ALL_SESSION_DATA_ITEMS =
           new ExtendedConsultingTypeResponseDTO()
@@ -192,23 +160,14 @@ public class SessionDataProviderTest {
               .welcomeMessage(
                   new WelcomeMessageDTO().sendWelcomeMessage(false).welcomeMessageText(null))
               .sendFurtherStepsMessage(false)
-              .sendSaveSessionDataMessage(false)
               .sessionDataInitializing(SESSION_DATA_INITIALIZING_WITH_ALL_SESSION_DATA_ITEMS)
-              .monitoring(
-                  new MonitoringDTO().initializeMonitoring(true).monitoringTemplateFile(null))
               .initializeFeedbackChat(false)
               .notifications(null)
               .languageFormal(false)
               .roles(null)
               .registration(null);
   private final SessionDataInitializingDTO SESSION_DATA_INITIALIZING_WITH_NO_SESSION_DATA_ITEMS =
-      new SessionDataInitializingDTO()
-          .addictiveDrugs(false)
-          .age(false)
-          .gender(false)
-          .relation(false)
-          .relation(false)
-          .state(false);
+      new SessionDataInitializingDTO().age(false).state(false);
   private final ExtendedConsultingTypeResponseDTO
       CONSULTING_TYPE_SETTINGS_WITH_NO_SESSION_DATA_ITEMS =
           new ExtendedConsultingTypeResponseDTO()
@@ -220,10 +179,7 @@ public class SessionDataProviderTest {
               .welcomeMessage(
                   new WelcomeMessageDTO().sendWelcomeMessage(false).welcomeMessageText(null))
               .sendFurtherStepsMessage(false)
-              .sendSaveSessionDataMessage(false)
               .sessionDataInitializing(SESSION_DATA_INITIALIZING_WITH_NO_SESSION_DATA_ITEMS)
-              .monitoring(
-                  new MonitoringDTO().initializeMonitoring(true).monitoringTemplateFile(null))
               .initializeFeedbackChat(false)
               .notifications(null)
               .languageFormal(false)
@@ -241,7 +197,6 @@ public class SessionDataProviderTest {
     Session sessionWithInitializedItem = easyRandom.nextObject(Session.class);
     sessionWithInitializedItem.setConsultingTypeId(CONSULTING_TYPE_ID_SUCHT);
     SessionData data = easyRandom.nextObject(SessionData.class);
-    data.setKey("addictiveDrugs");
     data.setValue("updatedValue");
     SessionData dataAge = easyRandom.nextObject(SessionData.class);
     dataAge.setKey("age");
@@ -257,25 +212,13 @@ public class SessionDataProviderTest {
         sessionDataProvider.createSessionDataList(
             sessionWithInitializedItem, SESSION_DATA_DTO_WITH_NO_AGE_VALUE);
 
-    assertEquals(5, result.size());
+    assertEquals(2, result.size());
 
     for (SessionData sessionData : result) {
       switch (sessionData.getKey()) {
-        case "addictiveDrugs":
-          assertEquals(ADDICTIVE_DRUGS_VALUE, sessionData.getValue());
-          assertThat(sessionData.getId(), is(notNullValue()));
-          break;
         case "age":
           assertThat(sessionData.getValue(), is(nullValue()));
           assertThat(sessionData.getId(), is(notNullValue()));
-          break;
-        case "gender":
-          assertEquals(GENDER_VALUE, sessionData.getValue());
-          assertThat(sessionData.getId(), is(nullValue()));
-          break;
-        case "relation":
-          assertEquals(RELATION_VALUE, sessionData.getValue());
-          assertThat(sessionData.getId(), is(nullValue()));
           break;
         case "state":
           assertEquals(STATE_VALUE, sessionData.getValue());
@@ -365,16 +308,8 @@ public class SessionDataProviderTest {
     Map<String, Object> result =
         sessionDataProvider.getSessionDataMapFromSession(INITIALIZED_SESSION_WITH_SESSION_DATA);
 
-    assertEquals(
-        result.get(SESSION_DATA_ADDICTIVE_DRUGS.getKey()), SESSION_DATA_ADDICTIVE_DRUGS.getValue());
-    assertEquals(
-        result.get(SESSION_DATA_ADDICTIVE_DRUGS.getKey()), SESSION_DATA_ADDICTIVE_DRUGS.getValue());
-    assertEquals(result.get(SESSION_DATA_GENDER.getKey()), SESSION_DATA_GENDER.getValue());
     assertEquals(result.get(SESSION_DATA_AGE.getKey()), SESSION_DATA_AGE.getValue());
-    assertTrue(result.containsKey(SessionDataKeyRegistration.ADDICTIVE_DRUGS.getValue()));
-    assertTrue(result.containsKey(SessionDataKeyRegistration.GENDER.getValue()));
     assertTrue(result.containsKey(SessionDataKeyRegistration.AGE.getValue()));
-    assertFalse(result.containsKey(SessionDataKeyRegistration.RELATION.getValue()));
     assertFalse(result.containsKey(SessionDataKeyRegistration.STATE.getValue()));
   }
 
