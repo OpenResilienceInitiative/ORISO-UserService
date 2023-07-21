@@ -114,7 +114,7 @@ public class Messenger implements Messaging {
                     break;
                   }
                 } else {
-                  log.debug("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
+                  log.info("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
                 }
               }
             });

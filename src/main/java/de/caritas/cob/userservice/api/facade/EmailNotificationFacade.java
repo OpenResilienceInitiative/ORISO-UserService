@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.ReassignmentRequestE
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
@@ -43,6 +44,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -82,6 +84,7 @@ public class EmailNotificationFacade {
    *
    * @param session the regarding session
    */
+  @Async
   public void sendNewEnquiryEmailNotification(Session session, TenantData tenantData) {
 
     var sessionAlreadyAssignedToConsultant = nonNull(session.getConsultant());
@@ -90,8 +93,10 @@ public class EmailNotificationFacade {
         log.info(
             "Preparing to send NEW_ENQUIRY_EMAIL_NOTIFICATION email for session: {}",
             session.getId());
+        TenantContext.setCurrentTenantData(tenantData);
         newEnquiryEmailSupplier.setCurrentSession(session);
         sendMailTasksToMailService(newEnquiryEmailSupplier);
+        TenantContext.clear();
       } catch (Exception ex) {
         log.error(
             "EmailNotificationFacade error: Failed to send new enquiry notification for session {}.",
@@ -101,6 +106,7 @@ public class EmailNotificationFacade {
     }
   }
 
+  @Async
   public void sendNewDirectEnquiryEmailNotification(
       String consultantId, Long agencyId, String postCode, TenantData tenantData) {
     log.info(
@@ -110,11 +116,12 @@ public class EmailNotificationFacade {
         agencyId);
 
     try {
+      TenantContext.setCurrentTenantData(tenantData);
       newDirectEnquiryEmailSupplier.setAgencyId(agencyId);
       newDirectEnquiryEmailSupplier.setConsultantId(consultantId);
       newDirectEnquiryEmailSupplier.setPostCode(postCode);
       sendMailTasksToMailService(newDirectEnquiryEmailSupplier);
-
+      TenantContext.clear();
     } catch (Exception ex) {
       log.error("Failed to send NEW_DIRECT_ENQUIRY_EMAIL_NOTIFICATION", ex);
     }
@@ -126,7 +133,7 @@ public class EmailNotificationFacade {
     if (isNotEmpty(generatedMails)) {
       MailsDTO mailsDTO = new MailsDTO().mails(generatedMails);
       log.info(
-          "EmailNotificationFacade Sending email notifications with mailDTOs. MailSupplier class: {}",
+          "Sending email notifications with mailDTOs. MailSupplier class: {}",
           mailsToSend.getClass());
       mailService.sendEmailNotification(mailsDTO);
     }
@@ -140,9 +147,11 @@ public class EmailNotificationFacade {
    * @param roles roles to decide the regarding recipients
    * @param userId the user id of initiating user
    */
+  @Async
   @Transactional
   public void sendNewMessageNotification(
       String rcGroupId, Set<String> roles, String userId, TenantData tenantData) {
+    TenantContext.setCurrentTenantData(tenantData);
     try {
       Session session = sessionService.getSessionByGroupIdAndUser(rcGroupId, userId, roles);
       EmailSupplier newMessageMails =
@@ -176,6 +185,7 @@ public class EmailNotificationFacade {
           userId,
           ex);
     }
+    TenantContext.clear();
   }
 
   /**
@@ -185,8 +195,10 @@ public class EmailNotificationFacade {
    * @param rcFeedbackGroupId group id of feedback chat
    * @param userId regarding user id
    */
+  @Async
   public void sendNewFeedbackMessageNotification(
       String rcFeedbackGroupId, String userId, TenantData tenantData) {
+    TenantContext.setCurrentTenantData(tenantData);
     try {
       Session session = sessionService.getSessionByFeedbackGroupId(rcFeedbackGroupId);
       EmailSupplier newFeedbackMessages =
@@ -206,6 +218,7 @@ public class EmailNotificationFacade {
           rcFeedbackGroupId,
           e);
     }
+    TenantContext.clear();
   }
 
   /**
@@ -216,11 +229,13 @@ public class EmailNotificationFacade {
    * @param senderUserId the id of initiating user
    * @param askerUserName the name of the asker
    */
+  @Async
   public void sendAssignEnquiryEmailNotification(
       Consultant receiverConsultant,
       String senderUserId,
       String askerUserName,
       TenantData tenantData) {
+    TenantContext.setCurrentTenantData(tenantData);
     log.info(
         "Preparing to send ASSIGN_ENQUIRY_NOTIFICATION email to consultant: {}",
         receiverConsultant != null ? receiverConsultant.getId() : "No consultant selected");
@@ -232,11 +247,13 @@ public class EmailNotificationFacade {
     } catch (Exception exception) {
       log.error("EmailNotificationFacade error: ", exception);
     }
+    TenantContext.clear();
   }
 
+  @Async
   @Transactional
   public void sendReassignRequestNotification(String rcGroupId, TenantData tenantData) {
-
+    TenantContext.setCurrentTenantData(tenantData);
     var session = sessionService.getSessionByGroupId(rcGroupId);
     var user = session.getUser();
 
@@ -264,6 +281,7 @@ public class EmailNotificationFacade {
             exception);
       }
     }
+    TenantContext.clear();
   }
 
   private boolean shouldSendReassignmentNotificationForAdviceSeeker(User user) {
@@ -279,9 +297,11 @@ public class EmailNotificationFacade {
         && !user.getEmail().endsWith(identityClientConfig.getEmailDummySuffix());
   }
 
+  @Async
   @Transactional
   public void sendReassignConfirmationNotification(
       ReassignmentNotificationDTO reassignmentNotification, TenantData tenantData) {
+    TenantContext.setCurrentTenantData(tenantData);
     Consultant existingConsultantById =
         findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
 
@@ -306,6 +326,7 @@ public class EmailNotificationFacade {
           "EmailNotificationFacade error: Failed to send reqssign confiration notification",
           exception);
     }
+    TenantContext.clear();
   }
 
   private boolean shouldSendReassignmentNotificationForConsultant(
