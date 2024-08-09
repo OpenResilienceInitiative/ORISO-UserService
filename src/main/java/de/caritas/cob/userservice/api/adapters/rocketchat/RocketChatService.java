@@ -523,7 +523,7 @@ public class RocketChatService implements MessageClient {
       return restTemplate.postForEntity(url, request, LoginResponseDTO.class);
     } catch (Exception ex) {
       log.error(
-          "Rocket.Chat Error: Could not login user ({}) in Rocket.Chat for the first time. Reason",
+          "Rocket.Chat Error: Could not login user ({}) in Rocket.Chat for the first time. Reason:",
           username,
           ex);
       throw new RocketChatLoginException(

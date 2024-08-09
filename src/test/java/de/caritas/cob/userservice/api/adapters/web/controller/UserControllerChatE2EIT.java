@@ -50,6 +50,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
+import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -152,6 +153,8 @@ class UserControllerChatE2EIT {
 
   @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
+  @Autowired private CacheManagerConfig cacheManagerConfig;
+
   @MockBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
@@ -182,6 +185,7 @@ class UserControllerChatE2EIT {
 
   @AfterEach
   void reset() {
+    cacheManagerConfig.cacheManager().getCache("rocketChatUserCache").clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
