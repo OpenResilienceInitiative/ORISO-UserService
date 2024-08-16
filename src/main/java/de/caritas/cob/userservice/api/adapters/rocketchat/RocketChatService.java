@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+import static java.util.Arrays.asList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
@@ -71,6 +72,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -132,6 +134,7 @@ public class RocketChatService implements MessageClient {
   private static final String USERS_LIST_ERROR_MESSAGE =
       "Could not get users list from Rocket.Chat";
   private static final String USER_LIST_GET_FIELD_SELECTION = "{\"_id\":1}";
+  private static final Integer PAGE_SIZE = 100;
   private final LocalDateTime localDateTime1900 = LocalDateTime.of(1900, 1, 1, 0, 0);
 
   private final LocalDateTime localDateTimeFuture = nowInUtc().plusYears(1L);
@@ -305,6 +308,12 @@ public class RocketChatService implements MessageClient {
       log.error("User Info failed.", exception);
       return Optional.empty();
     }
+  }
+
+  @Override
+  @Cacheable(key = "#chatUserId", value = "rocketChatUserCache")
+  public Optional<Map<String, Object>> findUserAndAddToCache(String chatUserId) {
+    return findUser(chatUserId);
   }
 
   @Override
@@ -513,6 +522,10 @@ public class RocketChatService implements MessageClient {
       var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_LOGIN);
       return restTemplate.postForEntity(url, request, LoginResponseDTO.class);
     } catch (Exception ex) {
+      log.error(
+          "Rocket.Chat Error: Could not login user ({}) in Rocket.Chat for the first time. Reason:",
+          username,
+          ex);
       throw new RocketChatLoginException(
           String.format("Could not login user (%s) in Rocket.Chat for the first time", username));
     }
@@ -566,6 +579,11 @@ public class RocketChatService implements MessageClient {
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (Exception ex) {
+      log.error(
+          "Rocket.Chat Error: Could not add user {} to Rocket.Chat group with id {}. Reason: ",
+          rcUserId,
+          rcGroupId,
+          ex);
       throw new RocketChatAddUserToGroupException(
           String.format(
               "Could not add user %s to Rocket.Chat group with id %s", rcUserId, rcGroupId));
@@ -607,6 +625,10 @@ public class RocketChatService implements MessageClient {
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (Exception ex) {
+      log.error(
+          "Rocket.Chat Error: Could not leave as technical user from Rocket.Chat group with id {}. Reason: ",
+          rcGroupId,
+          ex);
       throw new RocketChatLeaveFromGroupException(
           String.format(
               "Could not leave as technical user from Rocket.Chat group with id %s", rcGroupId));
@@ -639,6 +661,11 @@ public class RocketChatService implements MessageClient {
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (Exception ex) {
+      log.error(
+          "Rocket.Chat Error: Could not remove user {} from Rocket.Chat group with id {}. Reason: ",
+          rcUserId,
+          rcGroupId,
+          ex);
       throw new RocketChatRemoveUserFromGroupException(
           String.format(
               "Could not remove user %s from Rocket.Chat group with id %s", rcUserId, rcGroupId));
@@ -678,6 +705,7 @@ public class RocketChatService implements MessageClient {
     try {
       groupMemberList = getChatUsers(rcGroupId);
     } catch (Exception exception) {
+      log.error("Could not get chat users. Reason: ", exception);
       throw new RocketChatGetGroupMembersException(
           String.format("Group member list from group with id %s is empty", rcGroupId));
     }
@@ -783,13 +811,14 @@ public class RocketChatService implements MessageClient {
               GroupMemberResponseDTO.class);
 
     } catch (Exception ex) {
+      log.error("Could not get chat users. Reason: ", ex);
       throw new RocketChatGetGroupMembersException(
           String.format("Could not get Rocket.Chat group" + " members for room id %s", rcGroupId),
           ex);
     }
 
     if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return Arrays.asList(response.getBody().getMembers());
+      return asList(response.getBody().getMembers());
     } else {
       var error = "Could not get Rocket.Chat group members for room id %s";
       throw new RocketChatGetGroupMembersException(String.format(error, rcGroupId));
@@ -851,6 +880,7 @@ public class RocketChatService implements MessageClient {
       response = restTemplate.postForObject(url, request, StandardResponseDTO.class);
 
     } catch (Exception ex) {
+      log.error("Could not clean history of Rocket.Chat group id {}. Reason: ", rcGroupId, ex);
       throw new RocketChatRemoveSystemMessagesException(
           String.format("Could not clean history of Rocket.Chat group id %s", rcGroupId));
     }
@@ -887,7 +917,7 @@ public class RocketChatService implements MessageClient {
     }
 
     if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return Arrays.asList(response.getBody().getUpdate());
+      return asList(response.getBody().getUpdate());
     } else {
       var error = "Could not get Rocket.Chat subscriptions for user id %s";
       throw new InternalServerErrorException(error, LogService::logRocketChatError);
@@ -946,7 +976,7 @@ public class RocketChatService implements MessageClient {
     }
 
     if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return Arrays.asList(response.getBody().getUpdate());
+      return asList(response.getBody().getUpdate());
     } else {
       var error =
           String.format(CHAT_ROOM_ERROR_MESSAGE, rocketChatCredentials.getRocketChatUserId());
@@ -1157,6 +1187,13 @@ public class RocketChatService implements MessageClient {
     return getGroupsListAll(mongoDbQuery);
   }
 
+  /**
+   * Returns a list of all Rocket.Chat groups.
+   *
+   * @param mongoDbQuery mongoDB Query as {@link DBObject} created with {@link QueryBuilder}
+   * @return a {@link List} of {@link GroupDTO} instances
+   * @throws RocketChatGetGroupsListAllException when request fails
+   */
   /**
    * Returns a list of all Rocket.Chat groups.
    *
