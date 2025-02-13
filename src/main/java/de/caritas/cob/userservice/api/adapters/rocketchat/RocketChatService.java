@@ -412,7 +412,7 @@ public class RocketChatService implements MessageClient {
           "Could not add technical user to Rocket.Chat group with id {}. Reason: ",
           groupId,
           ex.getMessage());
-      log.error("Skipping deletion of Rocket.Chat group with id {}", groupId);
+      log.info("Skipping deletion of Rocket.Chat group with id {}", groupId);
       return;
     }
 
