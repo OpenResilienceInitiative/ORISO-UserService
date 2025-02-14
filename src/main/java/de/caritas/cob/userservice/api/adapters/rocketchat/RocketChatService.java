@@ -407,6 +407,16 @@ public class RocketChatService implements MessageClient {
   public void deleteGroupAsTechnicalUser(String groupId) throws RocketChatDeleteGroupException {
     try {
       this.addTechnicalUserToGroup(groupId);
+    } catch (Exception ex) {
+      log.error(
+          "Could not add technical user to Rocket.Chat group with id {}. Reason: ",
+          groupId,
+          ex.getMessage());
+      log.info("Skipping deletion of Rocket.Chat group with id {}", groupId);
+      return;
+    }
+
+    try {
       RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
       rollbackGroup(groupId, technicalUser);
     } catch (Exception e) {

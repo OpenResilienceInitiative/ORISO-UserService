@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.IterableUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 /** Provider for user to inactive Rocket.Chat group map. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class InactivePrivateGroupsProvider {
 
   private final @NonNull RocketChatService rocketChatService;
@@ -45,7 +47,16 @@ public class InactivePrivateGroupsProvider {
 
     Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
-        .filter(group -> !groupChatIdSet.contains(group.getId()))
+        .filter(
+            group -> {
+              boolean isFilteredOut = !groupChatIdSet.contains(group.getId());
+              if (isFilteredOut) {
+                log.info(
+                    "Inactive group with id {} is filtered out, because it is a group chat.",
+                    group.getId());
+              }
+              return isFilteredOut;
+            })
         .forEach(
             group ->
                 userWithInactiveGroupsMap
