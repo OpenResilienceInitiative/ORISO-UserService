@@ -81,7 +81,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatCreateGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteUserException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupMembersException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupsListAllException;
@@ -891,12 +890,13 @@ public class RocketChatServiceTest {
     verify(this.restTemplate, times(1)).postForObject(eq(RC_URL_GROUPS_DELETE), any(), any());
   }
 
-  @Test(expected = RocketChatDeleteGroupException.class)
-  public void
-      deleteGroupAsTechnicalUser_Should_throwRocketChatDeleteUserException_When_responseIsNotSuccess()
-          throws Exception {
+  @Test
+  public void deleteGroupAsTechnicalUser_Should_notThrowException_When_responseIsNotSuccess()
+      throws Exception {
     when(rcCredentialsHelper.getTechnicalUser()).thenThrow(new RuntimeException());
 
+    // do not throw exception as room might have been deleted already and for non-existent
+    // room we don't need to do anything
     this.rocketChatService.deleteGroupAsTechnicalUser("");
   }
 

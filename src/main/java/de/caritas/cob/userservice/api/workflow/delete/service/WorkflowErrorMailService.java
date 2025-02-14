@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-/** Service class to build a error mail for all deletion workflow errors. */
+/** Service class to build a error mail for all dWorkflowErrorLogServiceeletion workflow errors. */
 @Service
 @RequiredArgsConstructor
 public class WorkflowErrorMailService {
