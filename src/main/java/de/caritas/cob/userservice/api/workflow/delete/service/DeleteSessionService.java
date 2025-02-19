@@ -4,10 +4,13 @@ import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteSingleRoomAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteSingleRoomAndSessionAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.model.RocketchatRoomDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import lombok.NonNull;
@@ -38,6 +41,22 @@ public class DeleteSessionService {
     this.actionsRegistry
         .buildContainerForType(SessionDeletionWorkflowDTO.class)
         .addActionToExecute(DeleteSingleRoomAndSessionAction.class)
+        .executeActions(deletionWorkflowDTO);
+
+    return deletionWorkflowDTO.getDeletionWorkflowErrors();
+  }
+
+  public Collection<? extends DeletionWorkflowError> performRocketchatSessionDeletion(
+      String rcGroupId) {
+    if (isNull(rcGroupId)) {
+      return Collections.emptyList();
+    }
+
+    var deletionWorkflowDTO = new RocketchatRoomDeletionWorkflowDTO(rcGroupId, new ArrayList<>());
+
+    this.actionsRegistry
+        .buildContainerForType(RocketchatRoomDeletionWorkflowDTO.class)
+        .addActionToExecute(DeleteSingleRoomAction.class)
         .executeActions(deletionWorkflowDTO);
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
