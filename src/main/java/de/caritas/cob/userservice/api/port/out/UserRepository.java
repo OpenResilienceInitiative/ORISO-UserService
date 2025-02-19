@@ -16,6 +16,8 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByRcUserIdAndDeleteDateIsNull(String rcUserId);
 
+  List<User> findAllByRcUserIdAndDeleteDateIsNull(String rcUserId);
+
   List<User> findAllByDeleteDateNotNull();
 
   Optional<User> findByUsernameInAndDeleteDateIsNull(Collection<String> usernames);
