@@ -82,13 +82,16 @@ public class DeleteInactiveSessionsAndUserService {
     List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
 
     try {
-      Optional<User> user =
-          userRepository.findByRcUserIdAndDeleteDateIsNull(userInactiveGroupEntry.getKey());
-      user.ifPresentOrElse(
-          u -> workflowErrors.addAll(deleteInactiveGroupsOrUser(userInactiveGroupEntry, u)),
-          () ->
-              workflowErrors.addAll(
-                  performUserSessionDeletionForNonExistingUser(userInactiveGroupEntry.getValue())));
+      List<User> users =
+          userRepository.findAllByRcUserIdAndDeleteDateIsNull(userInactiveGroupEntry.getKey());
+      if (users.isEmpty()) {
+        workflowErrors.addAll(
+            performUserSessionDeletionForNonExistingUser(userInactiveGroupEntry.getValue()));
+      } else {
+        users.stream()
+            .forEach(
+                u -> workflowErrors.addAll(deleteInactiveGroupsOrUser(userInactiveGroupEntry, u)));
+      }
     } catch (NonUniqueResultException ex) {
       log.error(
           "Non unique result for findByRcUserIdAndDeleteDateIsNull found. RcUserId:",

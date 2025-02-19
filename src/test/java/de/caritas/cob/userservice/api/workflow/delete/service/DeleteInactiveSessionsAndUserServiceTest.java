@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ALL;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.times;
@@ -13,6 +12,7 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -25,8 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import javax.persistence.NonUniqueResultException;
 import lombok.extern.slf4j.Slf4j;
+import org.assertj.core.api.Fail;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,8 +75,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.of(user));
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Collections.singletonList(session));
     DeletionWorkflowError deletionWorkflowError = Mockito.mock(DeletionWorkflowError.class);
     when(deleteUserAccountService.performUserDeletion(user))
@@ -107,8 +107,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.of(user));
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(session1, session2));
 
     // when
@@ -134,8 +134,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.of(user));
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(session1, session2));
 
     // when
@@ -161,8 +161,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.of(user));
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(session1, session2));
     DeletionWorkflowError deletionWorkflowError =
         DeletionWorkflowError.builder()
@@ -202,8 +202,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.of(user));
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(session2, session3));
 
     // when
@@ -228,14 +228,18 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList());
 
     // when
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    deleteSessionService.performSessionDeletion(session1);
+    try {
+      deleteSessionService.performSessionDeletion(session1);
+    } catch (Exception ex) {
+      Fail.fail("No exception should have been thrown");
+    }
   }
 
   @Test
@@ -253,8 +257,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Lists.newArrayList());
     when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
 
     // when
@@ -262,38 +266,5 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
     // then
     verify(deleteSessionService, times(1)).performRocketchatSessionDeletion(anyString());
-  }
-
-  @Test
-  void
-      deleteInactiveSessionsAndUsers_Should_catchAndLogNonUniqueResultException_WhenThrownByFindByRcUserIdAndDeleteDateIsNull() {
-    // given
-    EasyRandom easyRandom = new EasyRandom();
-    User user = easyRandom.nextObject(User.class);
-    Session session1 = easyRandom.nextObject(Session.class);
-    Map<String, List<String>> userWithInactiveGroupsMap =
-        new HashMap<>() {
-          {
-            put(user.getUserId(), Collections.singletonList(session1.getGroupId()));
-          }
-        };
-    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
-        .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(anyString()))
-        .thenThrow(new NonUniqueResultException());
-
-    // when
-    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
-
-    // then
-    List<ILoggingEvent> logEvents = listAppender.list;
-    assertTrue(
-        logEvents.stream()
-            .anyMatch(
-                event ->
-                    event
-                        .getFormattedMessage()
-                        .contains(
-                            "Non unique result for findByRcUserIdAndDeleteDateIsNull found")));
   }
 }
