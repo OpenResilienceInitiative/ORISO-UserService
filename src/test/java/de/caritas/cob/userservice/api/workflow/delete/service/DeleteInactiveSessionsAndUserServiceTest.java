@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ALL;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.times;
@@ -24,6 +25,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.assertj.core.api.Fail;
@@ -266,5 +268,78 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
     // then
     verify(deleteSessionService, times(1)).performRocketchatSessionDeletion(anyString());
+  }
+
+  @Test
+  void
+      deleteInactiveSessionsAndUsers_Should_notPropagateExceptionWhenUnexpectedExceptionOccurred() {
+    // given
+    Entry<String, List<String>> userInactiveGroupEntry =
+        Map.entry("userId", Collections.emptyList());
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenThrow(new RuntimeException());
+
+    // when
+    try {
+      deleteInactiveSessionsAndUserService.performDeletionWorkflow(userInactiveGroupEntry);
+      List<ILoggingEvent> logsList = listAppender.list;
+      assertTrue(
+          logsList.stream()
+              .anyMatch(
+                  event ->
+                      event
+                          .getFormattedMessage()
+                          .contains(
+                              "Skip deleting user-session for user with rcUserId: userId, unexpected error occurred while deleting user with rcUserId:")));
+    } catch (Exception ex) {
+      Fail.fail("No exception should have been thrown");
+    }
+  }
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_ProcessInChunks() {
+    // given
+    Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 2500; i++) {
+      userWithInactiveGroupsMap.put("user" + i, Collections.singletonList("group" + i));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
+        .thenReturn(userWithInactiveGroupsMap);
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    // then
+    List<ILoggingEvent> logsList = listAppender.list;
+    assertTrue(
+        logsList.stream()
+            .anyMatch(event -> event.getFormattedMessage().contains("Processing chunk number: 1")));
+    assertTrue(
+        logsList.stream()
+            .anyMatch(event -> event.getFormattedMessage().contains("Processing chunk number: 2")));
+    assertTrue(
+        logsList.stream()
+            .anyMatch(event -> event.getFormattedMessage().contains("Processing chunk number: 3")));
+  }
+
+  @Test
+  void
+      deleteInactiveSessionsAndUsers_Should_ProcessFirstChunk_If_RecordsNumber_IsSmallerThanChunkSize() {
+    // given
+    Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 100; i++) {
+      userWithInactiveGroupsMap.put("user" + i, Collections.singletonList("group" + i));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap())
+        .thenReturn(userWithInactiveGroupsMap);
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    // then
+    List<ILoggingEvent> logsList = listAppender.list;
+    assertTrue(
+        logsList.stream()
+            .anyMatch(event -> event.getFormattedMessage().contains("Processing chunk number: 1")));
   }
 }
