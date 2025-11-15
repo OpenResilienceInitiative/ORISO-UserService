@@ -1,0 +1,93 @@
+package de.caritas.cob.userservice.api.admin.report.rule;
+
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserRoomDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
+import de.caritas.cob.userservice.api.admin.report.builder.ViolationByConsultantBuilder;
+import de.caritas.cob.userservice.api.admin.report.model.ViolationReportRule;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Violation rule to find consultants without necessary rocket chat room for directly assigned
+ * sessions.
+ */
+@Component
+@RequiredArgsConstructor
+public class MissingRocketChatRoomForConsultantViolationReportRule implements ViolationReportRule {
+
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull RocketChatService rocketChatService;
+
+  /**
+   * Generates all violations for {@link Consultant} without required rocket chat room assignment.
+   *
+   * @return the generated violations
+   */
+  @Override
+  @Transactional
+  public List<ViolationDTO> generateViolations() {
+    return StreamSupport.stream(this.consultantRepository.findAll().spliterator(), false)
+        .map(
+            consultant ->
+                this.sessionRepository.findByConsultantAndStatus(
+                    consultant, SessionStatus.IN_PROGRESS))
+        .flatMap(Collection::stream)
+        .map(this::fromMissingSession)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toList());
+  }
+
+  private ViolationDTO fromMissingSession(Session session) {
+    UserInfoResponseDTO userInfoWithRooms;
+    try {
+      userInfoWithRooms =
+          this.rocketChatService.getUserInfo(session.getConsultant().getRocketChatId());
+    } catch (Exception e) {
+      return ViolationByConsultantBuilder.getInstance(session.getConsultant())
+          .withReason(e.getCause().getMessage())
+          .build();
+    }
+    List<UserRoomDTO> rooms = userInfoWithRooms.getUser().getRooms();
+    List<String> rocketChatRoomsOfUser =
+        rooms.stream().map(UserRoomDTO::getRoomId).collect(Collectors.toList());
+
+    String violationMessage = buildPossibleViolationMessage(session, rocketChatRoomsOfUser);
+    if (isNotBlank(violationMessage)) {
+      return ViolationByConsultantBuilder.getInstance(session.getConsultant())
+          .withReason(violationMessage)
+          .build();
+    }
+    return null;
+  }
+
+  private String buildPossibleViolationMessage(
+      Session session, List<String> rocketChatRoomsOfUser) {
+    String violationMessage = "";
+
+    if (isGroupMissing(session.getGroupId(), rocketChatRoomsOfUser)) {
+      violationMessage += "Missing room with id " + session.getGroupId() + " in rocket chat";
+    }
+    return violationMessage;
+  }
+
+  private boolean isGroupMissing(String groupId, List<String> rocketChatRooms) {
+    return isNotBlank(groupId) && !rocketChatRooms.contains(groupId);
+  }
+}

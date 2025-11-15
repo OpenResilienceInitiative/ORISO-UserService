@@ -1,0 +1,76 @@
+# ---------------- Logging ----------------
+server.port=8082
+logging.level.root=INFO
+logging.level.org.springframework.web=DEBUG
+logging.level.org.hibernate=ERROR
+logging.level.org.springframework.web.servlet.mvc.method.annotation=DEBUG
+
+# ---------------- Keycloak ----------------
+keycloak.auth-server-url=http://localhost:8080
+keycloak.realm=online-beratung
+keycloak.bearer-only=true
+keycloak.resource=app
+keycloak.principal-attribute=preferred_username
+keycloak.cors=false
+keycloak.use-resource-role-mappings=false
+keycloak.config.admin-username=technical
+keycloak.config.admin-password=technical
+keycloak.config.admin-client-id=admin-cli
+keycloak.config.app-client-id=app
+
+# ---------------- MariaDB ----------------
+spring.datasource.url=jdbc:mariadb://10.43.123.72:3306/userservice
+spring.datasource.username=userservice
+spring.datasource.password=userservice
+spring.datasource.driver-class-name=org.mariadb.jdbc.Driver
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=8
+spring.datasource.hikari.idle-timeout=500000
+spring.datasource.hikari.maxLifetime=500000
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MariaDB103Dialect
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.hibernate.ddl-auto=validate
+
+# ---------------- Rocket.Chat ----------------
+rocket.technical.username=rocket-chat-technical-user
+rocket.technical.password=technical
+rocket.systemuser.id=znEvpWQ8wFPQSLmND
+rocket.systemuser.username=ali
+rocket.systemuser.password=ali
+rocket-chat.credential-cron=0 */10 * * * ?
+rocket-chat.base-url=http://localhost:3000/api/v1
+rocket-chat.mongo-url=mongodb://10.43.61.124:27017/rocketchat?retryWrites=false
+
+# ---------------- Liquibase ----------------
+spring.liquibase.change-log=classpath:db/changelog/userservice-local-master.xml
+spring.liquibase.user=userservice
+spring.liquibase.password=userservice
+spring.liquibase.enabled=true
+spring.liquibase.drop-first=false
+
+# ---------------- Local App Settings ----------------
+app.base.url=http://localhost:8082
+multitenancy.enabled=false
+
+# ---------------- Agency Service URL ----------------
+agency.service.api.url=http://localhost:8084
+
+# ---------------- CSRF (match admin app) ----------------
+csrf.header.property=X-CSRF-Token
+csrf.cookie.property=CSRF-TOKEN
+csrf.whitelist.header.property=X-CSRF-Token
+csrf.whitelist.config-uris=/users/data,\
+  /users/sessions/askers,\
+  /actuator/health,\
+  /actuator/health/**,\
+  /actuator/loggers,\
+  /actuator/loggers/**
+tenant.service.api.url=http://localhost:8081
+
+# ---------------- Spring Boot MongoDB connection ----------------
+spring.data.mongodb.uri=mongodb://10.43.61.124:27017/userservice
+spring.rabbitmq.host=10.43.157.60
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=rabbit
+spring.rabbitmq.password=rabbit
