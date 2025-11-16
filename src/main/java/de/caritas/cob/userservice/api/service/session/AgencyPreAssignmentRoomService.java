@@ -159,10 +159,3 @@ public class AgencyPreAssignmentRoomService {
     return String.format("Agency %s pre-assignment #%d", matrixUserId, session.getId());
   }
 }
-
-
-
-
-
-
-

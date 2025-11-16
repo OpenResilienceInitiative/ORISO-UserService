@@ -58,10 +58,3 @@ public class AgencyMatrixCredentialClient {
     return Optional.empty();
   }
 }
-
-
-
-
-
-
-
