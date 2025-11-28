@@ -196,7 +196,18 @@ public class Messenger implements Messaging {
   @Override
   public Optional<Map<String, Object>> findChatMetaInfo(long chatId, String userId) {
     var chat = findChat(chatId).orElseThrow();
+    String groupId = chat.getGroupId();
 
-    return messageClient.getChatInfo(chat.getGroupId());
+    // MATRIX MIGRATION: Check if this is a Matrix room (starts with ! or contains :)
+    boolean isMatrixRoom = groupId != null && (groupId.startsWith("!") || groupId.contains(":"));
+
+    if (isMatrixRoom) {
+      log.info("MATRIX: Skipping RocketChat metadata for Matrix room: {}", groupId);
+      // For Matrix rooms, return empty - banned users will be handled by Matrix API
+      return Optional.empty();
+    }
+
+    // Legacy RocketChat rooms
+    return messageClient.getChatInfo(groupId);
   }
 }

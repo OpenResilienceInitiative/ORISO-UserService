@@ -21,11 +21,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -58,6 +60,7 @@ import org.springframework.stereotype.Service;
 public class SessionService {
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserService userService;
@@ -258,7 +261,7 @@ public class SessionService {
    */
   public List<ConsultantSessionResponseDTO> getTeamSessionsForConsultant(Consultant consultant) {
 
-    List<Session> sessions = null;
+    List<Session> sessions = new ArrayList<>();
 
     Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
     if (nonNull(consultantAgencies)) {
@@ -267,10 +270,39 @@ public class SessionService {
               .map(ConsultantAgency::getAgencyId)
               .collect(Collectors.toList());
 
-      sessions =
+      // Get traditional team sessions (where consultant is NOT the owner)
+      List<Session> teamSessions =
           sessionRepository
               .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
                   consultantAgencyIds, consultant, SessionStatus.IN_PROGRESS, true);
+      if (teamSessions != null) {
+        sessions.addAll(teamSessions);
+      }
+
+      // MATRIX MIGRATION: Also get group chat sessions where consultant is the creator
+      List<Session> ownedGroupChats =
+          sessionRepository.findByConsultantAndTeamSessionAndStatus(
+              consultant, true, SessionStatus.IN_PROGRESS);
+      if (ownedGroupChats != null) {
+        sessions.addAll(ownedGroupChats);
+      }
+
+      // MATRIX MIGRATION: Also get group chat sessions where consultant is a participant
+      List<GroupChatParticipant> participations =
+          groupChatParticipantRepository.findByConsultantId(consultant.getId());
+      if (participations != null && !participations.isEmpty()) {
+        List<Long> participantSessionIds =
+            participations.stream()
+                .map(GroupChatParticipant::getChatId)
+                .collect(Collectors.toList());
+        Iterable<Session> participantSessionsIterable =
+            sessionRepository.findAllById(participantSessionIds);
+        List<Session> participantSessions = new ArrayList<>();
+        participantSessionsIterable.forEach(participantSessions::add);
+        if (!participantSessions.isEmpty()) {
+          sessions.addAll(participantSessions);
+        }
+      }
     }
 
     return mapSessionsToConsultantSessionDto(sessions);

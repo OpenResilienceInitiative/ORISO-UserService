@@ -84,6 +84,9 @@ public class Chat {
   @Column(name = "rc_group_id")
   private String groupId;
 
+  @Column(name = "matrix_room_id")
+  private String matrixRoomId;
+
   @ManyToOne
   @JoinColumn(name = "consultant_id_owner", nullable = false)
   @Fetch(FetchMode.SELECT)

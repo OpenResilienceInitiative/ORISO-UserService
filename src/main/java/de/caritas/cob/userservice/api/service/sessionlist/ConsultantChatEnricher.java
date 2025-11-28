@@ -44,7 +44,8 @@ public class ConsultantChatEnricher {
             RocketChatCredentials.builder()
                 .rocketChatToken(rcToken)
                 .rocketChatUserId(consultant.getRocketChatId())
-                .build());
+                .build(),
+            consultant);
 
     consultantSessionResponseDTOs.forEach(
         consultantSessionResponseDTO ->

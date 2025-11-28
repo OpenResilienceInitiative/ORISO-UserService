@@ -43,6 +43,7 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
+  private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -993,5 +994,53 @@ public class MatrixSynapseService {
    */
   public String getMatrixApiUrl() {
     return matrixConfig.getApiUrl("");
+  }
+
+  /**
+   * Get the list of room IDs that a user has joined.
+   *
+   * @param username the Matrix username (without @)
+   * @param password the Matrix password
+   * @return list of joined room IDs
+   */
+  public java.util.List<String> getJoinedRooms(String username, String password) {
+    try {
+      // Login to get access token
+      String accessToken = loginUser(username, password);
+      if (accessToken == null) {
+        log.warn("Could not login Matrix user {} to get joined rooms", username);
+        return java.util.Collections.emptyList();
+      }
+
+      // Call Matrix API to get joined rooms
+      var headers = new HttpHeaders();
+      headers.set("Authorization", "Bearer " + accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var url = matrixConfig.getApiUrl(ENDPOINT_JOINED_ROOMS);
+      HttpEntity<Void> request = new HttpEntity<>(headers);
+
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+        @SuppressWarnings("unchecked")
+        java.util.List<String> joinedRooms =
+            (java.util.List<String>) response.getBody().get("joined_rooms");
+        log.info(
+            "✅ User {} has {} joined Matrix rooms",
+            username,
+            joinedRooms != null ? joinedRooms.size() : 0);
+        return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
+      }
+
+      log.warn("Failed to get joined rooms for user {}: {}", username, response.getStatusCode());
+      return java.util.Collections.emptyList();
+
+    } catch (Exception e) {
+      log.error("Error getting joined rooms for user {}: {}", username, e.getMessage());
+      return java.util.Collections.emptyList();
+    }
   }
 }

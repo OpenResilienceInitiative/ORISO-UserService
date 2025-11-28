@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -24,6 +25,7 @@ public class MatrixMessageController {
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
+  private final @NonNull ChatService chatService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserService userService;
@@ -142,9 +144,23 @@ public class MatrixMessageController {
   public ResponseEntity<?> getMessages(@PathVariable Long sessionId) {
 
     try {
+      // MATRIX MIGRATION: Check both Session (1-on-1) and Chat (group chats)
+      String matrixRoomId = null;
+
+      // Try Session first (1-on-1 chats)
       var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
-        log.error("Session {} not found or has no Matrix room", sessionId);
+      if (session.isPresent() && session.get().getMatrixRoomId() != null) {
+        matrixRoomId = session.get().getMatrixRoomId();
+      } else {
+        // Try Chat (group chats)
+        var chat = chatService.getChat(sessionId);
+        if (chat.isPresent() && chat.get().getMatrixRoomId() != null) {
+          matrixRoomId = chat.get().getMatrixRoomId();
+        }
+      }
+
+      if (matrixRoomId == null) {
+        log.error("Session/Chat {} not found or has no Matrix room", sessionId);
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
@@ -165,9 +181,9 @@ public class MatrixMessageController {
           return ResponseEntity.ok(Map.of("messages", new Object[0]));
         }
 
+        // For group chats or accepted sessions, use consultant's own Matrix credentials
         // For enquiries (NEW status, no consultant assigned), use agency's Matrix credentials
-        // For accepted sessions (consultant assigned), use consultant's own Matrix credentials
-        if (session.get().getConsultant() == null) {
+        if (session.isPresent() && session.get().getConsultant() == null) {
           // This is an enquiry - use agency's Matrix service account
           Long agencyId = session.get().getAgencyId();
           if (agencyId == null) {
@@ -193,7 +209,7 @@ public class MatrixMessageController {
             return ResponseEntity.ok(Map.of("messages", new Object[0]));
           }
         } else {
-          // This is an accepted session - use consultant's own Matrix credentials
+          // This is a group chat or accepted session - use consultant's own Matrix credentials
           String matrixId = consultant.get().getMatrixUserId();
           if (matrixId != null && matrixId.startsWith("@")) {
             matrixUsername = matrixId.substring(1).split(":")[0];
@@ -207,7 +223,12 @@ public class MatrixMessageController {
           }
         }
       } else {
-        // USER
+        // USER - only for 1-on-1 sessions
+        if (session.isEmpty()) {
+          log.error("User trying to access group chat {} - not allowed", sessionId);
+          return ResponseEntity.ok(Map.of("messages", new Object[0]));
+        }
+
         var user = session.get().getUser();
 
         String matrixId = user.getMatrixUserId();
@@ -230,10 +251,9 @@ public class MatrixMessageController {
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
-      String roomId = session.get().getMatrixRoomId();
-      var messages = matrixSynapseService.getRoomMessages(roomId, accessToken);
+      var messages = matrixSynapseService.getRoomMessages(matrixRoomId, accessToken);
 
-      log.info("Retrieved {} messages from room {}", messages.size(), roomId);
+      log.info("Retrieved {} messages from room {}", messages.size(), matrixRoomId);
 
       return ResponseEntity.ok(Map.of("success", true, "messages", messages));
 
@@ -313,9 +333,27 @@ public class MatrixMessageController {
     try {
       log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
 
+      // MATRIX MIGRATION: Check both Session (1-on-1) and Chat (group chats)
+      String matrixRoomId = null;
+      boolean isGroupChat = false;
+      de.caritas.cob.userservice.api.model.User sessionUser = null;
+
       var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
-        log.error("Session {} not found or has no Matrix room", sessionId);
+      if (session.isPresent() && session.get().getMatrixRoomId() != null) {
+        matrixRoomId = session.get().getMatrixRoomId();
+        sessionUser = session.get().getUser();
+        log.info("📤 Upload: Found 1-on-1 session with Matrix room: {}", matrixRoomId);
+      } else {
+        var chat = chatService.getChat(sessionId);
+        if (chat.isPresent() && chat.get().getMatrixRoomId() != null) {
+          matrixRoomId = chat.get().getMatrixRoomId();
+          isGroupChat = true;
+          log.info("📤 Upload: Found group chat with Matrix room: {}", matrixRoomId);
+        }
+      }
+
+      if (matrixRoomId == null) {
+        log.error("Session/Chat {} not found or has no Matrix room", sessionId);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
@@ -332,6 +370,7 @@ public class MatrixMessageController {
       String password;
 
       if (isConsultant) {
+        // MATRIX MIGRATION: For group chats, consultants use their own credentials
         var consultant = consultantService.getConsultant(keycloakUserId);
         if (consultant.isEmpty()) {
           log.error("Consultant {} not found", keycloakUsername);
@@ -355,10 +394,14 @@ public class MatrixMessageController {
               .body(Map.of("error", "Password not configured"));
         }
       } else {
-        // USER
-        var user = session.get().getUser();
+        // USER (only for 1-on-1 sessions)
+        if (sessionUser == null) {
+          log.error("User session not found for upload");
+          return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+              .body(Map.of("error", "User session not found"));
+        }
 
-        String matrixId = user.getMatrixUserId();
+        String matrixId = sessionUser.getMatrixUserId();
         if (matrixId != null && matrixId.startsWith("@")) {
           matrixUsername = matrixId.substring(1).split(":")[0];
         } else {
@@ -367,7 +410,7 @@ public class MatrixMessageController {
               .body(Map.of("error", "Matrix ID not configured"));
         }
 
-        password = user.getMatrixPassword();
+        password = sessionUser.getMatrixPassword();
         if (password == null) {
           log.error("User {} missing password", keycloakUsername);
           return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
@@ -384,7 +427,7 @@ public class MatrixMessageController {
             .body(Map.of("error", "Matrix login failed"));
       }
 
-      String roomId = session.get().getMatrixRoomId();
+      String roomId = matrixRoomId;
 
       // Upload file to Matrix and automatically send as message
       java.util.Map<String, Object> result =

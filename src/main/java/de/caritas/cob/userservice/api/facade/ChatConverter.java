@@ -20,7 +20,12 @@ public class ChatConverter {
   }
 
   public Chat convertToEntity(ChatDTO chatDTO, Consultant consultant, AgencyDTO agencyDTO) {
-    LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    // Handle null dates for group chats (they may not have scheduled start times)
+    // Use current time as default for non-scheduled chats
+    LocalDateTime startDate = nowInUtc();
+    if (nonNull(chatDTO.getStartDate()) && nonNull(chatDTO.getStartTime())) {
+      startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    }
 
     Chat.ChatBuilder builder =
         Chat.builder()
@@ -28,10 +33,10 @@ public class ChatConverter {
             .chatOwner(consultant)
             .initialStartDate(startDate)
             .startDate(startDate)
-            .duration(chatDTO.getDuration())
-            .repetitive(isTrue(chatDTO.isRepetitive()))
+            .duration(chatDTO.getDuration() != null ? chatDTO.getDuration() : 0)
+            .repetitive(isTrue(chatDTO.getRepetitive()))
             // Note that the repetition interval can only be weekly atm.
-            .chatInterval(isTrue(chatDTO.isRepetitive()) ? ChatInterval.WEEKLY : null)
+            .chatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null)
             .updateDate(nowInUtc())
             .createDate(nowInUtc())
             .hintMessage(chatDTO.getHintMessage());

@@ -232,4 +232,16 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   List<Session> findByConsultantAndUser(Consultant consultant, User user);
 
   List<Session> findByUserAndMainTopicId(User user, Long topicId);
+
+  /**
+   * Find sessions where consultant is the owner and it's a team session with given status. Used for
+   * group chats where consultant is the creator.
+   *
+   * @param consultant the consultant
+   * @param isTeamSession whether it's a team session
+   * @param status the session status
+   * @return list of sessions
+   */
+  List<Session> findByConsultantAndTeamSessionAndStatus(
+      Consultant consultant, boolean isTeamSession, SessionStatus status);
 }

@@ -14,7 +14,6 @@ import java.time.LocalTime;
 import javax.validation.constraints.Max;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -41,29 +40,25 @@ public class ChatDTO {
   private String topic;
 
   @DateTimeFormat(iso = ISO.DATE)
-  @NotNull(message = "{chat.startDate.invalid}")
-  @ApiModelProperty(required = true, example = "2019-10-23", position = 1)
+  @ApiModelProperty(required = false, example = "2019-10-23", position = 1)
   @JsonProperty("startDate")
   @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
   private LocalDate startDate;
 
   @DateTimeFormat(pattern = "HH:mm")
-  @NotNull(message = "{chat.startTime.invalid}")
-  @ApiModelProperty(required = true, example = "12:05", position = 2)
+  @ApiModelProperty(required = false, example = "12:05", position = 2)
   @JsonProperty("startTime")
   private LocalTime startTime;
 
-  @NotNull(message = "{chat.duration.notNull}")
   @Min(value = CHAT_MIN_DURATION, message = "{chat.duration.invalid}")
   @Max(value = CHAT_MAX_DURATION, message = "{chat.duration.invalid}")
-  @ApiModelProperty(required = true, example = "120", position = 3)
+  @ApiModelProperty(required = false, example = "120", position = 3)
   @JsonProperty("duration")
-  private int duration;
+  private Integer duration;
 
-  @NotNull(message = "{chat.repetitive.notNull}")
-  @ApiModelProperty(required = true, example = "true", position = 4)
+  @ApiModelProperty(required = false, example = "true", position = 4)
   @JsonProperty("repetitive")
-  private boolean repetitive;
+  private Boolean repetitive;
 
   @ApiModelProperty(required = true, example = "5", position = 5)
   @Min(value = 0, message = "{chat.agencyId.invalid}")
@@ -74,6 +69,13 @@ public class ChatDTO {
   @Length(max = 300, message = "{chat.hintMessage.invalid}")
   @JsonProperty("hintMessage")
   private String hintMessage;
+
+  @ApiModelProperty(
+      required = false,
+      example = "[\"consultant-id-1\", \"consultant-id-2\"]",
+      position = 7)
+  @JsonProperty("consultantIds")
+  private java.util.List<String> consultantIds;
 
   @Override
   public String toString() {
@@ -93,6 +95,8 @@ public class ChatDTO {
         + agencyId
         + ", hintMessage="
         + hintMessage
+        + ", consultantIds="
+        + consultantIds
         + "]";
   }
 }

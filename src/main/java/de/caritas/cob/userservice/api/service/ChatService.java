@@ -59,7 +59,24 @@ public class ChatService {
         consultant.getConsultantAgencies().stream()
             .map(ConsultantAgency::getAgencyId)
             .collect(Collectors.toSet());
-    return chatRepository.findByAgencyIds(agencyIds).stream()
+    log.info(
+        "🔍 ChatService.getChatsForConsultant - consultant: {}, agencyIds: {}",
+        consultant.getUsername(),
+        agencyIds);
+
+    var chats = chatRepository.findByAgencyIds(agencyIds);
+    log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
+    chats.forEach(
+        chat ->
+            log.info(
+                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                chat.getId(),
+                chat.getTopic(),
+                chat.getGroupId(),
+                chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
+                chat.isActive()));
+
+    return chats.stream()
         .map(this::convertChatToConsultantSessionResponseDTO)
         .collect(Collectors.toList());
   }
@@ -202,10 +219,40 @@ public class ChatService {
     return chatRepository.findByGroupId(groupId);
   }
 
+  /**
+   * Returns chat sessions for a consultant by chat IDs. This method retrieves chats from the
+   * database without checking consultant access - access control should be handled at a higher
+   * level (e.g., by checking Matrix room membership or chat ownership).
+   *
+   * @param chatIds Set of chat IDs
+   * @return List of {@link ConsultantSessionResponseDTO}
+   */
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
-    return StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-        .map(this::convertChatToConsultantSessionResponseDTO)
-        .collect(Collectors.toList());
+    log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
+
+    var chats =
+        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
+            .collect(Collectors.toList());
+
+    log.info("🔍 ChatService: Found {} chats in database", chats.size());
+    chats.forEach(
+        chat ->
+            log.info(
+                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                chat.getId(),
+                chat.getTopic(),
+                chat.getGroupId(),
+                chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
+                chat.isActive()));
+
+    var result =
+        chats.stream()
+            .map(this::convertChatToConsultantSessionResponseDTO)
+            .collect(Collectors.toList());
+
+    log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
+
+    return result;
   }
 
   /**
@@ -267,8 +314,8 @@ public class ChatService {
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
-    chat.setRepetitive(isTrue(chatDTO.isRepetitive()));
-    chat.setChatInterval(isTrue(chatDTO.isRepetitive()) ? ChatInterval.WEEKLY : null);
+    chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
+    chat.setChatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
     chat.setHintMessage(chatDTO.getHintMessage());

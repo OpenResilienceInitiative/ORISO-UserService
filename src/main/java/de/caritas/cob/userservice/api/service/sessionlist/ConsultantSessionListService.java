@@ -20,8 +20,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class ConsultantSessionListService {
@@ -69,9 +71,21 @@ public class ConsultantSessionListService {
 
   public List<ConsultantSessionResponseDTO> retrieveChatsForConsultantAndChatIds(
       Consultant consultant, List<Long> chatIds, String rcAuthToken) {
+    log.info(
+        "🔍 ConsultantSessionListService.retrieveChatsForConsultantAndChatIds - consultant: {}, chatIds: {}",
+        consultant.getUsername(),
+        chatIds);
+
     var uniqueChatIds = new HashSet<>(chatIds);
+    log.info("🔍 Unique chat IDs: {}", uniqueChatIds);
+
     var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds);
-    return updateConsultantChatValues(chats, rcAuthToken, consultant);
+    log.info("🔍 Retrieved {} chats from ChatService", chats.size());
+
+    var result = updateConsultantChatValues(chats, rcAuthToken, consultant);
+    log.info("🔍 After updateConsultantChatValues: {} chats", result.size());
+
+    return result;
   }
 
   /**
@@ -131,13 +145,21 @@ public class ConsultantSessionListService {
       String rcAuthToken,
       SessionListQueryParameter sessionListQueryParameter) {
 
+    // Get team sessions (Session entities)
     List<ConsultantSessionResponseDTO> teamSessions =
         sessionService.getTeamSessionsForConsultant(consultant);
 
-    updateConsultantSessionValues(teamSessions, rcAuthToken, consultant);
-    sortSessionsByLastMessageDateDesc(teamSessions);
+    // MATRIX MIGRATION: Also get chats for group chats (Chat entities with topic field)
+    // Group chats created via the new flow have BOTH Session and Chat entities
+    List<ConsultantSessionResponseDTO> teamChats = chatService.getChatsForConsultant(consultant);
 
-    return teamSessions;
+    // Merge sessions and chats
+    List<ConsultantSessionResponseDTO> allTeamSessions =
+        mergeConsultantSessionsAndChats(consultant, teamSessions, teamChats);
+
+    sortSessionsByLastMessageDateDesc(allTeamSessions);
+
+    return allTeamSessions;
   }
 
   private List<ConsultantSessionResponseDTO> mergeConsultantSessionsAndChats(
@@ -147,13 +169,43 @@ public class ConsultantSessionListService {
     List<ConsultantSessionResponseDTO> allSessions = new ArrayList<>();
 
     var rcAuthToken = rocketChatCredentials.getRocketChatToken();
+
+    // Enrich sessions and chats
+    List<ConsultantSessionResponseDTO> enrichedSessions = emptyList();
+    List<ConsultantSessionResponseDTO> enrichedChats = emptyList();
+
     if (isNotEmpty(sessions)) {
-      allSessions.addAll(updateConsultantSessionValues(sessions, rcAuthToken, consultant));
+      enrichedSessions = updateConsultantSessionValues(sessions, rcAuthToken, consultant);
     }
 
     if (isNotEmpty(chats)) {
-      allSessions.addAll(updateConsultantChatValues(chats, rcAuthToken, consultant));
+      enrichedChats = updateConsultantChatValues(chats, rcAuthToken, consultant);
     }
+
+    // MATRIX MIGRATION: Merge sessions and chats by groupId
+    // For group chats, we have BOTH a Session and a Chat entity with the same groupId
+    // We need to combine them into a single ConsultantSessionResponseDTO
+    var chatsByGroupId =
+        enrichedChats.stream()
+            .filter(chat -> chat.getChat() != null && chat.getChat().getGroupId() != null)
+            .collect(Collectors.toMap(chat -> chat.getChat().getGroupId(), chat -> chat));
+
+    // Add sessions, merging with matching chats
+    for (ConsultantSessionResponseDTO session : enrichedSessions) {
+      if (session.getSession() != null && session.getSession().getGroupId() != null) {
+        var matchingChat = chatsByGroupId.get(session.getSession().getGroupId());
+        if (matchingChat != null) {
+          // Merge: session already has session data, add chat data from matching chat
+          session.setChat(matchingChat.getChat());
+          chatsByGroupId.remove(session.getSession().getGroupId()); // Mark as merged
+        }
+      }
+      allSessions.add(session);
+    }
+
+    // Add remaining chats that didn't match any session (old-style chats without sessions)
+    allSessions.addAll(chatsByGroupId.values());
+
     return allSessions;
   }
 
