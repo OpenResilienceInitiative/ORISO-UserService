@@ -1,0 +1,55 @@
+https://plantuml.com/de/state-diagram
+
+@startuml
+hide empty description
+
+[*] --> NightlyCronJob
+[*] --> HourlyCronJob
+
+NightlyCronJob : user.account.deleteworkflow.cron
+NightlyCronJob --> DeleteUserAccountScheduler : triggers
+
+HourlyCronJob : user.anonymous.deleteworkflow.cron
+HourlyCronJob --> DeleteUserAnonymousScheduler : triggers
+
+note right of NightlyCronJob : Configured in application.properties
+note right of HourlyCronJob : Configured in application.properties
+
+DeleteUserAccountScheduler --> DeleteUserAccountService : executes
+DeleteUserAnonymousScheduler --> DeleteUserAnonymousService : executes
+
+state DeleteUserAccountService #lightblue {
+  [*] --> CollectDeletedUsers
+  CollectDeletedUsers --> DeleteAskerActions : executes
+  [*] --> CollectDeletedConsultants
+  CollectDeletedConsultants --> DeleteConsultantActions : executes
+  WorkflowErrors --> WorkflowErrorMailService
+
+  state DeleteAskerActions {
+    DeleteKeycloakAskerAction --> DeleteAskerRoomsAndSessionsAction
+    DeleteAskerRoomsAndSessionsAction --> DeleteDatabaseAskerAgencyAction
+    DeleteDatabaseAskerAgencyAction --> DeleteRocketChatAskerAction
+    DeleteRocketChatAskerAction --> DeleteAnonymousRegistryIdAction
+    DeleteAnonymousRegistryIdAction --> DeleteDatabaseAskerAction
+    DeleteDatabaseAskerAction --> WorkflowErrors : collect all errors
+  }
+
+  state DeleteConsultantActions {
+      DeleteKeycloakConsultantAction --> DeleteDatabaseConsultantAgencyAction
+      DeleteDatabaseConsultantAgencyAction --> DeleteChatAction
+      DeleteChatAction --> DeleteRocketChatConsultantAction
+      DeleteRocketChatConsultantAction --> DeleteDatabaseConsultantAction
+      DeleteDatabaseConsultantAction  --> WorkflowErrors : collect all errors
+  }
+}
+
+state WorkflowErrorMailService {
+  BuildOneMailContainingAllErrors --> sendToMailService
+}
+
+state DeleteUserAnonymousService #lightblue {
+  [*] --> CollectInactiveAnonymousUsers
+  CollectInactiveAnonymousUsers --> DeleteAskerActions : executes
+  WorkflowErrors --> WorkflowErrorMailService
+}
+@enduml

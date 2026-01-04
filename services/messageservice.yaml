@@ -1,0 +1,579 @@
+openapi: 3.0.1
+
+info:
+  title: will be replaced
+  description: This information will be replaced by the SpringFox config information
+  version: 0.0.1
+
+paths:
+  /messages/key:
+    post:
+      tags:
+        - message-controller
+      summary: 'Update the master-key fragment for the Session-Key [Authorization:
+        Role: technical]'
+      operationId: updateKey
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/MasterKeyDTO'
+        required: true
+      responses:
+        202:
+          description: ACCEPTED - key was successfully inserted
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        409:
+          description: CONFLICT - there was a key in the service
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+      x-codegen-request-body-name: key
+
+  /messages/new:
+    post:
+      tags:
+        - message-controller
+      summary: 'Add new Rocket.Chat message [Authorization: Role: user, anonymous, consultant,
+        technical]'
+      operationId: createMessage
+      parameters:
+        - name: rcToken
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: rcUserId
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/MessageDTO'
+        required: true
+      responses:
+        201:
+          description: CREATED - message was successfully created
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/MessageResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+      x-codegen-request-body-name: Message
+
+  /messages/videohint/new:
+    post:
+      tags:
+        - message-controller
+      summary: 'Add new Rocket.Chat system video call event message [Authorization: Role: user,
+      anonymous, consultant]'
+      operationId: createVideoHintMessage
+      parameters:
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/VideoCallMessageDTO'
+      responses:
+        201:
+          description: CREATED - hint message was successfully created
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/MessageResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+
+  /messages:
+    get:
+      tags:
+        - message-controller
+      summary: 'Get Rocket.Chat message stream [Authorization: Role: user, anonymous, consultant]'
+      operationId: getMessageStream
+      parameters:
+        - name: rcToken
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: rcUserId
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: rcGroupId
+          in: query
+          description: Rocket.Chat roomId
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK - successfull operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/MessageStreamDTO'
+        204:
+          description: NO CONTENT - no messages available
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+
+  /messages/draft:
+    post:
+      tags:
+        - message-controller
+      summary: 'Save a draft message [Authorization: Role: user, anonymous, consultant]'
+      operationId: saveDraftMessage
+      parameters:
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        description: Draft message to be saved
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/DraftMessageDTO'
+        required: true
+      responses:
+        200:
+          description: OK - successfull operation
+        201:
+          description: CREATED - message was successfully created
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+    get:
+      tags:
+        - message-controller
+      summary: 'Get a draft message by user and rocket chat group id [Authorization: Role: user, consultant]'
+      operationId: findDraftMessage
+      parameters:
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK - successfull operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/DraftMessageDTO'
+        204:
+          description: NO CONTENT - no messages available
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+
+  /messages/aliasonly/new:
+    post:
+      tags:
+        - message-controller
+      summary: 'Saves a new empty system message containing the provided message type in the alias.
+      [Authorization: Role: user, consultant, technical]'
+      operationId: saveAliasOnlyMessage
+      parameters:
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AliasOnlyMessageDTO'
+      responses:
+        201:
+          description: CREATED - message was successfully created
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/MessageResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /messages/aliasWithContent/new:
+    post:
+      tags:
+        - message-controller
+      summary: 'Saves a new system message containing the provided message type in the alias and
+      some content.
+      [Authorization: Role: user, consultant, technical]'
+      operationId: saveAliasMessageWithContent
+      parameters:
+        - name: rcGroupId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AliasMessageDTO'
+      responses:
+        201:
+          description: CREATED - message was successfully created
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/MessageResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+
+components:
+  schemas:
+    MessageDTO:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        sendNotification:
+          type: boolean
+          example: "true"
+        t:
+          type: string
+          example: "c"
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+
+    MessageStreamDTO:
+      type: object
+      required:
+        - messages
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessagesDTO'
+
+    MessagesDTO:
+      type: object
+      required:
+        - _id
+        - rid
+        - msg
+        - ts
+        - u
+        - unread
+        - mentions
+        - channels
+        - _updatedAt
+      properties:
+        _id:
+          type: string
+          example: "M73fE4WhYF4peYB3s"
+        t:
+          type: string
+          example: "room_changed_privacy"
+        alias:
+          $ref: '#/components/schemas/AliasMessageDTO'
+        rid:
+          type: string
+          example: "fR2Rz7dmWmHdXE8uz"
+        msg:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        ts:
+          type: string
+          description: "Full qualified timestamp"
+          example: "2018-11-15T09:33:00.057Z"
+        u:
+          $ref: '#/components/schemas/UserDTO'
+        unread:
+          type: boolean
+        mentions:
+          type: array
+          items:
+            type: string
+        channels:
+          type: array
+          items:
+            type: string
+        _updatedAt:
+          type: string
+          description: "Full qualified timestamp"
+          example: "2018-11-15T09:33:00.057Z"
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentDTO'
+        file:
+          $ref: '#/components/schemas/FileDTO'
+
+    MessageResponseDTO:
+      type: object
+      required:
+        - _id
+        - rid
+        - msg
+        - ts
+        - _updatedAt
+      properties:
+        _id:
+          type: string
+          example: "M73fE4WhYF4peYB3s"
+        t:
+          type: string
+          example: "room_changed_privacy"
+        e2e:
+          type: string
+          example: "pending"
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        rid:
+          type: string
+          example: "fR2Rz7dmWmHdXE8uz"
+        msg:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        ts:
+          type: string
+          description: "Full qualified timestamp"
+          example: "2018-11-15T09:33:00.057Z"
+        _updatedAt:
+          type: string
+          description: "Full qualified timestamp"
+          example: "2018-11-15T09:33:00.057Z"
+
+    AliasMessageDTO:
+      type: object
+      properties:
+        videoCallMessageDTO:
+          $ref: '#/components/schemas/VideoCallMessageDTO'
+        messageType:
+          $ref: '#/components/schemas/MessageType'
+        content:
+          type: string
+
+    VideoCallMessageDTO:
+      type: object
+      required:
+        - eventType
+        - initiatorUserName
+        - initiatorRcUserId
+      properties:
+        eventType:
+          type: string
+          enum:
+            - "IGNORED_CALL"
+        initiatorUserName:
+          type: string
+          example: "consultant23"
+        rcUserId:
+          type: string
+        initiatorRcUserId:
+          type: string
+          example: "ag89h3tjkerg94t"
+
+    AliasOnlyMessageDTO:
+      type: object
+      required:
+        - messageType
+      properties:
+        messageType:
+          $ref: '#/components/schemas/MessageType'
+
+    MessageType:
+      type: string
+      enum:
+        - "FINISHED_CONVERSATION"
+        - "FURTHER_STEPS"
+        - "UPDATE_SESSION_DATA"
+        - "VIDEOCALL"
+        - "USER_MUTED"
+        - "USER_UNMUTED"
+        - "E2EE_ACTIVATED"
+        - "INITIAL_APPOINTMENT_DEFINED"
+
+    UserDTO:
+      type: object
+      required:
+        - _id
+        - username
+        - name
+      properties:
+        _id:
+          type: string
+          example: "vppRFqjrzTsTZ6iEn"
+        username:
+          type: string
+          example: "test"
+        name:
+          type: string
+          example: "Mustermax"
+
+    AttachmentDTO:
+      type: object
+      required:
+        - title
+        - type
+        - description
+        - title_link
+        - title_link_download
+        - image_url
+        - image_type
+        - image_size
+        - image_preview
+      properties:
+        title:
+          type: string
+          example: "filename.png"
+        type:
+          type: string
+          example: "file"
+        description:
+          type: string
+          example: "Description"
+        title_link:
+          type: string
+          example: "/file-upload/ijxact7nd5SMpSwiS/file.png"
+        title_link_download:
+          type: boolean
+          example: "true"
+        image_url:
+          type: string
+          example: "/file-upload/ijxact7nd5SMpSwiS/file.png"
+        image_type:
+          type: string
+          example: "image/png"
+        image_size:
+          type: integer
+          example: "36461"
+        image-preview:
+          type: string
+          example: "/9j/2wBDAAYEBQYFBAYGBQY"
+
+    FileDTO:
+      type: object
+      required:
+        - _id
+        - name
+        - type
+      properties:
+        _id:
+          type: string
+          example: "M73fE4WhYF4peYB3s"
+        name:
+          type: string
+          example: "filename.jpg"
+        type:
+          type: string
+          example: "image/jepg"
+
+    DraftMessageDTO:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        t:
+          type: string
+          example: "c"
+
+    MasterKeyDTO:
+      type: object
+      required:
+        - masterKey
+      properties:
+        masterKey:
+          type: string
+          example: "sdj8wnFNASj324!ksldf9"
+
+  securitySchemes:
+    Bearer:
+      type: apiKey
+      name: Authorization
+      in: header
