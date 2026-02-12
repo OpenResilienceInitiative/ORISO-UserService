@@ -609,8 +609,6 @@ public class TestConstants {
           nowInUtc(),
           null,
           LanguageCode.de,
-          null,
-          null,
           false,
           null);
   public static final User USER_NO_RC_USER_ID =
@@ -631,8 +629,6 @@ public class TestConstants {
           nowInUtc(),
           null,
           LanguageCode.de,
-          null,
-          null,
           false,
           null);
   public static final User USER_NO_RC_USER_ID_2 =
@@ -653,8 +649,6 @@ public class TestConstants {
           nowInUtc(),
           null,
           LanguageCode.de,
-          null,
-          null,
           false,
           null);
   public static final String ACCESS_TOKEN = "DASDLAJS835u83hKSAJDF";
@@ -671,7 +665,6 @@ public class TestConstants {
           AGENCY_ID,
           PASSWORD,
           EMAIL,
-          null,
           null,
           "true",
           Integer.toString(CONSULTING_TYPE_ID_SUCHT),
@@ -691,7 +684,6 @@ public class TestConstants {
           PASSWORD,
           EMAIL,
           null,
-          null,
           "true",
           Integer.toString(CONSULTING_TYPE_ID_KREUZBUND),
           "",
@@ -707,14 +699,14 @@ public class TestConstants {
   public static final UserDTO USER_DTO_WITH_INVALID_AGE =
       new UserDTO(INVALID_AGE, null, Integer.toString(CONSULTING_TYPE_ID_U25));
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_AGE =
-      new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
+      new UserDTO(null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
   public static final UserDTO USER_DTO_WITHOUT_CONSULTING_TYPE = new UserDTO();
   public static final UserDTO USER_DTO_WITH_STATE =
       new UserDTO(null, VALID_STATE, Integer.toString(CONSULTING_TYPE_ID_U25));
   public static final UserDTO USER_DTO_WITH_INVALID_STATE =
       new UserDTO(null, INVALID_STATE, Integer.toString(CONSULTING_TYPE_ID_U25));
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_STATE =
-      new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
+      new UserDTO(null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
   public static final RocketChatUserDTO ROCKET_CHAT_USER_DTO =
       new RocketChatUserDTO(RC_USER_ID, USERNAME, null, null);
   public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO =
@@ -1064,8 +1056,6 @@ public class TestConstants {
           nowInUtc(),
           null,
           LanguageCode.de,
-          null,
-          null,
           false,
           null);
 
@@ -1791,7 +1781,6 @@ public class TestConstants {
   public static final String INVALID_AGE_VALUE = "12age";
   public static final String GENDER_VALUE = "1";
   public static final String STATE_VALUE = "16";
-  public static final boolean TERMS_ACCEPTED = true;
   /** ConsultingTypeSettings */
   public static final ExtendedConsultingTypeResponseDTO CONSULTING_TYPE_SETTINGS_KREUZBUND =
       new ExtendedConsultingTypeResponseDTO()

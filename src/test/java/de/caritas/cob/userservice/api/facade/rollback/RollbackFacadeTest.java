@@ -55,7 +55,7 @@ public class RollbackFacadeTest {
   public void
       rollBackUserAccount_Should_DeleteKeycloakAccount_When_UserIdIsGivenAndRollbackUserAccountFlagIsTrue() {
     RollbackUserAccountInformation rbUserInfo =
-        RollbackUserAccountInformation.builder().userId(USER_ID).rollBackUserAccount(true).build();
+        RollbackUserAccountInformation.builder().userId(USER_ID).build();
 
     rollbackFacade.rollBackUserAccount(rbUserInfo);
 
@@ -69,7 +69,7 @@ public class RollbackFacadeTest {
     User user = easyRandom.nextObject(User.class);
     user.setUserId(USER_ID);
     RollbackUserAccountInformation rbUserInfo =
-        RollbackUserAccountInformation.builder().user(user).rollBackUserAccount(true).build();
+        RollbackUserAccountInformation.builder().user(user).build();
 
     rollbackFacade.rollBackUserAccount(rbUserInfo);
 

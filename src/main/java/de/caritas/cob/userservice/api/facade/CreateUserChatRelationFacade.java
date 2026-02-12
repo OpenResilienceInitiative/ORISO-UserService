@@ -52,8 +52,7 @@ public class CreateUserChatRelationFacade {
       UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
 
     DataDTO rcUserCredentials = obtainValidUserCredentials(userDTO, user, rocketChatCredentials);
-    updateRocketChatUserIdInDatabase(
-        user, rcUserCredentials.getUserId(), Boolean.parseBoolean(userDTO.getTermsAccepted()));
+    updateRocketChatUserIdInDatabase(user, rcUserCredentials.getUserId());
     createUserChatAgencyRelation(userDTO, user);
   }
 
@@ -62,10 +61,7 @@ public class CreateUserChatRelationFacade {
 
     if (isNewUserAccountRegistration(user, rocketChatCredentials)) {
       return validateUserCredentials(
-          obtainRocketChatloginData(userDTO, user),
-          user,
-          rocketChatCredentials,
-          Boolean.parseBoolean(userDTO.getTermsAccepted()));
+          obtainRocketChatloginData(userDTO, user), user, rocketChatCredentials);
     }
     return new DataDTO(
         rocketChatCredentials.getRocketChatUserId(),
@@ -86,35 +82,31 @@ public class CreateUserChatRelationFacade {
               new UsernameTranscoder().encodeUsername(userDTO.getUsername()),
               userDTO.getPassword());
 
-      checkIfRocketLoginSucceeded(userDTO, user, rcUserResponse);
+      checkIfRocketLoginSucceeded(user, rcUserResponse);
 
       return rcUserResponse.getBody().getData();
     } catch (RocketChatLoginException exception) {
-      rollBackAndLogRocketChatLoginError(
-          user, exception, Boolean.parseBoolean(userDTO.getTermsAccepted()));
+      rollBackAndLogRocketChatLoginError(user, exception);
     }
     return null;
   }
 
   private void checkIfRocketLoginSucceeded(
-      UserDTO userDTO, User user, ResponseEntity<LoginResponseDTO> rcUserResponse) {
+      User user, ResponseEntity<LoginResponseDTO> rcUserResponse) {
     if (isNull(rcUserResponse)
         || !rcUserResponse.getStatusCode().equals(HttpStatus.OK)
         || isNull(rcUserResponse.getBody())) {
-      rollBackAndLogRocketChatLoginError(user, Boolean.parseBoolean(userDTO.getTermsAccepted()));
+      rollBackAndLogRocketChatLoginError(user);
     }
   }
 
   private DataDTO validateUserCredentials(
-      DataDTO dataDTO,
-      User user,
-      RocketChatCredentials rocketChatCredentials,
-      boolean deleteUserOnRollback) {
+      DataDTO dataDTO, User user, RocketChatCredentials rocketChatCredentials) {
     String rcUserToken = obtainValidRcToken(dataDTO, rocketChatCredentials);
     String rcUserId = obtainValidRcUserId(dataDTO, rocketChatCredentials);
 
     if (isBlank(rcUserToken) || isBlank(rcUserId)) {
-      rollBackAndLogRocketChatLoginError(user, deleteUserOnRollback);
+      rollBackAndLogRocketChatLoginError(user);
     }
 
     dataDTO.setUserId(rcUserId);
@@ -134,8 +126,7 @@ public class CreateUserChatRelationFacade {
         : rocketChatCredentials.getRocketChatUserId();
   }
 
-  private void updateRocketChatUserIdInDatabase(
-      User user, String rcUserId, boolean deleteUserOnRollback) {
+  private void updateRocketChatUserIdInDatabase(User user, String rcUserId) {
     if (isNotBlank(user.getRcUserId())) {
       return;
     }
@@ -143,18 +134,16 @@ public class CreateUserChatRelationFacade {
     user.setRcUserId(rcUserId);
     try {
       User updatedUser = userService.saveUser(user);
-      checkUpdatedUserId(user, updatedUser, deleteUserOnRollback);
+      checkUpdatedUserId(user, updatedUser);
     } catch (Exception e) {
-      rollBackAndLogMariaDbError(user, e, deleteUserOnRollback);
+      rollBackAndLogMariaDbError(user, e);
     }
   }
 
-  private void checkUpdatedUserId(User user, User updatedUser, boolean deleteUserOnRollback) {
+  private void checkUpdatedUserId(User user, User updatedUser) {
     if (isBlank(updatedUser.getRcUserId())) {
       rollBackAndLogMariaDbError(
-          user,
-          new IllegalArgumentException("Rocket.Chat user ID is empty."),
-          deleteUserOnRollback);
+          user, new IllegalArgumentException("Rocket.Chat user ID is empty."));
     }
   }
 
@@ -172,7 +161,6 @@ public class CreateUserChatRelationFacade {
               .userId(user.getUserId())
               .user(user)
               .userAgency(userAgency)
-              .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
               .build());
       throw new InternalServerErrorException(
           "Could not create user-agency relation for group chat registration",
@@ -192,14 +180,13 @@ public class CreateUserChatRelationFacade {
     }
   }
 
-  private void rollBackAndLogRocketChatLoginError(User user, boolean deleteUser) {
+  private void rollBackAndLogRocketChatLoginError(User user) {
     rollBackAndLogRocketChatLoginError(
-        user, new RocketChatLoginException("Rocket.Chat login error."), deleteUser);
+        user, new RocketChatLoginException("Rocket.Chat login error."));
   }
 
-  private void rollBackAndLogRocketChatLoginError(
-      User user, RocketChatLoginException exception, boolean deleteUser) {
-    rollBackUserAccount(user, deleteUser);
+  private void rollBackAndLogRocketChatLoginError(User user, RocketChatLoginException exception) {
+    rollBackUserAccount(user);
     throw new InternalServerErrorException(
         String.format(
             "Rocket.Chat login for Group Chat registration was not successful for user %s. %s",
@@ -207,8 +194,8 @@ public class CreateUserChatRelationFacade {
         LogService::logRocketChatError);
   }
 
-  private void rollBackAndLogMariaDbError(User user, Exception exception, boolean deleteUser) {
-    rollBackUserAccount(user, deleteUser);
+  private void rollBackAndLogMariaDbError(User user, Exception exception) {
+    rollBackUserAccount(user);
     throw new InternalServerErrorException(
         String.format(
             "Could not update Rocket.Chat user ID for user %s. %s",
@@ -216,12 +203,8 @@ public class CreateUserChatRelationFacade {
         LogService::logDatabaseError);
   }
 
-  private void rollBackUserAccount(User user, boolean deleteUser) {
+  private void rollBackUserAccount(User user) {
     rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder()
-            .userId(user.getUserId())
-            .user(user)
-            .rollBackUserAccount(deleteUser)
-            .build());
+        RollbackUserAccountInformation.builder().userId(user.getUserId()).user(user).build());
   }
 }

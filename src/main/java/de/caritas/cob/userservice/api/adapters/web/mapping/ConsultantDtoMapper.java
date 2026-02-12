@@ -39,9 +39,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .formalLanguage(consultant.isLanguageFormal())
         .languages(languageStringsOf(updateConsultantDTO.getLanguages()))
         .absent(consultant.isAbsent())
-        .absenceMessage(consultant.getAbsenceMessage())
-        .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
-        .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation());
+        .absenceMessage(consultant.getAbsenceMessage());
   }
 
   public ConsultantResponseDTO consultantResponseDtoOf(

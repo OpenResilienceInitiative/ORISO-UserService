@@ -402,14 +402,6 @@ public class UserServiceMapper {
       var preferredLanguage = (String) patchMap.get("preferredLanguage");
       adviceSeeker.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
     }
-    if (patchMap.containsKey("termsAndConditionsConfirmation")
-        && (patchMap.get("termsAndConditionsConfirmation") instanceof Boolean)) {
-      adviceSeeker.setTermsAndConditionsConfirmation(LocalDateTime.now());
-    }
-    if (patchMap.containsKey("dataPrivacyConfirmation")
-        && (patchMap.get("dataPrivacyConfirmation") instanceof Boolean)) {
-      adviceSeeker.setDataPrivacyConfirmation(LocalDateTime.now());
-    }
     if (patchMap.containsKey("emailNotifications")) {
       patchEmailNotificationSettings(adviceSeeker, patchMap);
     }

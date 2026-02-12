@@ -47,13 +47,11 @@ public class RollbackFacade {
   }
 
   private void rollbackKeycloakAndMariaDbAccount(RollbackUserAccountInformation rollbackUser) {
-    if (rollbackUser.isRollBackUserAccount()) {
-      if (nonNull(rollbackUser.getUserId())) {
-        identityClient.rollBackUser(rollbackUser.getUserId());
-      }
-      if (nonNull(rollbackUser.getUser())) {
-        userService.deleteUser(rollbackUser.getUser());
-      }
+    if (nonNull(rollbackUser.getUserId())) {
+      identityClient.rollBackUser(rollbackUser.getUserId());
+    }
+    if (nonNull(rollbackUser.getUser())) {
+      userService.deleteUser(rollbackUser.getUser());
     }
   }
 }

@@ -105,12 +105,6 @@ public class User implements TenantAware, NotificationsAware {
   @Column(length = 2, nullable = false, columnDefinition = "varchar(2) default 'de'")
   private LanguageCode languageCode;
 
-  @Column(name = "terms_and_conditions_confirmation", columnDefinition = "datetime")
-  private LocalDateTime termsAndConditionsConfirmation;
-
-  @Column(name = "data_privacy_confirmation", columnDefinition = "datetime")
-  private LocalDateTime dataPrivacyConfirmation;
-
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
   private boolean notificationsEnabled;
 
@@ -130,8 +124,6 @@ public class User implements TenantAware, NotificationsAware {
     this.languageFormal = languageFormal;
     setEncourage2fa(true);
     setLanguageCode(LanguageCode.de);
-    this.termsAndConditionsConfirmation = LocalDateTime.now();
-    this.dataPrivacyConfirmation = LocalDateTime.now();
   }
 
   @Override
