@@ -201,7 +201,6 @@ if [ -z "$BASE_DIR" ]; then
 fi
 
 export MAVEN_PROJECTBASEDIR=${MAVEN_BASEDIR:-"$BASE_DIR"}
-echo $MAVEN_PROJECTBASEDIR
 MAVEN_OPTS="$(concat_lines "$MAVEN_PROJECTBASEDIR/.mvn/jvm.config") $MAVEN_OPTS"
 
 # For Cygwin, switch paths to Windows format before running java
@@ -217,6 +216,22 @@ if $cygwin; then
 fi
 
 WRAPPER_LAUNCHER=org.apache.maven.wrapper.MavenWrapperMain
+
+# Some repos missed committing `.mvn/wrapper/maven-wrapper.jar`. Download it on-demand so `./mvnw`
+# works in fresh checkouts/CI.
+WRAPPER_JAR="$MAVEN_PROJECTBASEDIR/.mvn/wrapper/maven-wrapper.jar"
+if [ ! -r "$WRAPPER_JAR" ]; then
+  mkdir -p "$(dirname "$WRAPPER_JAR")" || true
+  WRAPPER_URL="https://repo.maven.apache.org/maven2/org/apache/maven/wrapper/maven-wrapper/3.2.0/maven-wrapper-3.2.0.jar"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$WRAPPER_JAR" "$WRAPPER_URL"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$WRAPPER_JAR" "$WRAPPER_URL"
+  else
+    echo "ERROR: Neither curl nor wget is available to download Maven Wrapper JAR." >&2
+    exit 1
+  fi
+fi
 
 exec "$JAVACMD" \
   $MAVEN_OPTS \
