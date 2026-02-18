@@ -1,0 +1,1 @@
+ALTER TABLE user ADD COLUMN matrix_password VARCHAR(255) DEFAULT NULL;

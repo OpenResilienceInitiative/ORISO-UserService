@@ -1,0 +1,13 @@
+<?xml version="1.1" encoding="UTF-8" standalone="no"?>
+<databaseChangeLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+  <changeSet author="leandroSilva" id="removeFeedbackRelatedColumns">
+    <sqlFile path="db/changelog/changeset/0046_remove_feeback_related_columns/removeRc_feedback_group_idFromSession.sql"
+      stripComments="true"/>
+    <sqlFile path="db/changelog/changeset/0046_remove_feeback_related_columns/removeIs_peer_chatFromSession.sql"
+      stripComments="true"/>
+    <sqlFile path="db/changelog/changeset/0046_remove_feeback_related_columns/removeNotify_new_feedback_message_from_advice_seekerFromConsultant.sql"
+      stripComments="true"/>
+  </changeSet>
+</databaseChangeLog>

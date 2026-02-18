@@ -1,0 +1,246 @@
+openapi: 3.0.1
+
+info:
+  title: Definition for Tenant API
+  description: This information will be replaced by the SpringFox config information
+  version: 0.0.1
+
+paths:
+  /tenant:
+    post:
+      tags:
+        - tenant-admin-controller
+      summary: 'Creates a new tenant [Authorization: Role: tenant-admin]'
+      operationId: createTenant
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/TenantDTO'
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+    get:
+      tags:
+        - tenant-admin-controller
+      summary: 'Get all tenants'
+      operationId: getAllTenants
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BasicTenantLicensingDTO'
+        204:
+          description: NO CONTENT - no content found
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/{id}:
+    summary: Represents a tenant
+    description: This resource represents an individual tenant in a system.
+    get:
+      tags:
+        - tenant-admin-controller
+      summary: 'Gets a tenant by its id [Authorization: Role: tenant-admin or single-tenant-admin]'
+      operationId: getTenantById
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        404:
+          description: Not found
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+    put:
+      tags:
+        - tenant-admin-controller
+      summary: 'Updates a tenant [Authorization: Role: tenant-admin or single-tenant-admin]'
+      operationId: updateTenant
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/TenantDTO'
+      responses:
+        200:
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        409:
+          description: CONFLICT - unique constraint validation fails
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+components:
+  schemas:
+    TenantDTO:
+      type: object
+      required:
+        - id
+        - name
+        - subdomain
+      properties:
+        id:
+          type: long
+          example: 12132
+        name:
+          type: string
+          example: "Company name AG"
+          maxLength: 40
+        subdomain:
+          type: string
+          example: "companyname"
+          maxLength: 100
+        createDate:
+          type: string
+        updateDate:
+          type: string
+        licensing:
+          $ref: '#/components/schemas/Licensing'
+        theming:
+          $ref:
+            '#/components/schemas/Theming'
+        content:
+          $ref:
+            '#/components/schemas/Content'
+        settings:
+          $ref:
+            '#/components/schemas/Settings'
+    BasicTenantLicensingDTO:
+      type: object
+      required:
+        - id
+        - name
+        - subdomain
+      properties:
+        id:
+          type: long
+          example: 12132
+        name:
+          type: string
+          example: "Company name AG"
+          maxLength: 40
+        subdomain:
+          type: string
+          example: "companyname"
+          maxLength: 100
+        createDate:
+          type: string
+        updateDate:
+          type: string
+        licensing:
+          $ref: '#/components/schemas/Licensing'
+    Licensing:
+      type: object
+      required:
+        - allowedNumberOfUsers
+      properties:
+        allowedNumberOfUsers:
+          type: integer
+          example: 1
+    Theming:
+      type: object
+      properties:
+        logo:
+          type: string
+          example: "base64 encoded image"
+        favicon:
+          type: string
+          example: "base64 encoded image"
+        primaryColor:
+          type: string
+          example: "#FFFFFF"
+        secondaryColor:
+          type: string
+          example: "#FFFFFF"
+    Content:
+      type: object
+      required:
+        - impressum
+      properties:
+        impressum:
+          type: string
+          example: "Llorem ipsum..."
+        claim:
+          type: string
+          example: "Llorem ipsum..."
+          maxLength: 40
+        privacy:
+          type: string
+          example: "Llorem ipsum..."
+        termsAndConditions:
+          type: string
+          example: "Llorem ipsum..."
+    Settings:
+      type: object
+      properties:
+        featureStatisticsEnabled:
+          type: boolean
+          example: "false"
+        featureTopicsEnabled:
+          type: boolean
+          example: "false"
+        topicsInRegistrationEnabled:
+          type: boolean
+          example: "false"
+        featureDemographicsEnabled:
+          type: boolean
+          example: "false"
+        featureAppointmentsEnabled:
+          type: boolean
+          example: "false"
+        featureGroupChatV2Enabled:
+          type: boolean
+          example: "false"
+        featureToolsEnabled:
+          type: boolean
+          example: "false"
+        featureAttachmentUploadDisabled:
+          type: boolean
+          example: "false"
+        featureToolsOICDToken:
+          type: string
+          example: "1234-1234-1234-1234"
