@@ -16,17 +16,23 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 public class ConsultantDtoMapper implements DtoMapperUtils {
+  @Autowired private IdentityClient identityClient;
 
   public UpdateAdminConsultantDTO updateAdminConsultantOf(
       UpdateConsultantDTO updateConsultantDTO, Consultant consultant) {
@@ -39,7 +45,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .formalLanguage(consultant.isLanguageFormal())
         .languages(languageStringsOf(updateConsultantDTO.getLanguages()))
         .absent(consultant.isAbsent())
-        .absenceMessage(consultant.getAbsenceMessage());
+        .absenceMessage(consultant.getAbsenceMessage())
+        .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
+        .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation());
   }
 
   public ConsultantResponseDTO consultantResponseDtoOf(
@@ -48,7 +56,10 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         agencies.stream().map(this::agencyResponseDtoOf).collect(Collectors.toList());
 
     var consultantResponseDto =
-        new ConsultantResponseDTO().consultantId(consultant.getId()).agencies(agencyDtoList);
+        new ConsultantResponseDTO()
+            .consultantId(consultant.getId())
+            .agencies(agencyDtoList)
+            .isSupervisor(consultant.isSupervisor());
 
     if (mapNames) {
       consultantResponseDto.firstName(consultant.getFirstName()).lastName(consultant.getLastName());
@@ -108,6 +119,26 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     consultant.setCreateDate((String) consultantMap.get("createdAt"));
     consultant.setUpdateDate((String) consultantMap.get("updatedAt"));
     consultant.setDeleteDate((String) consultantMap.get("deletedAt"));
+    Long tenantId = (Long) consultantMap.get("tenantId");
+    if (tenantId != null) {
+      consultant.setTenantId(tenantId.intValue());
+    }
+    consultant.setTenantName((String) consultantMap.get("tenantName"));
+
+    // Handle missing Keycloak users gracefully
+    boolean isGroupChatConsultant = false;
+    try {
+      isGroupChatConsultant =
+          identityClient.userHasRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    } catch (Exception e) {
+      // If user doesn't exist in Keycloak, assume they don't have the role
+      log.debug("Could not check role for consultant {}: {}", consultant.getId(), e.getMessage());
+    }
+    consultant.setIsGroupchatConsultant(isGroupChatConsultant);
+
+    // Get supervisor permission from database field (from map, not DTO)
+    Boolean isSupervisor = (Boolean) consultantMap.get("isSupervisor");
+    consultant.setIsSupervisor(isSupervisor != null && isSupervisor);
 
     var agencies = new ArrayList<AgencyAdminResponseDTO>();
     var agencyMaps = (ArrayList<Map<String, Object>>) consultantMap.get("agencies");
@@ -148,7 +179,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         httpEntity = userAdminApi.updateConsultant(id, null);
         break;
       case DELETE:
-        httpEntity = userAdminApi.markConsultantForDeletion(id);
+        httpEntity = userAdminApi.markConsultantForDeletion(id, false);
         break;
       default:
         httpEntity = userAdminApi.getConsultant(id);

@@ -31,7 +31,7 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
-        - Bearer: [ ]
+        - Bearer: []
       x-codegen-request-body-name: key
 
   /messages/new:
@@ -79,55 +79,7 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
-        - Bearer: [ ]
-      x-codegen-request-body-name: Message
-
-  /messages/feedback/new:
-    post:
-      tags:
-        - message-controller
-      summary: 'Add new Rocket.Chat message to feedback chat [Authorization: authority
-        for feedback chat]'
-      operationId: createFeedbackMessage
-      parameters:
-        - name: rcToken
-          in: header
-          required: true
-          schema:
-            type: string
-        - name: rcUserId
-          in: header
-          required: true
-          schema:
-            type: string
-        - name: rcFeedbackGroupId
-          in: header
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/MessageDTO'
-        required: true
-      responses:
-        201:
-          description: CREATED - message was successfully created
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/MessageResponseDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
+        - Bearer: []
       x-codegen-request-body-name: Message
 
   /messages/videohint/new:
@@ -171,7 +123,7 @@ paths:
       tags:
         - message-controller
       summary: 'Get Rocket.Chat message stream [Authorization: Role: user, anonymous, consultant]'
-      operationId: findMessages
+      operationId: getMessageStream
       parameters:
         - name: rcToken
           in: header
@@ -189,29 +141,9 @@ paths:
           required: true
           schema:
             type: string
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
-            minimum: 0
-        - name: count
-          in: query
-          schema:
-            type: integer
-            default: 0
-            minimum: 0
-            description: 0 means all messages
-        - name: since
-          in: query
-          schema:
-            type: string
-            format: date-time
-            example: "2022-01-10T15:23:44.921Z"
-            description: ISO 8601 UTC
       responses:
         200:
-          description: OK - successful operation
+          description: OK - successfull operation
           content:
             'application/json':
               schema:
@@ -227,149 +159,7 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
-        - Bearer: [ ]
-
-  /messages/{messageId}:
-    parameters:
-      - name: rcToken
-        in: header
-        required: true
-        schema:
-          type: string
-      - name: rcUserId
-        in: header
-        required: true
-        schema:
-          type: string
-      - name: messageId
-        in: path
-        required: true
-        schema:
-          type: string
-          minLength: 17
-          maxLength: 17
-    get:
-      tags:
-        - message-controller
-      summary: 'Finds a message by its ID [Auth: user]'
-      operationId: findMessage
-      responses:
-        200:
-          description: OK - successful operation
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/MessagesDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization
-        404:
-          description: NOT FOUND - messageId unknown
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-    patch:
-      tags:
-        - message-controller
-      summary: 'Partially updates a message [Auth: user]'
-      description: Current support is limited to the reassign status.
-      operationId: patchMessage
-      requestBody:
-        required: true
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/AliasArgs'
-      responses:
-        204:
-          description: NO CONTENT - message has been updated
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization
-        404:
-          description: NOT FOUND - messageId unknown
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-    delete:
-      tags:
-        - message-controller
-      summary: 'Marks a message as deleted, removes its text and its attachment if it exists [Auth: 
-        user, consultant, anonymous]'
-      operationId: deleteMessage
-      responses:
-        204:
-          description: NO CONTENT - message (and attachment) has been deleted
-        207:
-          description: MULTI-STATUS - message has been deleted, attachmentId unknown
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization
-        404:
-          description: NOT FOUND - messageId unknown
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-
-  /messages/forward:
-    post:
-      tags:
-        - message-controller
-      summary: 'Forward a Rocket.Chat message to another group [Authorization: Role:
-        u25-consultant]'
-      operationId: forwardMessage
-      parameters:
-        - name: rcToken
-          in: header
-          required: true
-          schema:
-            type: string
-        - name: rcUserId
-          in: header
-          required: true
-          schema:
-            type: string
-        - name: rcGroupId
-          in: header
-          required: true
-          schema:
-            type: string
-      requestBody:
-        description: Body description
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/ForwardMessageDTO'
-        required: true
-      responses:
-        201:
-          description: CREATED - message was successfully created
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/MessageResponseDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
+        - Bearer: []
 
   /messages/draft:
     post:
@@ -392,7 +182,7 @@ paths:
         required: true
       responses:
         200:
-          description: OK - successful operation
+          description: OK - successfull operation
         201:
           description: CREATED - message was successfully created
         400:
@@ -404,7 +194,7 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
-        - Bearer: [ ]
+        - Bearer: []
     get:
       tags:
         - message-controller
@@ -418,7 +208,7 @@ paths:
             type: string
       responses:
         200:
-          description: OK - successful operation
+          description: OK - successfull operation
           content:
             'application/json':
               schema:
@@ -434,7 +224,7 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
-        - Bearer: [ ]
+        - Bearer: []
 
   /messages/aliasonly/new:
     post:
@@ -526,6 +316,9 @@ components:
         t:
           type: string
           example: "c"
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
 
     MessageStreamDTO:
       type: object
@@ -562,6 +355,9 @@ components:
           type: string
           example: "fR2Rz7dmWmHdXE8uz"
         msg:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        org:
           type: string
           example: "Lorem ipsum dolor sit amet, consetetur..."
         ts:
@@ -609,6 +405,9 @@ components:
         e2e:
           type: string
           example: "pending"
+        org:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
         rid:
           type: string
           example: "fR2Rz7dmWmHdXE8uz"
@@ -627,43 +426,11 @@ components:
     AliasMessageDTO:
       type: object
       properties:
-        forwardMessageDTO:
-          $ref: '#/components/schemas/ForwardMessageDTO'
         videoCallMessageDTO:
           $ref: '#/components/schemas/VideoCallMessageDTO'
         messageType:
           $ref: '#/components/schemas/MessageType'
         content:
-          type: string
-
-    ForwardMessageDTO:
-      type: object
-      required:
-        - message
-        - timestamp
-        - username
-        - rcUserId
-      properties:
-        message:
-          type: string
-          example: "Lorem ipsum dolor sit amet, consetetur..."
-        org:
-          type: string
-          example: "Lorem ipsum dolor sit amet, consetetur..."
-          description: "Legacy fallback for stringified messages"
-        timestamp:
-          type: string
-          description: "Full qualified timestamp"
-          example: "2018-11-15T09:33:00.057Z"
-        username:
-          type: string
-          example: "asker23"
-        displayName:
-          type: string
-        rcUserId:
-          type: string
-          example: "ag89h3tjkerg94t"
-        t:
           type: string
 
     VideoCallMessageDTO:
@@ -693,63 +460,18 @@ components:
       properties:
         messageType:
           $ref: '#/components/schemas/MessageType'
-        args:
-          $ref: '#/components/schemas/AliasArgs'
 
     MessageType:
       type: string
       enum:
-        - "INITIAL_APPOINTMENT_DEFINED"
-        - "APPOINTMENT_SET"
-        - "APPOINTMENT_CANCELLED"
-        - "APPOINTMENT_RESCHEDULED"
         - "FINISHED_CONVERSATION"
-        - "FORWARD"
         - "FURTHER_STEPS"
         - "UPDATE_SESSION_DATA"
         - "VIDEOCALL"
         - "USER_MUTED"
         - "USER_UNMUTED"
         - "E2EE_ACTIVATED"
-        - "MASTER_KEY_LOST"
-        - "REASSIGN_CONSULTANT"
-        - "REASSIGN_CONSULTANT_RESET_LAST_MESSAGE"
-        - "CONSULTANT_DISPLAY_NAME_CHANGED"
-
-    AliasArgs:
-      oneOf:
-        - $ref: '#/components/schemas/ConsultantReassignment'
-
-    ConsultantReassignment:
-      type: object
-      description: >
-        toConsultantId, toConsultantName, toAskerName and fromConsultantName are required during
-        creation but cannot be changed afterwards. Thus, in subsequent edits these properties can
-        be omitted because they are ignored then.
-      required:
-        - status
-      properties:
-        toConsultantId:
-          type: string
-          format: UUID
-        toConsultantName:
-          type: string
-        toAskerName:
-          type: string
-        fromConsultantId:
-          type: string
-          format: UUID
-        fromConsultantName:
-          type: string
-        status:
-          $ref: '#/components/schemas/ReassignStatus'
-
-    ReassignStatus:
-      type: string
-      enum:
-        - "REQUESTED"
-        - "CONFIRMED"
-        - "REJECTED"
+        - "INITIAL_APPOINTMENT_DEFINED"
 
     UserDTO:
       type: object
@@ -832,6 +554,9 @@ components:
         - message
       properties:
         message:
+          type: string
+          example: "Lorem ipsum dolor sit amet, consetetur..."
+        org:
           type: string
           example: "Lorem ipsum dolor sit amet, consetetur..."
         t:

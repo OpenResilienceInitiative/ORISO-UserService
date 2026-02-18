@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.model.Session;
 
 public class RocketChatRoomNameGenerator {
 
-  private static final String FEEDBACK_GROUP_SUFFIX = "feedback";
   private static final String GROUP_CHAT_SUFFIX = "group_chat";
 
   /**
@@ -19,17 +18,6 @@ public class RocketChatRoomNameGenerator {
    */
   public String generateGroupName(Session session) {
     return generateName(session.getId(), null);
-  }
-
-  /**
-   * Generates a unique name for the private Rocket.Chat group consisting of the session id, the
-   * feedback identifier and the current time stamp.
-   *
-   * @param session the session
-   * @return the group name
-   */
-  public String generateFeedbackGroupName(Session session) {
-    return generateName(session.getId(), FEEDBACK_GROUP_SUFFIX);
   }
 
   /**

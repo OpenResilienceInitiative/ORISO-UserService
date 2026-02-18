@@ -4,25 +4,25 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ACTIVE_CHA
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
-public class RocketChatRoomNameGeneratorTest {
+@ExtendWith(MockitoExtension.class)
+class RocketChatRoomNameGeneratorTest {
 
   private RocketChatRoomNameGenerator rocketChatRoomNameGenerator;
 
-  @Before
-  public void setup() {
+  @BeforeEach
+  void setup() {
     this.rocketChatRoomNameGenerator = new RocketChatRoomNameGenerator();
   }
 
   @Test
-  public void generateGroupName_Should_ReturnGroupNameContainingSessionIdAndTimestamp() {
+  void generateGroupName_Should_ReturnGroupNameContainingSessionIdAndTimestamp() {
 
     String groupName = rocketChatRoomNameGenerator.generateGroupName(SESSION);
 
@@ -31,17 +31,7 @@ public class RocketChatRoomNameGeneratorTest {
   }
 
   @Test
-  public void
-      generateFeedbackGroupName_Should_ReturnGroupNameContainingSessionIdAndTimestampAndFeedbackIdentifier() {
-
-    String groupName = rocketChatRoomNameGenerator.generateFeedbackGroupName(SESSION);
-
-    assertThat(groupName, startsWith(String.valueOf(SESSION.getId())));
-    assertTrue(groupName.matches("^[0-9]+_feedback_[0-9]+"));
-  }
-
-  @Test
-  public void
+  void
       generateGroupChatName_Should_ReturnGroupNameContainingSessionIdAndTimestampAndGroupChatIdentifier() {
 
     String groupName = rocketChatRoomNameGenerator.generateGroupChatName(ACTIVE_CHAT);

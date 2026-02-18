@@ -4,7 +4,9 @@ import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MAX;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MIN;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.CONSULTING_TYPE_REGEXP;
+import static de.caritas.cob.userservice.api.helper.UserHelper.REFERER_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.STATE_REGEXP;
+import static de.caritas.cob.userservice.api.helper.UserHelper.TERMS_ACCEPTED_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.VALID_POSTCODE_REGEX;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
@@ -21,12 +23,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.validation.ValidState;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import java.util.Collection;
-import javax.validation.constraints.Email;
-import javax.validation.constraints.Max;
-import javax.validation.constraints.Min;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
-import javax.validation.constraints.Pattern;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -90,6 +92,11 @@ public class UserDTO implements UserRegistrationDTO {
   @ApiModelProperty(example = "\"16\"", position = 9)
   private String state;
 
+  @Pattern(regexp = TERMS_ACCEPTED_REGEXP, message = "{user.custom.termsAccepted.invalid}")
+  @ApiModelProperty(required = true, example = "\"true\"", position = 10)
+  @JsonProperty("termsAccepted")
+  private String termsAccepted;
+
   @Pattern(regexp = CONSULTING_TYPE_REGEXP, message = "{user.consultingType.invalid}")
   @ApiModelProperty(required = true, example = "\"0\"", position = 11)
   @JsonProperty("consultingType")
@@ -122,6 +129,11 @@ public class UserDTO implements UserRegistrationDTO {
 
   private LanguageCode preferredLanguage;
 
+  @ApiModelProperty(required = false, example = "\"referer\"")
+  @Pattern(regexp = REFERER_REGEXP, message = "{user.custom.referer.invalid}")
+  @JsonProperty("referer")
+  private String referer;
+
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;
   }
@@ -136,12 +148,14 @@ public class UserDTO implements UserRegistrationDTO {
       Long agencyId,
       String password,
       String email,
+      String termsAccepted,
       String consultingTypeId) {
     this.username = username;
     this.postcode = postcode;
     this.agencyId = agencyId;
     this.password = password;
     this.email = email;
+    this.termsAccepted = termsAccepted;
     this.consultingType = consultingTypeId;
   }
 
@@ -172,6 +186,9 @@ public class UserDTO implements UserRegistrationDTO {
         + '\''
         + ", state='"
         + state
+        + '\''
+        + ", termsAccepted='"
+        + termsAccepted
         + '\''
         + ", consultingType='"
         + consultingType

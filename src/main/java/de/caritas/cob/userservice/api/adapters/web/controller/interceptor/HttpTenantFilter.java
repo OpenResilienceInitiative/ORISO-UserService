@@ -7,10 +7,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -31,7 +31,14 @@ public class HttpTenantFilter extends OncePerRequestFilter {
   private final @Nullable TenantService tenantService;
 
   private static final String[] TENANCY_FILTER_WHITELIST =
-      new String[] {"/actuator/health", "/actuator/health/**", "/swagger-ui.html", "/favicon.ico"};
+      new String[] {
+        "/actuator/health",
+        "/actuator/health/**",
+        "/actuator/loggers/**",
+        "/actuator/loggers",
+        "/swagger-ui.html",
+        "/favicon.ico"
+      };
 
   private final DefaultRequiresTenantFilterMatcher requiresTenantFilterMatcher =
       new DefaultRequiresTenantFilterMatcher();

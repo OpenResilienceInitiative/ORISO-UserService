@@ -25,13 +25,13 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteRocketChatConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class DeleteUserAccountServiceTest {
 
   @InjectMocks private DeleteUserAccountService deleteUserAccountService;
@@ -42,7 +42,7 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private ActionsRegistry actionsRegistry;
 
-  @Mock private WorkflowResultsMailService workflowResultsMailService;
+  @Mock private WorkflowErrorMailService workflowErrorMailService;
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
@@ -50,7 +50,7 @@ public class DeleteUserAccountServiceTest {
   public void deleteUserAccounts_Should_notPerformAnyDeletion_When_noUserAccountIsMarkedDeleted() {
     this.deleteUserAccountService.deleteUserAccounts();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verifyNoMoreInteractions(this.actionsRegistry);
   }
 
@@ -66,7 +66,7 @@ public class DeleteUserAccountServiceTest {
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
   }
 
   @Test
@@ -85,7 +85,7 @@ public class DeleteUserAccountServiceTest {
         .buildContainerForType(ConsultantDeletionWorkflowDTO.class);
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseConsultantAction.class), times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
   }
 
   @Test
@@ -116,6 +116,6 @@ public class DeleteUserAccountServiceTest {
 
     this.deleteUserAccountService.deleteUserAccounts();
 
-    verify(this.workflowResultsMailService, times(1)).buildAndSendErrorMail(anyList());
+    verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(anyList());
   }
 }

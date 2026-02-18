@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
 import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.List;
@@ -22,7 +21,6 @@ public class ConsultantSessionEnricher {
 
   private final @NonNull SessionListAnalyser sessionListAnalyser;
   private final @NonNull RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
-  private final @NonNull ConsultingTypeManager consultingTypeManager;
 
   @Autowired(required = false)
   private SessionTopicEnrichmentService sessionTopicEnrichmentService;
@@ -67,18 +65,6 @@ public class ConsultantSessionEnricher {
         rocketChatRoomInformation,
         consultant.getRocketChatId());
 
-    // Due to a Rocket.Chat bug the read state is only set, when a message was posted
-    if (isFeedbackFlagAvailable(rocketChatRoomInformation, consultantSessionResponseDTO)) {
-      session.setFeedbackRead(
-          rocketChatRoomInformation.getReadMessages().get(session.getFeedbackGroupId()));
-    } else {
-      // Fallback: If map doesn't contain feedback group id set to true -> no feedback label in
-      // frontend application
-      session.setFeedbackRead(
-          !rocketChatRoomInformation
-              .getLastMessagesRoom()
-              .containsKey(session.getFeedbackGroupId()));
-    }
     enrichSessionWithTopic(consultantSessionResponseDTO);
   }
 
@@ -87,15 +73,5 @@ public class ConsultantSessionEnricher {
       sessionTopicEnrichmentService.enrichSessionWithTopicData(
           consultantSessionResponseDTO.getSession());
     }
-  }
-
-  private boolean isFeedbackFlagAvailable(
-      RocketChatRoomInformation rocketChatRoomInformation, ConsultantSessionResponseDTO session) {
-    return rocketChatRoomInformation
-            .getLastMessagesRoom()
-            .containsKey(session.getSession().getFeedbackGroupId())
-        && rocketChatRoomInformation
-            .getReadMessages()
-            .containsKey(session.getSession().getFeedbackGroupId());
   }
 }

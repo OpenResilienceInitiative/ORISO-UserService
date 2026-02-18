@@ -4,17 +4,18 @@ import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MAX;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MIN;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.CONSULTING_TYPE_REGEXP;
+import static de.caritas.cob.userservice.api.helper.UserHelper.REFERER_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.VALID_POSTCODE_REGEX;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import java.util.Collection;
-import javax.validation.constraints.Max;
-import javax.validation.constraints.Min;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
-import javax.validation.constraints.Pattern;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -80,4 +81,9 @@ public class NewRegistrationDto implements UserRegistrationDTO {
   @ApiModelProperty(required = false, example = "\"RELATIVE_COUNSELLING\"")
   @JsonProperty("counsellingRelation")
   private String counsellingRelation;
+
+  @ApiModelProperty(required = false, example = "\"referer\"")
+  @Pattern(regexp = REFERER_REGEXP, message = "{user.custom.referer.invalid}")
+  @JsonProperty("referer")
+  private String referer;
 }

@@ -133,7 +133,8 @@ public class ConsultantAgencyService {
             .consultantId(id)
             .firstName(consultant.getFirstName())
             .lastName(consultant.getLastName())
-            .username(consultant.getUsername());
+            .username(consultant.getUsername())
+            .isSupervisor(consultant.isSupervisor());
 
     accountManager
         .findConsultant(id)

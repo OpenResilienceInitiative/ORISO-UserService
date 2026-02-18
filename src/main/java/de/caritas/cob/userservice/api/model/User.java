@@ -1,20 +1,22 @@
 package de.caritas.cob.userservice.api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EntityListeners;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.validation.constraints.Size;
-import lombok.AllArgsConstructor;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -31,7 +33,6 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 /** Represents a user */
 @Entity
 @Table(name = "user")
-@AllArgsConstructor
 @NoArgsConstructor
 @Getter
 @Setter
@@ -64,6 +65,13 @@ public class User implements TenantAware, NotificationsAware {
 
   @Column(name = "rc_user_id")
   private String rcUserId;
+
+  @Column(name = "matrix_user_id")
+  private String matrixUserId;
+
+  @Column(name = "matrix_password")
+  @Size(max = 255)
+  private String matrixPassword;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   private boolean languageFormal;
@@ -105,6 +113,12 @@ public class User implements TenantAware, NotificationsAware {
   @Column(length = 2, nullable = false, columnDefinition = "varchar(2) default 'de'")
   private LanguageCode languageCode;
 
+  @Column(name = "terms_and_conditions_confirmation", columnDefinition = "datetime")
+  private LocalDateTime termsAndConditionsConfirmation;
+
+  @Column(name = "data_privacy_confirmation", columnDefinition = "datetime")
+  private LocalDateTime dataPrivacyConfirmation;
+
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
   private boolean notificationsEnabled;
 
@@ -124,6 +138,8 @@ public class User implements TenantAware, NotificationsAware {
     this.languageFormal = languageFormal;
     setEncourage2fa(true);
     setLanguageCode(LanguageCode.de);
+    this.termsAndConditionsConfirmation = LocalDateTime.now();
+    this.dataPrivacyConfirmation = LocalDateTime.now();
   }
 
   @Override
@@ -141,5 +157,11 @@ public class User implements TenantAware, NotificationsAware {
   @Override
   public int hashCode() {
     return Objects.hash(userId);
+  }
+
+  @JsonIgnore
+  @Transient
+  public Dialect getDialect() {
+    return isLanguageFormal() ? Dialect.FORMAL : Dialect.INFORMAL;
   }
 }

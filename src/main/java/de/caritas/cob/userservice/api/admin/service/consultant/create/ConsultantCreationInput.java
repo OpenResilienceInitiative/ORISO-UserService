@@ -19,6 +19,8 @@ interface ConsultantCreationInput {
 
   String getEmail();
 
+  String getPassword();
+
   boolean isAbsent();
 
   String getAbsenceMessage();

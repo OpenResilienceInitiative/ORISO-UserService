@@ -33,7 +33,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
-import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
@@ -69,9 +68,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.servlet.http.Cookie;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.PositiveOrZero;
+import jakarta.servlet.http.Cookie;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.assertj.core.util.Lists;
@@ -150,8 +149,6 @@ class UserControllerConsultantE2EIT {
 
   @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean private AgencyAdminService agencyAdminService;
-
   @MockBean private AdminUserFacade adminUserFacade;
 
   private User user;
@@ -190,7 +187,6 @@ class UserControllerConsultantE2EIT {
           consultantToReset.setLanguages(null);
           consultantToReset.setNotifyEnquiriesRepeating(true);
           consultantToReset.setNotifyNewChatMessageFromAdviceSeeker(true);
-          consultantToReset.setNotifyNewFeedbackMessageFromAdviceSeeker(true);
           consultantRepository.save(consultantToReset);
         });
     consultantsToReset = new HashSet<>();
@@ -556,6 +552,8 @@ class UserControllerConsultantE2EIT {
             .andExpect(jsonPath("_embedded[0]._embedded.lastname", containsString(infix)))
             .andExpect(jsonPath("_embedded[*]._embedded.username", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[*]._embedded.email", not(contains(nullValue()))))
+            .andExpect(jsonPath("_embedded[0]._embedded.isGroupchatConsultant", is(true)))
+            .andExpect(jsonPath("_embedded[1]._embedded.isGroupchatConsultant", is(true)))
             .andExpect(jsonPath("_embedded[0]._embedded.agencies", hasSize(1)))
             .andExpect(
                 jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
@@ -680,7 +678,7 @@ class UserControllerConsultantE2EIT {
             .andExpect(jsonPath("_embedded[0]._links.addAgency.method", is("POST")))
             .andExpect(jsonPath("_embedded[0]._links.addAgency.templated", is(false)))
             .andExpect(jsonPath("_links.self.href", startsWith(pageUrlPrefix)))
-            .andExpect(jsonPath("_links.self.href", containsString("query=*")))
+            .andExpect(jsonPath("_links.self.href", containsString("query=")))
             .andExpect(jsonPath("_links.self.method", is("GET")))
             .andExpect(jsonPath("_links.self.templated", is(false)))
             .andExpect(jsonPath("_links.next", is(nullValue())))
@@ -883,7 +881,8 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("agencies[0].description", is(notNullValue())))
         .andExpect(jsonPath("agencies[0].teamAgency", is(notNullValue())))
         .andExpect(jsonPath("agencies[0].offline", is(notNullValue())))
-        .andExpect(jsonPath("agencies[0].consultingType", is(notNullValue())));
+        .andExpect(jsonPath("agencies[0].consultingType", is(notNullValue())))
+        .andExpect(jsonPath("agencies[0].topicIds", is(notNullValue())));
   }
 
   @Test
@@ -905,7 +904,6 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("consultingType", is(1)))
         .andExpect(jsonPath("status", is(1)))
         .andExpect(jsonPath("groupId", is("ix7E7HzXKTgGeQMyb")))
-        .andExpect(jsonPath("feedbackGroupId", is("EQBcSwxn4eCAPYQ2J")))
         .andExpect(jsonPath("consultantId", is("473f7c4b-f011-4fc2-847c-ceb636a5b399")))
         .andExpect(jsonPath("consultantRcId", is("CztX9SWF4SJPvgknZ")))
         .andExpect(jsonPath("askerId", is("06c6601f-a5b4-4812-9260-20065390b1f5")))

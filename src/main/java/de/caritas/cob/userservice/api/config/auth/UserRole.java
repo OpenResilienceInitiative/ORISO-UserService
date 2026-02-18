@@ -12,8 +12,6 @@ public enum UserRole {
   USER("user"),
   CONSULTANT("consultant"),
   TECHNICAL("technical"),
-  PEER_CONSULTANT("peer-consultant"),
-  MAIN_CONSULTANT("main-consultant"),
   GROUP_CHAT_CONSULTANT("group-chat-consultant"),
   USER_ADMIN("user-admin"),
   SINGLE_TENANT_ADMIN("single-tenant-admin"),
@@ -21,7 +19,9 @@ public enum UserRole {
   AGENCY_ADMIN("agency-admin"),
   RESTRICTED_AGENCY_ADMIN("restricted-agency-admin"),
   TOPIC_ADMIN("topic-admin"),
-  NOTIFICATIONS_TECHNICAL("notifications-technical");
+  NOTIFICATIONS_TECHNICAL("notifications-technical"),
+  RESTRICTED_CONSULTANT_ADMIN("restricted-consultant-admin"),
+  SUPERVISOR_CONSULTANT("supervisor-consultant");
 
   private final String value;
 

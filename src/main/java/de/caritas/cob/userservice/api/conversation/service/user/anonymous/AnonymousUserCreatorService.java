@@ -73,7 +73,7 @@ public class AnonymousUserCreatorService {
 
   private void rollBackAnonymousUserAccount(String userId) {
     rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder().userId(userId).build());
+        RollbackUserAccountInformation.builder().userId(userId).rollBackUserAccount(true).build());
   }
 
   private RocketChatCredentials obtainRocketChatCredentials(

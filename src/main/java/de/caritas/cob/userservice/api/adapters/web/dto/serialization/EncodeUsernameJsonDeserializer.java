@@ -23,7 +23,20 @@ public class EncodeUsernameJsonDeserializer extends JsonDeserializer<String> {
   @Override
   public String deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
       throws IOException {
-    String username = new UsernameTranscoder().encodeUsername(jsonParser.getValueAsString());
+    // MATRIX MIGRATION: Capture plain username BEFORE encryption
+    String plainUsername = jsonParser.getValueAsString();
+
+    // Store plain username in ThreadLocal for Matrix user creation
+    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials current =
+        de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
+    if (current != null) {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
+          plainUsername, current.getPassword());
+    } else {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(plainUsername, null);
+    }
+
+    String username = new UsernameTranscoder().encodeUsername(plainUsername);
 
     // Check if username is of valid length
     if (!userHelper.isUsernameValid(username)) {

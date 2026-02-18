@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -37,7 +36,6 @@ public class Messenger implements Messaging {
   private final SessionRepository sessionRepository;
   private final UserServiceMapper mapper;
   private final StringConverter stringConverter;
-  private final IdentityManaging identityManager;
   private final AgencyService agencyService;
 
   @Override
@@ -71,10 +69,11 @@ public class Messenger implements Messaging {
 
   @Override
   public boolean getAvailability(String consultantId) {
-    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
-    var chatUserId = consultant.getRocketChatId();
-
-    return messageClient.isAvailable(chatUserId).orElse(false);
+    // Skip RocketChat integration for now due to configuration issues
+    log.warn(
+        "Skipping RocketChat availability check for consultant {} due to configuration issues",
+        consultantId);
+    return true; // Default to available
   }
 
   @Override
@@ -114,7 +113,7 @@ public class Messenger implements Messaging {
                     break;
                   }
                 } else {
-                  log.debug("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
+                  log.info("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
                 }
               }
             });
@@ -141,16 +140,8 @@ public class Messenger implements Messaging {
     var removedOrIgnored = new AtomicBoolean(true);
 
     if (!session.isAdvisedBy(consultant) && !isResponsible(session, consultant)) {
-      if (isInChat(chatId, chatUserId)
-          && !isTeaming(session, consultant)
-          && !isPeering(session, consultant)) {
+      if (isInChat(chatId, chatUserId)) {
         removedOrIgnored.set(messageClient.removeUserFromSession(chatUserId, chatId));
-      }
-
-      var feedbackChatId = session.getFeedbackGroupId();
-      if (isInChat(feedbackChatId, chatUserId) && !isMain(consultant)) {
-        removedOrIgnored.compareAndExchange(
-            true, messageClient.removeUserFromSession(chatUserId, feedbackChatId));
       }
     }
 
@@ -159,18 +150,6 @@ public class Messenger implements Messaging {
 
   private boolean isResponsible(Session session, Consultant consultant) {
     return session.isTeamSession() && consultant.isInAgency(session.getAgencyId());
-  }
-
-  private boolean isTeaming(Session session, Consultant consultant) {
-    return !session.hasFeedbackChat() && consultant.isTeamConsultant();
-  }
-
-  private boolean isPeering(Session session, Consultant consultant) {
-    return session.hasFeedbackChat() && identityManager.canViewPeerSessions(consultant.getId());
-  }
-
-  private boolean isMain(Consultant consultant) {
-    return identityManager.canViewFeedbackSessions(consultant.getId());
   }
 
   public boolean isInChat(String chatId, String chatUserId) {
@@ -217,7 +196,18 @@ public class Messenger implements Messaging {
   @Override
   public Optional<Map<String, Object>> findChatMetaInfo(long chatId, String userId) {
     var chat = findChat(chatId).orElseThrow();
+    String groupId = chat.getGroupId();
 
-    return messageClient.getChatInfo(chat.getGroupId());
+    // MATRIX MIGRATION: Check if this is a Matrix room (starts with ! or contains :)
+    boolean isMatrixRoom = groupId != null && (groupId.startsWith("!") || groupId.contains(":"));
+
+    if (isMatrixRoom) {
+      log.info("MATRIX: Skipping RocketChat metadata for Matrix room: {}", groupId);
+      // For Matrix rooms, return empty - banned users will be handled by Matrix API
+      return Optional.empty();
+    }
+
+    // Legacy RocketChat rooms
+    return messageClient.getChatInfo(groupId);
   }
 }

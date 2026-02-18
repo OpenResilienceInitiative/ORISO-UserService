@@ -9,11 +9,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.GRANTED_AU
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_SESSIONS;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -30,6 +26,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,15 +34,15 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.jeasy.random.EasyRandom;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
-public class AskerDataProviderTest {
+@ExtendWith(MockitoExtension.class)
+class AskerDataProviderTest {
 
   @InjectMocks private AskerDataProvider askerDataProvider;
 
@@ -61,9 +58,10 @@ public class AskerDataProviderTest {
 
   @Mock EmailNotificationMapper emailNotificationMapper;
 
+  @Mock SessionService sessionService;
+
   @Test
-  public void
-      retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
+  void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
     when(agencyService.getAgencies(Mockito.anyList()))
@@ -84,7 +82,7 @@ public class AskerDataProviderTest {
   }
 
   @Test
-  public void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencies() {
+  void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencies() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
     when(agencyService.getAgencies(Mockito.anyList()))
@@ -104,20 +102,23 @@ public class AskerDataProviderTest {
     assertEquals(AGENCY_DTO_KREUZBUND, agency);
   }
 
-  @Test(expected = InternalServerErrorException.class)
-  public void
+  @Test
+  void
       retrieveData_GetConsultingTypes_Should_ThrowInternalServerErrorException_When_AgencyServiceHelperFails() {
-    givenAnEmailDummySuffixConfig();
-    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
-    when(agencyService.getAgencies(Mockito.anyList()))
-        .thenThrow(new InternalServerErrorException(""));
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          givenAnEmailDummySuffixConfig();
+          when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+          when(agencyService.getAgencies(Mockito.anyList()))
+              .thenThrow(new InternalServerErrorException(""));
 
-    askerDataProvider.retrieveData(USER);
+          askerDataProvider.retrieveData(USER);
+        });
   }
 
   @Test
-  public void
-      retrieveData_Should_ReturnUserDataResponseDTOWithValidEmail_When_ProvidedWithValidUser() {
+  void retrieveData_Should_ReturnUserDataResponseDTOWithValidEmail_When_ProvidedWithValidUser() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
     when(consultingTypeManager.getAllConsultingTypeIds())
@@ -130,7 +131,7 @@ public class AskerDataProviderTest {
   }
 
   @Test
-  public void retrieveData_Should_ReturnUserDataResponseDTOWithoutEmail_When_UserHasDummyMail() {
+  void retrieveData_Should_ReturnUserDataResponseDTOWithoutEmail_When_UserHasDummyMail() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
     User user = mock(User.class);
@@ -145,7 +146,7 @@ public class AskerDataProviderTest {
   }
 
   @Test
-  public void retrieveData_Should_ReturnValidData() {
+  void retrieveData_Should_ReturnValidData() {
     givenAnEmailDummySuffixConfig();
     when(agencyService.getAgencies(any())).thenReturn(Collections.singletonList(AGENCY_DTO_SUCHT));
     LinkedHashMap<String, Object> sessionData = new LinkedHashMap<>();
@@ -184,7 +185,7 @@ public class AskerDataProviderTest {
   }
 
   @Test
-  public void retrieveData_Should_ReturnUserDataWithoutAgency_When_userHasNotAgencyInSession() {
+  void retrieveData_Should_ReturnUserDataWithoutAgency_When_userHasNotAgencyInSession() {
     givenAnEmailDummySuffixConfig();
 
     User user = new EasyRandom().nextObject(User.class);

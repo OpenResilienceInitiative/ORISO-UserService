@@ -43,7 +43,4 @@ public class GroupDTO {
 
   @JsonProperty("_updatedAt")
   private Date updatedAt;
-
-  @JsonProperty("lm")
-  private Date lastMessageDate;
 }

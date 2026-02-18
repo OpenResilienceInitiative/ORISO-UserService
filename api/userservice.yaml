@@ -4,6 +4,24 @@ info:
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
 paths:
+  /users/{username}:
+    get:
+      tags:
+        - user-controller
+      summary: Checks if a given user exists, provided a username
+      operationId: userExists
+      parameters:
+        - name: username
+          in: path
+          description: username
+          required: true
+          schema:
+              type: string
+      responses:
+        200:
+          description: OK - user exists
+        404:
+          description: NOT FOUND - user does not exist
   /users/askers/new:
     post:
       tags:
@@ -25,6 +43,50 @@ paths:
           description: FORBIDDEN - no/invalid CSRF token
         409:
           description: CONFLICT - invalid/unavailable username
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /users/askers/session/new:
+    post:
+      tags:
+        - user-controller
+      summary: 'Register a new session for an existing asker [Authorization: Role: user]'
+      operationId: registerNewSession
+      parameters:
+        - name: RCToken
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: RCUserId
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/NewRegistrationDto'
+        required: true
+      responses:
+        201:
+          description: CREATED - session was registered successfully
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/NewRegistrationResponseDto'
+        400:
+          description: BAD REQUEST - invalid/incomplete request or body object
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - user is already registered for provided topic
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/NewRegistrationResponseDto'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -174,7 +236,7 @@ paths:
             format: int64
         - name: RCUserId
           in: header
-          required: true
+          required: false
           schema:
             type: string
       responses:
@@ -231,13 +293,13 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns sessions for given RocketChat group or feedback group IDs.
+      summary: 'Returns sessions for given RocketChat group IDs.
       [Authorization: Role: user, consultant]'
-      operationId: getSessionsForGroupOrFeedbackGroupIds
+      operationId: getSessionsForGroupIds
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: rcGroupIds[]
@@ -278,7 +340,7 @@ paths:
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: sessionId
@@ -833,29 +895,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/statistics/registration:
-    get:
-      tags:
-        - user-controller
-      summary: 'Returns a list of user registration data per tenant'
-      operationId: getRegistrationStatistics
-      responses:
-        200:
-          description: successful operation
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/RegistrationStatisticsListResponseDTO'
-        204:
-          description: successful operation, but no content
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /users/mails/messages/new:
     post:
       tags:
@@ -863,33 +902,6 @@ paths:
       summary: 'Sends a notification e-mail that a new message/answer has been written
         [Authorization: Role: user, consultant]'
       operationId: sendNewMessageNotification
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/NewMessageNotificationDTO'
-        required: true
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - invalid token
-        409:
-          description: CONFLICT - no user e-mail address in db given
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/mails/messages/feedback/new:
-    post:
-      tags:
-        - user-controller
-      summary: 'Sends a notification e-mail that a new feedback message/answer has
-        been written [Authorization: Role: consultant with authority for feedback
-        chat]'
-      operationId: sendNewFeedbackMessageNotification
       requestBody:
         content:
           'application/json':
@@ -1007,7 +1019,7 @@ paths:
       parameters:
         - name: query
           in: query
-          description: URL-encoded infix to search for in first name, last name, or email.
+          description: URL-encoded infix to search for in id, first name, last name, or email.
             A non-encoded star symbol searches for all.
           required: true
           schema:
@@ -1876,6 +1888,7 @@ components:
         - postcode
         - agencyId
         - password
+        - termsAccepted
         - consultingType
       properties:
         username:
@@ -1894,6 +1907,9 @@ components:
           type: string
           format: password
           example: pass@w0rd
+        termsAccepted:
+          type: string
+          example: true
         consultingType:
           type: string
           example: 3
@@ -1917,6 +1933,7 @@ components:
         preferredLanguage:
           $ref: "#/components/schemas/LanguageCode"
 
+
     SessionDataDTO:
       type: object
       properties:
@@ -1928,47 +1945,6 @@ components:
           type: string
           example: 8
           description: mandatory depending on the consulting type
-
-    RegistrationStatisticsListResponseDTO:
-      type: object
-      properties:
-        registrationStatistics:
-          type: array
-          items:
-            $ref: '#/components/schemas/RegistrationStatisticsResponseDTO'
-
-    RegistrationStatisticsResponseDTO:
-      type: object
-      required:
-        - userId
-        - registrationDate
-      properties:
-        userId:
-          type: string
-        registrationDate:
-          type: string
-          example: '2022-08-15T21:11:29'
-        age:
-          type: integer
-          example: '25'
-        gender:
-          type: string
-          example: 'FEMALE'
-        counsellingRelation:
-          type: string
-          example: 'SELF_COUNSELLING'
-        topicsInternalAttributes:
-          type: array
-          items:
-            type: string
-          example: [ 'angeho01','angeho13' ]
-        mainTopicInternalAttribute:
-          type: string
-          example: 'angeho01'
-        postalCode:
-          type: string
-          example: '99999'
-
 
     ConsultantSessionListResponseDTO:
       type: object
@@ -2099,13 +2075,10 @@ components:
           type: string
           example: xGklslk2JJKK
           description: Rocket.Chat room ID
-        feedbackGroupId:
+        matrixRoomId:
           type: string
-          example: 8ertjlasdKJA
-          description: Rocket.Chat feedback room ID
-        isPeerChat:
-          type: boolean
-          example: false
+          example: "!aBcDeF123:91.99.219.182"
+          description: Matrix Synapse room ID
         askerRcId:
           type: string
           example: 8ertjlasdKJA
@@ -2123,9 +2096,6 @@ components:
         messagesRead:
           type: boolean
           example: false
-        feedbackRead:
-          type: boolean
-          example: true
         isTeamSession:
           type: boolean
           example: false
@@ -2178,44 +2148,12 @@ components:
     AliasMessageDTO:
       type: object
       properties:
-        forwardMessageDTO:
-          $ref: '#/components/schemas/ForwardMessageDTO'
         videoCallMessageDTO:
           $ref: '#/components/schemas/VideoCallMessageDTO'
         messageType:
           $ref: '#/components/schemas/MessageType'
         content:
           type: string
-
-    ForwardMessageDTO:
-      type: object
-      required:
-        - message
-        - timestamp
-        - username
-        - rcUserId
-      properties:
-        message:
-          type: string
-          example: "Lorem ipsum dolor sit amet, consetetur..."
-        timestamp:
-          type: string
-          description: "Full qualified timestamp"
-          example: "2018-11-15T09:33:00.057Z"
-        username:
-          type: string
-          example: "asker23"
-        displayName:
-          type: string
-        rcUserId:
-          type: string
-          example: "ag89h3tjkerg94t"
-        t:
-          type: string
-        org:
-          type: string
-          example: "Lorem ipsum dolor sit amet, consetetur..."
-          description: "Legacy fallback for stringified messages"
 
     VideoCallMessageDTO:
       type: object
@@ -2245,7 +2183,6 @@ components:
         - "APPOINTMENT_RESCHEDULED"
         - "FURTHER_STEPS"
         - "UPDATE_SESSION_DATA"
-        - "FORWARD"
         - "VIDEOCALL"
         - "FINISHED_CONVERSATION"
         - "USER_MUTED"
@@ -2254,7 +2191,6 @@ components:
         - "MASTER_KEY_LOST"
         - "REASSIGN_CONSULTANT"
         - "REASSIGN_CONSULTANT_RESET_LAST_MESSAGE"
-        - "CONSULTANT_DISPLAY_NAME_CHANGED"
 
     LastMessageDTO:
       type: object
@@ -2290,10 +2226,6 @@ components:
           type: string
           example: xGklslk2JJKK
           description: Rocket.Chat room ID
-        feedbackGroupId:
-          type: string
-          example: 8ertjlasdKJA
-          description: Rocket.Chat feedback room ID
         consultantId:
           type: string
           example: 926b9777-4eef-443d-925a-4aa534797bd7
@@ -2332,6 +2264,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SessionTopicDTO'
+        referer:
+          type: string
+          pattern: "^[a-zA-Z0-9]{1,8}$"
+          maxLength: 8
+          example: '12345678'
 
     UserChatDTO:
       type: object
@@ -2401,10 +2338,25 @@ components:
           type: string
           format: date-time
           writeOnly: true
+        createdAt:
+          type: string
+          format: time
+          example: 2023-10-23T12:05:00.000Z
+        chatAgencies:
+          type: array
+          items:
+              $ref: '#/components/schemas/AgencyDTO'
+        hintMessage:
+          type: string
+          example: "Hint"
+          maxLength: 300
 
     SessionUserDTO:
       type: object
       properties:
+        id:
+          type: string
+          example: 926b9777-4eef-443d-925a-4aa534797bd7
         username:
           type: string
           example: max94
@@ -2428,6 +2380,12 @@ components:
         lastName:
           type: string
           example: Mustermann
+        username:
+          type: string
+          example: beraterXYZ
+        displayName:
+          type: string
+          example: Berater XYZ
 
     UserSessionListResponseDTO:
       type: object
@@ -2595,8 +2553,20 @@ components:
         appointmentFeatureEnabled:
           type: boolean
           example: true
+        termsAndConditionsConfirmation:
+          type: string
+          example: 2022-12-07T11:51:01
+          description: "Datetime stamp when the user accepted terms and condition"
+        dataPrivacyConfirmation:
+          type: string
+          example: 2022-12-07T11:51:01
+          description: "Datetime stamp when the user accepted data privacy"
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionDTO"
 
     PatchUserDTO:
       type: object
@@ -2621,6 +2591,14 @@ components:
             $ref: '#/components/schemas/EmailToggle'
         preferredLanguage:
           $ref: '#/components/schemas/LanguageCode'
+        termsAndConditionsConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates has the user accepted new terms and conditions text
+        dataPrivacyConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates does the user accepted new data privacy text
         available:
           description: mark consultant as (not) available for one-on-one chats, no effect on others
           type: boolean
@@ -2653,6 +2631,14 @@ components:
           example: de, en
           items:
             $ref: '#/components/schemas/LanguageCode'
+        termsAndConditionsConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates has the user accepted new terms and conditions text
+        dataPrivacyConfirmation:
+          type: boolean
+          example: true
+          description: Flag that indicates does the user accepted new data privacy text
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
 
@@ -2717,6 +2703,10 @@ components:
           type: integer
           format: int64
           example: 12
+        topicIds:
+          type: array
+          items:
+            type: long
 
 
     MobileTokenDTO:
@@ -2748,6 +2738,10 @@ components:
           type: string
         username:
           type: string
+        isSupervisor:
+          type: boolean
+          example: true
+          description: Flag that indicates if the consultant can be added as a supervisor
         agencies:
           type: array
           items:
@@ -2778,6 +2772,10 @@ components:
         topic:
           type: string
           example: Wöchentliche Drogenberatung
+        agencyId:
+          type: integer
+          format: int64
+          example: 7
         startDate:
           type: string
           format: date
@@ -2792,12 +2790,23 @@ components:
         repetitive:
           type: boolean
           example: false
+        hintMessage:
+          type: string
+          example: "Hint"
+          maxLength: 300
 
     CreateChatResponseDTO:
       type: object
       required:
         - groupId
       properties:
+        createdAt:
+          type: string
+          format: time
+          example: 2019-10-23T12:05:00.000Z
+        creatorDisplayName:
+          type: string
+          example: Max M.
         groupId:
           type: string
           example: WCET6GWir78pNMyyD
@@ -2845,6 +2854,8 @@ components:
         displayName:
           type: string
         utcOffset:
+          type: string
+        userId:
           type: string
 
     E2eKeyDTO:
@@ -2900,9 +2911,17 @@ components:
             type: integer
             format: int64
           example: [ 12,15 ]
+        mainTopicId:
+          type: integer
+          example: 15
         counsellingRelation:
           type: string
           example: 'SELF_COUNSELLING'
+        referer:
+          type: string
+          pattern: "^[a-zA-Z0-9]{1,8}$"
+          maxLength: 8
+          example: '12345678'
 
 
     NewRegistrationResponseDto:
@@ -3079,7 +3098,6 @@ components:
       enum:
         - DAILY_ENQUIRY
         - NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER
-        - NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER
 
   securitySchemes:
     Bearer:

@@ -26,16 +26,16 @@ import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkf
 import java.util.ArrayList;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
-@RunWith(MockitoJUnitRunner.class)
-public class DeleteSingleRoomAndSessionActionTest {
+@ExtendWith(MockitoExtension.class)
+class DeleteSingleRoomAndSessionActionTest {
 
   @InjectMocks private DeleteSingleRoomAndSessionAction deleteSingleRoomAndSessionAction;
 
@@ -47,15 +47,14 @@ public class DeleteSingleRoomAndSessionActionTest {
 
   @Mock private Logger logger;
 
-  @Before
-  public void setup() {
+  @BeforeEach
+  void setup() {
     setInternalState(DeleteSingleRoomAndSessionAction.class, "log", logger);
   }
 
   @Test
-  public void
-      execute_Should_returnEmptyListAndPerformAllDeletions_When_userSessionIsDeletedSuccessful()
-          throws Exception {
+  void execute_Should_returnEmptyListAndPerformAllDeletions_When_userSessionIsDeletedSuccessful()
+      throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
     SessionDeletionWorkflowDTO workflowDTO = new SessionDeletionWorkflowDTO(session, emptyList());
 
@@ -64,16 +63,15 @@ public class DeleteSingleRoomAndSessionActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     verifyNoMoreInteractions(this.logger);
-    verify(this.rocketChatService, times(2)).deleteGroupAsTechnicalUser(any());
+    verify(this.rocketChatService, times(1)).deleteGroupAsTechnicalUser(any());
     verify(this.sessionDataRepository, times(1)).findBySessionId(session.getId());
     verify(this.sessionDataRepository, times(1)).deleteAll(any());
     verify(this.sessionRepository, times(1)).delete(session);
   }
 
   @Test
-  public void
-      execute_Should_returnExpectedWorkflowErrors_When_noUserSessionDeletedStepIsSuccessful()
-          throws Exception {
+  void execute_Should_returnExpectedWorkflowErrors_When_noUserSessionDeletedStepIsSuccessful()
+      throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
     doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
         .when(this.rocketChatService)
@@ -86,13 +84,12 @@ public class DeleteSingleRoomAndSessionActionTest {
     this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(4));
-    verify(logger, times(4)).error(anyString(), any(Exception.class));
+    assertThat(workflowErrors, hasSize(3));
+    verify(logger, times(3)).error(anyString(), any(Exception.class));
   }
 
   @Test
-  public void execute_Should_returnExpectedWorkflowErrors_When_rocketChatDeletionFails()
-      throws Exception {
+  void execute_Should_returnExpectedWorkflowErrors_When_rocketChatDeletionFails() throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
     doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
         .when(this.rocketChatService)
@@ -103,22 +100,17 @@ public class DeleteSingleRoomAndSessionActionTest {
     this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(2));
-    verify(logger, times(2)).error(anyString(), any(RocketChatDeleteGroupException.class));
+    assertThat(workflowErrors, hasSize(1));
+    verify(logger, times(1)).error(anyString(), any(RocketChatDeleteGroupException.class));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(ASKER));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(ROCKET_CHAT));
     assertThat(workflowErrors.get(0).getIdentifier(), is(session.getGroupId()));
     assertThat(workflowErrors.get(0).getReason(), is("Deletion of Rocket.Chat group failed"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    assertThat(workflowErrors.get(1).getDeletionSourceType(), is(ASKER));
-    assertThat(workflowErrors.get(1).getDeletionTargetType(), is(ROCKET_CHAT));
-    assertThat(workflowErrors.get(1).getIdentifier(), is(session.getFeedbackGroupId()));
-    assertThat(workflowErrors.get(1).getReason(), is("Deletion of Rocket.Chat group failed"));
-    assertThat(workflowErrors.get(1).getTimestamp(), notNullValue());
   }
 
   @Test
-  public void execute_Should_returnExpectedWorkflowError_When_sessionDataDeletionFails() {
+  void execute_Should_returnExpectedWorkflowError_When_sessionDataDeletionFails() {
     Session session = new EasyRandom().nextObject(Session.class);
     doThrow(new RuntimeException()).when(this.sessionDataRepository).deleteAll(any());
     SessionDeletionWorkflowDTO workflowDTO =
@@ -137,7 +129,7 @@ public class DeleteSingleRoomAndSessionActionTest {
   }
 
   @Test
-  public void execute_Should_returnExpectedWorkflowError_When_sessionDeletionFails() {
+  void execute_Should_returnExpectedWorkflowError_When_sessionDeletionFails() {
     Session session = new EasyRandom().nextObject(Session.class);
     doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
     SessionDeletionWorkflowDTO workflowDTO =

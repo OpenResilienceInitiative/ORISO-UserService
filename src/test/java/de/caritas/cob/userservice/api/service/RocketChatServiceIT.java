@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_SYSTEM_A;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_INFO_RESPONSE_DTO;
 import static java.util.Objects.nonNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -9,8 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -24,7 +21,6 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsP
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO.PresenceStatus;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -347,42 +343,6 @@ class RocketChatServiceIT {
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             ArgumentMatchers.<Class<PresenceDTO>>any()));
-  }
-
-  @Test
-  void updateUser_Should_evictCacheEntry_When_displayNameIsUpdated()
-      throws RocketChatUserNotInitializedException {
-    givenAValidRocketChatSystemUser();
-    givenAValidChatUserId();
-    var userInfoUrl = "https://testing.com/api/v1/users.info?userId=" + chatUserId;
-    when(restTemplate.exchange(
-            eq(userInfoUrl),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            ArgumentMatchers.<Class<UserInfoResponseDTO>>any()))
-        .thenReturn(new ResponseEntity<>(USER_INFO_RESPONSE_DTO, HttpStatus.OK));
-    when(restTemplate.postForEntity(
-            eq("https://testing.com/api/v1/users.update"), any(), eq(Void.class)))
-        .thenReturn(new ResponseEntity<>(HttpStatus.OK));
-
-    underTest.findUserAndAddToCache(chatUserId);
-    underTest.findUserAndAddToCache(chatUserId);
-    verify(restTemplate, times(1))
-        .exchange(
-            eq(userInfoUrl),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            ArgumentMatchers.<Class<UserInfoResponseDTO>>any());
-
-    underTest.updateUser(chatUserId, "New Display Name");
-
-    underTest.findUserAndAddToCache(chatUserId);
-    verify(restTemplate, times(2))
-        .exchange(
-            eq(userInfoUrl),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            ArgumentMatchers.<Class<UserInfoResponseDTO>>any());
   }
 
   private void givenAValidRocketChatSystemUser() throws RocketChatUserNotInitializedException {

@@ -15,6 +15,18 @@ public class UrlDecodePasswordJsonDeserializer extends JsonDeserializer<String> 
   public String deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
       throws IOException, JsonProcessingException {
     String password = jsonParser.getValueAsString();
-    return helper.urlDecodeString(password);
+    String decodedPassword = helper.urlDecodeString(password);
+
+    // MATRIX MIGRATION: Store plain password in ThreadLocal for Matrix user creation
+    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials current =
+        de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
+    if (current != null) {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
+          current.getUsername(), decodedPassword);
+    } else {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(null, decodedPassword);
+    }
+
+    return decodedPassword;
   }
 }

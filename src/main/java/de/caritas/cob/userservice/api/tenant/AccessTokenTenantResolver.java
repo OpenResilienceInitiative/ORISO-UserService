@@ -2,12 +2,11 @@ package de.caritas.cob.userservice.api.tenant;
 
 import java.util.Map;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.keycloak.KeycloakSecurityContext;
-import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
 import org.springframework.stereotype.Component;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import jakarta.servlet.http.HttpServletRequest;
 
 @AllArgsConstructor
 @Component
@@ -37,11 +36,10 @@ public class AccessTokenTenantResolver implements TenantResolver {
   }
 
   private Map<String, Object> getClaimMap(HttpServletRequest request) {
-    KeycloakSecurityContext keycloakSecContext =
-        ((KeycloakAuthenticationToken) request.getUserPrincipal())
-            .getAccount()
-            .getKeycloakSecurityContext();
-    return keycloakSecContext.getToken().getOtherClaims();
+    if (request.getUserPrincipal() instanceof JwtAuthenticationToken jwtAuth) {
+      return jwtAuth.getToken().getClaims();
+    }
+    return Map.of();
   }
 
   @Override

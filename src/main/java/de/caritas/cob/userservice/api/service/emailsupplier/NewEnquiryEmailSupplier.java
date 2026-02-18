@@ -3,14 +3,13 @@ package de.caritas.cob.userservice.api.service.emailsupplier;
 import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
 import static java.util.Collections.emptyList;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
+import static org.keycloak.common.util.CollectionUtil.isEmpty;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -69,12 +68,12 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
     log.info("Generating emails for new enquiry");
     List<ConsultantAgency> consultantAgencyList =
         consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(session.getAgencyId());
-    log.info("Retrieved consultant agency list ", consultantAgencyList);
+    log.info("Retrieved consultant agency list {}", consultantAgencyList);
     if (isEmpty(consultantAgencyList)) {
       return emptyList();
     }
     AgencyDTO agency = agencyService.getAgency(session.getAgencyId());
-    log.info("Retrieved agency " + agency);
+    log.info("Retrieved agency {}", agency);
     return consultantAgencyList.stream()
         .filter(this::validConsultantAgency)
         .filter(this::shouldSendNewEnquiryNotificationForConsultant)
@@ -82,25 +81,68 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
         .collect(Collectors.toList());
   }
 
-  private Boolean validConsultantAgency(ConsultantAgency consultantAgency) {
-    return nonNull(consultantAgency)
-        && isNotBlank(consultantAgency.getConsultant().getEmail())
-        && !consultantAgency.getConsultant().isAbsent();
+  private boolean validConsultantAgency(ConsultantAgency consultantAgency) {
+    if (consultantAgency == null) {
+      return false;
+    }
+    var consultant = consultantAgency.getConsultant();
+    var isValid =
+        nonNull(consultant) && isNotBlank(consultant.getEmail()) && !consultant.isAbsent();
+    logReasonsIfConsultantNotValid(consultantAgency, consultant, isValid);
+    return isValid;
+  }
+
+  private static void logReasonsIfConsultantNotValid(
+      ConsultantAgency consultantAgency, Consultant consultant, boolean isValid) {
+    if (!isValid) {
+      if (consultant == null) {
+        log.debug(
+            "Cannot send email notification: consultant is null for agency {}",
+            consultantAgency.getId());
+      } else if (!isNotBlank(consultant.getEmail())) {
+        log.debug(
+            "Cannot send email notification: email is blank for consultant {}", consultant.getId());
+      } else if (consultant.isAbsent()) {
+        log.debug(
+            "Skipping new enquiry email notification: consultant {} is marked as absent",
+            consultant.getId());
+      }
+    }
   }
 
   private boolean shouldSendNewEnquiryNotificationForConsultant(ConsultantAgency consultantAgency) {
-    if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
-      return wantsToReceiveNotificationsAboutNewEnquiry(consultantAgency.getConsultant());
+    if (!releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
+      // since the notificationtoggle is off, by default send notifications
+      return true;
     }
-    return true;
+
+    var consultant = consultantAgency.getConsultant();
+    var shouldSend = wantsToReceiveNotificationsAboutNewEnquiry(consultant);
+    if (shouldSend) {
+      log.debug(
+          "All notification checks passed for consultant {} - will generate email",
+          consultant.getId());
+    }
+    return shouldSend;
   }
 
-  private boolean wantsToReceiveNotificationsAboutNewEnquiry(
-      NotificationsAware notificationsAware) {
+  private boolean wantsToReceiveNotificationsAboutNewEnquiry(Consultant consultant) {
     NotificationsSettingsDTO notificationsSettingsDTO =
-        deserializeNotificationSettingsDTOOrDefaultIfNull(notificationsAware);
-    return notificationsAware.isNotificationsEnabled()
-        && notificationsSettingsDTO.getInitialEnquiryNotificationEnabled();
+        deserializeNotificationSettingsDTOOrDefaultIfNull(consultant);
+    var notificationEnabled = consultant.isNotificationsEnabled();
+    if (!notificationEnabled) {
+      log.debug(
+          "Skipping email notification: notifications are disabled for consultant {}",
+          consultant.getId());
+    }
+    var initialEnquiryNotificationsEnabled =
+        notificationsSettingsDTO.getInitialEnquiryNotificationEnabled();
+    if (!initialEnquiryNotificationsEnabled) {
+      log.debug(
+          "Skipping email notification: initial enquiry notification setting is disabled for consultant {}",
+          consultant.getId());
+    }
+    return notificationEnabled && initialEnquiryNotificationsEnabled;
   }
 
   private Function<ConsultantAgency, MailDTO> toEnquiryMailDTO(AgencyDTO agency) {
@@ -129,6 +171,7 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
         .template(TEMPLATE_NEW_ENQUIRY_NOTIFICATION)
         .email(consultant.getEmail())
         .language(language)
+        .dialect(consultant.getDialect())
         .templateData(templateAttributes);
   }
 }

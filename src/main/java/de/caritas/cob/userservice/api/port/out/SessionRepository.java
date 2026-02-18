@@ -26,11 +26,11 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   List<Session> findByConsultantAndStatus(Consultant consultant, SessionStatus sessionStatus);
 
   /**
-   * Find all {@link Session}s by a consultant and a list of session statuses.
+   * Find a {@link Session} by a consultant id and a session statuses.
    *
    * @param consultant {@link Consultant}
-   * @param statuses list of {@link SessionStatus}
-   * @return A list of {@link Session}s for the specific consultant and statuses
+   * @param statuses {@link SessionStatus}
+   * @return A list of {@link Session}s for the specific consultant id and status
    */
   List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
 
@@ -55,9 +55,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specific agency ids and status orderd by creation
    *     date ascending
    */
-  List<Session>
-      findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
-          List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
+  List<Session> findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateAsc(
+      List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
 
   /**
    * Find a {@link Session} by agency ids with status and team session where consultant is not the
@@ -69,7 +68,7 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specific agency ids and status orderd by creation
    *     date ascending
    */
-  List<Session> findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+  List<Session> findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
       List<Long> agencyIds,
       Consultant consultant,
       SessionStatus sessionStatus,
@@ -109,14 +108,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Page<Session> findByUserUserId(String userId, Pageable pageable);
 
   /**
-   * Find the {@link Session} by Rocket.Chat feedback group id.
-   *
-   * @param feedbackGroupId the rocket chat feedback group id
-   * @return an {@link Optional} of the session
-   */
-  Optional<Session> findByFeedbackGroupId(String feedbackGroupId);
-
-  /**
    * Find the {@link Session} by Rocket.Chat group id.
    *
    * @param groupId the rocket chat group id
@@ -124,13 +115,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   Optional<Session> findByGroupId(String groupId);
 
+  /**
+   * Find the {@link Session} by Matrix room ID.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return an {@link Optional} of the session
+   */
+  Optional<Session> findByMatrixRoomId(String matrixRoomId);
+
   @Query(
-      value =
-          "SELECT * "
-              + "FROM session s "
-              + "WHERE s.rc_group_id IN :group_ids OR s.rc_feedback_group_id IN :group_ids",
+      value = "SELECT * " + "FROM session s " + "WHERE s.rc_group_id IN :group_ids",
       nativeQuery = true)
-  List<Session> findByGroupOrFeedbackGroupIds(@Param(value = "group_ids") Set<String> groupIds);
+  List<Session> findByGroupIds(@Param(value = "group_ids") Set<String> groupIds);
 
   /**
    * Find all {@link Session}s by an agency ID and SessionStatus where consultant is null.
@@ -234,4 +230,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return an {@link List} of the result
    */
   List<Session> findByConsultantAndUser(Consultant consultant, User user);
+
+  List<Session> findByUserAndMainTopicId(User user, Long topicId);
+
+  /**
+   * Find sessions where consultant is the owner and it's a team session with given status. Used for
+   * group chats where consultant is the creator.
+   *
+   * @param consultant the consultant
+   * @param isTeamSession whether it's a team session
+   * @param status the session status
+   * @return list of sessions
+   */
+  List<Session> findByConsultantAndTeamSessionAndStatus(
+      Consultant consultant, boolean isTeamSession, SessionStatus status);
 }

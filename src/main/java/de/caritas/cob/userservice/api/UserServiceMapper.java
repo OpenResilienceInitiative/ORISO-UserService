@@ -35,6 +35,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 
@@ -79,15 +80,15 @@ public class UserServiceMapper {
     map.put(
         "notifyNewChatMessageFromAdviceSeeker",
         consultant.getNotifyNewChatMessageFromAdviceSeeker());
-    map.put(
-        "notifyNewFeedbackMessageFromAdviceSeeker",
-        consultant.getNotifyNewFeedbackMessageFromAdviceSeeker());
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
     map.put("chatUserId", consultant.getRocketChatId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
 
-    if (additionalMap.containsKey("displayName")) {
-      var displayName = (String) additionalMap.get("displayName");
+    var displayName =
+        additionalMap.containsKey("displayName")
+            ? (String) additionalMap.get("displayName")
+            : consultant.getDisplayName();
+    if (displayName != null) {
       map.put("displayName", usernameTranscoder.decodeUsername(displayName));
     }
 
@@ -98,7 +99,8 @@ public class UserServiceMapper {
       Page<ConsultantBase> consultantPage,
       List<Consultant> fullConsultants,
       List<AgencyDTO> agencyDTOS,
-      List<ConsultantAgencyBase> consultantAgencies) {
+      List<ConsultantAgencyBase> consultantAgencies,
+      Map<Long, String> tenantIdsToNameMap) {
 
     var agencyLookupMap =
         agencyDTOS.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
@@ -115,7 +117,7 @@ public class UserServiceMapper {
         consultantBase -> {
           var fullConsultant = fullConsultantLookupMap.get(consultantBase.getId());
           var agencies = mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap);
-          var consultantMap = mapOf(consultantBase, fullConsultant, agencies);
+          var consultantMap = mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap);
           consultants.add(consultantMap);
         });
 
@@ -134,7 +136,8 @@ public class UserServiceMapper {
       Page<AdminBase> adminsPage,
       List<Admin> fullAdmins,
       List<AgencyDTO> agencyDTOs,
-      List<AdminAgencyBase> agenciesOfAdmin) {
+      List<AdminAgencyBase> agenciesOfAdmin,
+      Map<Long, String> tenantIdsToNameMap) {
     var agencyLookupMap =
         agencyDTOs.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
 
@@ -148,9 +151,9 @@ public class UserServiceMapper {
     adminsPage.forEach(
         adminBase -> {
           var fullAdmin = fullAdminLookupMap.get(adminBase.getId());
-          var agencies = mapOfAdmin(fullAdmin, agencyLookupMap, adminAgencyLookupMap);
-          var consultantMap = mapOfAdmin(adminBase, fullAdmin, agencies);
-          admins.add(consultantMap);
+          var agencies = mapOfAgencies(fullAdmin, agencyLookupMap, adminAgencyLookupMap);
+          var adminMap = mapOfAdmin(adminBase, fullAdmin, agencies, tenantIdsToNameMap);
+          admins.add(adminMap);
         });
 
     return Map.of(
@@ -190,7 +193,7 @@ public class UserServiceMapper {
     return agencies;
   }
 
-  private List<Map<String, Object>> mapOfAdmin(
+  private List<Map<String, Object>> mapOfAgencies(
       Admin admin,
       Map<Long, AgencyDTO> agencyLookupMap,
       Map<String, List<AdminAgencyBase>> aaLookupMap) {
@@ -232,7 +235,8 @@ public class UserServiceMapper {
   public Map<String, Object> mapOf(
       ConsultantBase consultantBase,
       Consultant fullConsultant,
-      List<Map<String, Object>> agencies) {
+      List<Map<String, Object>> agencies,
+      Map<Long, String> tenantIdsToNameMap) {
     var status =
         isNull(fullConsultant.getStatus())
             ? ConsultantStatus.ERROR.toString()
@@ -249,6 +253,7 @@ public class UserServiceMapper {
     map.put("isAbsent", fullConsultant.isAbsent());
     map.put("isLanguageFormal", fullConsultant.isLanguageFormal());
     map.put("isTeamConsultant", fullConsultant.isTeamConsultant());
+    map.put("isSupervisor", fullConsultant.isSupervisor());
     map.put(
         "createdAt",
         nonNull(fullConsultant.getCreateDate()) ? fullConsultant.getCreateDate().toString() : null);
@@ -259,12 +264,21 @@ public class UserServiceMapper {
         "deletedAt",
         nonNull(fullConsultant.getDeleteDate()) ? fullConsultant.getDeleteDate().toString() : null);
     map.put("agencies", agencies);
-
+    Long tenantId = fullConsultant.getTenantId();
+    map.put("tenantId", tenantId);
+    map.put(
+        "tenantName",
+        tenantIdsToNameMap.containsKey(tenantId)
+            ? tenantIdsToNameMap.get(tenantId)
+            : StringUtils.EMPTY);
     return map;
   }
 
   public Map<String, Object> mapOfAdmin(
-      AdminBase adminBase, Admin fullAdmin, List<Map<String, Object>> agencies) {
+      AdminBase adminBase,
+      Admin fullAdmin,
+      List<Map<String, Object>> agencies,
+      Map<Long, String> tenantIdsToNameMap) {
 
     Map<String, Object> map = new HashMap<>();
     map.put("id", adminBase.getId());
@@ -273,6 +287,7 @@ public class UserServiceMapper {
     map.put("lastName", adminBase.getLastName());
     map.put("username", fullAdmin.getUsername());
     map.put("tenantId", fullAdmin.getTenantId());
+    map.put("tenantName", getTenantName(fullAdmin, tenantIdsToNameMap));
     map.put(
         "createdAt",
         nonNull(fullAdmin.getCreateDate()) ? fullAdmin.getCreateDate().toString() : null);
@@ -282,6 +297,12 @@ public class UserServiceMapper {
     map.put("agencies", agencies);
 
     return map;
+  }
+
+  private String getTenantName(Admin fullAdmin, Map<Long, String> tenantIdsToNameMap) {
+    return tenantIdsToNameMap.containsKey(fullAdmin.getTenantId())
+        ? tenantIdsToNameMap.get(fullAdmin.getTenantId())
+        : StringUtils.EMPTY;
   }
 
   public Optional<Map<String, Object>> mapOf(Optional<Session> optionalSession) {
@@ -360,9 +381,8 @@ public class UserServiceMapper {
       var notify = (Boolean) patchMap.get("notifyNewChatMessageFromAdviceSeeker");
       consultant.setNotifyNewChatMessageFromAdviceSeeker(notify);
     }
-    if (patchMap.containsKey("notifyNewFeedbackMessageFromAdviceSeeker")) {
-      var notify = (Boolean) patchMap.get("notifyNewFeedbackMessageFromAdviceSeeker");
-      consultant.setNotifyNewFeedbackMessageFromAdviceSeeker(notify);
+    if (patchMap.containsKey("displayName")) {
+      consultant.setDisplayName((String) patchMap.get("displayName"));
     }
     if (patchMap.containsKey("termsAndConditionsConfirmation")
         && (patchMap.get("termsAndConditionsConfirmation") instanceof Boolean)) {
@@ -380,12 +400,21 @@ public class UserServiceMapper {
     return consultant;
   }
 
-  public Optional<String> displayNameOf(Map<String, Object> patchMap) {
+  public Optional<String> encodedDisplayNameOf(Map<String, Object> patchMap) {
     if (patchMap.containsKey("displayName")) {
       var displayName = (String) patchMap.get("displayName");
       var encodedDisplayName = usernameTranscoder.encodeUsername(displayName);
 
       return Optional.of(encodedDisplayName);
+    }
+
+    return Optional.empty();
+  }
+
+  public Optional<String> displayNameOf(Map<String, Object> patchMap) {
+    if (patchMap.containsKey("displayName")) {
+      var displayName = (String) patchMap.get("displayName");
+      return Optional.of(displayName);
     }
 
     return Optional.empty();
@@ -401,6 +430,14 @@ public class UserServiceMapper {
     if (patchMap.containsKey("preferredLanguage")) {
       var preferredLanguage = (String) patchMap.get("preferredLanguage");
       adviceSeeker.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
+    }
+    if (patchMap.containsKey("termsAndConditionsConfirmation")
+        && (patchMap.get("termsAndConditionsConfirmation") instanceof Boolean)) {
+      adviceSeeker.setTermsAndConditionsConfirmation(LocalDateTime.now());
+    }
+    if (patchMap.containsKey("dataPrivacyConfirmation")
+        && (patchMap.get("dataPrivacyConfirmation") instanceof Boolean)) {
+      adviceSeeker.setDataPrivacyConfirmation(LocalDateTime.now());
     }
     if (patchMap.containsKey("emailNotifications")) {
       patchEmailNotificationSettings(adviceSeeker, patchMap);
@@ -468,6 +505,9 @@ public class UserServiceMapper {
     var status = (String) appointmentMap.get("status");
     appointment.setStatus(AppointmentStatus.valueOf(status.toUpperCase()));
     appointment.setConsultant(consultant);
+    if (appointmentMap.containsKey("bookingId")) {
+      appointment.setBookingId((Integer) appointmentMap.get("bookingId"));
+    }
 
     return appointment;
   }

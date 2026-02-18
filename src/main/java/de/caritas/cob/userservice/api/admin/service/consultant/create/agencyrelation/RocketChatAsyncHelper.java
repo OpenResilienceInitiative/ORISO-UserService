@@ -62,10 +62,19 @@ public class RocketChatAsyncHelper {
           .addToGroupsOrRollbackOnFailure();
       updateConsultantStatus(consultant, agency);
     } catch (Exception e) {
-      consultant.setStatus(ConsultantStatus.ERROR);
-      consultantRepository.save(consultant);
-      sendErrorEmail(consultant, e);
-      log.error("Error happened during rocket chat session assignments", e);
+      // MATRIX MIGRATION: Don't set ERROR status for Matrix consultants (RocketChat is optional)
+      if (consultant.getMatrixUserId() == null) {
+        consultant.setStatus(ConsultantStatus.ERROR);
+        consultantRepository.save(consultant);
+        sendErrorEmail(consultant, e);
+        log.error("Error happened during rocket chat session assignments", e);
+      } else {
+        // For Matrix consultants, RocketChat failures are expected and non-blocking
+        log.warn(
+            "RocketChat assignment failed for Matrix consultant {}, continuing",
+            consultant.getId());
+        updateConsultantStatus(consultant, agency);
+      }
     }
     TenantContext.clear();
   }

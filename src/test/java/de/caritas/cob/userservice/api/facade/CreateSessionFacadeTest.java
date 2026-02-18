@@ -13,7 +13,8 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSION_RESPONSE_DTO_LIST_U25;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -27,102 +28,127 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.powermock.reflect.Whitebox.setInternalState;
 
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
+import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.slf4j.Logger;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-@RunWith(SpringRunner.class)
-public class CreateSessionFacadeTest {
+@ExtendWith(SpringExtension.class)
+class CreateSessionFacadeTest {
 
   @InjectMocks private CreateSessionFacade createSessionFacade;
   @Mock private SessionService sessionService;
   @Mock private AgencyVerifier agencyVerifier;
   @Mock private SessionDataService sessionDataService;
   @Mock private RollbackFacade rollbackFacade;
-  @Mock private ValidatedUserAccountProvider userAccountProvider;
+  @Mock private UserAccountService userAccountProvider;
   @Mock private Logger logger;
 
-  @Before
+  @Mock private ConsultantAgencyRepository consultantAgencyRepository;
+
+  List<NewSessionValidationConstraint> validationConstraints =
+      Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE);
+
+  @BeforeEach
   public void setup() {
     setInternalState(LogService.class, "LOGGER", logger);
   }
 
   /** Method: createUserSession */
-  @Test(expected = ConflictException.class)
+  @Test
   public void createUserSession_Should_ReturnConflict_When_AlreadyRegisteredToConsultingType() {
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> {
+          when(sessionService.getSessionsForUserByConsultingTypeId(any(), anyInt()))
+              .thenReturn(SESSION_LIST);
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-    when(sessionService.getSessionsForUserByConsultingTypeId(any(), anyInt()))
-        .thenReturn(SESSION_LIST);
-    createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
-
-    verify(sessionService, times(0)).saveSession(any());
+          verify(sessionService, times(0)).saveSession(any());
+        });
   }
 
-  @Test(expected = InternalServerErrorException.class)
+  @Test
   public void
       createUserSession_Should_ReturnInternalServerErrorAndRollbackUserAccount_When_SessionCouldNotBeSaved() {
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          when(sessionService.getSessionsForUserId(USER_ID))
+              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+          when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+          when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+              .thenThrow(new InternalServerErrorException(MESSAGE));
 
-    when(sessionService.getSessionsForUserId(USER_ID))
-        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
-    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
-    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
-        .thenThrow(new InternalServerErrorException(MESSAGE));
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-    createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
-
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
-    verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+          verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+        });
   }
 
-  @Test(expected = InternalServerErrorException.class)
+  @Test
   public void
       createUserSession_Should_ReturnInternalServerErrorAndRollbackUserAccount_When_SessionDataCouldNotBeSaved() {
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          when(sessionService.getSessionsForUserId(USER_ID))
+              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+          when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+          when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+              .thenThrow(new InternalServerErrorException(MESSAGE));
+          doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
+              .when(sessionDataService)
+              .saveSessionData(any(Session.class), any());
 
-    when(sessionService.getSessionsForUserId(USER_ID))
-        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
-    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
-    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
-        .thenThrow(new InternalServerErrorException(MESSAGE));
-    doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
-        .when(sessionDataService)
-        .saveSessionData(any(Session.class), any());
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-    createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
-
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
-    verify(sessionService, times(1)).deleteSession(any());
-    verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+          verify(sessionService, times(1)).deleteSession(any());
+          verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+        });
   }
 
-  @Test(expected = BadRequestException.class)
+  @Test
   public void
       createUserSession_Should_ReturnBadRequest_When_AgencyForConsultingTypeCouldNotBeFound() {
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          when(sessionService.getSessionsForUserId(USER_ID))
+              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+          when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(null);
 
-    when(sessionService.getSessionsForUserId(USER_ID))
-        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
-    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(null);
-
-    createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+        });
   }
 
   @Test
@@ -135,7 +161,8 @@ public class CreateSessionFacadeTest {
         .thenReturn(SESSION_WITHOUT_CONSULTANT);
 
     Long result =
-        createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
+        createSessionFacade.createUserSession(
+            USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
   }
@@ -150,7 +177,8 @@ public class CreateSessionFacadeTest {
         .thenReturn(SESSION_WITHOUT_CONSULTANT);
 
     Long result =
-        createSessionFacade.createUserSession(USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT);
+        createSessionFacade.createUserSession(
+            USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
     verify(sessionDataService, times(1)).saveSessionData(any(Session.class), any());

@@ -22,16 +22,19 @@ import de.caritas.cob.userservice.api.model.NotificationSettings;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.NotificationsDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -54,6 +57,7 @@ public class NewMessageEmailSupplier implements EmailSupplier {
   private final String emailDummySuffix;
   private boolean multiTenancyEnabled;
   private final TenantTemplateSupplier tenantTemplateSupplier;
+  private final MessageClient messageClient;
 
   private final ReleaseToggleService releaseToggleService;
 
@@ -102,20 +106,44 @@ public class NewMessageEmailSupplier implements EmailSupplier {
     List<ConsultantAgency> consultantList = retrieveDependentConsultantAgencies();
     if (isNotEmpty(consultantList)) {
       return consultantList.stream()
-          .filter(agency -> !agency.getConsultant().getEmail().isEmpty())
+          .filter(agency -> checkThatConsultantEmailNotEmpty(agency))
           .filter(agency -> wantsToReceiveNotifications(agency.getConsultant()))
+          .filter(isConsultantLoggedOut())
           .map(this::toNewConsultantMessageMailDTO)
           .collect(Collectors.toList());
     }
     return emptyList();
   }
 
+  private static boolean checkThatConsultantEmailNotEmpty(ConsultantAgency agency) {
+    var isEmpty = agency.getConsultant().getEmail().isEmpty();
+    if (isEmpty) {
+      log.debug(
+          "Skipping email notification: consultant email is empty {}",
+          agency.getConsultant().getId());
+    }
+    return !isEmpty;
+  }
+
   private boolean wantsToReceiveNotifications(Consultant consultant) {
 
     if (isNewNotificationToggleEnabled()) {
-      return wantsToReceiveNotificationsAboutNewMessage(consultant);
+      var wantsToReceiveNotifications = wantsToReceiveNotificationsAboutNewMessage(consultant);
+      if (!wantsToReceiveNotifications) {
+        log.debug(
+            "Skipping email notification: new message notification setting is disabled for consultant {}",
+            consultant.getId());
+      }
+      return wantsToReceiveNotifications;
     } else {
-      return consultant.getNotifyNewChatMessageFromAdviceSeeker();
+      var notifyNewChatMessageFromAdviceSeeker =
+          consultant.getNotifyNewChatMessageFromAdviceSeeker();
+      if (!notifyNewChatMessageFromAdviceSeeker) {
+        log.debug(
+            "Skipping email notification: new message notification setting is disabled for consultant {}",
+            consultant.getId());
+      }
+      return notifyNewChatMessageFromAdviceSeeker;
     }
   }
 
@@ -127,8 +155,9 @@ public class NewMessageEmailSupplier implements EmailSupplier {
       NotificationsAware notificationsAware) {
     NotificationSettings notificationSettings =
         deserializeNotificationSettingsOrDefaultIfNull(notificationsAware);
-    return notificationsAware.isNotificationsEnabled()
-        && notificationSettings.isNewChatMessageNotificationEnabled();
+    boolean notificationsEnabled = notificationsAware.isNotificationsEnabled();
+
+    return notificationsEnabled && notificationSettings.isNewChatMessageNotificationEnabled();
   }
 
   private boolean isNotTheFirstMessage() {
@@ -184,6 +213,7 @@ public class NewMessageEmailSupplier implements EmailSupplier {
     return new MailDTO()
         .template(TEMPLATE_NEW_MESSAGE_NOTIFICATION_CONSULTANT)
         .email(recipient.getEmail())
+        .dialect(recipient.getDialect())
         .language(languageOf(recipient.getLanguageCode()))
         .templateData(templateAttributes);
   }
@@ -197,11 +227,32 @@ public class NewMessageEmailSupplier implements EmailSupplier {
           userId);
     } else if (!isAdviceSeekerWithEmail()) {
       log.info("Cannot send email. Advice seeker ({}) has no genuine address.", userId);
-    } else {
+    } else if (isAdviceSeekerLoggedOut()) {
       return buildMailForAskerList();
     }
 
     return emptyList();
+  }
+
+  private Predicate<ConsultantAgency> isConsultantLoggedOut() {
+    return this::checkIfConsultantIsLoggedIn;
+  }
+
+  private boolean checkIfConsultantIsLoggedIn(ConsultantAgency agency) {
+    var isLoggedOut =
+        !messageClient.isLoggedIn(agency.getConsultant().getRocketChatId()).orElse(false);
+    if (!isLoggedOut) {
+      log.debug("Skipping send email notification for new message: consultant is logged in");
+    }
+    return isLoggedOut;
+  }
+
+  private boolean isAdviceSeekerLoggedOut() {
+    var isLoggedOut = !messageClient.isLoggedIn(session.getUser().getRcUserId()).orElse(false);
+    if (!isLoggedOut) {
+      log.debug("Skipping send email notification for new message: advice seeker is logged in");
+    }
+    return isLoggedOut;
   }
 
   private List<MailDTO> buildMailForAskerList() {
@@ -219,7 +270,8 @@ public class NewMessageEmailSupplier implements EmailSupplier {
             asker.getEmail(),
             asker.getLanguageCode(),
             usernameTranscoder.decodeUsername(consultantUsername),
-            usernameTranscoder.decodeUsername(asker.getUsername()));
+            usernameTranscoder.decodeUsername(asker.getUsername()),
+            asker.getDialect());
 
     return singletonList(mailDTO);
   }
@@ -249,7 +301,11 @@ public class NewMessageEmailSupplier implements EmailSupplier {
   }
 
   private MailDTO buildMailDtoForNewMessageNotificationAsker(
-      String email, LanguageCode languageCode, String consultantName, String askerName) {
+      String email,
+      LanguageCode languageCode,
+      String consultantName,
+      String askerName,
+      Dialect askerDialect) {
     var templateAttributes = new ArrayList<TemplateDataDTO>();
     templateAttributes.add(new TemplateDataDTO().key("consultantName").value(consultantName));
     templateAttributes.add(new TemplateDataDTO().key("askerName").value(askerName));
@@ -262,6 +318,7 @@ public class NewMessageEmailSupplier implements EmailSupplier {
 
     return new MailDTO()
         .template(TEMPLATE_NEW_MESSAGE_NOTIFICATION_ASKER)
+        .dialect(askerDialect)
         .email(email)
         .language(languageOf(languageCode))
         .templateData(templateAttributes);

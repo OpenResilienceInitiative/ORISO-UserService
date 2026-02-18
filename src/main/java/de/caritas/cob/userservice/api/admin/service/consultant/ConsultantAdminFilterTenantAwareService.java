@@ -4,7 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterQueryBuilder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import javax.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityManagerFactory;
 import lombok.NonNull;
 import org.apache.lucene.search.Query;
 import org.hibernate.search.jpa.FullTextEntityManager;
@@ -27,6 +27,7 @@ public class ConsultantAdminFilterTenantAwareService extends ConsultantAdminFilt
     super(entityManagerFactory);
   }
 
+  @Override
   protected FullTextQuery buildFilteredQuery(
       ConsultantFilter consultantFilter, FullTextEntityManager fullTextEntityManager) {
 
@@ -53,8 +54,10 @@ public class ConsultantAdminFilterTenantAwareService extends ConsultantAdminFilt
             .onConsultantFilter(consultantFilter)
             .buildQuery();
 
-    Query resultQuery = queryBuilder.bool().must(tenantQuery).must(query).createQuery();
-
+    Query resultQuery =
+        TenantContext.isTechnicalOrSuperAdminContext()
+            ? query
+            : queryBuilder.bool().must(tenantQuery).must(query).createQuery();
     return fullTextEntityManager.createFullTextQuery(resultQuery, Consultant.class);
   }
 }

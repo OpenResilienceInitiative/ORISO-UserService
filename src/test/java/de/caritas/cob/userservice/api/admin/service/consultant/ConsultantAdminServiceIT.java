@@ -4,17 +4,19 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.powermock.api.mockito.PowerMockito.when;
 
+import de.caritas.cob.userservice.api.AccountManager;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
-import de.caritas.cob.userservice.api.admin.service.consultant.create.ConsultantCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -27,23 +29,21 @@ import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.jeasy.random.EasyRandomParameters;
 import org.jeasy.random.FieldPredicates;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 public class ConsultantAdminServiceIT {
 
   private static final String EXISTING_CONSULTANT = "0b3b1cc6-be98-4787-aa56-212259d811b9";
+  private static final Boolean FORCE_DELETE_SESSIONS = false;
 
   @Autowired private ConsultantAdminService consultantAdminService;
 
@@ -51,11 +51,13 @@ public class ConsultantAdminServiceIT {
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockBean private ConsultantCreatorService consultantCreatorService;
+  @MockBean private CreateConsultantSaga createConsultantSaga;
 
   @MockBean private ConsultantUpdateService consultantUpdateService;
 
   @MockBean private AppointmentService appointmentService;
+
+  @MockBean private AccountManager accountManager;
 
   @Test
   public void findConsultantById_Should_returnExpectedConsultant_When_consultantIdExists() {
@@ -94,7 +96,7 @@ public class ConsultantAdminServiceIT {
     assertThat(consultantById.getLinks().getDelete(), notNullValue());
     assertThat(
         consultantById.getLinks().getDelete().getHref(),
-        endsWith("/useradmin/consultants/" + EXISTING_CONSULTANT));
+        endsWith("/useradmin/consultants/" + EXISTING_CONSULTANT + "?forceDeleteSessions=false"));
     assertThat(consultantById.getLinks().getDelete().getMethod(), is(MethodEnum.DELETE));
     assertThat(consultantById.getLinks().getAgencies(), notNullValue());
     assertThat(
@@ -108,22 +110,26 @@ public class ConsultantAdminServiceIT {
     assertThat(consultantById.getLinks().getAddAgency().getMethod(), is(MethodEnum.POST));
   }
 
-  @Test(expected = NoContentException.class)
+  @Test
   public void findConsultantById_Should_throwNoContentException_When_consultantIdDoesNotExist() {
-    this.consultantAdminService.findConsultantById("Invalid");
+    assertThrows(
+        NoContentException.class,
+        () -> {
+          this.consultantAdminService.findConsultantById("Invalid");
+        });
   }
 
   @Test
   public void createNewConsultant_Should_useCreatorServiceAndBuildConsultantAdminResponseDTO() {
     CreateConsultantDTO createConsultantDTO =
         new EasyRandom().nextObject(CreateConsultantDTO.class);
-    when(this.consultantCreatorService.createNewConsultant(any()))
-        .thenReturn(new EasyRandom().nextObject(Consultant.class));
+    when(this.createConsultantSaga.createNewConsultant(any()))
+        .thenReturn(new EasyRandom().nextObject(ConsultantAdminResponseDTO.class));
 
     ConsultantAdminResponseDTO result =
         this.consultantAdminService.createNewConsultant(createConsultantDTO);
 
-    verify(this.consultantCreatorService, times(1)).createNewConsultant(createConsultantDTO);
+    verify(this.createConsultantSaga, times(1)).createNewConsultant(createConsultantDTO);
     assertThat(result.getLinks(), notNullValue());
     assertThat(result.getEmbedded(), notNullValue());
   }
@@ -147,7 +153,7 @@ public class ConsultantAdminServiceIT {
   public void markConsultantForDeletion_Should_setDeleteDateForConsultantAndConsultantAgencies() {
     var consultant = givenAPersistedConsultantWithMultipleAgencies();
 
-    this.consultantAdminService.markConsultantForDeletion(consultant.getId());
+    this.consultantAdminService.markConsultantForDeletion(consultant.getId(), false);
 
     var deletedConsultant = consultantRepository.findById(consultant.getId());
     assertThat(deletedConsultant.get().getDeleteDate(), notNullValue());

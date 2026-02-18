@@ -22,14 +22,14 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.AppointmentsApi;
 import io.swagger.annotations.Api;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -46,13 +46,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class AppointmentController implements AppointmentsApi {
 
   private static final String APPOINTMENT_NOT_FOUND = "Appointment (%s) not found.";
+
+  private static final String APPOINTMENT_WITH_BOOKING_ID_NOT_FOUND =
+      "Appointment with booking id (%s) not found.";
   private final Organizing organizer;
 
   private final AppointmentDtoMapper mapper;
 
   private final AuthenticatedUser currentUser;
 
-  private final @NotNull ValidatedUserAccountProvider userAccountProvider;
+  private final @NotNull UserAccountService userAccountProvider;
 
   private final @NotNull CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
@@ -72,6 +75,21 @@ public class AppointmentController implements AppointmentsApi {
         organizer
             .findAppointment(id.toString())
             .orElseThrow(() -> new NotFoundException(APPOINTMENT_NOT_FOUND, id.toString()));
+
+    var appointment = mapper.appointmentOf(appointmentMap, currentUser.isConsultant());
+
+    return ResponseEntity.ok(appointment);
+  }
+
+  @Override
+  public ResponseEntity<Appointment> getAppointmentByBookingId(Integer bookingId) {
+    var appointmentMap =
+        organizer
+            .findAppointmentByBookingId(bookingId)
+            .orElseThrow(
+                () ->
+                    new NotFoundException(
+                        APPOINTMENT_WITH_BOOKING_ID_NOT_FOUND, bookingId.toString()));
 
     var appointment = mapper.appointmentOf(appointmentMap, currentUser.isConsultant());
 

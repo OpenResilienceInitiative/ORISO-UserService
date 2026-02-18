@@ -54,7 +54,7 @@ public class RocketChatRemoveFromGroupOperationService extends RocketChatGroupOp
     return this;
   }
 
-  /** Removes the given consultant from Rocket.Chat group and feedback group of given session. */
+  /** Removes the given consultant from Rocket.Chat group of given session. */
   public void removeFromGroupsOrRollbackOnFailure() {
     this.consultantsToRemoveFromSessions.forEach(
         (session, consultants) ->
@@ -74,10 +74,11 @@ public class RocketChatRemoveFromGroupOperationService extends RocketChatGroupOp
   }
 
   /** Removes the given consultant from Rocket.Chat group of given session. */
-  public void removeFromGroup() {
+  public void removeFromGroupAndIgnoreGroupNotFound() {
     this.consultantsToRemoveFromSessions.forEach(
         ((session, consultants) ->
-            removeConsultantsFromSessionGroup(session.getGroupId(), consultants)));
+            removeConsultantsFromSessionGroupAndIgnoreGroupNotFound(
+                session.getGroupId(), consultants)));
   }
 
   /**
@@ -87,41 +88,13 @@ public class RocketChatRemoveFromGroupOperationService extends RocketChatGroupOp
     this.consultantsToRemoveFromSessions.forEach(this::performGroupRemove);
   }
 
-  /** Removes the given consultant from Rocket.Chat feedback group of given session. */
-  public void removeFromFeedbackGroup() {
-    this.consultantsToRemoveFromSessions.forEach(
-        ((session, consultants) ->
-            removeConsultantsFromSessionGroup(session.getFeedbackGroupId(), consultants)));
-  }
-
-  /**
-   * Removes the given consultant from Rocket.Chat feedback group of given session with rollback on
-   * error.
-   */
-  public void removeFromFeedbackGroupOrRollbackOnFailure() {
-    this.consultantsToRemoveFromSessions.forEach(this::performFeedbackGroupRemove);
-  }
-
   private void performGroupRemove(Session session, List<Consultant> consultants) {
     try {
-      removeConsultantsFromSessionGroup(session.getGroupId(), consultants);
+      removeConsultantsFromSessionGroupAndIgnoreGroupNotFound(session.getGroupId(), consultants);
     } catch (Exception e) {
       rollback();
       throw new InternalServerErrorException(
           String.format(FAILED_TO_REMOVE_CONSULTANTS_ERROR, session.getGroupId(), session.getId()),
-          e,
-          LogService::logRocketChatError);
-    }
-  }
-
-  private void performFeedbackGroupRemove(Session session, List<Consultant> consultants) {
-    try {
-      removeConsultantsFromSessionGroup(session.getFeedbackGroupId(), consultants);
-    } catch (Exception e) {
-      rollback();
-      throw new InternalServerErrorException(
-          String.format(
-              FAILED_TO_REMOVE_CONSULTANTS_ERROR, session.getFeedbackGroupId(), session.getId()),
           e,
           LogService::logRocketChatError);
     }

@@ -24,25 +24,22 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
@@ -55,9 +52,9 @@ public class RegisteredEnquiryConversationListProviderIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private ValidatedUserAccountProvider userAccountProvider;
+  @MockBean private UserAccountService userAccountProvider;
 
-  @Before
+  @BeforeEach
   public void setup() {
     Consultant consultant = mock(Consultant.class);
     ConsultantAgency consultantAgency = mock(ConsultantAgency.class);
@@ -66,7 +63,7 @@ public class RegisteredEnquiryConversationListProviderIT {
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
   }
 
-  @After
+  @AfterEach
   public void cleanDatabase() {
     this.sessionRepository.deleteAll();
   }

@@ -43,11 +43,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -112,6 +113,8 @@ class UserController2faE2EIT {
 
   @MockBean private AuthenticatedUser authenticatedUser;
 
+  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
   @MockBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
@@ -164,6 +167,17 @@ class UserController2faE2EIT {
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void startTwoFactorAuthByEmailSetupShouldRespondWithNoContent() throws Exception {
+    startTwoFactorAuthorizationAndAssertResponseIsCorrect();
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.RESTRICTED_AGENCY_ADMIN)
+  void startTwoFactorAuthByEmailSetupShouldRespondWithNoContent_If_Called_As_AgencyAdmin()
+      throws Exception {
+    startTwoFactorAuthorizationAndAssertResponseIsCorrect();
+  }
+
+  private void startTwoFactorAuthorizationAndAssertResponseIsCorrect() throws Exception {
     givenAValidConsultant();
     givenAValidEmailDTO();
     givenKeycloakFoundNoEmailInUse();

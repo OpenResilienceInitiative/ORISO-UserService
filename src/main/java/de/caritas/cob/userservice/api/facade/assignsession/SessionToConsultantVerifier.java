@@ -42,7 +42,8 @@ public class SessionToConsultantVerifier {
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 
-    verifyUserAndConsultantHaveRocketChatId(consultantSessionDTO);
+    // MATRIX MIGRATION: Commented out RocketChat ID verification
+    // verifyUserAndConsultantHaveRocketChatId(consultantSessionDTO);
     if (REGISTERED.equals(consultantSessionDTO.getSession().getRegistrationType())) {
       verifyIfConsultantIsAssignedToAgency(consultantSessionDTO);
     }

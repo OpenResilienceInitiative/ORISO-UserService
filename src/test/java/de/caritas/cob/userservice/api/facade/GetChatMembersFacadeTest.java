@@ -6,8 +6,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.GROUP_MEMBER_DTO_LIST;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -25,15 +24,17 @@ import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import java.util.Optional;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-@RunWith(SpringRunner.class)
+@ExtendWith(SpringExtension.class)
 public class GetChatMembersFacadeTest {
 
   @InjectMocks private GetChatMembersFacade getChatMembersFacade;
@@ -46,6 +47,9 @@ public class GetChatMembersFacadeTest {
 
   @Mock private RocketChatService rocketChatService;
 
+  @Mock private UserRepository userRepository;
+  @Mock private ConsultantRepository consultantRepository;
+
   @Mock private UserHelper userHelper;
 
   @Test
@@ -56,7 +60,7 @@ public class GetChatMembersFacadeTest {
       getChatMembersFacade.getChatMembers(CHAT_ID);
       fail("Expected exception: NotFoundException");
     } catch (NotFoundException notFoundException) {
-      assertTrue("Excepted NotFoundException thrown", true);
+      assertTrue(true, "Excepted NotFoundException thrown");
     }
 
     verify(chatService, times(1)).getChat(CHAT_ID);
@@ -72,7 +76,7 @@ public class GetChatMembersFacadeTest {
       getChatMembersFacade.getChatMembers(CHAT_ID);
       fail("Expected exception: ConflictException");
     } catch (ConflictException conflictException) {
-      assertTrue("Excepted ConflictException thrown", true);
+      assertTrue(true, "Excepted ConflictException thrown");
     }
 
     verify(chatService, times(1)).getChat(CHAT_ID);
@@ -90,7 +94,7 @@ public class GetChatMembersFacadeTest {
       getChatMembersFacade.getChatMembers(CHAT_ID);
       fail("Expected exception: RequestForbiddenException");
     } catch (ForbiddenException requestForbiddenException) {
-      assertTrue("Excepted RequestForbiddenException thrown", true);
+      assertTrue(true, "Excepted RequestForbiddenException thrown");
     }
 
     verify(chatService, times(1)).getChat(CHAT_ID);
@@ -109,7 +113,7 @@ public class GetChatMembersFacadeTest {
       getChatMembersFacade.getChatMembers(CHAT_ID);
       fail("Expected exception: RequestForbiddenException");
     } catch (ForbiddenException requestForbiddenException) {
-      assertTrue("Excepted RequestForbiddenException thrown", true);
+      assertTrue(true, "Excepted RequestForbiddenException thrown");
     }
 
     verify(chatService, times(1)).getChat(CHAT_ID);
@@ -148,25 +152,34 @@ public class GetChatMembersFacadeTest {
     verify(chatPermissionVerifier, times(1)).verifyPermissionForChat(ACTIVE_CHAT);
   }
 
-  @Test(expected = InternalServerErrorException.class)
+  @Test
   public void getChatMembers_Should_throwInternalServerErrorException_When_rocketChatAccessFails()
       throws Exception {
-    when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.of(ACTIVE_CHAT));
-    when(rocketChatService.getStandardMembersOfGroup(ACTIVE_CHAT.getGroupId()))
-        .thenThrow(new RocketChatGetGroupMembersException(""));
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.of(ACTIVE_CHAT));
+          when(rocketChatService.getStandardMembersOfGroup(ACTIVE_CHAT.getGroupId()))
+              .thenThrow(new RocketChatGetGroupMembersException(""));
 
-    getChatMembersFacade.getChatMembers(ACTIVE_CHAT.getId());
+          getChatMembersFacade.getChatMembers(ACTIVE_CHAT.getId());
+        });
   }
 
-  @Test(expected = InternalServerErrorException.class)
+  @Test
   public void getChatMembers_Should_throwInternalServerErrorException_When_rocketChatGroupHasNoId()
       throws Exception {
-    Chat activeChatWithoutId = new Chat();
-    activeChatWithoutId.setActive(true);
-    when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.of(activeChatWithoutId));
-    when(rocketChatService.getStandardMembersOfGroup(ACTIVE_CHAT.getGroupId()))
-        .thenThrow(new RocketChatGetGroupMembersException(""));
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          Chat activeChatWithoutId = new Chat();
+          activeChatWithoutId.setActive(true);
+          when(chatService.getChat(ACTIVE_CHAT.getId()))
+              .thenReturn(Optional.of(activeChatWithoutId));
+          when(rocketChatService.getStandardMembersOfGroup(ACTIVE_CHAT.getGroupId()))
+              .thenThrow(new RocketChatGetGroupMembersException(""));
 
-    getChatMembersFacade.getChatMembers(ACTIVE_CHAT.getId());
+          getChatMembersFacade.getChatMembers(ACTIVE_CHAT.getId());
+        });
   }
 }

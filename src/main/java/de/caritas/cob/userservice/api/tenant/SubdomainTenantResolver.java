@@ -6,7 +6,7 @@ import static java.util.Optional.of;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.SubdomainExtractor;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.AllArgsConstructor;
 import lombok.NonNull;
 import org.springframework.stereotype.Component;

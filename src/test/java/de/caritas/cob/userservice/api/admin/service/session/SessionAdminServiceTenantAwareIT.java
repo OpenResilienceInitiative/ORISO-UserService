@@ -6,44 +6,46 @@ import static org.hamcrest.Matchers.hasSize;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 @TestPropertySource(properties = "multitenancy.enabled=true")
-@TestPropertySource(
-    properties =
-        "spring.datasource.data=classpath*:database/UserServiceDatabase.sql,classpath*:database/transformDataForTenants.sql")
+@Sql(scripts = {"classpath:database/transformDataForTenants.sql"})
+@ActiveProfiles("testing")
 @Transactional
-public class SessionAdminServiceTenantAwareIT {
+class SessionAdminServiceTenantAwareIT {
 
   @Autowired private SessionAdminService sessionAdminService;
 
-  @Before
-  public void beforeTests() {
+  @Autowired private SessionRepository sessionRepository;
+
+  @BeforeEach
+  void beforeTests() {
     TenantContext.setCurrentTenant(1L);
   }
 
-  @After
-  public void afterTests() {
+  @AfterEach
+  void afterTests() {
     TenantContext.clear();
   }
 
   @Test
-  public void findSessions_Should_haveCorrectPagedResults_When_noFilterIsGiven() {
+  void findSessions_Should_haveCorrectPagedResults_When_noFilterIsGiven() {
+
     SessionAdminResultDTO firstPage =
         this.sessionAdminService.findSessions(1, 100, new SessionFilter());
     SessionAdminResultDTO secondPage =

@@ -4,11 +4,8 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
 import static java.util.Objects.nonNull;
-import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -48,6 +45,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDT
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UpdateUser;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
@@ -57,15 +55,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.RegistrationStatisticsListResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.RegistrationStatisticsResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.apiclient.MessageServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
@@ -97,13 +92,11 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
-import de.caritas.cob.userservice.messageservice.generated.web.MessageControllerApi;
-import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
-import de.caritas.cob.userservice.messageservice.generated.web.model.MessageType;
 import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.net.URI;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -111,9 +104,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import lombok.NonNull;
 import lombok.SneakyThrows;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -149,7 +141,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriTemplateHandler;
@@ -205,6 +196,8 @@ class UserControllerE2EIT {
   @MockBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
+  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
+
   @MockBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
@@ -217,23 +210,23 @@ class UserControllerE2EIT {
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
+  @MockBean
+  @Qualifier("topicControllerApiPrimary")
+  private TopicControllerApi topicControllerApi;
+
   @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean private TopicControllerApi topicControllerApi;
-
-  @MockBean private MailsControllerApi mailsControllerApi;
-
-  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
-
-  @MockBean private MessageServiceApiControllerFactory messageServiceApiControllerFactory;
-
-  @MockBean private MessageControllerApi messageControllerApi;
+  @MockBean
+  @Qualifier("mailsControllerApi")
+  private MailsControllerApi mailsControllerApi;
 
   @MockBean private ApplicationSettingsService applicationSettingsService;
 
   @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @MockBean private Keycloak keycloak;
+
+  @Captor private ArgumentCaptor<HttpEntity<UpdateUser>> updateUserCaptor;
 
   @Captor private ArgumentCaptor<HttpEntity<MethodCall>> methodCallCaptor;
 
@@ -251,7 +244,6 @@ class UserControllerE2EIT {
   private DeleteUserAccountDTO deleteUserAccountDto;
   private UserInfoResponseDTO userInfoResponse;
   private UserResource userResource;
-  private List<Session> sessionsToDelete = new ArrayList<>();
 
   @AfterEach
   void reset() {
@@ -267,7 +259,6 @@ class UserControllerE2EIT {
           consultantToReset.setLanguages(null);
           consultantToReset.setNotifyEnquiriesRepeating(true);
           consultantToReset.setNotifyNewChatMessageFromAdviceSeeker(true);
-          consultantToReset.setNotifyNewFeedbackMessageFromAdviceSeeker(true);
           consultantRepository.save(consultantToReset);
         });
     consultantsToReset = new HashSet<>();
@@ -293,17 +284,10 @@ class UserControllerE2EIT {
     userInfoResponse = null;
     identityConfig.setDisplayNameAllowedForConsultants(false);
     userResource = null;
-    sessionsToDelete.forEach(
-        s -> {
-          if (sessionRepository.existsById(s.getId())) {
-            sessionRepository.deleteById(s.getId());
-          }
-        });
-    sessionsToDelete = new ArrayList<>();
   }
 
   @BeforeEach
-  void setUp() {
+  public void setUp() {
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -312,9 +296,6 @@ class UserControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
-    when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
-    when(messageControllerApi.getApiClient())
-        .thenReturn(mock(de.caritas.cob.userservice.messageservice.generated.ApiClient.class));
   }
 
   @Test
@@ -375,17 +356,13 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
         .andExpect(jsonPath("e2eEncryptionEnabled", is(false)))
-        .andExpect(jsonPath("emailToggles", hasSize(3)))
+        .andExpect(jsonPath("emailToggles", hasSize(2)))
         .andExpect(
             jsonPath(
                 "emailToggles[*].name",
-                containsInAnyOrder(
-                    "DAILY_ENQUIRY",
-                    "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER",
-                    "NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER")))
+                containsInAnyOrder("DAILY_ENQUIRY", "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER")))
         .andExpect(jsonPath("emailToggles[0].state", is(true)))
         .andExpect(jsonPath("emailToggles[1].state", is(true)))
-        .andExpect(jsonPath("emailToggles[2].state", is(true)))
         .andExpect(jsonPath("inTeamAgency", is(consultant.isTeamConsultant())));
   }
 
@@ -497,17 +474,13 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("available", is(true)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
         .andExpect(jsonPath("e2eEncryptionEnabled", is(false)))
-        .andExpect(jsonPath("emailToggles", hasSize(3)))
+        .andExpect(jsonPath("emailToggles", hasSize(2)))
         .andExpect(
             jsonPath(
                 "emailToggles[*].name",
-                containsInAnyOrder(
-                    "DAILY_ENQUIRY",
-                    "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER",
-                    "NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER")))
+                containsInAnyOrder("DAILY_ENQUIRY", "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER")))
         .andExpect(jsonPath("emailToggles[0].state", is(true)))
         .andExpect(jsonPath("emailToggles[1].state", is(true)))
-        .andExpect(jsonPath("emailToggles[2].state", is(true)))
         .andExpect(jsonPath("inTeamAgency", is(consultant.isTeamConsultant())));
   }
 
@@ -713,63 +686,6 @@ class UserControllerE2EIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
-  void getSessionsStatisticsAuthenticatedConsultant_ShouldGetSessionsWithTopics() throws Exception {
-    givenABearerToken();
-    givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
-    givenConsultingTypeServiceResponse();
-    givenAValidTopicServiceResponse();
-
-    MvcResult mvcResult =
-        mockMvc
-            .perform(
-                get("/users/statistics/registration")
-                    .cookie(CSRF_COOKIE)
-                    .header(CSRF_HEADER, CSRF_VALUE)
-                    .header("rcToken", RC_TOKEN)
-                    .accept(MediaType.APPLICATION_JSON))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("registrationStatistics", hasSize(greaterThan(0))))
-            .andExpect(jsonPath("registrationStatistics[0].userId", is(notNullValue())))
-            .andExpect(jsonPath("registrationStatistics[0].registrationDate", is(notNullValue())))
-            .andExpect(jsonPath("registrationStatistics[0].age").isEmpty())
-            .andExpect(jsonPath("registrationStatistics[0].gender").isEmpty())
-            .andExpect(jsonPath("registrationStatistics[0].counsellingRelation").isEmpty())
-            .andExpect(jsonPath("registrationStatistics[0].postalCode", is(notNullValue())))
-            .andReturn();
-
-    var response =
-        new ObjectMapper()
-            .readValue(
-                mvcResult.getResponse().getContentAsString(),
-                de.caritas.cob.userservice.api.adapters.web.dto
-                    .RegistrationStatisticsListResponseDTO.class);
-
-    assertGender(response);
-    assertAge(response);
-  }
-
-  private void assertGender(RegistrationStatisticsListResponseDTO response) {
-    var resultList =
-        response.getRegistrationStatistics().stream()
-            .map(RegistrationStatisticsResponseDTO::getGender)
-            .distinct()
-            .collect(Collectors.toList());
-
-    assertThat(resultList).contains("FEMALE", "MALE", null);
-  }
-
-  private void assertAge(RegistrationStatisticsListResponseDTO response) {
-    var resultList =
-        response.getRegistrationStatistics().stream()
-            .map(RegistrationStatisticsResponseDTO::getAge)
-            .distinct()
-            .collect(Collectors.toList());
-
-    assertThat(resultList).contains(15, 25, null);
-  }
-
-  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getUserDataShouldRespondWithConsultantDataAndStatusOkWhen2faIsNotActivated()
       throws Exception {
@@ -829,17 +745,13 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
         .andExpect(jsonPath("preferredLanguage", is(consultant.getLanguageCode().toString())))
         .andExpect(jsonPath("e2eEncryptionEnabled", is(false)))
-        .andExpect(jsonPath("emailToggles", hasSize(3)))
+        .andExpect(jsonPath("emailToggles", hasSize(2)))
         .andExpect(
             jsonPath(
                 "emailToggles[*].name",
-                containsInAnyOrder(
-                    "DAILY_ENQUIRY",
-                    "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER",
-                    "NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER")))
+                containsInAnyOrder("DAILY_ENQUIRY", "NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER")))
         .andExpect(jsonPath("emailToggles[0].state", is(true)))
         .andExpect(jsonPath("emailToggles[1].state", is(true)))
-        .andExpect(jsonPath("emailToggles[2].state", is(true)))
         .andExpect(jsonPath("inTeamAgency", is(consultant.isTeamConsultant())))
         .andExpect(jsonPath("emailNotifications.emailNotificationsEnabled", is(true)))
         .andExpect(jsonPath("emailNotifications.settings", is(notNullValue())))
@@ -932,12 +844,12 @@ class UserControllerE2EIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("emailToggles", hasSize(3)))
+        .andExpect(jsonPath("emailToggles", hasSize(2)))
         .andExpect(jsonPath("emailToggles[?(@.name =~ /DAILY_ENQUIRY/)].state", is(List.of(false))))
         .andExpect(
             jsonPath(
                 "emailToggles[?(@.name =~ /NEW_.*_MESSAGE_FROM_ADVICE_SEEKER/)].state",
-                is(List.of(true, true))))
+                is(List.of(true))))
         .andExpect(jsonPath("e2eEncryptionEnabled", is(true)))
         .andExpect(jsonPath("isDisplayNameEditable", is(true)));
   }
@@ -963,12 +875,12 @@ class UserControllerE2EIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("emailToggles", hasSize(3)))
+        .andExpect(jsonPath("emailToggles", hasSize(2)))
         .andExpect(jsonPath("emailToggles[?(@.name =~ /DAILY_ENQUIRY/)].state", is(List.of(true))))
         .andExpect(
             jsonPath(
                 "emailToggles[?(@.name =~ /NEW_.*_MESSAGE_FROM_ADVICE_SEEKER/)].state",
-                is(List.of(false, false))));
+                is(List.of(false))));
   }
 
   @Test
@@ -1012,6 +924,7 @@ class UserControllerE2EIT {
   void patchUserDataShouldSaveConsultantAndRespondWithNoContent() throws Exception {
     givenAValidConsultant();
     givenAFullPatchDto();
+    givenAValidRocketChatUpdateUserResponse();
     givenAValidKeycloakUpdateLocaleResponse(consultant.getId());
     givenAValidRocketChatUserPresenceSetResponse();
     patchUserDTO.setEmailNotifications(partiallyActiveEmailNotifications());
@@ -1037,6 +950,16 @@ class UserControllerE2EIT {
     verify(userResource).update(userRepCaptor.capture());
     var locale = userRepCaptor.getValue().getAttributes().get("locale");
     assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
+
+    var urlSuffix = "/api/v1/users.update";
+    verify(rocketChatRestTemplate)
+        .postForEntity(endsWith(urlSuffix), updateUserCaptor.capture(), eq(Void.class));
+
+    var updateUser = updateUserCaptor.getValue().getBody();
+    assertNotNull(updateUser);
+    var user = updateUser.getData();
+    assertTrue(user.getName().startsWith("enc."));
+    assertTrue(user.getName().length() > 4);
 
     verifyRocketChatSetsUserPresence();
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
@@ -1154,46 +1077,6 @@ class UserControllerE2EIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void patchUserDataShouldPostDisplayNameChangedAliasMessageToAllConsultantSessions()
-      throws Exception {
-    givenAValidConsultant();
-    givenDisplayNameAllowedForConsultants();
-    givenAValidKeycloakLoginResponse();
-    givenAValidRocketChatUpdateUserResponse();
-    var sessionInProgress =
-        givenASessionForConsultant(consultant, Session.SessionStatus.IN_PROGRESS);
-    var sessionInArchive = givenASessionForConsultant(consultant, Session.SessionStatus.IN_ARCHIVE);
-    sessionsToDelete.addAll(List.of(sessionInProgress, sessionInArchive));
-
-    var patchDto = new HashMap<String, Object>(1);
-    patchDto.put("displayName", RandomStringUtils.randomAlphabetic(8));
-
-    mockMvc
-        .perform(
-            patch("/users/data")
-                .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(patchDto))
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNoContent());
-
-    var expectedMessage =
-        new AliasOnlyMessageDTO().messageType(MessageType.CONSULTANT_DISPLAY_NAME_CHANGED);
-    var groupIdInProgress = sessionInProgress.getGroupId();
-    var groupIdInArchive = sessionInArchive.getGroupId();
-    await()
-        .atMost(5, SECONDS)
-        .untilAsserted(
-            () -> {
-              verify(messageControllerApi).saveAliasOnlyMessage(groupIdInProgress, expectedMessage);
-              verify(messageControllerApi).saveAliasOnlyMessage(groupIdInArchive, expectedMessage);
-            });
-  }
-
-  @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
   void patchUserDataShouldRespondWithBadRequestOnEmptyPayload() throws Exception {
     givenAValidUser();
@@ -1305,7 +1188,6 @@ class UserControllerE2EIT {
     var dbConsultant = consultantRepository.findById(consultant.getId()).orElseThrow();
     assertFalse(dbConsultant.getNotifyEnquiriesRepeating());
     assertFalse(dbConsultant.getNotifyNewChatMessageFromAdviceSeeker());
-    assertFalse(dbConsultant.getNotifyNewFeedbackMessageFromAdviceSeeker());
   }
 
   @Test
@@ -1588,6 +1470,32 @@ class UserControllerE2EIT {
                             language.getLanguageCode().toString()))));
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void updateUserDataWithTermsAndConditions() throws Exception {
+    givenAValidConsultant();
+    givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    updateConsultantDTO.setTermsAndConditionsConfirmation(true);
+    updateConsultantDTO.setDataPrivacyConfirmation(true);
+    givenValidRocketChatTechUserResponse();
+    givenValidRocketChatUserInfoResponse();
+
+    mockMvc
+        .perform(
+            put("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updateConsultantDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    var savedConsultant = consultantRepository.findById(consultant.getId());
+    assertEquals(
+        savedConsultant.get().getTermsAndConditionsConfirmation().toLocalDate(), LocalDate.now());
+    assertEquals(savedConsultant.get().getDataPrivacyConfirmation().toLocalDate(), LocalDate.now());
+  }
+
   // FIXME: does not test the "saved monitoring", see next fixme
   @Test
   void registerUserWithoutConsultingIdShouldSaveMonitoringAndPreferredLanguage() throws Exception {
@@ -1671,12 +1579,6 @@ class UserControllerE2EIT {
     assertTrue(session.getIsConsultantDirectlySet());
   }
 
-  // FIXME: (for all registerUser tests) Currently, we cannot easily get the generated data. The API
-  // does not return anything from the generated user, which would lead us to write code for tests.
-  // Which I don't like. Idea, API could return the user or at least the ID, then for the user we
-  // could fetch the sessions
-  // (de.caritas.cob.userservice.api.port.out.SessionRepository#findByUser), since there is only one
-  // at the time, I think this would be an acceptable solution.
   @Test
   void registerUserWithoutConsultingIdShouldSaveCreateUserWithDemographicsData() throws Exception {
     ReflectionTestUtils.setField(userVerifier, "demographicsFeatureEnabled", true);
@@ -1702,7 +1604,7 @@ class UserControllerE2EIT {
       throws Exception {
     givenConsultingTypeServiceResponse(2);
     givenARealmResource();
-    givenAUserDTOWithCounsellingRelation();
+    givenAUserDTOWithCounsellingRelationAndReferer();
     givenAValidTopicServiceResponse();
 
     mockMvc
@@ -1744,6 +1646,28 @@ class UserControllerE2EIT {
             post("/users/askers/new")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void registerNewSession_Should_ReturnCreated_When_ProvidedWithValidRequestBody()
+      throws Exception {
+    givenAValidUser();
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse(2);
+    givenARealmResource();
+    givenAUserDTOWithMainTopic();
+
+    mockMvc
+        .perform(
+            post("/users/askers/session/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .header("RCToken", "token")
+                .header("RCUserId", "userId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
         .andExpect(status().isCreated());
@@ -1807,10 +1731,12 @@ class UserControllerE2EIT {
     userDTO.setAge("17");
     userDTO.setState("8");
     userDTO.setPostcode(RandomStringUtils.randomNumeric(5));
+    userDTO.setTermsAccepted("true");
     userDTO.setConsultingType("1");
     userDTO.setConsultantId(consultantId);
     userDTO.setAgencyId(aPositiveLong());
     userDTO.setEmail(givenAValidEmail());
+    userDTO.setReferer("validRef");
   }
 
   private void givenAUserDTOWithDemographics() {
@@ -1818,9 +1744,10 @@ class UserControllerE2EIT {
     userDTO.setUserGender("MALE");
   }
 
-  private void givenAUserDTOWithCounsellingRelation() {
+  private void givenAUserDTOWithCounsellingRelationAndReferer() {
     givenAUserDTO();
     userDTO.setCounsellingRelation("RELATIVE_COUNSELLING");
+    userDTO.setReferer("validRef");
   }
 
   private void givenAUserDTOWithMainTopic() {
@@ -2063,22 +1990,6 @@ class UserControllerE2EIT {
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
   }
 
-  private Session givenASessionForConsultant(
-      Consultant sessionConsultant, Session.SessionStatus status) {
-    var sessionUser = userRepository.findAll().iterator().next();
-    var session = new Session();
-    session.setConsultant(sessionConsultant);
-    session.setUser(sessionUser);
-    session.setStatus(status);
-    session.setPostcode("12345");
-    session.setConsultingTypeId(0);
-    session.setGroupId("test-group-" + RandomStringUtils.randomAlphanumeric(8));
-    session.setRegistrationType(Session.RegistrationType.REGISTERED);
-    session.setLanguageCode(LanguageCode.de);
-    session.setIsConsultantDirectlySet(false);
-    return sessionRepository.save(session);
-  }
-
   private void givenConsultingTypeServiceResponse(Integer consultingTypeId) {
     consultingTypeControllerApi.getApiClient().setBasePath("https://www.google.de/");
     when(restTemplate.getUriTemplateHandler())
@@ -2180,13 +2091,8 @@ class UserControllerE2EIT {
     newChatMessageToggle.setName(EmailType.NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER);
     newChatMessageToggle.setState(state);
 
-    var newFeedbackMessageToggle = new EmailToggle();
-    newFeedbackMessageToggle.setName(EmailType.NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER);
-    newFeedbackMessageToggle.setState(state);
-
     var patchDtoAsMap = new HashMap<String, Object>(3);
-    patchDtoAsMap.put(
-        "emailToggles", Set.of(dailyEnquiryToggle, newChatMessageToggle, newFeedbackMessageToggle));
+    patchDtoAsMap.put("emailToggles", Set.of(dailyEnquiryToggle, newChatMessageToggle));
 
     if (!state) {
       consultantsToReset.add(consultant);
@@ -2203,7 +2109,6 @@ class UserControllerE2EIT {
 
   private void givenConsultantIsNotToNotifyAboutNewFollowUps() {
     consultant.setNotifyNewChatMessageFromAdviceSeeker(false);
-    consultant.setNotifyNewFeedbackMessageFromAdviceSeeker(false);
     consultantRepository.save(consultant);
     consultantsToReset.add(consultant);
   }
@@ -2233,11 +2138,7 @@ class UserControllerE2EIT {
     newChat.setName(EmailType.NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER);
     newChat.setState(true);
 
-    var newFeedback = new EmailToggle();
-    newFeedback.setName(EmailType.NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER);
-    newFeedback.setState(true);
-
-    patchUserDTO.setEmailToggles(Set.of(dailyEnquiries, newChat, newFeedback));
+    patchUserDTO.setEmailToggles(Set.of(dailyEnquiries, newChat));
 
     patchUserDTO.setEmailNotifications(activeEmailNotifications());
   }

@@ -77,6 +77,16 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
+   * Provides the password.
+   *
+   * @return the password from DTO, or null if not provided
+   */
+  @Override
+  public String getPassword() {
+    return this.createConsultantDTO.getPassword();
+  }
+
+  /**
    * Provides the absent flag.
    *
    * @return the absent flag
@@ -123,7 +133,6 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
    */
   @Override
   public Long getTenantId() {
-    Integer tenantId = this.createConsultantDTO.getTenantId();
-    return tenantId == null ? null : Long.valueOf(tenantId);
+    return this.createConsultantDTO.getTenantId();
   }
 }

@@ -18,4 +18,5 @@ public class RollbackUserAccountInformation {
   private User user;
   private Session session;
   private UserAgency userAgency;
+  private boolean rollBackUserAccount;
 }

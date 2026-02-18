@@ -10,13 +10,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.access.AccessDeniedHandlerImpl;
@@ -24,6 +25,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** This custom filter checks CSRF cookie and header token for equality. */
+@Slf4j
 public class StatelessCsrfFilter extends OncePerRequestFilter {
 
   private final RequestMatcher requireCsrfProtectionMatcher;
@@ -39,6 +41,12 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
   public void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
+    if (request.getRequestURI() != null && request.getRequestURI().contains("supervisors")) {
+      log.info(
+          "CSRF filter saw request: uri={}, method={}",
+          request.getRequestURI(),
+          request.getMethod());
+    }
 
     if (requireCsrfProtectionMatcher.matches(request)) {
       final String csrfTokenValue =
@@ -46,6 +54,12 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       String csrfCookieValue = retrieveCsrfCookieValue(request);
 
       if (isNull(csrfTokenValue) || !csrfTokenValue.equals(csrfCookieValue)) {
+        log.warn(
+            "CSRF rejected request: uri={}, method={}, header={}, cookie={}",
+            request.getRequestURI(),
+            request.getMethod(),
+            csrfTokenValue,
+            csrfCookieValue);
         accessDeniedHandler.handle(
             request, response, new AccessDeniedException("Missing or non-matching CSRF-token"));
         return;

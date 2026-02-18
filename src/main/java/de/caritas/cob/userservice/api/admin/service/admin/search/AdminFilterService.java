@@ -11,7 +11,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.querybuilder.Ad
 import de.caritas.cob.userservice.api.model.Admin;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
-import javax.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityManagerFactory;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.lucene.search.SortField;

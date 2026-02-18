@@ -3,9 +3,9 @@ package de.caritas.cob.userservice.api.config.auth;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import java.util.Arrays;
 import java.util.Set;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
-import javax.validation.constraints.Pattern;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +34,8 @@ public class IdentityConfig implements IdentityClientConfig {
   @NotNull private Boolean otpAllowedForUsers;
 
   @NotNull private Boolean otpAllowedForConsultants;
+
+  @NotNull private Boolean otpAllowedForRestrictedAgencyAdmins;
 
   @NotNull private Boolean otpAllowedForSingleTenantAdmins;
 
@@ -82,6 +84,8 @@ public class IdentityConfig implements IdentityClientConfig {
         || roles.contains(UserRole.CONSULTANT.getValue()) && otpAllowedForConsultants
         || roles.contains(UserRole.TENANT_ADMIN.getValue()) && otpAllowedForTenantSuperAdmins
         || roles.contains(UserRole.SINGLE_TENANT_ADMIN.getValue())
-            && otpAllowedForSingleTenantAdmins;
+            && otpAllowedForSingleTenantAdmins
+        || roles.contains(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())
+            && otpAllowedForRestrictedAgencyAdmins;
   }
 }

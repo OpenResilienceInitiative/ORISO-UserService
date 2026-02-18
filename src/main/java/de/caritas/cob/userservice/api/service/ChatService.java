@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -32,17 +33,21 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Chat service class */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ChatService {
 
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
+
+  private final @NonNull AgencyService agencyService;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -54,7 +59,24 @@ public class ChatService {
         consultant.getConsultantAgencies().stream()
             .map(ConsultantAgency::getAgencyId)
             .collect(Collectors.toSet());
-    return chatRepository.findByAgencyIds(agencyIds).stream()
+    log.info(
+        "🔍 ChatService.getChatsForConsultant - consultant: {}, agencyIds: {}",
+        consultant.getUsername(),
+        agencyIds);
+
+    var chats = chatRepository.findByAgencyIds(agencyIds);
+    log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
+    chats.forEach(
+        chat ->
+            log.info(
+                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                chat.getId(),
+                chat.getTopic(),
+                chat.getGroupId(),
+                chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
+                chat.isActive()));
+
+    return chats.stream()
         .map(this::convertChatToConsultantSessionResponseDTO)
         .collect(Collectors.toList());
   }
@@ -66,7 +88,8 @@ public class ChatService {
             new SessionConsultantForConsultantDTO()
                 .id(chat.getChatOwner().getId())
                 .firstName(chat.getChatOwner().getFirstName())
-                .lastName(chat.getChatOwner().getLastName()));
+                .lastName(chat.getChatOwner().getLastName())
+                .username(chat.getChatOwner().getUsername()));
   }
 
   private String[] getChatModerators(Set<ChatAgency> chatAgencies) {
@@ -102,7 +125,12 @@ public class ChatService {
    * @return saved {@link UserChat}
    */
   public UserChat saveUserChatRelation(UserChat userChat) {
-    return userChatRepository.save(userChat);
+
+    if (userChatRepository.findByChatAndUser(userChat.getChat(), userChat.getUser()).isEmpty()) {
+      return userChatRepository.save(userChat);
+    } else {
+      throw new ConflictException("User is already assigned to chat");
+    }
   }
 
   /**
@@ -132,6 +160,16 @@ public class ChatService {
   }
 
   private UserChatDTO createUserChat(Chat chat) {
+    if (chat.getChatAgencies().size() > 1) {
+      log.warn(
+          "Chat with id {} has more than one agency assigned. " + "This should not be the case.",
+          chat.getId());
+    }
+    var chatAgencies =
+        chat.getChatAgencies().stream()
+            .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
+            .collect(Collectors.toList());
+
     return new UserChatDTO(
         chat.getId(),
         chat.getTopic(),
@@ -155,7 +193,10 @@ public class ChatService {
         false,
         getChatModerators(chat.getChatAgencies()),
         chat.getStartDate(),
-        null);
+        null,
+        chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
+        chatAgencies,
+        chat.getHintMessage());
   }
 
   /**
@@ -178,16 +219,46 @@ public class ChatService {
     return chatRepository.findByGroupId(groupId);
   }
 
+  /**
+   * Returns chat sessions for a consultant by chat IDs. This method retrieves chats from the
+   * database without checking consultant access - access control should be handled at a higher
+   * level (e.g., by checking Matrix room membership or chat ownership).
+   *
+   * @param chatIds Set of chat IDs
+   * @return List of {@link ConsultantSessionResponseDTO}
+   */
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
-    return StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-        .map(this::convertChatToConsultantSessionResponseDTO)
-        .collect(Collectors.toList());
+    log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
+
+    var chats =
+        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
+            .collect(Collectors.toList());
+
+    log.info("🔍 ChatService: Found {} chats in database", chats.size());
+    chats.forEach(
+        chat ->
+            log.info(
+                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                chat.getId(),
+                chat.getTopic(),
+                chat.getGroupId(),
+                chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
+                chat.isActive()));
+
+    var result =
+        chats.stream()
+            .map(this::convertChatToConsultantSessionResponseDTO)
+            .collect(Collectors.toList());
+
+    log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
+
+    return result;
   }
 
   /**
    * Returns an {@link List} of {@link UserSessionResponseDTO} for the provided group IDs.
    *
-   * @param groupIds a list of rocket chat group or feedback group IDs
+   * @param groupIds a list of rocket chat group IDs
    * @return {@link List<UserSessionResponseDTO>}
    */
   public List<UserSessionResponseDTO> getChatSessionsByGroupIds(Set<String> groupIds) {
@@ -243,10 +314,11 @@ public class ChatService {
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
-    chat.setRepetitive(isTrue(chatDTO.isRepetitive()));
-    chat.setChatInterval(isTrue(chatDTO.isRepetitive()) ? ChatInterval.WEEKLY : null);
+    chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
+    chat.setChatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
+    chat.setHintMessage(chatDTO.getHintMessage());
 
     this.saveChat(chat);
 

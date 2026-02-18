@@ -6,8 +6,7 @@ import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.fail;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -21,13 +20,13 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import org.jeasy.random.EasyRandom;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class ConsultantAgencyDeletionValidationServiceTest {
 
   @InjectMocks private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
@@ -53,7 +52,7 @@ public class ConsultantAgencyDeletionValidationServiceTest {
       fail("Exception was not thrown");
     } catch (CustomValidationHttpStatusException e) {
       assertThat(
-          requireNonNull(e.getCustomHttpHeader().get("X-Reason")).iterator().next(),
+          requireNonNull(e.getCustomHttpHeaders().get("X-Reason")).iterator().next(),
           is(CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE.name()));
     }
   }
@@ -75,22 +74,26 @@ public class ConsultantAgencyDeletionValidationServiceTest {
       fail("Exception was not thrown");
     } catch (CustomValidationHttpStatusException e) {
       assertThat(
-          requireNonNull(e.getCustomHttpHeader().get("X-Reason")).iterator().next(),
+          requireNonNull(e.getCustomHttpHeaders().get("X-Reason")).iterator().next(),
           is(CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES.name()));
     }
   }
 
-  @Test(expected = InternalServerErrorException.class)
+  @Test
   public void
       validateForDeletion_Should_throwInternalServerErrorException_When_agencyCanNotBeFetched() {
-    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
-    consultantAgency.setDeleteDate(null);
-    when(this.consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(any()))
-        .thenReturn(singletonList(consultantAgency));
-    when(this.agencyService.getAgencyWithoutCaching(any()))
-        .thenThrow(new InternalServerErrorException(""));
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
+          consultantAgency.setDeleteDate(null);
+          when(this.consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(any()))
+              .thenReturn(singletonList(consultantAgency));
+          when(this.agencyService.getAgencyWithoutCaching(any()))
+              .thenThrow(new InternalServerErrorException(""));
 
-    this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
+          this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
+        });
   }
 
   @Test

@@ -5,22 +5,24 @@ import static java.util.Objects.isNull;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Index;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.validation.constraints.Size;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -84,6 +86,13 @@ public class Consultant implements TenantAware, NotificationsAware {
   @NonNull
   private String rocketChatId;
 
+  @Column(name = "matrix_user_id")
+  private String matrixUserId;
+
+  @Column(name = "matrix_password")
+  @Size(max = 255)
+  private String matrixPassword;
+
   @Column(name = "username", updatable = false, nullable = false)
   @Size(max = 255)
   @NonNull
@@ -119,6 +128,12 @@ public class Consultant implements TenantAware, NotificationsAware {
 
   @Column(name = "is_team_consultant", nullable = false, columnDefinition = "tinyint")
   private boolean teamConsultant;
+
+  @Column(name = "is_supervisor", nullable = false, columnDefinition = "tinyint default 0")
+  private boolean supervisor;
+
+  @Column(name = "display_name")
+  private String displayName;
 
   @Column(name = "absence_message")
   @Lob
@@ -168,12 +183,6 @@ public class Consultant implements TenantAware, NotificationsAware {
       nullable = false,
       columnDefinition = "bit default true")
   private Boolean notifyNewChatMessageFromAdviceSeeker;
-
-  @Column(
-      name = "notify_new_feedback_message_from_advice_seeker",
-      nullable = false,
-      columnDefinition = "bit default true")
-  private Boolean notifyNewFeedbackMessageFromAdviceSeeker;
 
   @Column(name = "tenant_id")
   @Field
@@ -250,6 +259,12 @@ public class Consultant implements TenantAware, NotificationsAware {
         .map(ConsultantAgency::getAgencyId)
         .collect(Collectors.toSet())
         .contains(agencyId);
+  }
+
+  @JsonIgnore
+  @Transient
+  public Dialect getDialect() {
+    return isLanguageFormal() ? Dialect.FORMAL : Dialect.INFORMAL;
   }
 
   @Override

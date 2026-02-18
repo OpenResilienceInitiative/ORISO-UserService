@@ -1,15 +1,14 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat;
 
+import static com.mongodb.client.model.Filters.eq;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Arrays.asList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 
-import com.mongodb.DBObject;
-import com.mongodb.QueryBuilder;
+import com.google.common.collect.Lists;
 import com.mongodb.client.MongoClient;
-import com.mongodb.client.model.Filters;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupAddUserBodyDTO;
@@ -37,6 +36,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.SetRoomReadOnlyBodyDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserCreateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserDeleteBodyDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
@@ -60,19 +60,17 @@ import de.caritas.cob.userservice.api.service.LogService;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
@@ -116,6 +114,7 @@ public class RocketChatService implements MessageClient {
   private static final String ENDPOINT_USER_UPDATE = "/users.update";
   private static final String ENDPOINT_USER_DELETE = "/users.delete";
   private static final String ENDPOINT_USER_LIST = "/users.list";
+  private static final String ENDPOINT_USER_CREATE = "/users.create";
   private static final String ENDPOINT_USER_LOGIN = "/login";
   private static final String ENDPOINT_USER_LOGOUT = "/logout";
   private static final String ENDPOINT_USER_PRESENCE_GET = "/users.getPresence?userId=";
@@ -136,6 +135,7 @@ public class RocketChatService implements MessageClient {
       "Could not get users list from Rocket.Chat";
   private static final String USER_LIST_GET_FIELD_SELECTION = "{\"_id\":1}";
   private static final Integer PAGE_SIZE = 100;
+  private static final String ERROR_ROOM_NOT_FOUND = "error-room-not-found";
   private final LocalDateTime localDateTime1900 = LocalDateTime.of(1900, 1, 1, 0, 0);
 
   private final LocalDateTime localDateTimeFuture = nowInUtc().plusYears(1L);
@@ -218,7 +218,6 @@ public class RocketChatService implements MessageClient {
   }
 
   @Override
-  @CacheEvict(key = "#chatUserId", value = "rocketChatUserCache")
   public boolean updateUser(String chatUserId, String displayName) {
     var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_UPDATE);
     var updateUser = mapper.updateUserOf(chatUserId, displayName);
@@ -409,16 +408,6 @@ public class RocketChatService implements MessageClient {
   public void deleteGroupAsTechnicalUser(String groupId) throws RocketChatDeleteGroupException {
     try {
       this.addTechnicalUserToGroup(groupId);
-    } catch (Exception ex) {
-      log.error(
-          "Could not add technical user to Rocket.Chat group with id {}. Reason: ",
-          groupId,
-          ex.getMessage());
-      log.info("Skipping deletion of Rocket.Chat group with id {}", groupId);
-      return;
-    }
-
-    try {
       RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
       rollbackGroup(groupId, technicalUser);
     } catch (Exception e) {
@@ -498,15 +487,18 @@ public class RocketChatService implements MessageClient {
       response = this.rcCredentialHelper.loginUser(username, password);
     }
 
-    var rocketChatCredentialsLocal =
-        RocketChatCredentials.builder()
-            .rocketChatUserId(response.getBody().getData().getUserId())
-            .rocketChatToken(response.getBody().getData().getAuthToken())
-            .build();
-
-    logoutUser(rocketChatCredentialsLocal);
-
-    return rocketChatCredentialsLocal.getRocketChatUserId();
+    LoginResponseDTO body = response.getBody();
+    if (body != null) {
+      var rocketChatCredentialsLocal =
+          RocketChatCredentials.builder()
+              .rocketChatUserId(body.getData().getUserId())
+              .rocketChatToken(body.getData().getAuthToken())
+              .build();
+      logoutUser(rocketChatCredentialsLocal);
+      return rocketChatCredentialsLocal.getRocketChatUserId();
+    } else {
+      throw new RocketChatLoginException("Could not login user in Rocket.Chat");
+    }
   }
 
   /**
@@ -535,7 +527,7 @@ public class RocketChatService implements MessageClient {
       return restTemplate.postForEntity(url, request, LoginResponseDTO.class);
     } catch (Exception ex) {
       log.error(
-          "Rocket.Chat Error: Could not login user ({}) in Rocket.Chat for the first time. Reason:",
+          "Rocket.Chat Error: Could not login user ({}) in Rocket.Chat for the first time. Reason",
           username,
           ex);
       throw new RocketChatLoginException(
@@ -664,13 +656,7 @@ public class RocketChatService implements MessageClient {
 
     GroupResponseDTO response;
     try {
-      RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
-      var header = getStandardHttpHeaders(technicalUser);
-      var body = new GroupRemoveUserBodyDTO(rcUserId, rcGroupId);
-      HttpEntity<GroupRemoveUserBodyDTO> request = new HttpEntity<>(body, header);
-
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_KICK);
-      response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
+      response = tryRemoveUserFromGroup(rcUserId, rcGroupId);
 
     } catch (Exception ex) {
       log.error(
@@ -687,6 +673,19 @@ public class RocketChatService implements MessageClient {
       var error = "Could not remove user %s from Rocket.Chat group with id %s";
       throw new RocketChatRemoveUserFromGroupException(String.format(error, rcUserId, rcGroupId));
     }
+  }
+
+  private GroupResponseDTO tryRemoveUserFromGroup(String rcUserId, String rcGroupId)
+      throws RocketChatUserNotInitializedException {
+    GroupResponseDTO response;
+    RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
+    var header = getStandardHttpHeaders(technicalUser);
+    var body = new GroupRemoveUserBodyDTO(rcUserId, rcGroupId);
+    HttpEntity<GroupRemoveUserBodyDTO> request = new HttpEntity<>(body, header);
+
+    var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_KICK);
+    response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
+    return response;
   }
 
   public boolean removeUserFromSession(String chatUserId, String chatId) {
@@ -781,7 +780,7 @@ public class RocketChatService implements MessageClient {
         mongoClient
             .getDatabase(MONGO_DATABASE_NAME)
             .getCollection(MONGO_COLLECTION_SUBSCRIPTION)
-            .find(Filters.eq("rid", chatId));
+            .find(eq("rid", chatId));
 
     var members = new ArrayList<GroupMemberDTO>();
     try (var cursor = subscriptions.iterator()) {
@@ -1178,66 +1177,89 @@ public class RocketChatService implements MessageClient {
   public List<GroupDTO> fetchAllInactivePrivateGroupsSinceGivenDate(
       LocalDateTime dateTimeSinceInactive) throws RocketChatGetGroupsListAllException {
 
-    final var GROUP_RESPONSE_LAST_MESSAGE_TIMESTAMP_FIELD = "lm";
-    final var GROUP_RESPONSE_GROUP_TYPE_FIELD = "t";
-    final var GROUP_RESPONSE_GROUP_TYPE_PRIVATE = "p";
-
-    DBObject mongoDbQuery =
-        QueryBuilder.start(GROUP_RESPONSE_LAST_MESSAGE_TIMESTAMP_FIELD)
-            .lessThan(
-                QueryBuilder.start("$date")
-                    .is(
-                        dateTimeSinceInactive.format(
-                            DateTimeFormatter.ofPattern(RC_DATE_TIME_PATTERN)))
-                    .get())
-            .and(
-                QueryBuilder.start(GROUP_RESPONSE_GROUP_TYPE_FIELD)
-                    .is(GROUP_RESPONSE_GROUP_TYPE_PRIVATE)
-                    .get())
-            .get();
-
-    return getGroupsListAll(mongoDbQuery);
+    String filter =
+        String.format(
+            "{\"lm\": {\"$lt\": {\"$date\": \"%s\"}}, \"$and\": [{\"t\": \"p\"}]}",
+            dateTimeSinceInactive.format(DateTimeFormatter.ofPattern(RC_DATE_TIME_PATTERN)));
+    return getGroupsListAll(filter);
   }
 
   /**
    * Returns a list of all Rocket.Chat groups.
    *
-   * @param mongoDbQuery mongoDB Query as {@link DBObject} created with {@link QueryBuilder}
+   * @param mongoDbQuery mongoDB Query as {@link String}
    * @return a {@link List} of {@link GroupDTO} instances
    * @throws RocketChatGetGroupsListAllException when request fails
    */
-  /**
-   * Returns a list of all Rocket.Chat groups.
-   *
-   * @param mongoDbQuery mongoDB Query as {@link DBObject} created with {@link QueryBuilder}
-   * @return a {@link List} of {@link GroupDTO} instances
-   * @throws RocketChatGetGroupsListAllException when request fails
-   */
-  private List<GroupDTO> getGroupsListAll(DBObject mongoDbQuery)
+  private List<GroupDTO> getGroupsListAll(String mongoDbQuery)
       throws RocketChatGetGroupsListAllException {
 
-    ResponseEntity<GroupsListAllResponseDTO> response;
     try {
       var technicalUser = rcCredentialHelper.getTechnicalUser();
       var header = getStandardHttpHeaders(technicalUser);
       HttpEntity<GroupAddUserBodyDTO> request = new HttpEntity<>(header);
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_LIST) + "?query={query}";
-      response =
-          restTemplate.exchange(
-              url,
-              HttpMethod.GET,
-              request,
-              GroupsListAllResponseDTO.class,
-              mongoDbQuery.toString());
+
+      return getGroupListAllCombiningPages(mongoDbQuery, request);
     } catch (Exception ex) {
+      log.error("Rocket.Chat Error: Could not get Rocket.Chat groups list all. Reason: ", ex);
       throw new RocketChatGetGroupsListAllException(GROUPS_LIST_ALL_ERROR_MESSAGE, ex);
     }
+  }
 
-    if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return Arrays.asList(response.getBody().getGroups());
-    } else {
+  private List<GroupDTO> getGroupListAllCombiningPages(
+      String mongoDbQuery, HttpEntity<GroupAddUserBodyDTO> request)
+      throws RocketChatGetGroupsListAllException {
+    List<GroupDTO> result = Lists.newArrayList();
+    int currentOffset = 0;
+    var pageResponse =
+        getGroupsListAllResponseDTOResponseEntityForCurrentOffset(
+            mongoDbQuery, request, currentOffset);
+
+    var totalResultSize = 0;
+    if (isResponseSuccessful(pageResponse)) {
+      totalResultSize = pageResponse.getBody().getTotal();
+    }
+
+    while (isResponseSuccessful(pageResponse) && currentOffset < totalResultSize) {
+      result.addAll(asList(pageResponse.getBody().getGroups()));
+      currentOffset += PAGE_SIZE;
+      pageResponse =
+          getGroupsListAllResponseDTOResponseEntityForCurrentOffset(
+              mongoDbQuery, request, currentOffset);
+    }
+    if (pageResponse.getStatusCode() != HttpStatus.OK || isNull(pageResponse.getBody())) {
+      log.error(
+          "Could not get Rocket.Chat groups list all. Reason {} {}. Url {}",
+          pageResponse.getStatusCode(),
+          pageResponse.getBody(),
+          getGroupAllPaginatedUrl(currentOffset));
       throw new RocketChatGetGroupsListAllException(GROUPS_LIST_ALL_ERROR_MESSAGE);
     }
+
+    return result;
+  }
+
+  private boolean isResponseSuccessful(ResponseEntity<GroupsListAllResponseDTO> pageResponse) {
+    return pageResponse.getStatusCode() == HttpStatus.OK && nonNull(pageResponse.getBody());
+  }
+
+  private ResponseEntity<GroupsListAllResponseDTO>
+      getGroupsListAllResponseDTOResponseEntityForCurrentOffset(
+          String mongoDbQuery, HttpEntity<GroupAddUserBodyDTO> request, int currentOffset) {
+    ResponseEntity<GroupsListAllResponseDTO> response;
+    var url = getGroupAllPaginatedUrl(currentOffset);
+    response =
+        restTemplate.exchange(
+            url, HttpMethod.GET, request, GroupsListAllResponseDTO.class, mongoDbQuery);
+    return response;
+  }
+
+  private String getGroupAllPaginatedUrl(int currentOffset) {
+    return rocketChatConfig.getApiUrl(ENDPOINT_GROUP_LIST)
+        + "?query={query}&offset="
+        + currentOffset
+        + "&count="
+        + PAGE_SIZE;
   }
 
   /**
@@ -1313,6 +1335,68 @@ public class RocketChatService implements MessageClient {
     } catch (HttpClientErrorException exception) {
       log.error("Saving room settings failed.", exception);
       return false;
+    }
+  }
+
+  public void removeUserFromGroupIgnoreGroupNotFound(String rcUserId, String rcGroupId)
+      throws RocketChatRemoveUserFromGroupException {
+    {
+      GroupResponseDTO response;
+      try {
+        response = tryRemoveUserFromGroup(rcUserId, rcGroupId);
+      } catch (Exception ex) {
+        if (ex.getMessage().contains(ERROR_ROOM_NOT_FOUND)) {
+          return;
+        }
+        log.error(
+            "Rocket.Chat Error: Could not remove user {} from Rocket.Chat group with id {}. Reason: ",
+            rcUserId,
+            rcGroupId,
+            ex);
+        throw new RocketChatRemoveUserFromGroupException(
+            String.format(
+                "Could not remove user %s from Rocket.Chat group with id %s", rcUserId, rcGroupId));
+      }
+
+      if (response != null && !response.isSuccess()) {
+        var error = "Could not remove user %s from Rocket.Chat group with id %s";
+        throw new RocketChatRemoveUserFromGroupException(String.format(error, rcUserId, rcGroupId));
+      }
+    }
+  }
+
+  /**
+   * Creates a new user in Rocket.Chat.
+   *
+   * @param username the username
+   * @param password the password
+   * @param email the email address
+   * @return the user creation response
+   * @throws RocketChatLoginException on failure
+   */
+  public ResponseEntity<StandardResponseDTO> createUser(
+      String username, String password, String email) throws RocketChatLoginException {
+
+    try {
+      var systemUserCredentials = rcCredentialHelper.getSystemUser();
+      var headers = getStandardHttpHeaders(systemUserCredentials);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var userCreateDTO = new UserCreateDTO();
+      userCreateDTO.setName(username);
+      userCreateDTO.setEmail(email);
+      userCreateDTO.setPassword(password);
+      userCreateDTO.setUsername(username);
+
+      HttpEntity<UserCreateDTO> request = new HttpEntity<>(userCreateDTO, headers);
+
+      var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_CREATE);
+      return restTemplate.postForEntity(url, request, StandardResponseDTO.class);
+    } catch (Exception ex) {
+      log.error(
+          "Rocket.Chat Error: Could not create user ({}) in Rocket.Chat. Reason", username, ex);
+      throw new RocketChatLoginException(
+          String.format("Could not create user (%s) in Rocket.Chat", username));
     }
   }
 }

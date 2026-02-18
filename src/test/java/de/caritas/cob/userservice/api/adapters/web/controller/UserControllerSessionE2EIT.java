@@ -33,7 +33,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
@@ -48,6 +47,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.AliasMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MessageType;
@@ -77,12 +77,13 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
@@ -90,7 +91,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -99,6 +100,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.RoleMappingResource;
@@ -109,16 +112,14 @@ import org.keycloak.representations.idm.RoleRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.context.annotation.Bean;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
@@ -128,13 +129,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
+import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
+import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
 import org.springframework.web.util.UriTemplateHandler;
 
 @SpringBootTest
 @ExtendWith(OutputCaptureExtension.class)
-@AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase
 class UserControllerSessionE2EIT {
@@ -144,7 +149,8 @@ class UserControllerSessionE2EIT {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
 
-  @Autowired private MockMvc mockMvc;
+  @Autowired private UserController userController;
+  private MockMvc mockMvc;
 
   @Autowired private ObjectMapper objectMapper;
 
@@ -172,13 +178,7 @@ class UserControllerSessionE2EIT {
 
   @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @TestConfiguration
-  static class TestConfig {
-    @Bean(name = "initializeFeedbackChat")
-    public Boolean initializeFeedbackChat() {
-      return false;
-    }
-  }
+  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @SuppressWarnings("unused")
   @MockBean
@@ -262,10 +262,36 @@ class UserControllerSessionE2EIT {
 
   @BeforeEach
   public void setUp() {
+    MockitoAnnotations.initMocks(this);
+    this.mockMvc =
+        MockMvcBuilders.standaloneSetup(userController)
+            .setHandlerExceptionResolvers(withExceptionControllerAdvice())
+            .build();
+    objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
                 new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()));
+  }
+
+  private ExceptionHandlerExceptionResolver withExceptionControllerAdvice() {
+    final ExceptionHandlerExceptionResolver exceptionResolver =
+        new ExceptionHandlerExceptionResolver() {
+          @Override
+          protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
+              final HandlerMethod handlerMethod, final Exception exception) {
+            Method method =
+                new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
+                    .resolveMethod(exception);
+            if (method != null) {
+              return new ServletInvocableHandlerMethod(
+                  new ApiResponseEntityExceptionHandler(), method);
+            }
+            return super.getExceptionHandlerMethod(handlerMethod, exception);
+          }
+        };
+    exceptionResolver.afterPropertiesSet();
+    return exceptionResolver;
   }
 
   @Test
@@ -592,30 +618,8 @@ class UserControllerSessionE2EIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldFindSessionsByGroupOrFeedbackGroup()
-      throws Exception {
-    givenAUserWithSessions();
-    givenNoRocketChatSubscriptionUpdates();
-    givenNoRocketChatRoomUpdates();
-
-    mockMvc
-        .perform(
-            get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP,9faSTWZ5gurHLXy4R")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("sessions[0].session.feedbackGroupId", is("9faSTWZ5gurHLXy4R")))
-        .andExpect(jsonPath("sessions[1].session.groupId", is("mzAdWzQEobJ2PkoxP")))
-        .andExpect(jsonPath("sessions", hasSize(2)));
-  }
-
-  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldFindSessionsByGroupOrFeedbackGroupForConsultant()
-      throws Exception {
+  void getSessionsForGroupIdsShouldFindSessionsByGroupConsultant() throws Exception {
     givenAConsultantWithSessions();
     givenNoRocketChatSubscriptionUpdates();
     givenNoRocketChatRoomUpdates();
@@ -629,27 +633,18 @@ class UserControllerSessionE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("sessions[0].session.groupId", is("YWKxhFX5K2HPpsFbs")))
-        .andExpect(jsonPath("sessions[0].session.feedbackRead", is(true)))
         .andExpect(jsonPath("sessions[0].user.username", is("u25suchtler")))
         .andExpect(
             jsonPath("sessions[0].consultant.id", is("bad14912-cf9f-4c16-9d0e-fe8ede9b60dc")))
         .andExpect(jsonPath("sessions[0].consultant.firstName", is("Manfred")))
         .andExpect(jsonPath("sessions[0].consultant.lastName", is("Main")))
         .andExpect(jsonPath("sessions[0].consultant.username").doesNotExist())
-        .andExpect(jsonPath("sessions[1].session.feedbackGroupId", is("4SPkApB8So88c7tQ3")))
-        .andExpect(jsonPath("sessions[1].session.feedbackRead", is(true)))
-        .andExpect(jsonPath("sessions[1].user.username", is("u25depp")))
-        .andExpect(
-            jsonPath("sessions[1].consultant.id", is("bad14912-cf9f-4c16-9d0e-fe8ede9b60dc")))
-        .andExpect(jsonPath("sessions[1].consultant.firstName", is("Manfred")))
-        .andExpect(jsonPath("sessions[1].consultant.lastName", is("Main")))
-        .andExpect(jsonPath("sessions[1].consultant.username").doesNotExist())
-        .andExpect(jsonPath("sessions", hasSize(2)));
+        .andExpect(jsonPath("sessions", hasSize(1)));
   }
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldFindSessionByGroupId() throws Exception {
+  void getSessionsForGroupIdsShouldFindSessionByGroupId() throws Exception {
     givenAUserWithSessions();
     givenNoRocketChatSubscriptionUpdates();
     givenNoRocketChatRoomUpdates();
@@ -669,8 +664,7 @@ class UserControllerSessionE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldContainConsultantOfUserSession()
-      throws Exception {
+  void getSessionsForGroupIdsShouldContainConsultantOfUserSession() throws Exception {
     givenAUserWithSessions();
     givenNoRocketChatSubscriptionUpdates();
     givenNoRocketChatRoomUpdates();
@@ -692,54 +686,19 @@ class UserControllerSessionE2EIT {
         .andExpect(jsonPath("sessions", hasSize(1)));
   }
 
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldBeForbiddenIfUserDoesNotParticipateInSession()
-      throws Exception {
-    givenAUserWithSessions();
-    givenNoRocketChatSubscriptionUpdates();
-    givenNoRocketChatRoomUpdates();
-
-    mockMvc
-        .perform(
-            get("/users/sessions/room?rcGroupIds=4SPkApB8So88c7tQ3")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
+  @ParameterizedTest
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  @ValueSource(strings = {"QBv2xym9qQ2DoAxkR", "doesNotExist", "mzAdWzQEobJ2PkoxP"})
   void
-      getSessionsForGroupOrFeedbackGroupIdsShouldBeForbiddenIfConsultantDoesNotParticipateInSession()
-          throws Exception {
+      getSessionsForGroupIdsShouldBeNoContentIfConsultantDoesNotParticipateInSessionOrNoSessionsFoundForIdsOrNewEnquiriesForConsultantsNotInAgency(
+          String rcGroupId) throws Exception {
     givenAConsultantWithSessions();
     givenNoRocketChatSubscriptionUpdates();
     givenNoRocketChatRoomUpdates();
 
     mockMvc
         .perform(
-            get("/users/sessions/room?rcGroupIds=QBv2xym9qQ2DoAxkR")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void getSessionsForGroupOrFeedbackGroupIdsShouldBeNoContentIfNoSessionsFoundForIds()
-      throws Exception {
-    givenAConsultantWithSessions();
-    givenNoRocketChatSubscriptionUpdates();
-    givenNoRocketChatRoomUpdates();
-
-    mockMvc
-        .perform(
-            get("/users/sessions/room?rcGroupIds=doesNotExist")
+            get("/users/sessions/room?rcGroupIds=" + rcGroupId)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
@@ -749,9 +708,8 @@ class UserControllerSessionE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getSessionsForGroupOrFeedbackGroupIdsShouldReturnSessionsForNewEnquiriesOfConsultantInAgency()
-          throws Exception {
+  void getSessionsForGroupIdsShouldReturnSessionsForNewEnquiriesOfConsultantInAgency()
+      throws Exception {
     givenAConsultantWithSessionsOfNewEnquiries();
     givenNoRocketChatSubscriptionUpdates();
     givenNoRocketChatRoomUpdates();
@@ -766,25 +724,6 @@ class UserControllerSessionE2EIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("sessions[0].session.groupId", is("XJrRTzFg8Ac5BwE86")))
         .andExpect(jsonPath("sessions", hasSize(1)));
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getSessionsForGroupOrFeedbackGroupIdsShouldReturnForbiddenForNewEnquiriesForConsultantsNotInAgency()
-          throws Exception {
-    givenAConsultantWithSessions();
-    givenNoRocketChatSubscriptionUpdates();
-    givenNoRocketChatRoomUpdates();
-
-    mockMvc
-        .perform(
-            get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -828,7 +767,6 @@ class UserControllerSessionE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("sessions[0].session.groupId", is("YWKxhFX5K2HPpsFbs")))
-        .andExpect(jsonPath("sessions[0].session.feedbackRead", is(true)))
         .andExpect(jsonPath("sessions[0].user.username", is("u25suchtler")))
         .andExpect(
             jsonPath("sessions[0].consultant.id", is("bad14912-cf9f-4c16-9d0e-fe8ede9b60dc")))
@@ -840,7 +778,7 @@ class UserControllerSessionE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION)
-  void removeFromSessionShouldReturnForbiddenIfSessionIdFormatIsInvalid() throws Exception {
+  void removeFromSessionShouldReturnBadRequestIfSessionIdFormatIsInvalid() throws Exception {
     givenAValidConsultant(true);
     var sessionId = RandomStringUtils.randomAlphabetic(8);
 
@@ -854,7 +792,7 @@ class UserControllerSessionE2EIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -936,11 +874,6 @@ class UserControllerSessionE2EIT {
     verifyRocketChatUserRemovedFromGroup(
         logOutput, session.getGroupId(), session.getConsultant().getRocketChatId(), 0);
     verifyRocketChatTechUserLeftGroup(logOutput, session.getGroupId(), 0);
-
-    verifyRocketChatTechUserAddedToGroup(logOutput, session.getFeedbackGroupId(), 0);
-    verifyRocketChatUserRemovedFromGroup(
-        logOutput, session.getFeedbackGroupId(), consultant.getRocketChatId(), 0);
-    verifyRocketChatTechUserLeftGroup(logOutput, session.getFeedbackGroupId(), 0);
   }
 
   @Test
@@ -969,45 +902,6 @@ class UserControllerSessionE2EIT {
     verifyRocketChatUserRemovedFromGroup(
         logOutput, session.getGroupId(), session.getConsultant().getRocketChatId(), 0);
     verifyRocketChatTechUserLeftGroup(logOutput, session.getGroupId(), 0);
-
-    verifyRocketChatTechUserAddedToGroup(logOutput, session.getFeedbackGroupId(), 0);
-    verifyRocketChatUserRemovedFromGroup(
-        logOutput, session.getFeedbackGroupId(), consultant.getRocketChatId(), 0);
-    verifyRocketChatTechUserLeftGroup(logOutput, session.getFeedbackGroupId(), 0);
-  }
-
-  @Test
-  @WithMockUser(authorities = AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION)
-  void removeFromSessionShouldReturnNoContentAndRemoveConsultantFromSessionNotFromFeedbackChat(
-      CapturedOutput logOutput) throws Exception {
-    givenAValidConsultant(true);
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidSession();
-    var doc = givenSubscription(consultant.getRocketChatId(), "c", null);
-    givenMongoResponseWith(doc);
-    givenKeycloakUserRoles(consultant.getId(), "consultant");
-
-    mockMvc
-        .perform(
-            delete(
-                    "/users/sessions/{sessionId}/consultant/{consultantId}",
-                    session.getId(),
-                    consultant.getId())
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNoContent());
-
-    verifyRocketChatTechUserAddedToGroup(logOutput, session.getGroupId(), 1);
-    verifyRocketChatUserRemovedFromGroup(
-        logOutput, session.getGroupId(), consultant.getRocketChatId(), 1);
-    verifyRocketChatTechUserLeftGroup(logOutput, session.getGroupId(), 1);
-
-    verifyRocketChatTechUserAddedToGroup(logOutput, session.getFeedbackGroupId(), 0);
-    verifyRocketChatUserRemovedFromGroup(
-        logOutput, session.getFeedbackGroupId(), consultant.getRocketChatId(), 0);
-    verifyRocketChatTechUserLeftGroup(logOutput, session.getFeedbackGroupId(), 0);
   }
 
   @Test
@@ -1035,11 +929,6 @@ class UserControllerSessionE2EIT {
     verifyRocketChatUserRemovedFromGroup(
         logOutput, session.getGroupId(), session.getConsultant().getRocketChatId(), 0);
     verifyRocketChatTechUserLeftGroup(logOutput, session.getGroupId(), 0);
-
-    verifyRocketChatTechUserAddedToGroup(logOutput, session.getFeedbackGroupId(), 0);
-    verifyRocketChatUserRemovedFromGroup(
-        logOutput, session.getFeedbackGroupId(), consultant.getRocketChatId(), 0);
-    verifyRocketChatTechUserLeftGroup(logOutput, session.getFeedbackGroupId(), 0);
   }
 
   @Test
@@ -1180,28 +1069,6 @@ class UserControllerSessionE2EIT {
     when(mongoCollection.find(any(Bson.class))).thenReturn(findIterable).thenReturn(findIterable);
     when(mockedMongoClient.getDatabase("rocketchat")).thenReturn(mongoDatabase);
     when(mongoDatabase.getCollection("rocketchat_subscription")).thenReturn(mongoCollection);
-  }
-
-  @SuppressWarnings("SameParameterValue")
-  private Document givenSubscription(String chatUserId, String username, String name)
-      throws JsonProcessingException {
-    var doc = new LinkedHashMap<String, Object>();
-    doc.put("_id", RandomStringUtils.randomAlphanumeric(17));
-    doc.put("rid", RandomStringUtils.randomAlphanumeric(17));
-    doc.put("name", RandomStringUtils.randomAlphanumeric(17));
-
-    var user = new LinkedHashMap<>();
-    user.put("_id", chatUserId);
-    user.put("username", username);
-    if (nonNull(name)) {
-      user.put("name", name);
-    }
-
-    doc.put("u", user);
-
-    var json = objectMapper.writeValueAsString(doc);
-
-    return Document.parse(json);
   }
 
   private void givenAnEmptyRocketChatGetSubscriptionsResponse() {
@@ -1431,20 +1298,6 @@ class UserControllerSessionE2EIT {
 
   private void givenAUserWithSessions() {
     user = userRepository.findById("9c4057d0-05ad-4e86-a47c-dc5bdeec03b9").orElseThrow();
-    when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
-  }
-
-  private void givenADeletedUserWithSessions() throws JsonProcessingException {
-
-    user = userRepository.findById("9c4057d0-05ad-4e86-a47c-dc5bdeec03b9").orElseThrow();
-    user.setDeleteDate(LocalDateTime.now());
-    session =
-        user.getSessions().stream()
-            .filter(s -> s.getEnquiryMessageDate() != null)
-            .findFirst()
-            .orElseThrow();
-
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
     when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
   }

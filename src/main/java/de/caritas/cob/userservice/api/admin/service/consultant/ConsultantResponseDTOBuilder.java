@@ -68,7 +68,9 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .createDate(String.valueOf(consultant.getCreateDate()))
         .updateDate(String.valueOf(consultant.getUpdateDate()))
         .deleteDate(String.valueOf(consultant.getDeleteDate()))
-        .status(String.valueOf(consultant.getStatus()));
+        .status(String.valueOf(consultant.getStatus()))
+        .tenantId(consultant.getTenantId() != null ? consultant.getTenantId().intValue() : null)
+        .isSupervisor(consultant.isSupervisor());
   }
 
   private HalLink buildSelfLink() {
@@ -84,7 +86,7 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
 
   private HalLink buildDeleteLink() {
     return buildHalLink(
-        methodOn(UseradminApi.class).markConsultantForDeletion(this.consultant.getId()),
+        methodOn(UseradminApi.class).markConsultantForDeletion(this.consultant.getId(), false),
         MethodEnum.DELETE);
   }
 

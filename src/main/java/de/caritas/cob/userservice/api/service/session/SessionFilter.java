@@ -6,8 +6,7 @@ import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 public enum SessionFilter {
-  ALL("all"),
-  FEEDBACK("feedback");
+  ALL("all");
 
   private final String value;
 

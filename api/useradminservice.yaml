@@ -208,6 +208,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: forceDeleteSessions
+          in: query
+          schema:
+            type: boolean
+          description: parameter specifying if consultant sessions need to be removed prior the deletion
       responses:
         200:
           description: OK - consultant was marked for deletion successfully
@@ -568,7 +573,7 @@ paths:
       parameters:
         - name: query
           in: query
-          description: URL-encoded infix to search for in first name, last name, or email.
+          description: URL-encoded infix to search for in id first name, last name, or email.
             A non-encoded star symbol searches for all.
           required: true
           schema:
@@ -1183,6 +1188,7 @@ components:
       type: object
       required:
         - username
+        - password
         - firstname
         - lastname
         - email
@@ -1193,6 +1199,12 @@ components:
           type: string
           example: "max.mustermann"
           minLength: 1
+          maxLength: 255
+        password:
+          type: string
+          example: "SecurePass123!"
+          description: "Password for the consultant"
+          minLength: 8
           maxLength: 255
         firstname:
           type: string
@@ -1222,7 +1234,19 @@ components:
           maxLength: 10000
         tenantId:
           type: integer
+          format: int64
           example: "1"
+        isGroupchatConsultant:
+          $ref: '#/components/schemas/IsGroupchatConsultant'
+
+    IsGroupchatConsultant:
+      type: boolean
+      example: true
+
+    IsSupervisor:
+      type: boolean
+      example: true
+      description: Flag that indicates if the consultant can be added as a supervisor
 
     UpdateAdminConsultantDTO:
       type: object
@@ -1273,7 +1297,10 @@ components:
           type: boolean
           example: true
           description: Flag that indicates does the user accepted new data privacy text
-
+        isGroupchatConsultant:
+          $ref: '#/components/schemas/IsGroupchatConsultant'
+        isSupervisor:
+          $ref: '#/components/schemas/IsSupervisor'
 
     ConsultantDTO:
       type: object
@@ -1317,6 +1344,16 @@ components:
           type: array
           items:
             $ref: './../services/agencyadminservice.yaml#/components/schemas/AgencyAdminResponseDTO'
+        isGroupchatConsultant:
+          $ref: '#/components/schemas/IsGroupchatConsultant'
+        isSupervisor:
+          $ref: '#/components/schemas/IsSupervisor'
+        tenantId:
+          type: integer
+        tenantName:
+          type: string
+        displayName:
+          type: string
 
     CreateAdminDTO:
       type: object
@@ -1410,6 +1447,8 @@ components:
         deleteDate:
           type: string
         tenantId:
+          type: string
+        tenantName:
           type: string
         tenantSubdomain:
           type: string

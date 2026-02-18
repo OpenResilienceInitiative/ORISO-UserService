@@ -22,8 +22,7 @@ import de.caritas.cob.userservice.api.conversation.service.ConversationListResol
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import org.jeasy.random.EasyRandom;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -31,14 +30,12 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.test.web.servlet.MockMvc;
 
-@RunWith(SpringRunner.class)
 @WebMvcTest(ConversationController.class)
 @AutoConfigureMockMvc(addFilters = false)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-public class ConversationControllerIT {
+class ConversationControllerIT {
 
   private static final String ENQUIRIES_BASE_PATH = "/conversations/consultants/enquiries/";
   static final String GET_ANONYMOUS_ENQUIRIES_PATH = ENQUIRIES_BASE_PATH + "anonymous";
@@ -74,7 +71,7 @@ public class ConversationControllerIT {
   private AuthenticatedUser authenticatedUser;
 
   @Test
-  public void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
+  void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -85,8 +82,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsMissing()
-      throws Exception {
+  void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsMissing() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -96,7 +92,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getAnonymousEnquiries_Should_returnBadRequest_When_countIsMissing() throws Exception {
+  void getAnonymousEnquiries_Should_returnBadRequest_When_countIsMissing() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -106,8 +102,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero()
-      throws Exception {
+  void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -118,7 +113,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getAnonymousEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
+  void getAnonymousEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -129,8 +124,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getAnonymousEnquiries_Should_returnBadRequest_When_countIsLowerThanZero()
-      throws Exception {
+  void getAnonymousEnquiries_Should_returnBadRequest_When_countIsLowerThanZero() throws Exception {
     this.mvc
         .perform(
             get(GET_ANONYMOUS_ENQUIRIES_PATH)
@@ -141,7 +135,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
+  void getRegisteredEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
     this.mvc
         .perform(
             get(GET_REGISTERED_ENQUIRIES_PATH)
@@ -152,8 +146,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsMissing()
-      throws Exception {
+  void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsMissing() throws Exception {
     this.mvc
         .perform(
             get(GET_REGISTERED_ENQUIRIES_PATH)
@@ -163,8 +156,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnBadRequest_When_countIsMissing()
-      throws Exception {
+  void getRegisteredEnquiries_Should_returnBadRequest_When_countIsMissing() throws Exception {
     this.mvc
         .perform(
             get(GET_REGISTERED_ENQUIRIES_PATH)
@@ -174,7 +166,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero()
+  void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero()
       throws Exception {
     this.mvc
         .perform(
@@ -186,7 +178,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
+  void getRegisteredEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
     this.mvc
         .perform(
             get(GET_REGISTERED_ENQUIRIES_PATH)
@@ -197,8 +189,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void getRegisteredEnquiries_Should_returnBadRequest_When_countIsLowerThanZero()
-      throws Exception {
+  void getRegisteredEnquiries_Should_returnBadRequest_When_countIsLowerThanZero() throws Exception {
     this.mvc
         .perform(
             get(GET_REGISTERED_ENQUIRIES_PATH)
@@ -209,7 +200,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void acceptAnonymousEnquiry_Should_returnOk_When_requestParamsAreValid() throws Exception {
+  void acceptAnonymousEnquiry_Should_returnOk_When_requestParamsAreValid() throws Exception {
     this.mvc
         .perform(
             put(ACCEPT_ANONYMOUS_ENQUIRY_PATH).header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN))
@@ -219,8 +210,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void acceptAnonymousEnquiry_Should_returnBadRequest_When_sessionIdIsInvalid()
-      throws Exception {
+  void acceptAnonymousEnquiry_Should_returnBadRequest_When_sessionIdIsInvalid() throws Exception {
     this.mvc
         .perform(
             put(ACCEPT_ANONYMOUS_ENQUIRY_PATH.replace("1", "invalid"))
@@ -231,7 +221,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void createAnonymousEnquiry_Should_ReturnCreated_WhenProvidedWithValidRequestBody()
+  void createAnonymousEnquiry_Should_ReturnCreated_WhenProvidedWithValidRequestBody()
       throws Exception {
     this.mvc
         .perform(
@@ -246,7 +236,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void createAnonymousEnquiry_Should_ReturnBadRequest_WhenProvidedWithInvalidRequestBody()
+  void createAnonymousEnquiry_Should_ReturnBadRequest_WhenProvidedWithInvalidRequestBody()
       throws Exception {
     this.mvc
         .perform(
@@ -258,7 +248,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void finishAnonymousConversation_Should_ReturnBadRequest_WhenProvidedWithInvalidSessionId()
+  void finishAnonymousConversation_Should_ReturnBadRequest_WhenProvidedWithInvalidSessionId()
       throws Exception {
     this.mvc
         .perform(
@@ -269,7 +259,7 @@ public class ConversationControllerIT {
   }
 
   @Test
-  public void finishAnonymousConversation_Should_ReturnOk_WhenProvidedWithValidSessionId()
+  void finishAnonymousConversation_Should_ReturnOk_WhenProvidedWithValidSessionId()
       throws Exception {
     this.mvc
         .perform(

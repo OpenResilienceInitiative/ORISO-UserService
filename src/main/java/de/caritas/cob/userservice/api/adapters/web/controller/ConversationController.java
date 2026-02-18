@@ -20,7 +20,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.generated.api.conversation.controller.ConversationsApi;
 import io.swagger.annotations.Api;
-import javax.validation.Valid;
+import jakarta.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -52,7 +52,7 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getAnonymousEnquiries(
-      Integer offset, Integer count, @RequestHeader String rcToken) {
+      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
 
     ConsultantSessionListResponseDTO anonymousEnquirySessions =
         this.conversationListResolver.resolveConversations(
@@ -70,7 +70,7 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getRegisteredEnquiries(
-      Integer offset, Integer count, @RequestHeader String rcToken) {
+      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
 
     ConsultantSessionListResponseDTO registeredEnquirySessions =
         this.conversationListResolver.resolveConversations(

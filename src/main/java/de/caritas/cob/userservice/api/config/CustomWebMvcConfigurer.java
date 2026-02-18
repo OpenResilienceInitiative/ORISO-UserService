@@ -11,8 +11,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Component
 public class CustomWebMvcConfigurer implements WebMvcConfigurer {
 
-  @Value("${springfox.docuPath}")
-  private String docuPath;
+  @Value("${springdoc.swagger-ui.path:${springfox.docuPath:/swagger-ui.html}}")
+  private String swaggerUiPath;
 
   @Value("${registration.cors.allowed.paths}")
   private List<String> allowedPaths;
@@ -23,7 +23,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
   @Override
   public void addResourceHandlers(ResourceHandlerRegistry registry) {
     registry
-        .addResourceHandler(docuPath + "/**")
+        .addResourceHandler(swaggerUiPath + "/**")
         .addResourceLocations("classpath:/META-INF/resources/");
   }
 
@@ -37,6 +37,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
         .addMapping(path)
         .allowCredentials(true)
         .allowedMethods("OPTIONS", "POST")
-        .allowedOrigins(allowedOrigins);
+        .allowedOrigins(allowedOrigins)
+        .allowedHeaders("*");
   }
 }

@@ -126,22 +126,11 @@ public class UserService {
    * @param username the username to search for
    * @return {@link Optional} of {@link User}
    */
-  public List<User> findUsersByUsername(String username) {
-    List<User> users =
-        userRepository.findAllByUsernameInAndDeleteDateIsNull(
-            List.of(
-                usernameTranscoder.encodeUsername(username),
-                usernameTranscoder.decodeUsername(username)));
-    return users;
-  }
-
   public Optional<User> findUserByUsername(String username) {
-    List<User> users = findUsersByUsername(username);
-    if (users.isEmpty()) {
-      return Optional.empty();
-    } else {
-      return Optional.of(users.get(0));
-    }
+    return userRepository.findByUsernameInAndDeleteDateIsNull(
+        List.of(
+            usernameTranscoder.encodeUsername(username),
+            usernameTranscoder.decodeUsername(username)));
   }
 
   public Optional<User> findUserByEmail(String email) {

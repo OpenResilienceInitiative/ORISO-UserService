@@ -11,19 +11,21 @@ import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties.ConfigProperty;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties.Whitelist;
 import java.io.IOException;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
 import org.springframework.security.web.access.AccessDeniedHandler;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 public class StatelessCsrfFilterTest {
 
   private static final String CSRF_HEADER = "csrfHeader";
@@ -43,7 +45,7 @@ public class StatelessCsrfFilterTest {
 
   @Mock private AccessDeniedHandler accessDeniedHandler;
 
-  @Before
+  @BeforeEach
   public void setup() {
     ConfigProperty cookieProperty = new ConfigProperty();
     cookieProperty.setProperty(CSRF_COOKIE);

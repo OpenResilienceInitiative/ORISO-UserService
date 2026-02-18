@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.update;
 
+import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Objects.isNull;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
@@ -22,9 +24,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Service class to provide update functionality for consultants. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ConsultantUpdateService {
@@ -33,6 +37,7 @@ public class ConsultantUpdateService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AppointmentService appointmentService;
 
   /**
@@ -44,6 +49,8 @@ public class ConsultantUpdateService {
    */
   public Consultant updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    System.out.println("=== SUPERVISOR DEBUG: Received updateConsultantDTO.isSupervisor: " + updateConsultantDTO.getIsSupervisor());
+    log.info("Received updateConsultantDTO.isSupervisor: {}", updateConsultantDTO.getIsSupervisor());
     this.userAccountInputValidator.validateAbsence(
         new UpdateConsultantDTOAbsenceInputAdapter(updateConsultantDTO));
 
@@ -62,8 +69,35 @@ public class ConsultantUpdateService {
         updateConsultantDTO.getFirstname(),
         updateConsultantDTO.getLastname());
 
-    this.rocketChatService.updateUser(
-        buildUserUpdateRequestDTO(consultant.getRocketChatId(), updateConsultantDTO));
+    if (updateConsultantDTO.getIsGroupchatConsultant() != null
+        && updateConsultantDTO.getIsGroupchatConsultant()) {
+      identityClient.updateRole(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+    }
+    if ((updateConsultantDTO.getIsGroupchatConsultant() != null
+            && !updateConsultantDTO.getIsGroupchatConsultant())
+        || isNull(updateConsultantDTO.getIsGroupchatConsultant())) {
+      identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+    }
+
+    // MATRIX MIGRATION: RocketChat update is optional, don't block on errors
+    try {
+      this.rocketChatService.updateUser(
+          buildUserUpdateRequestDTO(consultant.getRocketChatId(), updateConsultantDTO));
+    } catch (Exception e) {
+      // RocketChat is being replaced by Matrix, so failures are non-blocking
+      // Silently continue - consultant update will succeed in database
+    }
+
+    // MATRIX MIGRATION: Update Matrix user display name using ADMIN API (no password needed)
+    if (consultant.getMatrixUserId() != null) {
+      try {
+        String newDisplayName =
+            updateConsultantDTO.getFirstname() + " " + updateConsultantDTO.getLastname();
+        matrixSynapseService.updateUserDisplayName(consultant.getMatrixUserId(), newDisplayName);
+      } catch (Exception e) {
+        // Matrix update failures are non-blocking
+      }
+    }
 
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant);
     appointmentService.syncConsultantData(updatedConsultant);
@@ -75,6 +109,7 @@ public class ConsultantUpdateService {
     UserDTO userDTO = new UserDTO();
     userDTO.setEmail(updateConsultantDTO.getEmail());
     userDTO.setUsername(consultant.getUsername());
+    userDTO.setTenantId(consultant.getTenantId());
 
     this.userAccountInputValidator.validateUserDTO(userDTO);
     return userDTO;
@@ -96,6 +131,19 @@ public class ConsultantUpdateService {
     consultant.setLanguages(languagesOf(updateConsultantDTO, consultant));
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
+    // Always update supervisor field if provided (even if false)
+    System.out.println("=== SUPERVISOR DEBUG: Checking isSupervisor: DTO value = " + updateConsultantDTO.getIsSupervisor() + ", consultant current value = " + consultant.isSupervisor());
+    log.info("Checking isSupervisor: DTO value = {}, consultant current value = {}", updateConsultantDTO.getIsSupervisor(), consultant.isSupervisor());
+    if (updateConsultantDTO.getIsSupervisor() != null) {
+      System.out.println("=== SUPERVISOR DEBUG: Updating supervisor field for consultant " + consultant.getId() + ": " + updateConsultantDTO.getIsSupervisor());
+      log.info("Updating supervisor field for consultant {}: {}", consultant.getId(), updateConsultantDTO.getIsSupervisor());
+      consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
+      System.out.println("=== SUPERVISOR DEBUG: Consultant supervisor field after update: " + consultant.isSupervisor());
+      log.info("Consultant supervisor field after update: {}", consultant.isSupervisor());
+    } else {
+      System.out.println("=== SUPERVISOR DEBUG: isSupervisor is null in DTO, skipping update");
+      log.info("isSupervisor is null in DTO, skipping update");
+    }
     consultant.setUpdateDate(nowInUtc());
     if (updateConsultantDTO.getTermsAndConditionsConfirmation() != null
         && updateConsultantDTO.getTermsAndConditionsConfirmation()) {

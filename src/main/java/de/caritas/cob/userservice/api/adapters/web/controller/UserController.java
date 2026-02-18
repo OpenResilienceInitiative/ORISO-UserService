@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
+import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
@@ -8,8 +10,6 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
-import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
@@ -39,7 +39,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.RegistrationStatisticsListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
@@ -60,7 +59,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
-import de.caritas.cob.userservice.api.facade.CreateNewConsultingTypeFacade;
+import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
@@ -68,14 +67,12 @@ import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
-import de.caritas.cob.userservice.api.facade.UsersStatisticsFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
-import de.caritas.cob.userservice.api.facade.userdata.EmailNotificationMapper;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -86,6 +83,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -96,12 +94,12 @@ import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
+import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteSingleRoomAndSessionAction;
-import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import java.net.URLDecoder;
@@ -112,14 +110,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.validation.Valid;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.InternalServerErrorException;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.InternalServerErrorException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
+import org.apache.commons.validator.routines.EmailValidator;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -133,7 +136,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
 
-  private final @NotNull ValidatedUserAccountProvider userAccountProvider;
+  private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull SessionService sessionService;
   private final @NotNull AuthenticatedUser authenticatedUser;
   private final @NotNull CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -154,7 +157,7 @@ public class UserController implements UsersApi {
   private final @NotNull StopChatFacade stopChatFacade;
   private final @NotNull GetChatMembersFacade getChatMembersFacade;
   private final @NotNull CreateUserFacade createUserFacade;
-  private final @NotNull CreateNewConsultingTypeFacade createNewConsultingTypeFacade;
+  private final @NotNull CreateNewSessionFacade createNewSessionFacade;
   private final @NotNull ConsultantDataFacade consultantDataFacade;
   private final @NotNull SessionDataService sessionDataService;
   private final @NotNull SessionArchiveService sessionArchiveService;
@@ -162,7 +165,6 @@ public class UserController implements UsersApi {
   private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull Messaging messenger;
-  private final @NotNull ActionsRegistry actionsRegistry;
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
@@ -171,11 +173,24 @@ public class UserController implements UsersApi {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
-  private final @NotNull UsersStatisticsFacade usersStatisticsFacade;
+  private final @NotNull IdentityClient identityClient;
 
   private final @NotNull AdminUserFacade adminUserFacade;
 
-  private final @NonNull EmailNotificationMapper emailNotificationMapper;
+  @Value("${feature.topics.enabled}")
+  private boolean featureTopicsEnabled;
+
+  private final @NonNull SessionDeleteService sessionDeleteService;
+
+  @Override
+  public ResponseEntity<Void> userExists(String username) {
+    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    val userExists = !usernameAvailable;
+    if (userExists) {
+      return ResponseEntity.ok().build();
+    }
+    return ResponseEntity.notFound().build();
+  }
 
   /**
    * Creates an user account and returns a 201 CREATED on success.
@@ -185,6 +200,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> registerUser(@Valid @RequestBody UserDTO user) {
+    validateUserHasChosenTopicIfTopicsFeatureIsEnabled(user);
     user.setNewUserAccount(true);
     var sessionId = createUserFacade.createUserAccountWithInitializedConsultingType(user);
 
@@ -196,6 +212,12 @@ public class UserController implements UsersApi {
     }
 
     return ResponseEntity.status(status).build();
+  }
+
+  private void validateUserHasChosenTopicIfTopicsFeatureIsEnabled(UserDTO user) {
+    if (featureTopicsEnabled && user.getMainTopicId() == null) {
+      throw new BadRequestException("Main topic id is required");
+    }
   }
 
   /**
@@ -217,38 +239,57 @@ public class UserController implements UsersApi {
         RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
     var registrationResponse =
-        createNewConsultingTypeFacade.initializeNewConsultingType(
-            newRegistrationDto, user, rocketChatCredentials);
+        createNewSessionFacade.initializeNewSession(
+            newRegistrationDto,
+            user,
+            rocketChatCredentials,
+            Lists.newArrayList(ONE_SESSION_PER_CONSULTING_TYPE));
 
     return new ResponseEntity<>(registrationResponse, registrationResponse.getStatus());
   }
 
+  /**
+   * Creates a new session or chat-agency relation depending on the provided topic.
+   *
+   * @param rcToken Rocket.Chat token (required)
+   * @param rcUserId Rocket.Chat user ID (required)
+   * @param newRegistrationDto {@link NewRegistrationDto}
+   * @return {@link ResponseEntity} containing {@link NewRegistrationResponseDto}
+   */
   @Override
-  public ResponseEntity<RegistrationStatisticsListResponseDTO> getRegistrationStatistics() {
+  public ResponseEntity<NewRegistrationResponseDto> registerNewSession(
+      @RequestHeader String rcToken,
+      @RequestHeader(value = "RCUserId", required = true) String rcUserId,
+      de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto newRegistrationDto) {
+    var user = this.userAccountProvider.retrieveValidatedUser();
+    var rocketChatCredentials =
+        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
-    var registrationResponse = usersStatisticsFacade.getRegistrationStatistics();
+    var response =
+        createNewSessionFacade.initializeNewSession(
+            newRegistrationDto,
+            user,
+            rocketChatCredentials,
+            Lists.newArrayList(ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID));
 
-    return new ResponseEntity<>(registrationResponse, HttpStatus.OK);
+    return new ResponseEntity<>(response, response.getStatus());
   }
 
   /**
    * Assigns the given session to the calling consultant.
    *
    * @param sessionId Session ID (required)
-   * @param rcUserId Rocket.Chat user ID (required)
+   * @param rcUserId Rocket.Chat user ID (optional - not used in Matrix migration)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
   public ResponseEntity<Void> acceptEnquiry(
-      @PathVariable Long sessionId, @RequestHeader String rcUserId) {
+      @PathVariable Long sessionId, @RequestHeader(required = false) String rcUserId) {
     var session = sessionService.getSession(sessionId);
 
-    if (session.isEmpty() || isNull(session.get().getGroupId())) {
-      log.error(
-          "Internal Server Error: Session id {} is invalid, session not found or has no "
-              + "Rocket.Chat groupId assigned.",
-          sessionId);
-
+    // MATRIX MIGRATION: Removed groupId check - Matrix sessions don't have RocketChat groupId
+    if (session.isEmpty()) {
+      log.error("Internal Server Error: Session id {} is invalid, session not found.", sessionId);
       return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
@@ -293,45 +334,28 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> deleteSessionAndInactiveUser(@PathVariable Long sessionId) {
-    var session =
-        sessionService
-            .getSession(sessionId)
-            .orElseThrow(
-                () -> new NotFoundException("A session with an id %s does not exist.", sessionId));
-
-    var user = session.getUser();
-    if (user.getSessions().size() == 1) {
-      actionsRegistry
-          .buildContainerForType(User.class)
-          .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
-          .executeActions(user);
-    }
-
-    var deleteSession = new SessionDeletionWorkflowDTO(session, null);
-    actionsRegistry
-        .buildContainerForType(SessionDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteSingleRoomAndSessionAction.class)
-        .executeActions(deleteSession);
-
+    sessionDeleteService.deleteSession(sessionId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
   /**
    * Returns a list of sessions for the currently authenticated/logged in user.
    *
-   * @param rcToken Rocket.Chat token (required)
+   * @param rcToken Rocket.Chat token (optional)
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
   public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(
-      @RequestHeader String rcToken) {
+      @RequestHeader(required = false) String rcToken) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
+
+    // Use dummy RocketChat credentials if no token provided
+    String token = rcToken != null ? rcToken : "dummy-rc-token";
+    String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
+
     var rocketChatCredentials =
-        RocketChatCredentials.builder()
-            .rocketChatUserId(user.getRcUserId())
-            .rocketChatToken(rcToken)
-            .build();
+        RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
 
     var userSessionsDTO =
         sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(
@@ -346,14 +370,14 @@ public class UserController implements UsersApi {
 
   /**
    * Returns a list of sessions for the currently authenticated/logged in user and given RocketChat
-   * group, or feedback group IDs.
+   * group IDs.
    *
    * @param rcToken Rocket.Chat token (required)
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupOrFeedbackGroupIds(
-      @RequestHeader String rcToken, @RequestParam(value = "rcGroupIds") List<String> rcGroupIds) {
+  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
+      @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -365,7 +389,7 @@ public class UserController implements UsersApi {
       var rocketChatCredentials =
           RocketChatCredentials.builder()
               .rocketChatUserId(user.getRcUserId())
-              .rocketChatToken(rcToken)
+              .rocketChatToken(rcToken != null ? rcToken : "")
               .build();
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
@@ -379,28 +403,84 @@ public class UserController implements UsersApi {
         : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
-  @Override
+  // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
+  @GetMapping(
+      value = "/users/sessions/room/{sessionId}",
+      produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
-      String rcToken, Long sessionId) {
+      @PathVariable Long sessionId,
+      @RequestHeader(value = "RCToken", required = false) String rcToken) {
+    log.info(
+        "🔍 GET /users/sessions/room/{} - sessionId: {}, rcToken: {}",
+        sessionId,
+        sessionId,
+        rcToken != null ? "present" : "null");
+
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
+      log.info("🔍 User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
+
+      // MATRIX MIGRATION: Try to find as session first, then as chat
+      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
               consultant, singletonList(sessionId), authenticatedUser.getRoles());
+
+      log.info(
+          "🔍 Step 1 result: {} sessions found",
+          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+
+      // If no session found, try to find as a chat (group chat)
+      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+        String token = rcToken != null ? rcToken : "dummy-rc-token";
+        var rocketChatCredentials =
+            RocketChatCredentials.builder()
+                .rocketChatUserId(consultant.getRocketChatId())
+                .rocketChatToken(token)
+                .build();
+        groupSessionList =
+            sessionListFacade.retrieveChatsForConsultantByChatIds(
+                consultant, singletonList(sessionId), rocketChatCredentials);
+
+        log.info(
+            "🔍 Step 2 result: {} chats found",
+            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+      }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
+      log.info("🔍 User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
+
+      // MATRIX MIGRATION: Use dummy RocketChat credentials if no token provided
+      String token = rcToken != null ? rcToken : "dummy-rc-token";
+      String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
       var rocketChatCredentials =
-          RocketChatCredentials.builder()
-              .rocketChatUserId(user.getRcUserId())
-              .rocketChatToken(rcToken)
-              .build();
+          RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
+
+      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
               user.getUserId(),
               singletonList(sessionId),
               rocketChatCredentials,
               authenticatedUser.getRoles());
+
+      log.info(
+          "🔍 Step 1 result: {} sessions found",
+          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+
+      // If no session found, try to find as a chat (group chat)
+      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+        groupSessionList =
+            sessionListFacade.retrieveChatsForUserByChatIds(
+                singletonList(sessionId), rocketChatCredentials);
+
+        log.info(
+            "🔍 Step 2 result: {} chats found",
+            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+      }
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -545,10 +625,21 @@ public class UserController implements UsersApi {
     userDtoMapper
         .preferredLanguageOf(patchUserDTO)
         .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
+
+    // MATRIX MIGRATION: Gracefully handle RocketChat unavailability
     userDtoMapper
         .availableOf(patchUserDTO)
         .filter(available -> authenticatedUser.isConsultant())
-        .ifPresent(available -> messenger.setAvailability(userId, available));
+        .ifPresent(
+            available -> {
+              try {
+                messenger.setAvailability(userId, available);
+              } catch (Exception e) {
+                log.warn(
+                    "RocketChat is not available (expected during Matrix migration), skipping setAvailability: {}",
+                    e.getMessage());
+              }
+            });
 
     return ResponseEntity.noContent().build();
   }
@@ -587,7 +678,7 @@ public class UserController implements UsersApi {
    * Returns a list of sessions for the currently authenticated consultant depending on the
    * submitted sessionStatus.
    *
-   * @param rcToken Rocket.Chat token (required)
+   * @param rcToken Rocket.Chat token (required, provided by RocketChatConfig as dummy if missing)
    * @param offset Number of items where to start in the query (0 = first item) (required)
    * @param count Number of items which are being returned (required)
    * @param filter Information on how to filter the list (required)
@@ -724,26 +815,6 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Sends email notifications to the user(s) if there has been a new feedback answer. Uses the
-   * provided Keycloak authorization token for user verification (user role). This means that the
-   * user that wrote the answer should also call this method.
-   *
-   * @param newMessageNotificationDTO (required)
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> sendNewFeedbackMessageNotification(
-      @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
-
-    emailNotificationFacade.sendNewFeedbackMessageNotification(
-        newMessageNotificationDTO.getRcGroupId(),
-        authenticatedUser.getUserId(),
-        TenantContext.getCurrentTenantData());
-
-    return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  /**
    * Sends email notification for reassign request to advice seeker if the property isConfirmed of
    * {@link ReassignmentNotificationDTO} is null or false. Send email confirmation notification to
    * consultant if property isConfirmed of {@link * ReassignmentNotificationDTO} is true.
@@ -785,7 +856,7 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
       String query, Integer page, Integer perPage, String field, String order) {
-    var decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    var decodedInfix = determineDecodedInfix(query).trim();
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = consultantDtoMapper.mappedFieldOf(field);
     var resultMap =
@@ -810,6 +881,14 @@ public class UserController implements UsersApi {
     }
 
     return ResponseEntity.ok(result);
+  }
+
+  private String determineDecodedInfix(String query) {
+    if (EmailValidator.getInstance().isValid(query)) {
+      return EmailUrlDecoder.decodeEmailQuery(query);
+    } else {
+      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    }
   }
 
   private void removeAgenciesWithoutAccessRight(
@@ -1000,7 +1079,6 @@ public class UserController implements UsersApi {
 
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
-
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }
 

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_CREATE_CHAT_BODY;
+import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_CREATE_CHAT_BODY_WITH_AGENCY_PLACEHOLDER;
+import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_CREATE_CHAT_V1_BODY;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_SYSTEM_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
@@ -50,7 +51,6 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -63,6 +63,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -72,6 +73,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -82,7 +84,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import javax.transaction.Transactional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
@@ -101,6 +103,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -153,7 +156,9 @@ class UserControllerChatE2EIT {
 
   @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @Autowired private CacheManagerConfig cacheManagerConfig;
+  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
+  @Autowired private CacheManager cacheManager;
 
   @MockBean
   @Qualifier("restTemplate")
@@ -185,7 +190,6 @@ class UserControllerChatE2EIT {
 
   @AfterEach
   void reset() {
-    cacheManagerConfig.cacheManager().getCache("rocketChatUserCache").clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -209,6 +213,7 @@ class UserControllerChatE2EIT {
     subscriptionsGetResponse = null;
     groupDeleteResponse = null;
     identityConfig.setDisplayNameAllowedForConsultants(false);
+    cacheManager.getCache("rocketChatUserCache").clear();
   }
 
   @BeforeEach
@@ -233,7 +238,7 @@ class UserControllerChatE2EIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .header("rcToken", RandomStringUtils.randomAlphabetic(16))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(VALID_CREATE_CHAT_BODY)
+                .content(VALID_CREATE_CHAT_V1_BODY)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("groupId", is("rcGroupId")));
@@ -246,6 +251,8 @@ class UserControllerChatE2EIT {
     givenAValidConsultant(true);
     givenAValidRocketChatSystemUser();
 
+    ConsultantAgency consultantAgency =
+        consultant.getConsultantAgencies().stream().findFirst().orElseThrow();
     mockMvc
         .perform(
             post("/users/chat/v2/new")
@@ -253,10 +260,15 @@ class UserControllerChatE2EIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .header("rcToken", RandomStringUtils.randomAlphabetic(16))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(VALID_CREATE_CHAT_BODY)
+                .content(giveValidCreateChatBodyWithAgency(consultantAgency))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("groupId", is("rcGroupId")));
+  }
+
+  private String giveValidCreateChatBodyWithAgency(ConsultantAgency consultantAgency) {
+    return VALID_CREATE_CHAT_BODY_WITH_AGENCY_PLACEHOLDER.replace(
+        "${AGENCY_ID}", consultantAgency.getAgencyId().toString());
   }
 
   @Test

@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroup;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -19,7 +18,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.IterableUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -27,7 +25,6 @@ import org.springframework.stereotype.Service;
 /** Provider for user to inactive Rocket.Chat group map. */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class InactivePrivateGroupsProvider {
 
   private final @NonNull RocketChatService rocketChatService;
@@ -37,40 +34,27 @@ public class InactivePrivateGroupsProvider {
   private int sessionInactiveDeleteWorkflowCheckDays;
 
   /**
-   * Get a map with users and their related inactive Rocket.Chat group info including last message
-   * timestamp. Group chats are excluded.
+   * Get a map with users and their related inactive Rocket.Chat group ids. Group chats are
+   * excluded.
    *
-   * @return a map with users and related inactive Rocket.Chat group info
+   * @return a map with users and related inactive Rocket.Chat groups ids
    */
-  public Map<String, List<InactiveGroup>> retrieveUserWithInactiveGroupInfoMap() {
+  public Map<String, List<String>> retrieveUserWithInactiveGroupsMap() {
 
-    Set<String> groupChatIdSet = buildSetOfGroupChatGroupIds();
+    Set<String> groupChatIdSet = buildSetOfGroupChatGroupdIds();
 
-    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
-        .filter(
-            group -> {
-              boolean isFilteredOut = !groupChatIdSet.contains(group.getId());
-              if (isFilteredOut) {
-                log.info(
-                    "Inactive group with id {} is filtered out, because it is a group chat.",
-                    group.getId());
-              }
-              return isFilteredOut;
-            })
+        .filter(group -> !groupChatIdSet.contains(group.getId()))
         .forEach(
             group ->
                 userWithInactiveGroupsMap
                     .computeIfAbsent(group.getUser().getId(), v -> new ArrayList<>())
-                    .add(
-                        InactiveGroup.builder()
-                            .groupId(group.getId())
-                            .lastMessageDate(group.getLastMessageDate())
-                            .build()));
+                    .add(group.getId()));
     return userWithInactiveGroupsMap;
   }
 
-  private Set<String> buildSetOfGroupChatGroupIds() {
+  private Set<String> buildSetOfGroupChatGroupdIds() {
     List<Chat> chatList = IterableUtils.toList(chatRepository.findAll());
     return chatList.stream().map(Chat::getGroupId).collect(Collectors.toSet());
   }

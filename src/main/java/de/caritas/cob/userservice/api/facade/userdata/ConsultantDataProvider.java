@@ -81,6 +81,8 @@ public class ConsultantDataProvider {
         .hasAnonymousConversations(
             hasAtLeastOneTypeWithAllowedAnonymousConversations(agencyDTOsOf(consultant)))
         .hasArchive(hasArchive(consultant))
+        .dataPrivacyConfirmation(consultant.getDataPrivacyConfirmation())
+        .termsAndConditionsConfirmation(consultant.getTermsAndConditionsConfirmation())
         .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(consultant))
         .build();
   }
@@ -94,11 +96,7 @@ public class ConsultantDataProvider {
     newChatToggle.setName(EmailType.NEW_CHAT_MESSAGE_FROM_ADVICE_SEEKER);
     newChatToggle.setState(consultant.getNotifyNewChatMessageFromAdviceSeeker());
 
-    var newFeedbackToggle = new EmailToggle();
-    newFeedbackToggle.setName(EmailType.NEW_FEEDBACK_MESSAGE_FROM_ADVICE_SEEKER);
-    newFeedbackToggle.setState(consultant.getNotifyNewFeedbackMessageFromAdviceSeeker());
-
-    return Set.of(enquiryToggle, newChatToggle, newFeedbackToggle);
+    return Set.of(enquiryToggle, newChatToggle);
   }
 
   private List<AgencyDTO> agencyDTOsOf(Consultant consultant) {

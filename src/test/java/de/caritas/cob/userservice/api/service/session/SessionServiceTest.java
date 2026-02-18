@@ -25,12 +25,11 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ROLES
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
-import static liquibase.util.BooleanUtils.isTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.everyItem;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -56,7 +55,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsu
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.exception.UpdateFeedbackGroupIdException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -73,7 +71,6 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testHelper.TestConstants;
-import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -85,8 +82,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.NullSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -121,7 +116,6 @@ class SessionServiceTest {
           true,
           true,
           true,
-          true,
           null,
           null,
           ConsultantStatus.CREATED,
@@ -144,7 +138,6 @@ class SessionServiceTest {
           .createDate(nowInUtc())
           .updateDate(nowInUtc())
           .teamSession(false)
-          .isPeerChat(false)
           .build();
 
   private final Session SESSION_WITH_CONSULTANT =
@@ -159,7 +152,6 @@ class SessionServiceTest {
           .createDate(nowInUtc())
           .updateDate(nowInUtc())
           .teamSession(false)
-          .isPeerChat(false)
           .build();
 
   private final Session ACCEPTED_SESSION =
@@ -175,14 +167,12 @@ class SessionServiceTest {
           .createDate(nowInUtc())
           .updateDate(nowInUtc())
           .teamSession(false)
-          .isPeerChat(false)
           .build();
 
   private final ConsultantAgency CONSULTANT_AGENCY_1 =
       new ConsultantAgency(1L, CONSULTANT, 1L, nowInUtc(), nowInUtc(), nowInUtc(), null, null);
   private final Set<ConsultantAgency> CONSULTANT_AGENCY_SET = new HashSet<>();
   private final List<Session> SESSION_LIST_WITH_CONSULTANT = singletonList(SESSION_WITH_CONSULTANT);
-  private final String ERROR_MSG = "error";
   private final UserDTO USER_DTO =
       new UserDTO(
           USERNAME,
@@ -192,9 +182,11 @@ class SessionServiceTest {
           "x@y.de",
           null,
           null,
+          null,
           CONSULTING_TYPE_ID_SUCHT + "",
           "",
           true,
+          null,
           null,
           null,
           null,
@@ -207,8 +199,8 @@ class SessionServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private Logger logger;
   @Mock private ConsultantService consultantService;
-  @Mock private UserService userService;
   @Mock private ConsultingTypeManager consultingTypeManager;
+  @Mock UserService userService;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -540,27 +532,6 @@ class SessionServiceTest {
   }
 
   @Test
-  void updateFeedbackGroupId_Should_ThrowUpdateFeedbackGroupIdException_WhenSaveSessionFails() {
-
-    InternalServerErrorException ex = new InternalServerErrorException(ERROR_MSG) {};
-    when(sessionService.saveSession(any())).thenThrow(ex);
-
-    try {
-      sessionService.updateFeedbackGroupId(SESSION, RC_GROUP_ID);
-      fail("Expected exception: UpdateFeedbackGroupIdException");
-    } catch (UpdateFeedbackGroupIdException updateFeedbackGroupIdException) {
-      // As expected
-    }
-  }
-
-  @Test
-  void updateFeedbackGroupId_Should_SaveSession() throws UpdateFeedbackGroupIdException {
-
-    sessionService.updateFeedbackGroupId(SESSION, RC_GROUP_ID);
-    verify(sessionRepository, times(1)).save(SESSION);
-  }
-
-  @Test
   void fetchSessionForConsultant_Should_ThrowNotFoundException_When_SessionIsNotFound() {
 
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
@@ -591,11 +562,11 @@ class SessionServiceTest {
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
     assertEquals(session.getGroupId(), result.getGroupId());
-    assertEquals(session.getFeedbackGroupId(), result.getFeedbackGroupId());
     assertEquals(session.getConsultingTypeId(), result.getConsultingType().intValue());
     assertEquals(session.getUserAge(), result.getAge());
     assertEquals(session.getUserGender(), result.getGender());
     assertEquals(session.getCounsellingRelation(), result.getCounsellingRelation());
+    assertEquals(session.getReferer(), result.getReferer());
   }
 
   @Test
@@ -763,27 +734,12 @@ class SessionServiceTest {
     assertThat(activeAndDoneSessionsForConsultant, hasSize(2));
   }
 
-  @ParameterizedTest
-  @ValueSource(booleans = {true, false})
-  @NullSource
-  void initializeSession_Should_initializePeerChat_When_consultingTypeSettingsHasPeerChat(
-      Boolean isPeerChat) {
-    var consultingTypeResponse = easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class);
-    consultingTypeResponse.setIsPeerChat(isPeerChat);
-    when(sessionRepository.save(any())).then(answer -> answer.getArgument(0, Session.class));
-    when(consultingTypeManager.getConsultingTypeSettings(any())).thenReturn(consultingTypeResponse);
-
-    var expectedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
-
-    assertThat(expectedSession.isPeerChat(), is(isTrue(isPeerChat)));
-  }
-
   @Test
   void
-      getSessionsByConsultantAndGroupOrFeedbackGroupIds_should_find_new_anonymous_enquiry_if_consultant_may_advise_consulting_type() {
+      getAllowedSessionsByConsultantAndGroupIds_should_find_new_anonymous_enquiry_if_consultant_may_advise_consulting_type() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
-    when(sessionRepository.findByGroupOrFeedbackGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
         .thenReturn(singletonList(anonymousEnquiry));
     when(agencyService.getAgencies(singletonList(4711L))).thenReturn(AGENCY_DTO_LIST);
     ConsultantAgency agency = new ConsultantAgency();
@@ -791,10 +747,31 @@ class SessionServiceTest {
     var consultant = createConsultantWithAgencies(agency);
 
     var sessionResponse =
-        sessionService.getSessionsByConsultantAndGroupOrFeedbackGroupIds(
+        sessionService.getAllowedSessionsByConsultantAndGroupIds(
             consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
 
     assertEquals(1, sessionResponse.size());
+  }
+
+  @Test
+  void
+      getAllowedSessionsByConsultantAndGroupIds_should_only_return_the_sessions_the_consultant_can_see() {
+    // given
+    List<Session> sessions = new ArrayList<>();
+    ConsultantAgency agency = new ConsultantAgency();
+    agency.setAgencyId(4711L);
+    var consultant = createConsultantWithAgencies(agency);
+    var allowedSession = giveAllowedSessionWithID(1L, consultant);
+    sessions.add(giveAllowedSessionWithID(2L, null));
+    sessions.add(allowedSession);
+    when(sessionRepository.findByGroupIds(singleton("rcGroupId"))).thenReturn(sessions);
+    // when
+    var sessionResponse =
+        sessionService.getAllowedSessionsByConsultantAndGroupIds(
+            consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
+    // then
+    assertThat(sessionResponse).hasSize(1);
+    assertThat(sessionResponse.get(0).getSession().getId()).isEqualTo(allowedSession.getId());
   }
 
   @Test
@@ -819,34 +796,31 @@ class SessionServiceTest {
   }
 
   @Test
-  void
-      getSessionsByUserAndGroupOrFeedbackGroupIds_should_find_session_for_anonymous_user_of_session() {
+  void getSessionsByUserAndGroupIds_should_find_session_for_anonymous_user_of_session() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupOrFeedbackGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    var sessionResponse = getSessionsByUserAndGroupOrFeedbackGroupIds(USER_ID);
+    var sessionResponse = getSessionsByUserAndGroupIds(USER_ID);
 
     assertEquals(1, sessionResponse.size());
   }
 
   @Test
-  void getSessionsByUserAndGroupOrFeedbackGroupIds_should_fail_if_user_is_not_owner_of_session() {
+  void getSessionsByUserAndGroupIds_should_fail_if_user_is_not_owner_of_session() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupOrFeedbackGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    assertThrows(
-        ForbiddenException.class, () -> getSessionsByUserAndGroupOrFeedbackGroupIds("someOtherId"));
+    assertThrows(ForbiddenException.class, () -> getSessionsByUserAndGroupIds("someOtherId"));
   }
 
-  private List<UserSessionResponseDTO> getSessionsByUserAndGroupOrFeedbackGroupIds(
-      String someOtherId) {
-    return sessionService.getSessionsByUserAndGroupOrFeedbackGroupIds(
+  private List<UserSessionResponseDTO> getSessionsByUserAndGroupIds(String someOtherId) {
+    return sessionService.getSessionsByUserAndGroupIds(
         someOtherId, singleton("rcGroupId"), singleton(UserRole.ANONYMOUS.getValue()));
   }
 
@@ -877,6 +851,14 @@ class SessionServiceTest {
   private List<UserSessionResponseDTO> getSomeUserId(String someUserId, Session anonymousEnquiry) {
     return sessionService.getSessionsByUserAndSessionIds(
         someUserId, singleton(anonymousEnquiry.getId()), singleton(UserRole.ANONYMOUS.getValue()));
+  }
+
+  private Session giveAllowedSessionWithID(Long id, Consultant consultant) {
+    Session allowedSession =
+        createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
+    allowedSession.setId(id);
+    allowedSession.setConsultant(consultant);
+    return allowedSession;
   }
 
   private Session createAnonymousNewEnquiryWithConsultingType(int consultingTypeId) {
@@ -910,7 +892,6 @@ class SessionServiceTest {
         nowInUtc(),
         null,
         null,
-        true,
         true,
         true,
         true,

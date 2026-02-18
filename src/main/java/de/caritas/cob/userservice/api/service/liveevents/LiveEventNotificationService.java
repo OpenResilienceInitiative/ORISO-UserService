@@ -69,7 +69,7 @@ public class LiveEventNotificationService {
    * Collects all relevant user or consultant ids of chats and sessions and sends a new direct
    * message to the live service.
    *
-   * @param rcGroupId the rocket chat group id used to observe relevant users
+   * @param rcGroupId the rocket chat group id OR Matrix room ID used to observe relevant users
    */
   public void sendLiveDirectMessageEventToUsers(String rcGroupId) {
     if (isNotBlank(rcGroupId)) {

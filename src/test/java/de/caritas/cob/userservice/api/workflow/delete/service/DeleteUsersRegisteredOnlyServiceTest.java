@@ -17,14 +17,14 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowErro
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collections;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class DeleteUsersRegisteredOnlyServiceTest {
 
   @InjectMocks private DeleteUsersRegisteredOnlyService deleteUsersRegisteredOnlyService;
@@ -33,7 +33,7 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
   @Mock private DeleteUserAccountService deleteUserAccountService;
 
-  @Mock private WorkflowResultsMailService workflowResultsMailService;
+  @Mock private WorkflowErrorMailService workflowErrorMailService;
 
   @Mock
   @SuppressWarnings("unused")
@@ -45,7 +45,7 @@ public class DeleteUsersRegisteredOnlyServiceTest {
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
 
     verifyNoMoreInteractions(deleteUserAccountService);
-    verifyNoMoreInteractions(workflowResultsMailService);
+    verifyNoMoreInteractions(workflowErrorMailService);
   }
 
   @Test
@@ -72,7 +72,7 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
 
-    verify(workflowResultsMailService).buildAndSendErrorMail(workflowErrors);
+    verify(workflowErrorMailService).buildAndSendErrorMail(workflowErrors);
   }
 
   @Test
@@ -85,7 +85,7 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
 
-    verify(workflowResultsMailService, never()).buildAndSendErrorMail(Mockito.any());
+    verify(workflowErrorMailService, never()).buildAndSendErrorMail(Mockito.any());
   }
 
   @Test
@@ -131,7 +131,7 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     // then
     verify(deleteUserAccountService).performUserDeletion(user);
-    verify(workflowResultsMailService, never()).buildAndSendErrorMail(Mockito.any());
+    verify(workflowErrorMailService, never()).buildAndSendErrorMail(Mockito.any());
   }
 
   @Test
@@ -151,6 +151,6 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     // then
     verify(deleteUserAccountService).performUserDeletion(user);
-    verify(workflowResultsMailService, never()).buildAndSendErrorMail(Mockito.any());
+    verify(workflowErrorMailService, never()).buildAndSendErrorMail(Mockito.any());
   }
 }

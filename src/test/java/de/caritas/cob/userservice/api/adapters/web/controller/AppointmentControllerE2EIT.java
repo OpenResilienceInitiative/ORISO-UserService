@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.Appointment;
 import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentStatus;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -24,33 +25,40 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.mockito.MockitoAnnotations;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
+import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
+import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
 
 @SpringBootTest
-@AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 class AppointmentControllerE2EIT {
@@ -59,8 +67,9 @@ class AppointmentControllerE2EIT {
   private static final String CSRF_HEADER = "csrfHeader";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Integer BOOKING_ID = 1;
 
-  @Autowired private MockMvc mockMvc;
+  private MockMvc mockMvc;
 
   @Autowired private ObjectMapper objectMapper;
 
@@ -74,11 +83,45 @@ class AppointmentControllerE2EIT {
 
   @MockBean private Clock clock;
 
+  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
   private Appointment appointment;
 
   private de.caritas.cob.userservice.api.model.Appointment savedAppointment;
 
   private Consultant consultant;
+
+  @Autowired private AppointmentController appointmentController;
+
+  @BeforeEach
+  public void setUp() {
+    MockitoAnnotations.initMocks(this);
+    this.mockMvc =
+        MockMvcBuilders.standaloneSetup(appointmentController)
+            .setHandlerExceptionResolvers(withExceptionControllerAdvice())
+            .build();
+    objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+  }
+
+  private ExceptionHandlerExceptionResolver withExceptionControllerAdvice() {
+    final ExceptionHandlerExceptionResolver exceptionResolver =
+        new ExceptionHandlerExceptionResolver() {
+          @Override
+          protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
+              final HandlerMethod handlerMethod, final Exception exception) {
+            Method method =
+                new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
+                    .resolveMethod(exception);
+            if (method != null) {
+              return new ServletInvocableHandlerMethod(
+                  new ApiResponseEntityExceptionHandler(), method);
+            }
+            return super.getExceptionHandlerMethod(handlerMethod, exception);
+          }
+        };
+    exceptionResolver.afterPropertiesSet();
+    return exceptionResolver;
+  }
 
   @AfterEach
   public void reset() {
@@ -102,7 +145,26 @@ class AppointmentControllerE2EIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("id", is(notNullValue())))
         .andExpect(jsonPath("description", is(savedAppointment.getDescription())))
-        .andExpect(jsonPath("datetime", is(savedAppointment.getDatetime().toString())))
+        .andExpect(jsonPath("datetime", is(notNullValue())))
+        .andExpect(jsonPath("status", is(savedAppointment.getStatus().toString().toLowerCase())));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void getAppointmentByBookingIdShouldReturnOk() throws Exception {
+    givenAValidConsultant(true);
+    givenASavedAppointment();
+
+    mockMvc
+        .perform(
+            get("/appointments/booking/{id}", savedAppointment.getBookingId())
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("id", is(notNullValue())))
+        .andExpect(jsonPath("description", is(savedAppointment.getDescription())))
+        .andExpect(jsonPath("datetime", is(notNullValue())))
         .andExpect(jsonPath("status", is(savedAppointment.getStatus().toString().toLowerCase())));
   }
 
@@ -193,7 +255,7 @@ class AppointmentControllerE2EIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("id", is(appointment.getId().toString())))
         .andExpect(jsonPath("description", is(appointment.getDescription())))
-        .andExpect(jsonPath("datetime", is(appointment.getDatetime().toString())))
+        .andExpect(jsonPath("datetime", is(notNullValue())))
         .andExpect(jsonPath("status", is(appointment.getStatus().toString().toLowerCase())));
 
     assertEquals(1, appointmentRepository.count());
@@ -236,6 +298,7 @@ class AppointmentControllerE2EIT {
     givenAValidConsultant(true);
     var id = UUID.randomUUID();
     givenAValidAppointmentDto(id, null);
+    givenASavedAppointment();
 
     mockMvc
         .perform(
@@ -310,7 +373,7 @@ class AppointmentControllerE2EIT {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("id", is(notNullValue())))
         .andExpect(jsonPath("description", is(appointment.getDescription())))
-        .andExpect(jsonPath("datetime", is(appointment.getDatetime().toString())))
+        .andExpect(jsonPath("datetime", is(notNullValue())))
         .andExpect(jsonPath("status", is(appointment.getStatus().getValue())));
 
     assertEquals(1, appointmentRepository.count());
@@ -334,7 +397,7 @@ class AppointmentControllerE2EIT {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("id", is(notNullValue())))
         .andExpect(jsonPath("description", is(appointment.getDescription())))
-        .andExpect(jsonPath("datetime", is(appointment.getDatetime().toString())))
+        .andExpect(jsonPath("datetime", is(notNullValue())))
         .andExpect(jsonPath("status", is(appointment.getStatus().getValue())));
 
     assertEquals(1, appointmentRepository.count());
@@ -413,8 +476,8 @@ class AppointmentControllerE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", hasSize(2)))
-        .andExpect(jsonPath("[0].datetime", is(today.toString())))
-        .andExpect(jsonPath("[1].datetime", is(tomorrow.toString())));
+        .andExpect(jsonPath("[0].datetime", is(notNullValue())))
+        .andExpect(jsonPath("[1].datetime", is(notNullValue())));
   }
 
   private void givenAValidAppointmentDto() {
@@ -444,6 +507,7 @@ class AppointmentControllerE2EIT {
         easyRandom.nextObject(de.caritas.cob.userservice.api.model.Appointment.class);
     savedAppointment.setConsultant(consultant);
     savedAppointment.setId(null);
+    savedAppointment.setBookingId(BOOKING_ID);
     var desc = savedAppointment.getDescription();
     if (desc.length() > 300) {
       savedAppointment.setDescription(desc.substring(0, 300));

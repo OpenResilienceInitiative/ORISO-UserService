@@ -84,22 +84,10 @@ public class MissingRocketChatRoomForConsultantViolationReportRule implements Vi
     if (isGroupMissing(session.getGroupId(), rocketChatRoomsOfUser)) {
       violationMessage += "Missing room with id " + session.getGroupId() + " in rocket chat";
     }
-    if (areBothRoomsMissing(session, rocketChatRoomsOfUser)) {
-      violationMessage += " and ";
-    }
-    if (isGroupMissing(session.getFeedbackGroupId(), rocketChatRoomsOfUser)) {
-      violationMessage +=
-          "Missing feedback room with id " + session.getFeedbackGroupId() + " in " + "rocket chat";
-    }
     return violationMessage;
   }
 
   private boolean isGroupMissing(String groupId, List<String> rocketChatRooms) {
     return isNotBlank(groupId) && !rocketChatRooms.contains(groupId);
-  }
-
-  private boolean areBothRoomsMissing(Session session, List<String> rocketChatRoomsOfUser) {
-    return isGroupMissing(session.getGroupId(), rocketChatRoomsOfUser)
-        && isGroupMissing(session.getFeedbackGroupId(), rocketChatRoomsOfUser);
   }
 }

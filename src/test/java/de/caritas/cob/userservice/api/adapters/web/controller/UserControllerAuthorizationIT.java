@@ -92,12 +92,13 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.service.user.UserService;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -150,12 +151,14 @@ class UserControllerAuthorizationIT {
   @MockBean private GetChatMembersFacade getChatMembersFacade;
   @MockBean private UserHelper userHelper;
   @MockBean private CreateSessionFacade createSessionFacade;
-  @MockBean private ValidatedUserAccountProvider validatedUserAccountProvider;
+  @MockBean private UserAccountService userAccountService;
   @MockBean private SessionDataService sessionDataService;
   @MockBean private SessionArchiveService sessionArchiveService;
   @MockBean private ConsultantUpdateService consultantUpdateService;
   @MockBean private ConsultantService consultantService;
   @MockBean private AskerDataProvider askerDataProvider;
+
+  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @MockBean
   @SuppressWarnings("unused")
@@ -196,16 +199,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -261,16 +261,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -326,16 +323,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -390,16 +384,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -453,16 +444,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -519,16 +507,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -583,16 +568,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -646,16 +628,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -710,15 +689,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -773,16 +749,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -839,15 +812,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -902,16 +872,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -965,16 +932,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1028,16 +992,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1105,17 +1066,13 @@ class UserControllerAuthorizationIT {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS
+        AuthorityValue.VIEW_AGENCY_CONSULTANTS
       })
   void searchConsultantsShouldReturnForbiddenWhenNoUserAdminAuthority() throws Exception {
     mvc.perform(
@@ -1148,16 +1105,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1241,15 +1195,12 @@ class UserControllerAuthorizationIT {
   @WithMockUser(
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1308,16 +1259,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1371,16 +1319,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1451,16 +1396,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1536,15 +1478,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1635,15 +1574,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1732,16 +1668,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1815,15 +1748,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -1918,15 +1848,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2011,16 +1938,13 @@ class UserControllerAuthorizationIT {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.CONSULTANT_DEFAULT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.USER_DEFAULT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY
       })
@@ -2063,18 +1987,14 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
       })
   void updateE2eInChats_Should_ReturnForbiddenAndCallNoMethods_WhenNoUserOrConsultantAuthority()
       throws Exception {
@@ -2114,14 +2034,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2181,7 +2098,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider, sessionService);
+    verifyNoMoreInteractions(userAccountService, sessionService);
   }
 
   @Test
@@ -2189,16 +2106,13 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.START_CHAT,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2215,7 +2129,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider, sessionService);
+    verifyNoMoreInteractions(userAccountService, sessionService);
   }
 
   @Test
@@ -2252,14 +2166,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2326,14 +2237,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2396,14 +2304,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN,
@@ -2451,7 +2356,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2459,14 +2364,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2482,7 +2384,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2495,7 +2397,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2532,14 +2434,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2602,14 +2501,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2656,14 +2552,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2716,7 +2609,7 @@ class UserControllerAuthorizationIT {
   void getUserData_Should_ReturnOK_When_AnonymousAuthority() throws Exception {
 
     when(this.authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.ANONYMOUS.getValue()));
-    when(this.validatedUserAccountProvider.retrieveValidatedUser())
+    when(this.userAccountService.retrieveValidatedUser())
         .thenReturn(new EasyRandom().nextObject(User.class));
     when(askerDataProvider.retrieveData(any()))
         .thenReturn(easyRandom.nextObject(UserDataResponseDTO.class));
@@ -2736,7 +2629,7 @@ class UserControllerAuthorizationIT {
   void getAskerSessions_Should_ReturnNoContent_When_AnonymousAuthority() throws Exception {
 
     when(this.authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.ANONYMOUS.getValue()));
-    when(this.validatedUserAccountProvider.retrieveValidatedUser())
+    when(this.userAccountService.retrieveValidatedUser())
         .thenReturn(new EasyRandom().nextObject(User.class));
 
     mvc.perform(
@@ -2772,14 +2665,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN,
@@ -2825,14 +2715,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2866,7 +2753,7 @@ class UserControllerAuthorizationIT {
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isOk());
 
-    verify(this.validatedUserAccountProvider).addMobileAppToken("test");
+    verify(this.userAccountService).addMobileAppToken("test");
   }
 
   @Test
@@ -2875,7 +2762,7 @@ class UserControllerAuthorizationIT {
       throws Exception {
     mvc.perform(put(PATH_PUT_ADD_MOBILE_TOKEN)).andExpect(status().isForbidden());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2883,14 +2770,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -2900,7 +2784,7 @@ class UserControllerAuthorizationIT {
     mvc.perform(put(PATH_PUT_ADD_MOBILE_TOKEN).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isForbidden());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2909,7 +2793,7 @@ class UserControllerAuthorizationIT {
     mvc.perform(put(PATH_PUT_ADD_MOBILE_TOKEN).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isUnauthorized());
 
-    verifyNoMoreInteractions(validatedUserAccountProvider);
+    verifyNoMoreInteractions(userAccountService);
   }
 
   @Test
@@ -2939,15 +2823,12 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION
       })
   void deactivateAndFlagUserAccountForDeletion_Should_ReturnForbidden_WhenNoConsultantAuthority()
@@ -2996,14 +2877,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -3054,14 +2932,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -3123,14 +2998,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -3194,20 +3066,17 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
       })
   void
-      getSessionsForGroupOrFeedbackGroupIds_should_return_forbidden_and_call_no_methods_when_no_user_or_consultant_authority()
+      getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_user_or_consultant_authority()
           throws Exception {
     mvc.perform(
             get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
@@ -3222,7 +3091,7 @@ class UserControllerAuthorizationIT {
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
   void
-      getSessionsForGroupOrFeedbackGroupIds_should_return_forbidden_and_call_no_methods_when_no_csrf_token_given()
+      getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_csrf_token_given()
           throws Exception {
     mvc.perform(
             get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
@@ -3234,7 +3103,7 @@ class UserControllerAuthorizationIT {
 
   @Test
   void
-      getSessionsForGroupOrFeedbackGroupIds_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
+      getSessionsForGroupOrGroupIds_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
           throws Exception {
     mvc.perform(
             get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
@@ -3251,14 +3120,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN
@@ -3305,14 +3171,11 @@ class UserControllerAuthorizationIT {
       authorities = {
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.TECHNICAL_DEFAULT,
         AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
         AuthorityValue.USER_ADMIN

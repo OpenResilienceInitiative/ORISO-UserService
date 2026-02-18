@@ -27,7 +27,6 @@ import java.util.Set;
 import org.assertj.core.util.Lists;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -35,10 +34,8 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.transaction.annotation.Transactional;
 
-@ExtendWith(SpringExtension.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @TestPropertySource(properties = "feature.topics.enabled=true")
@@ -64,7 +61,7 @@ class SessionServiceIT {
   private AgencyControllerApi agencyControllerApi;
 
   @BeforeEach
-  private void setUp() {
+  public void setUp() {
     when(topicServiceApiControllerFactory.createControllerApi()).thenReturn(topicControllerApi);
     when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
     when(agencyControllerApi.getApiClient()).thenReturn(new ApiClient());
@@ -88,25 +85,14 @@ class SessionServiceIT {
   }
 
   @Test
-  void getSessionsByUserAndGroupOrFeedbackGroupIdsShouldBeForbiddenIfUserHasNotRequiredRole() {
+  void getSessionsByUserAndGroupIdsShouldBeForbiddenIfUserHasNotRequiredRole() {
     assertThrows(
         ForbiddenException.class,
         () ->
-            sessionService.getSessionsByUserAndGroupOrFeedbackGroupIds(
+            sessionService.getSessionsByUserAndGroupIds(
                 "9c4057d0-05ad-4e86-a47c-dc5bdeec03b9",
                 Set.of("9faSTWZ5gurHLXy4R"),
                 Collections.emptySet()));
-  }
-
-  @Test
-  void getSessionsByUserAndGroupOrFeedbackGroupIdsShouldFetchAgencyForSession() {
-    var sessions =
-        sessionService.getSessionsByUserAndGroupOrFeedbackGroupIds(
-            "9c4057d0-05ad-4e86-a47c-dc5bdeec03b9", Set.of("9faSTWZ5gurHLXy4R"), Set.of("user"));
-
-    assertEquals(1, sessions.size());
-    var userSession = sessions.get(0);
-    assertEquals("9faSTWZ5gurHLXy4R", userSession.getSession().getFeedbackGroupId());
   }
 
   @Test
@@ -133,11 +119,11 @@ class SessionServiceIT {
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
     assertEquals(session.getGroupId(), result.getGroupId());
-    assertEquals(session.getFeedbackGroupId(), result.getFeedbackGroupId());
     assertEquals(session.getConsultingTypeId(), result.getConsultingType().intValue());
     assertEquals(session.getUserAge(), result.getAge());
     assertEquals(session.getUserGender(), result.getGender());
     assertEquals(session.getCounsellingRelation(), result.getCounsellingRelation());
+    assertEquals(session.getReferer(), result.getReferer());
     assertNotNull(result.getMainTopic());
     assertEquals(1, result.getMainTopic().getId());
     assertEquals("topic name", result.getMainTopic().getName());
@@ -187,7 +173,7 @@ class SessionServiceIT {
     session.setIsConsultantDirectlySet(false);
     sessionService.saveSession(session);
     assertThrows(
-        javax.ws.rs.BadRequestException.class,
+        jakarta.ws.rs.BadRequestException.class,
         () -> {
           sessionService.findGroupIdByConsultantAndUser(
               "473f7c4b-f011-4fc2-847c-ceb636a5b399", "1da238c6-cd46-4162-80f1-bff74eafe77f");

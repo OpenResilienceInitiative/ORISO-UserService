@@ -6,7 +6,8 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -15,16 +16,16 @@ import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserRe
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
-import javax.validation.Path;
-import javax.validation.Validator;
+import jakarta.validation.Path;
+import jakarta.validation.Validator;
 import org.hibernate.validator.internal.engine.ConstraintViolationImpl;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@RunWith(MockitoJUnitRunner.class)
+@ExtendWith(MockitoExtension.class)
 public class UserAccountInputValidatorTest {
 
   @InjectMocks private UserAccountInputValidator userAccountInputValidator;
@@ -68,9 +69,9 @@ public class UserAccountInputValidatorTest {
       this.userAccountInputValidator.validateAbsence(createConsultantDTO);
       fail("Exception should be thrown");
     } catch (CustomValidationHttpStatusException e) {
-      assertThat(e.getCustomHttpHeader(), notNullValue());
+      assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
-          e.getCustomHttpHeader().get("X-Reason").get(0),
+          e.getCustomHttpHeaders().get("X-Reason").get(0),
           is(MISSING_ABSENCE_MESSAGE_FOR_ABSENT_USER.name()));
     }
   }
@@ -87,11 +88,15 @@ public class UserAccountInputValidatorTest {
     }
   }
 
-  @Test(expected = KeycloakException.class)
+  @Test
   public void validateKeycloakResponse_Should_throwKeycloakException_When_userIdIsNull() {
-    KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
+    assertThrows(
+        KeycloakException.class,
+        () -> {
+          KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
 
-    this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
+          this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
+        });
   }
 
   @Test
@@ -106,8 +111,8 @@ public class UserAccountInputValidatorTest {
       this.userAccountInputValidator.validateEmailAddress("invalid");
       fail("Exception should be thrown");
     } catch (CustomValidationHttpStatusException e) {
-      assertThat(e.getCustomHttpHeader(), notNullValue());
-      assertThat(e.getCustomHttpHeader().get("X-Reason").get(0), is(EMAIL_NOT_VALID.name()));
+      assertThat(e.getCustomHttpHeaders(), notNullValue());
+      assertThat(e.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_VALID.name()));
     }
   }
 }

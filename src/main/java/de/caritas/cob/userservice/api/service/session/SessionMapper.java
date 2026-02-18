@@ -59,8 +59,8 @@ public class SessionMapper {
         .status(session.getStatus().getValue())
         .postcode(session.getPostcode())
         .groupId(session.getGroupId())
-        .feedbackGroupId(
-            nonNull(session.getFeedbackGroupId()) ? session.getFeedbackGroupId() : null)
+        .matrixRoomId(
+            session.getMatrixRoomId()) // MATRIX MIGRATION: Add Matrix room ID to API response
         .askerRcId(
             nonNull(session.getUser()) && nonNull(session.getUser().getRcUserId())
                 ? session.getUser().getRcUserId()
@@ -68,7 +68,6 @@ public class SessionMapper {
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))
-        .isPeerChat(session.isPeerChat())
         .registrationType(session.getRegistrationType().name())
         .createDate(toIsoTime(session.getCreateDate()))
         .topic(new SessionTopicDTO().id(session.getMainTopicId()));
@@ -77,6 +76,7 @@ public class SessionMapper {
   private SessionUserDTO convertToSessionUserDTO(Session session) {
     if (nonNull(session.getUser()) && nonNull(session.getSessionData())) {
       var sessionUserDto = new SessionUserDTO();
+      sessionUserDto.setId(session.getUser().getUserId());
       sessionUserDto.setUsername(
           new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
       sessionUserDto.setSessionData(buildSessionDataMapFromSession(session));
@@ -145,7 +145,8 @@ public class SessionMapper {
         GroupSessionConsultantDTO.builder()
             .id(sessionConsultant.getId())
             .firstName(sessionConsultant.getFirstName())
-            .lastName(sessionConsultant.getLastName());
+            .lastName(sessionConsultant.getLastName())
+            .displayName(sessionConsultant.getDisplayName());
     return response.consultant(consultant.build());
   }
 }

@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.container.CreateEnquiryExceptionInformation;
 import de.caritas.cob.userservice.api.exception.ImportException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -43,6 +42,7 @@ import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -79,14 +79,7 @@ public class AskerImportService {
   @Value("${rocket.systemuser.password}")
   private String ROCKET_CHAT_SYSTEM_USER_PASSWORD;
 
-  @Value("${asker.import.welcome.message.filename}")
-  private String welcomeMsgFilename;
-
-  @Value("${asker.import.welcome.message.filename.replace.value}")
-  private String welcomeMsgFilenameReplaceValue;
-
   private final String NEWLINE_CHAR = "\r\n";
-  private final String IMPORT_CHARSET = "UTF-8";
   private final String IMPORT_LOG_CHARSET = "UTF-8";
   private final String DUMMY_POSTCODE = "00000";
   private final @NonNull IdentityClient identityClient;
@@ -440,48 +433,6 @@ public class AskerImportService {
         List<ConsultantAgency> agencyList =
             consultantAgencyService.findConsultantsByAgencyId(record.getAgencyId());
 
-        // Create feedback group and add consultants if enabled for this agency/consulting type
-        if (extendedConsultingTypeResponseDTO.getInitializeFeedbackChat().booleanValue()) {
-          String rcFeedbackGroupId =
-              rocketChatService
-                  .createPrivateGroupWithSystemUser(
-                      rocketChatRoomNameGenerator.generateFeedbackGroupName(session))
-                  .get()
-                  .getGroup()
-                  .getId();
-          if (rcFeedbackGroupId == null || rcFeedbackGroupId.equals(StringUtils.EMPTY)) {
-            throw new ImportException(
-                String.format(
-                    "Could not create Rocket.Chat feedback group for user %s",
-                    record.getUsername()));
-          }
-
-          // Add the assigned consultant and all consultants of the session's agency to the feedback
-          // group that have the right to view all feedback sessions
-          for (ConsultantAgency agency : agencyList) {
-            if (identityClient.userHasAuthority(
-                    agency.getConsultant().getId(), AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS)
-                || agency.getConsultant().getId().equals(record.getConsultantId())) {
-              rocketChatService.addUserToGroup(
-                  agency.getConsultant().getRocketChatId(), rcFeedbackGroupId);
-            }
-          }
-
-          // Remove all system messages from feedback group
-          try {
-            rocketChatService.removeSystemMessages(
-                rcFeedbackGroupId, nowInUtc().minusHours(Helper.ONE_DAY_IN_HOURS), nowInUtc());
-          } catch (RocketChatRemoveSystemMessagesException e) {
-            throw new ImportException(
-                String.format(
-                    "Could not remove system messages from feedback group id %s for user %s",
-                    rcFeedbackGroupId, record.getUsername()));
-          }
-
-          // Update the session's feedback group id
-          sessionService.updateFeedbackGroupId(session, rcFeedbackGroupId);
-        }
-
         // Update session data by Rocket.Chat group id and consultant id
         session.setConsultant(consultant.get());
         session.setGroupId(rcGroupId);
@@ -499,15 +450,9 @@ public class AskerImportService {
         if (isTrue(agencyDTO.getTeamAgency())) {
           if (agencyList != null) {
             for (ConsultantAgency agency : agencyList) {
-              // If feedback chat enabled add all main consultants and the assigned consultant. If
-              // it is a "normal" team session add all consultants.
-              if (extendedConsultingTypeResponseDTO.getInitializeFeedbackChat().booleanValue()) {
-                if (identityClient.userHasAuthority(
-                        agency.getConsultant().getId(), AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS)
-                    || agency.getConsultant().getId().equals(record.getConsultantId())) {
-                  rocketChatService.addUserToGroup(
-                      agency.getConsultant().getRocketChatId(), rcGroupId);
-                }
+              if (agency.getConsultant().getId().equals(record.getConsultantId())) {
+                rocketChatService.addUserToGroup(
+                    agency.getConsultant().getRocketChatId(), rcGroupId);
               } else {
                 rocketChatService.addUserToGroup(
                     agency.getConsultant().getRocketChatId(), rcGroupId);
@@ -596,6 +541,7 @@ public class AskerImportService {
         record.getAgencyId(),
         record.getPassword(),
         record.getEmail(),
+        new Date().toString(),
         Integer.toString(consultingTypeId));
   }
 
@@ -607,6 +553,7 @@ public class AskerImportService {
         record.getAgencyId(),
         record.getPassword(),
         record.getEmail(),
+        new Date().toString(),
         Integer.toString(consultingTypeId));
   }
 

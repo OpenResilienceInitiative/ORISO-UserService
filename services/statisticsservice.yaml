@@ -109,6 +109,7 @@ components:
       enum:
         - "ASSIGN_SESSION"
         - "ARCHIVE_SESSION"
+        - "DELETE_ACCOUNT"
         - "CREATE_MESSAGE"
         - "START_VIDEO_CALL"
         - "STOP_VIDEO_CALL"
@@ -165,7 +166,7 @@ components:
           description: The id of the session
           example: 12345
 
-    ArchiveSessionStatisticsEventMessage:
+    ArchiveOrDeleteSessionStatisticsEventMessage:
       type: object
       required:
         - sessionId
@@ -185,6 +186,28 @@ components:
           description: The id of the session
           example: 12345
         endDate:
+          type: string
+          example: '2022-08-15T21:11:29'
+
+    DeleteAccountStatisticsEventMessage:
+      type: object
+      required:
+        - sessionId
+        - endDate
+      allOf:
+        - $ref: '#/components/schemas/StatisticsEventMessage'
+        - type: object
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+          description: The id of the tenant
+          example: 1
+        userId:
+          type: string
+          description: The keycloak id of the consultant
+          example: d63f4cc0-215d-40e2-a866-2d3e910f0590
+        deleteDate:
           type: string
           example: '2022-08-15T21:11:29'
 
@@ -258,6 +281,9 @@ components:
           format: int64
           description: The id of the tenant
           example: 1
+        tenantName:
+          type: string
+          example: 'Tenant name'
         registrationDate:
           type: string
           example: '2022-08-15T21:11:29'
@@ -281,6 +307,12 @@ components:
         postalCode:
           type: string
           example: '99999'
+        agencyName:
+          type: string
+          example: "Dortmund Beratungstelle"
+        referer:
+          type: string
+          example: "referer"
 
     RegistrationStatisticsListResponseDTO:
       type: object
@@ -301,6 +333,9 @@ components:
         registrationDate:
           type: string
           example: '2022-08-15T21:11:29'
+        endDate:
+          type: string
+          example: '2022-10-14T17:28:29'
         age:
           type: integer
           example: '25'
@@ -321,6 +356,15 @@ components:
         postalCode:
           type: string
           example: '99999'
+        tenantName:
+          type: string
+          example: 'Tenant name'
+        agencyName:
+          type: string
+          example: "Dortmund Beratungstelle"
+        referer:
+          type: string
+          example: "referer"
 
     BookingCreatedStatisticsEventMessage:
       type: object

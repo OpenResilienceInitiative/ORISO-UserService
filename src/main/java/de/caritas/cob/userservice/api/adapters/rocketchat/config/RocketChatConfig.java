@@ -9,11 +9,10 @@ import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import java.util.Arrays;
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.constraints.AssertTrue;
-import javax.validation.constraints.NotBlank;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import org.apache.logging.log4j.core.util.CronExpression;
 import org.hibernate.validator.constraints.URL;
@@ -81,7 +80,8 @@ public class RocketChatConfig {
       if (nonNull(cookie)) {
         rcToken = cookie.getValue();
       } else {
-        throw new BadRequestException("Neither rcToken in header nor rc_token in cookie.");
+        // MATRIX MIGRATION: Return dummy token instead of throwing exception
+        rcToken = "dummy-rc-token";
       }
     }
 

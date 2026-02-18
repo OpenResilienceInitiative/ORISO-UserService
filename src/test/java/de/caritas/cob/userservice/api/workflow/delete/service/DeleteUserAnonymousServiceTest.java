@@ -40,7 +40,7 @@ class DeleteUserAnonymousServiceTest {
 
   @Mock private DeleteUserAccountService deleteUserAccountService;
 
-  @Mock private WorkflowResultsMailService workflowResultsMailService;
+  @Mock private WorkflowErrorMailService workflowErrorMailService;
 
   @BeforeEach
   public void setUp() {
@@ -52,7 +52,7 @@ class DeleteUserAnonymousServiceTest {
   void deleteInactiveAnonymousUsers_Should_notPerformAnyDeletion_When_noSessionIsAvailable() {
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verifyNoMoreInteractions(this.deleteUserAccountService);
   }
 
@@ -63,7 +63,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verifyNoMoreInteractions(this.deleteUserAccountService);
   }
 
@@ -111,7 +111,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verifyNoMoreInteractions(this.deleteUserAccountService);
   }
 
@@ -128,7 +128,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verifyNoMoreInteractions(this.deleteUserAccountService);
   }
 
@@ -154,7 +154,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verifyNoMoreInteractions(this.workflowResultsMailService);
+    verifyNoMoreInteractions(this.workflowErrorMailService);
     verify(this.deleteUserAccountService, times(1)).performUserDeletion(user);
   }
 
@@ -180,7 +180,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
-    verify(this.workflowResultsMailService, times(1)).buildAndSendErrorMail(List.of(error));
+    verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(List.of(error));
     verify(this.deleteUserAccountService, times(1)).performUserDeletion(user);
   }
 }

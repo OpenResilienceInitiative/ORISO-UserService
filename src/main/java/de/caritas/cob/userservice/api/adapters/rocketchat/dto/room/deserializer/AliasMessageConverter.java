@@ -7,7 +7,6 @@ import static java.util.Optional.ofNullable;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AliasMessageDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ForwardMessageDTO;
 import java.io.IOException;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -15,23 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 /** Converter to transform json string values into alias objects. */
 @Slf4j
 public class AliasMessageConverter {
-
-  /**
-   * Maps a given String to a {@link ForwardMessageDTO}.
-   *
-   * @param alias String
-   * @return Optional of {@link ForwardMessageDTO}
-   */
-  public Optional<ForwardMessageDTO> convertStringToForwardMessageDTO(String alias) {
-    try {
-      return ofNullable(
-          new ObjectMapper().readValue(decode(alias, UTF_8.name()), ForwardMessageDTO.class));
-    } catch (IOException jsonParseEx) {
-      // This is not an error any more due to restructuring of the alias object. This is not a
-      // real error, but necessary due to legacy code
-      return empty();
-    }
-  }
 
   /**
    * Maps a given String to a {@link AliasMessageDTO}.

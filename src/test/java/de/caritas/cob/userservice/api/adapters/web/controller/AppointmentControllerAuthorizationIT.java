@@ -9,14 +9,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.Appointment;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
@@ -34,9 +37,15 @@ class AppointmentControllerAuthorizationIT {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
 
+  @MockBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
   @Autowired private MockMvc mvc;
 
   private Appointment appointment;
+
+  @BeforeEach
+  public void setUp() {
+    objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+  }
 
   @AfterEach
   public void cleanUp() {
@@ -85,18 +94,14 @@ class AppointmentControllerAuthorizationIT {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.TECHNICAL_DEFAULT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS
+        AuthorityValue.VIEW_AGENCY_CONSULTANTS
       })
   void putAppointmentsShouldReturnForbiddenWhenNoConsultantAuthority() throws Exception {
     givenAValidAppointment();
@@ -136,18 +141,14 @@ class AppointmentControllerAuthorizationIT {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.CREATE_NEW_CHAT,
         AuthorityValue.TECHNICAL_DEFAULT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS
+        AuthorityValue.VIEW_AGENCY_CONSULTANTS
       })
   void deleteAppointmentsShouldReturnForbiddenWhenNoConsultantAuthority() throws Exception {
     mvc.perform(
@@ -183,17 +184,13 @@ class AppointmentControllerAuthorizationIT {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS
+        AuthorityValue.VIEW_AGENCY_CONSULTANTS
       })
   void getAppointmentsShouldReturnForbiddenWhenNoConsultantAuthority() throws Exception {
     mvc.perform(
@@ -229,17 +226,13 @@ class AppointmentControllerAuthorizationIT {
         AuthorityValue.ANONYMOUS_DEFAULT,
         AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
         AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_PEER_SESSION,
         AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.USE_FEEDBACK,
         AuthorityValue.USER_DEFAULT,
         AuthorityValue.USER_ADMIN,
         AuthorityValue.START_CHAT,
         AuthorityValue.STOP_CHAT,
         AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS,
-        AuthorityValue.VIEW_ALL_PEER_SESSIONS
+        AuthorityValue.VIEW_AGENCY_CONSULTANTS
       })
   void postAppointmentsShouldReturnForbiddenWhenNoConsultantAuthority() throws Exception {
     mvc.perform(

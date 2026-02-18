@@ -7,9 +7,7 @@ import static org.hamcrest.CoreMatchers.everyItem;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -31,16 +29,16 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
-import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-@RunWith(SpringRunner.class)
+@ExtendWith(SpringExtension.class)
 public class ConsultantAgencyServiceTest {
 
   private final String CONSULTANT_ID = "1b71cc46-650d-42bb-8299-f8e3f6d7249a";
@@ -69,7 +67,6 @@ public class ConsultantAgencyServiceTest {
           true,
           true,
           true,
-          true,
           null,
           null,
           ConsultantStatus.CREATED,
@@ -90,7 +87,6 @@ public class ConsultantAgencyServiceTest {
       new ConsultantAgency(AGENCY_ID, null, 1L, nowInUtc(), nowInUtc(), nowInUtc(), null, null);
   private final List<ConsultantAgency> CONSULTANT_NULL_AGENCY_LIST =
       Arrays.asList(CONSULTANT_NULL_AGENCY);
-  private final String ERROR = "error";
 
   @InjectMocks private ConsultantAgencyService consultantAgencyService;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
@@ -105,7 +101,7 @@ public class ConsultantAgencyServiceTest {
   @SuppressWarnings("unused")
   private UserDtoMapper userDtoMapper;
 
-  @Before
+  @BeforeEach
   public void setup() {
     setInternalState(LogService.class, "LOGGER", logger);
   }
@@ -142,7 +138,7 @@ public class ConsultantAgencyServiceTest {
       consultantAgencyService.getConsultantsOfAgency(AGENCY_ID);
       fail("Expected exception: InternalServerErrorException");
     } catch (InternalServerErrorException serviceException) {
-      assertTrue("Excepted InternalServerErrorException thrown", true);
+      assertTrue(true, "Excepted InternalServerErrorException thrown");
     }
   }
 
@@ -158,7 +154,7 @@ public class ConsultantAgencyServiceTest {
       consultantAgencyService.getConsultantsOfAgency(AGENCY_ID);
       fail("Expected exception: InternalServerErrorException");
     } catch (InternalServerErrorException serviceException) {
-      assertTrue("Excepted InternalServerErrorException thrown", true);
+      assertTrue(true, "Excepted InternalServerErrorException thrown");
     }
   }
 

@@ -26,7 +26,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.user.ValidatedUserAccountProvider;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -34,22 +34,19 @@ import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
-import org.junit.After;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
-public class ArchivedSessionConversationListProviderTestIT {
+class ArchivedSessionConversationListProviderTestIT {
 
   @Autowired
   private ArchivedSessionConversationListProvider archivedSessionConversationListProvider;
@@ -62,18 +59,17 @@ public class ArchivedSessionConversationListProviderTestIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private ValidatedUserAccountProvider userAccountProvider;
+  @MockBean private UserAccountService userAccountProvider;
 
-  @After
-  public void cleanDatabase() {
+  @AfterEach
+  void cleanDatabase() {
     this.sessionRepository.deleteAll();
     this.consultantAgencyRepository.deleteAll();
     this.consultantRepository.deleteAll();
   }
 
   @Test
-  public void
-      buildConversations_Should_returnExpectedResponseDTO_When_consultantHasArchivedSessions() {
+  void buildConversations_Should_returnExpectedResponseDTO_When_consultantHasArchivedSessions() {
     saveTestData(10);
     PageableListRequest request = PageableListRequest.builder().count(5).offset(0).build();
 
@@ -87,7 +83,7 @@ public class ArchivedSessionConversationListProviderTestIT {
   }
 
   @Test
-  public void buildConversations_Should_returnExpectedElements_When_paginationParamsAreAtTheEnd() {
+  void buildConversations_Should_returnExpectedElements_When_paginationParamsAreAtTheEnd() {
     saveTestData(10);
     PageableListRequest request = PageableListRequest.builder().count(3).offset(9).build();
 
@@ -101,7 +97,7 @@ public class ArchivedSessionConversationListProviderTestIT {
   }
 
   @Test
-  public void buildConversations_Should_returnElementsInExpectedOrder() {
+  void buildConversations_Should_returnElementsInExpectedOrder() {
     saveTestData(100);
     PageableListRequest request = PageableListRequest.builder().count(100).offset(0).build();
 
@@ -120,7 +116,7 @@ public class ArchivedSessionConversationListProviderTestIT {
   }
 
   @Test
-  public void providedType_Should_return_archivedSession() {
+  void providedType_Should_return_archivedSession() {
     ConversationListType conversationListType =
         this.archivedSessionConversationListProvider.providedType();
 
@@ -165,8 +161,6 @@ public class ArchivedSessionConversationListProviderTestIT {
     this.sessionRepository.saveAll(sessions);
   }
 
-  private void setupConsultants() {}
-
   private Consultant buildConsultant() {
     Consultant consultant = new Consultant();
     consultant.setId(UUID.randomUUID().toString());
@@ -180,7 +174,6 @@ public class ArchivedSessionConversationListProviderTestIT {
     consultant.setEncourage2fa(true);
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
-    consultant.setNotifyNewFeedbackMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
     consultant.setLanguageCode(LanguageCode.de);
 

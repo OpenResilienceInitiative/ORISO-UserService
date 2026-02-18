@@ -7,7 +7,8 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hibernate.search.util.impl.CollectionHelper.asSet;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
@@ -42,8 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 import org.jeasy.random.EasyRandom;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
@@ -52,14 +52,12 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.junit4.SpringRunner;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
-public class ConsultantAgencyRelationCreatorServiceIT {
+class ConsultantAgencyRelationCreatorServiceIT {
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -83,10 +81,8 @@ public class ConsultantAgencyRelationCreatorServiceIT {
 
   @MockBean private ConsultingTypeManager consultingTypeManager;
 
-  @Autowired private RocketChatAsyncHelper rocketChatAsyncHelper;
-
   @Test
-  public void
+  void
       createNewConsultantAgency_Should_addConsultantToEnquiriesRocketChatGroups_When_ParamsAreValid() {
 
     Consultant consultant = createConsultantWithoutAgencyAndSession();
@@ -119,13 +115,6 @@ public class ConsultantAgencyRelationCreatorServiceIT {
                 .addUserToRocketChatGroup(
                     consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId()));
 
-    verifyAsync(
-        (a) ->
-            verify(rocketChatFacade, times(1))
-                .addUserToRocketChatGroup(
-                    consultant.getRocketChatId(),
-                    enquirySessionWithoutConsultant.getFeedbackGroupId()));
-
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 
@@ -134,7 +123,7 @@ public class ConsultantAgencyRelationCreatorServiceIT {
   }
 
   @Test
-  public void
+  void
       createNewConsultantAgency_Should_addConsultantToTeamSessionRocketChatGroups_When_ParamsAreValid() {
 
     Consultant consultant = createConsultantWithoutAgencyAndSession();
@@ -146,7 +135,6 @@ public class ConsultantAgencyRelationCreatorServiceIT {
     when(keycloakService.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
     ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO =
         new ExtendedConsultingTypeResponseDTO();
-    extendedConsultingTypeResponseDTO.setExcludeNonMainConsultantsFromTeamSessions(true);
     AgencyDTO agencyDTO = new AgencyDTO();
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(true);
@@ -165,10 +153,6 @@ public class ConsultantAgencyRelationCreatorServiceIT {
         .addUserToRocketChatGroup(
             consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId());
 
-    verify(rocketChatFacade, timeout(10000))
-        .addUserToRocketChatGroup(
-            consultant.getRocketChatId(), enquirySessionWithoutConsultant.getFeedbackGroupId());
-
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 
@@ -183,8 +167,8 @@ public class ConsultantAgencyRelationCreatorServiceIT {
   }
 
   @Test
-  public void createNewConsultantAgency_Should_updateKeycloakRoles_When_ParamsAreValid() {
-    var roleSetName = "peer";
+  void createNewConsultantAgency_Should_updateKeycloakRoles_When_ParamsAreValid() {
+    var roleSetName = "consultant";
     var createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
     createConsultantAgencyDTO.setAgencyId(15L);
     createConsultantAgencyDTO.setRoleSetKey(roleSetName);
@@ -274,97 +258,119 @@ public class ConsultantAgencyRelationCreatorServiceIT {
     return this.sessionRepository.save(session);
   }
 
-  @Test(expected = BadRequestException.class)
-  public void
+  @Test
+  void
       createConsultantAgencyRelations_Should_throwBadRequestException_When_consultantDoesNotExist() {
-    this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-        "invalid", asSet(1L), asSet("role"), null);
-  }
-
-  @Test(expected = BadRequestException.class)
-  public void
-      createNewConsultantAgency_Should_throwBadRequestException_When_consultantHasNotExpectedRole() {
-    Consultant consultant = createConsultantWithoutAgencyAndSession();
-
-    CreateConsultantAgencyDTO createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
-    when(keycloakService.userHasRole(any(), any())).thenReturn(false);
-
-    this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
-        consultant.getId(), createConsultantAgencyDTO);
-  }
-
-  @Test(expected = BadRequestException.class)
-  public void
-      createNewConsultantAgency_Should_throwBadRequestException_When_agencyServiceReturnesNullForAgency() {
-    Consultant consultant = createConsultantWithoutAgencyAndSession();
-
-    CreateConsultantAgencyDTO createConsultantAgencyDTO =
-        new CreateConsultantAgencyDTO().roleSetKey("valid role set");
-    when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-    when(this.agencyService.getAgencyWithoutCaching(any())).thenReturn(null);
-
-    this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
-        consultant.getId(), createConsultantAgencyDTO);
-  }
-
-  @Test(expected = InternalServerErrorException.class)
-  public void
-      createNewConsultantAgency_Should_throwInternalServerErrorException_When_agencyServiceThrowsAgencyServiceHelperException() {
-    Consultant consultant = createConsultantWithoutAgencyAndSession();
-
-    CreateConsultantAgencyDTO createConsultantAgencyDTO =
-        new CreateConsultantAgencyDTO().roleSetKey("valid role set");
-    when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-    when(agencyService.getAgencyWithoutCaching(any()))
-        .thenThrow(new InternalServerErrorException(""));
-
-    this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
-        consultant.getId(), createConsultantAgencyDTO);
-  }
-
-  @Test(expected = BadRequestException.class)
-  public void
-      createNewConsultantAgency_Should_throwBadRequestException_When_agencyTypeIsU25AndConsultantHasAnotherConsultingTypeAssigned() {
-
-    AgencyDTO emigrationAgency = new AgencyDTO().consultingType(17);
-
-    AgencyDTO agencyDTO = new AgencyDTO().consultingType(1).id(2L);
-
-    when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
-    when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-    when(consultingTypeManager.isConsultantBoundedToAgency(1)).thenReturn(true);
-
-    CreateConsultantAgencyDTO createConsultantAgencyDTO =
-        new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
-
-    String consultantIdWIthEmigrationAgency = "0b3b1cc6-be98-4787-aa56-212259d811b9";
-    this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
-        consultantIdWIthEmigrationAgency, createConsultantAgencyDTO);
-  }
-
-  @Test(expected = BadRequestException.class)
-  public void
-      createNewConsultantAgency_Should_throwBadRequestException_When_agencyTypeIsKreuzbundAndConsultantHasAnotherConsultingTypeAssigned() {
-
-    AgencyDTO emigrationAgency = new AgencyDTO().consultingType(17);
-
-    AgencyDTO agencyDTO = new AgencyDTO().consultingType(15).id(2L);
-
-    when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
-    when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-    when(consultingTypeManager.isConsultantBoundedToAgency(15)).thenReturn(true);
-
-    CreateConsultantAgencyDTO createConsultantAgencyDTO =
-        new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
-
-    this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
-        "0b3b1cc6-be98-4787-aa56-212259d811b9", createConsultantAgencyDTO);
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
+              "invalid", asSet(1L), asSet("role"), null);
+        });
   }
 
   @Test
-  public void
+  void
+      createNewConsultantAgency_Should_throwBadRequestException_When_consultantHasNotExpectedRole() {
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          Consultant consultant = createConsultantWithoutAgencyAndSession();
+
+          CreateConsultantAgencyDTO createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
+          when(keycloakService.userHasRole(any(), any())).thenReturn(false);
+
+          this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              consultant.getId(), createConsultantAgencyDTO);
+        });
+  }
+
+  @Test
+  void
+      createNewConsultantAgency_Should_throwBadRequestException_When_agencyServiceReturnesNullForAgency() {
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          Consultant consultant = createConsultantWithoutAgencyAndSession();
+
+          CreateConsultantAgencyDTO createConsultantAgencyDTO =
+              new CreateConsultantAgencyDTO().roleSetKey("valid role set");
+          when(keycloakService.userHasRole(any(), any())).thenReturn(true);
+          when(this.agencyService.getAgencyWithoutCaching(any())).thenReturn(null);
+
+          this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              consultant.getId(), createConsultantAgencyDTO);
+        });
+  }
+
+  @Test
+  void
+      createNewConsultantAgency_Should_throwInternalServerErrorException_When_agencyServiceThrowsAgencyServiceHelperException() {
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          Consultant consultant = createConsultantWithoutAgencyAndSession();
+
+          CreateConsultantAgencyDTO createConsultantAgencyDTO =
+              new CreateConsultantAgencyDTO().roleSetKey("valid role set");
+          when(keycloakService.userHasRole(any(), any())).thenReturn(true);
+          when(agencyService.getAgencyWithoutCaching(any()))
+              .thenThrow(new InternalServerErrorException(""));
+
+          this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              consultant.getId(), createConsultantAgencyDTO);
+        });
+  }
+
+  @Test
+  void
+      createNewConsultantAgency_Should_throwBadRequestException_When_agencyTypeIsU25AndConsultantHasAnotherConsultingTypeAssigned() {
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          AgencyDTO emigrationAgency = new AgencyDTO().consultingType(17);
+
+          AgencyDTO agencyDTO = new AgencyDTO().consultingType(1).id(2L);
+
+          when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
+          when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+          when(keycloakService.userHasRole(any(), any())).thenReturn(true);
+          when(consultingTypeManager.isConsultantBoundedToAgency(1)).thenReturn(true);
+
+          CreateConsultantAgencyDTO createConsultantAgencyDTO =
+              new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
+
+          String consultantIdWIthEmigrationAgency = "0b3b1cc6-be98-4787-aa56-212259d811b9";
+          this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              consultantIdWIthEmigrationAgency, createConsultantAgencyDTO);
+        });
+  }
+
+  @Test
+  void
+      createNewConsultantAgency_Should_throwBadRequestException_When_agencyTypeIsKreuzbundAndConsultantHasAnotherConsultingTypeAssigned() {
+    assertThrows(
+        BadRequestException.class,
+        () -> {
+          AgencyDTO emigrationAgency = new AgencyDTO().consultingType(17);
+
+          AgencyDTO agencyDTO = new AgencyDTO().consultingType(15).id(2L);
+
+          when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
+          when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+          when(keycloakService.userHasRole(any(), any())).thenReturn(true);
+          when(consultingTypeManager.isConsultantBoundedToAgency(15)).thenReturn(true);
+
+          CreateConsultantAgencyDTO createConsultantAgencyDTO =
+              new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
+
+          this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
+              "0b3b1cc6-be98-4787-aa56-212259d811b9", createConsultantAgencyDTO);
+        });
+  }
+
+  @Test
+  void
       createConsultantAgencyRelations_Should_throwBadRequestException_When_ConsultantHasNotRequestedRole() {
     final var consultant = createConsultantWithoutAgencyAndSession();
     try {

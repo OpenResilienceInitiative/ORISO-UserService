@@ -204,9 +204,6 @@ components:
             lockedAgencies:
               type: boolean
               example: false
-            excludeNonMainConsultantsFromTeamSessions:
-              type: boolean
-              example: true
             whiteSpot:
               allOf:
                 - $ref: '#/components/schemas/WhiteSpotDTO'
@@ -225,12 +222,6 @@ components:
             sessionDataInitializing:
               allOf:
                 - $ref: '#/components/schemas/SessionDataInitializingDTO'
-            initializeFeedbackChat:
-              type: boolean
-              example: true
-            isPeerChat:
-              type: boolean
-              example: true
             roles:
               $ref: '#/components/schemas/RolesDTO'
             notifications:

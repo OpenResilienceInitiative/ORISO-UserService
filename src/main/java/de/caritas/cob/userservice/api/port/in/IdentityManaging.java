@@ -24,8 +24,4 @@ public interface IdentityManaging {
   OtpInfoDTO getOtpCredential(String username);
 
   boolean isEmailAvailableOrOwn(String username, String email);
-
-  boolean canViewPeerSessions(String consultantId);
-
-  boolean canViewFeedbackSessions(String toString);
 }

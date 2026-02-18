@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
-import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.VIEW_ALL_FEEDBACK_SESSIONS;
-import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.VIEW_ALL_PEER_SESSIONS;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
@@ -10,12 +8,10 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.transaction.Transactional;
 import lombok.NonNull;
@@ -33,7 +29,6 @@ public class UnauthorizedMembersProvider {
 
   private final @NonNull ConsultantService consultantService;
   private final @NonNull RocketChatCredentialsProvider rocketChatCredentialsProvider;
-  private final @NonNull IdentityClient identityClient;
 
   /**
    * Obtains a list of {@link Consultant}s which are not authorized to view the given Rocket.Chat
@@ -103,13 +98,11 @@ public class UnauthorizedMembersProvider {
     List<Consultant> consultantsOfAgency =
         consultantService.findConsultantsByAgencyId(session.getAgencyId());
     addTeamConsultantsIfTeamSession(session, authorizedMembers, consultantsOfAgency);
-    addMainConsultantsIfFeedbackTeamSession(
-        rcGroupId, session, authorizedMembers, consultantsOfAgency);
   }
 
   private void addTeamConsultantsIfTeamSession(
       Session session, List<String> authorizedMembers, List<Consultant> consultantsOfAgency) {
-    if (session.isTeamSession() && !session.hasFeedbackChat()) {
+    if (session.isTeamSession()) {
       consultantsOfAgency.stream()
           .filter(Consultant::isTeamConsultant)
           .map(Consultant::getRocketChatId)
@@ -118,44 +111,5 @@ public class UnauthorizedMembersProvider {
                   !rocketChatId.equalsIgnoreCase(session.getConsultant().getRocketChatId()))
           .forEach(authorizedMembers::add);
     }
-  }
-
-  private void addMainConsultantsIfFeedbackTeamSession(
-      String rcGroupId,
-      Session session,
-      List<String> authorizedMembers,
-      List<Consultant> consultantsOfAgency) {
-    if (isTeamSessionWithFeedbackChat(session)) {
-      if (rcGroupId.equalsIgnoreCase(session.getGroupId())) {
-        obtainMainConsultantsOfGroup(
-            authorizedMembers, consultantsOfAgency, this::hasAuthorityToViewPeerGroups);
-      }
-      if (rcGroupId.equalsIgnoreCase(session.getFeedbackGroupId())) {
-        obtainMainConsultantsOfGroup(
-            authorizedMembers, consultantsOfAgency, this::hasAuthorityToViewFeedbackGroups);
-      }
-    }
-  }
-
-  private boolean isTeamSessionWithFeedbackChat(Session session) {
-    return session.isTeamSession() && session.hasFeedbackChat();
-  }
-
-  private void obtainMainConsultantsOfGroup(
-      List<String> authorizedMembers,
-      List<Consultant> consultantsOfAgency,
-      Predicate<Consultant> authorityMethod) {
-    consultantsOfAgency.stream()
-        .filter(authorityMethod)
-        .map(Consultant::getRocketChatId)
-        .forEach(authorizedMembers::add);
-  }
-
-  private boolean hasAuthorityToViewPeerGroups(Consultant consultant) {
-    return identityClient.userHasAuthority(consultant.getId(), VIEW_ALL_PEER_SESSIONS);
-  }
-
-  private boolean hasAuthorityToViewFeedbackGroups(Consultant consultant) {
-    return identityClient.userHasAuthority(consultant.getId(), VIEW_ALL_FEEDBACK_SESSIONS);
   }
 }

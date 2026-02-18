@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +32,7 @@ import org.springframework.stereotype.Service;
 /** Facade to encapsulate the steps to initialize a chat/agency relation. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CreateUserChatRelationFacade {
 
   private final @NonNull RocketChatService rocketChatService;
@@ -52,7 +54,8 @@ public class CreateUserChatRelationFacade {
       UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
 
     DataDTO rcUserCredentials = obtainValidUserCredentials(userDTO, user, rocketChatCredentials);
-    updateRocketChatUserIdInDatabase(user, rcUserCredentials.getUserId());
+    updateRocketChatUserIdInDatabase(
+        user, rcUserCredentials.getUserId(), Boolean.parseBoolean(userDTO.getTermsAccepted()));
     createUserChatAgencyRelation(userDTO, user);
   }
 
@@ -60,8 +63,17 @@ public class CreateUserChatRelationFacade {
       UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
 
     if (isNewUserAccountRegistration(user, rocketChatCredentials)) {
-      return validateUserCredentials(
-          obtainRocketChatloginData(userDTO, user), user, rocketChatCredentials);
+      try {
+        return validateUserCredentials(
+            obtainRocketChatloginData(userDTO, user),
+            user,
+            rocketChatCredentials,
+            Boolean.parseBoolean(userDTO.getTermsAccepted()));
+      } catch (RocketChatLoginException e) {
+        log.error("RocketChat login failed for user {}: {}", userDTO.getUsername(), e.getMessage());
+        throw new InternalServerErrorException(
+            "RocketChat login failed", LogService::logInternalServerError);
+      }
     }
     return new DataDTO(
         rocketChatCredentials.getRocketChatUserId(),
@@ -75,38 +87,54 @@ public class CreateUserChatRelationFacade {
         && isNull(user.getRcUserId());
   }
 
-  private DataDTO obtainRocketChatloginData(UserDTO userDTO, User user) {
+  private DataDTO obtainRocketChatloginData(UserDTO userDTO, User user)
+      throws RocketChatLoginException {
+    String encodedUsername = new UsernameTranscoder().encodeUsername(userDTO.getUsername());
+
+    // First, create the user in RocketChat
     try {
-      ResponseEntity<LoginResponseDTO> rcUserResponse =
-          rocketChatService.loginUserFirstTime(
-              new UsernameTranscoder().encodeUsername(userDTO.getUsername()),
-              userDTO.getPassword());
-
-      checkIfRocketLoginSucceeded(user, rcUserResponse);
-
-      return rcUserResponse.getBody().getData();
-    } catch (RocketChatLoginException exception) {
-      rollBackAndLogRocketChatLoginError(user, exception);
+      rocketChatService.createUser(encodedUsername, userDTO.getPassword(), userDTO.getEmail());
+    } catch (RocketChatLoginException e) {
+      log.warn("User {} might already exist in RocketChat: {}", encodedUsername, e.getMessage());
+      // Continue with login attempt even if creation fails (user might already exist)
     }
-    return null;
+
+    // Then login the user
+    ResponseEntity<LoginResponseDTO> rcUserResponse =
+        rocketChatService.loginUserFirstTime(encodedUsername, userDTO.getPassword());
+
+    checkIfRocketLoginSucceeded(userDTO, user, rcUserResponse);
+
+    return rcUserResponse.getBody().getData();
   }
 
   private void checkIfRocketLoginSucceeded(
-      User user, ResponseEntity<LoginResponseDTO> rcUserResponse) {
+      UserDTO userDTO, User user, ResponseEntity<LoginResponseDTO> rcUserResponse)
+      throws RocketChatLoginException {
     if (isNull(rcUserResponse)
         || !rcUserResponse.getStatusCode().equals(HttpStatus.OK)
         || isNull(rcUserResponse.getBody())) {
-      rollBackAndLogRocketChatLoginError(user);
+      throw new RocketChatLoginException("Rocket.Chat login failed - invalid response");
     }
   }
 
   private DataDTO validateUserCredentials(
-      DataDTO dataDTO, User user, RocketChatCredentials rocketChatCredentials) {
+      DataDTO dataDTO,
+      User user,
+      RocketChatCredentials rocketChatCredentials,
+      boolean deleteUserOnRollback) {
     String rcUserToken = obtainValidRcToken(dataDTO, rocketChatCredentials);
     String rcUserId = obtainValidRcUserId(dataDTO, rocketChatCredentials);
 
+    log.info(
+        "Validating RocketChat credentials for user {}: token={}, userId={}",
+        user.getUsername(),
+        rcUserToken,
+        rcUserId);
+
     if (isBlank(rcUserToken) || isBlank(rcUserId)) {
-      rollBackAndLogRocketChatLoginError(user);
+      log.warn("RocketChat credentials are blank for user {}, rolling back", user.getUsername());
+      rollBackAndLogRocketChatLoginError(user, deleteUserOnRollback);
     }
 
     dataDTO.setUserId(rcUserId);
@@ -126,7 +154,8 @@ public class CreateUserChatRelationFacade {
         : rocketChatCredentials.getRocketChatUserId();
   }
 
-  private void updateRocketChatUserIdInDatabase(User user, String rcUserId) {
+  private void updateRocketChatUserIdInDatabase(
+      User user, String rcUserId, boolean deleteUserOnRollback) {
     if (isNotBlank(user.getRcUserId())) {
       return;
     }
@@ -134,16 +163,18 @@ public class CreateUserChatRelationFacade {
     user.setRcUserId(rcUserId);
     try {
       User updatedUser = userService.saveUser(user);
-      checkUpdatedUserId(user, updatedUser);
+      checkUpdatedUserId(user, updatedUser, deleteUserOnRollback);
     } catch (Exception e) {
-      rollBackAndLogMariaDbError(user, e);
+      rollBackAndLogMariaDbError(user, e, deleteUserOnRollback);
     }
   }
 
-  private void checkUpdatedUserId(User user, User updatedUser) {
+  private void checkUpdatedUserId(User user, User updatedUser, boolean deleteUserOnRollback) {
     if (isBlank(updatedUser.getRcUserId())) {
       rollBackAndLogMariaDbError(
-          user, new IllegalArgumentException("Rocket.Chat user ID is empty."));
+          user,
+          new IllegalArgumentException("Rocket.Chat user ID is empty."),
+          deleteUserOnRollback);
     }
   }
 
@@ -161,6 +192,7 @@ public class CreateUserChatRelationFacade {
               .userId(user.getUserId())
               .user(user)
               .userAgency(userAgency)
+              .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
               .build());
       throw new InternalServerErrorException(
           "Could not create user-agency relation for group chat registration",
@@ -180,13 +212,14 @@ public class CreateUserChatRelationFacade {
     }
   }
 
-  private void rollBackAndLogRocketChatLoginError(User user) {
+  private void rollBackAndLogRocketChatLoginError(User user, boolean deleteUser) {
     rollBackAndLogRocketChatLoginError(
-        user, new RocketChatLoginException("Rocket.Chat login error."));
+        user, new RocketChatLoginException("Rocket.Chat login error."), deleteUser);
   }
 
-  private void rollBackAndLogRocketChatLoginError(User user, RocketChatLoginException exception) {
-    rollBackUserAccount(user);
+  private void rollBackAndLogRocketChatLoginError(
+      User user, RocketChatLoginException exception, boolean deleteUser) {
+    rollBackUserAccount(user, deleteUser);
     throw new InternalServerErrorException(
         String.format(
             "Rocket.Chat login for Group Chat registration was not successful for user %s. %s",
@@ -194,8 +227,8 @@ public class CreateUserChatRelationFacade {
         LogService::logRocketChatError);
   }
 
-  private void rollBackAndLogMariaDbError(User user, Exception exception) {
-    rollBackUserAccount(user);
+  private void rollBackAndLogMariaDbError(User user, Exception exception, boolean deleteUser) {
+    rollBackUserAccount(user, deleteUser);
     throw new InternalServerErrorException(
         String.format(
             "Could not update Rocket.Chat user ID for user %s. %s",
@@ -203,8 +236,12 @@ public class CreateUserChatRelationFacade {
         LogService::logDatabaseError);
   }
 
-  private void rollBackUserAccount(User user) {
+  private void rollBackUserAccount(User user, boolean deleteUser) {
     rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder().userId(user.getUserId()).user(user).build());
+        RollbackUserAccountInformation.builder()
+            .userId(user.getUserId())
+            .user(user)
+            .rollBackUserAccount(deleteUser)
+            .build());
   }
 }

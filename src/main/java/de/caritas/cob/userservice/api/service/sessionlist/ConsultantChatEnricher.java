@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
+import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import java.util.List;
@@ -21,6 +22,8 @@ public class ConsultantChatEnricher {
 
   private final @NonNull SessionListAnalyser sessionListAnalyser;
   private final @NonNull RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
+
+  private final @NonNull ConsultantDataFacade consultantDataFacade;
 
   /**
    * Enriches the given session with the following information from Rocket.Chat. - last message -
@@ -41,7 +44,8 @@ public class ConsultantChatEnricher {
             RocketChatCredentials.builder()
                 .rocketChatToken(rcToken)
                 .rocketChatUserId(consultant.getRocketChatId())
-                .build());
+                .build(),
+            consultant);
 
     consultantSessionResponseDTOs.forEach(
         consultantSessionResponseDTO ->
@@ -49,6 +53,8 @@ public class ConsultantChatEnricher {
                 rocketChatRoomInformation,
                 consultant.getRocketChatId(),
                 consultantSessionResponseDTO));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(consultantSessionResponseDTOs);
 
     return consultantSessionResponseDTOs;
   }

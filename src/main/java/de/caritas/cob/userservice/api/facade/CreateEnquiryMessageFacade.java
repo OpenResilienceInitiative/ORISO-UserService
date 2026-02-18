@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.facade;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
@@ -36,10 +35,8 @@ import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResponseDTO;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -92,16 +89,9 @@ public class CreateEnquiryMessageFacade {
       String rcGroupId =
           createRocketChatRoomAndAddUsers(
               session, agencyList, enquiryData.getRocketChatCredentials());
-      String rcFeedbackGroupId =
-          retrieveRcFeedbackGroupIdIfConsultingTypeHasFeedbackChat(
-              session, rcGroupId, agencyList, extendedConsultingTypeResponseDTO);
 
       var createEnquiryExceptionInformation =
-          CreateEnquiryExceptionInformation.builder()
-              .session(session)
-              .rcGroupId(rcGroupId)
-              .rcFeedbackGroupId(rcFeedbackGroupId)
-              .build();
+          CreateEnquiryExceptionInformation.builder().session(session).rcGroupId(rcGroupId).build();
 
       saveRocketChatIdForUser(
           enquiryData.getUser(),
@@ -134,11 +124,7 @@ public class CreateEnquiryMessageFacade {
           rcGroupId, extendedConsultingTypeResponseDTO, createEnquiryExceptionInformation);
 
       updateSession(
-          session,
-          enquiryData.getLanguage(),
-          rcGroupId,
-          rcFeedbackGroupId,
-          createEnquiryExceptionInformation);
+          session, enquiryData.getLanguage(), rcGroupId, createEnquiryExceptionInformation);
 
       if (session.getIsConsultantDirectlySet()) {
         emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
@@ -251,7 +237,6 @@ public class CreateEnquiryMessageFacade {
       Session session, RocketChatCredentials rocketChatCredentials) {
 
     try {
-
       Optional<GroupResponseDTO> rcGroupDTO =
           rocketChatService.createPrivateGroup(
               rocketChatRoomNameGenerator.generateGroupName(session), rocketChatCredentials);
@@ -300,78 +285,6 @@ public class CreateEnquiryMessageFacade {
     }
   }
 
-  private String retrieveRcFeedbackGroupIdIfConsultingTypeHasFeedbackChat(
-      Session session,
-      String rcGroupId,
-      List<ConsultantAgency> agencyList,
-      ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO)
-      throws CreateEnquiryException {
-
-    if (isFalse(extendedConsultingTypeResponseDTO.getInitializeFeedbackChat())) {
-      return null;
-    }
-
-    return createRcFeedbackGroup(session, rcGroupId, agencyList);
-  }
-
-  public String createRcFeedbackGroup(
-      Session session, String rcGroupId, List<ConsultantAgency> agencyList)
-      throws CreateEnquiryException {
-
-    String rcFeedbackGroupId = null;
-    var createEnquiryExceptionInformation =
-        CreateEnquiryExceptionInformation.builder().session(session).rcGroupId(rcGroupId).build();
-
-    try {
-
-      rcFeedbackGroupId =
-          createFeedbackGroupAsSystemUser(session, createEnquiryExceptionInformation);
-      addSystemUserToGroup(rcFeedbackGroupId);
-      addConsultantsToFeedbackChatGroup(agencyList, rcFeedbackGroupId);
-      rocketChatService.removeSystemMessages(
-          rcFeedbackGroupId, nowInUtc().minusHours(Helper.ONE_DAY_IN_HOURS), nowInUtc());
-
-    } catch (RocketChatAddSystemUserException
-        | RocketChatCreateGroupException
-        | RocketChatAddUserToGroupException
-        | RocketChatRemoveSystemMessagesException
-        | RocketChatUserNotInitializedException exception) {
-      createEnquiryExceptionInformation.setRcFeedbackGroupId(rcFeedbackGroupId);
-      throw new CreateEnquiryException(
-          String.format("Could not initialize feedback chat for session %s", session.getId()),
-          exception,
-          createEnquiryExceptionInformation);
-    }
-
-    return rcFeedbackGroupId;
-  }
-
-  private String createFeedbackGroupAsSystemUser(
-      Session session, CreateEnquiryExceptionInformation createEnquiryExceptionInformation)
-      throws RocketChatCreateGroupException, CreateEnquiryException {
-
-    Optional<GroupResponseDTO> rcFeedbackGroupDTO =
-        rocketChatService.createPrivateGroupWithSystemUser(
-            rocketChatRoomNameGenerator.generateFeedbackGroupName(session));
-
-    if (rcFeedbackGroupDTO.isEmpty()
-        || Objects.isNull(rcFeedbackGroupDTO.get().getGroup().getId())) {
-      throw new CreateEnquiryException(
-          String.format("Could not create rc feedback group for session %s", session.getId()),
-          createEnquiryExceptionInformation);
-    }
-    return rcFeedbackGroupDTO.get().getGroup().getId();
-  }
-
-  private void addConsultantsToFeedbackChatGroup(
-      List<ConsultantAgency> agencyList, String rcFeedbackGroupId)
-      throws RocketChatAddUserToGroupException {
-
-    for (ConsultantAgency agency : agencyList) {
-      rocketChatService.addUserToGroup(agency.getConsultant().getRocketChatId(), rcFeedbackGroupId);
-    }
-  }
-
   private void saveRocketChatIdForUser(
       User user,
       RocketChatCredentials rocketChatCredentials,
@@ -392,13 +305,11 @@ public class CreateEnquiryMessageFacade {
       Session session,
       String language,
       String rcGroupId,
-      String rcFeedbackGroupId,
       CreateEnquiryExceptionInformation createEnquiryExceptionInformation)
       throws CreateEnquiryException {
 
     try {
       session.setGroupId(rcGroupId);
-      session.setFeedbackGroupId(rcFeedbackGroupId);
       session.setStatus(SessionStatus.NEW);
       session.setEnquiryMessageDate(nowInUtc());
       if (nonNull(language)) {
@@ -408,9 +319,7 @@ public class CreateEnquiryMessageFacade {
       sessionService.saveSession(session);
     } catch (InternalServerErrorException exception) {
       throw new CreateEnquiryException(
-          String.format(
-              "Could not update session %s with groupId %s and feedbackGroupId %s",
-              session.getId(), rcGroupId, rcFeedbackGroupId),
+          String.format("Could not update session %s with groupId %s", session.getId(), rcGroupId),
           exception,
           createEnquiryExceptionInformation);
     }
@@ -427,7 +336,6 @@ public class CreateEnquiryMessageFacade {
       RocketChatCredentials rocketChatCredentials) {
     if (nonNull(createEnquiryExceptionInformation)) {
       rollbackCreateGroup(createEnquiryExceptionInformation.getRcGroupId(), rocketChatCredentials);
-      rollbackCreateGroupAsSystemUser(createEnquiryExceptionInformation.getRcFeedbackGroupId());
     }
   }
 
@@ -438,18 +346,6 @@ public class CreateEnquiryMessageFacade {
       log.error(
           "Internal Server Error: Error during rollback of group while saving enquiry "
               + "message. Group with id {} could not be deleted.",
-          rcGroupId);
-    }
-  }
-
-  private void rollbackCreateGroupAsSystemUser(String rcGroupId) {
-    if (Objects.isNull(rcGroupId)) {
-      return;
-    }
-    if (!rocketChatService.deleteGroupAsSystemUser(rcGroupId)) {
-      log.error(
-          "Internal Server Error: Error during rollback of feedback group while saving "
-              + "enquiry message. Group with id {} could not be deleted.",
           rcGroupId);
     }
   }
