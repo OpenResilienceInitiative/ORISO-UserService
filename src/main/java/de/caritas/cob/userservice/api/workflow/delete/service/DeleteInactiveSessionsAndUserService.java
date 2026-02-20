@@ -1,15 +1,15 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
-import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
-
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowInfo;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowResult;
+import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroupInfo;
 import de.caritas.cob.userservice.api.workflow.delete.service.provider.InactivePrivateGroupsProvider;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -35,7 +35,6 @@ public class DeleteInactiveSessionsAndUserService {
   private final @NonNull DeleteSessionService deleteSessionService;
   private final @NonNull InactivePrivateGroupsProvider inactivePrivateGroupsProvider;
 
-  private static final String USER_NOT_FOUND_REASON = "User could not be found.";
   private static final String RC_SESSION_GROUP_NOT_FOUND_REASON =
       "Session with rc group id could not be found.";
 
@@ -47,59 +46,52 @@ public class DeleteInactiveSessionsAndUserService {
    */
   public void deleteInactiveSessionsAndUsers() {
 
-    Map<String, List<String>> userWithInactiveGroupsMap =
-        inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap();
+    Map<String, List<InactiveGroupInfo>> userWithInactiveGroupsMap =
+        inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     log.info("Total users with inactive groups: " + userWithInactiveGroupsMap.size());
-    List<Entry<String, List<String>>> entries =
+    List<Entry<String, List<InactiveGroupInfo>>> entries =
         new ArrayList<>(userWithInactiveGroupsMap.entrySet());
     int totalChunks = (int) Math.ceil((double) entries.size() / CHUNK_SIZE);
 
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
+    DeletionWorkflowResult deletionWorkflowResult = new DeletionWorkflowResult();
 
     log.info("Total chunks to process: " + totalChunks);
     for (int i = 0; i < totalChunks; i++) {
       int start = i * CHUNK_SIZE;
       int end = Math.min(start + CHUNK_SIZE, entries.size());
-      List<Entry<String, List<String>>> chunk = entries.subList(start, end);
+      List<Entry<String, List<InactiveGroupInfo>>> chunk = entries.subList(start, end);
 
       log.info("Processing chunk number: " + (i + 1));
 
-      List<DeletionWorkflowError> chunkErrors =
-          chunk.stream()
-              .map(this::performDeletionWorkflow)
-              .flatMap(Collection::stream)
-              .collect(Collectors.toList());
-
-      workflowErrors.addAll(chunkErrors);
+      chunk.forEach(entry -> deletionWorkflowResult.merge(performDeletionWorkflow(entry)));
     }
 
-    findWorkflowErrorByReason(workflowErrors);
+    processWorkflowResult(deletionWorkflowResult);
   }
 
-  private void findWorkflowErrorByReason(List<DeletionWorkflowError> workflowErrors) {
-    if (isNotEmpty(workflowErrors)) {
-      List<DeletionWorkflowError> rcSessionGroupNotFoundWorkflowErrors =
-          getSameReasonWorkflowErrors(workflowErrors, RC_SESSION_GROUP_NOT_FOUND_REASON);
-      List<DeletionWorkflowError> workflowErrorsExceptSessionGroupNotFound =
-          new ArrayList<>(workflowErrors);
-      workflowErrorsExceptSessionGroupNotFound.removeAll(rcSessionGroupNotFoundWorkflowErrors);
-      this.workflowErrorLogService.logWorkflowErrors(rcSessionGroupNotFoundWorkflowErrors);
-      this.workflowErrorMailService.buildAndSendErrorMail(workflowErrorsExceptSessionGroupNotFound);
-    }
+  private void processWorkflowResult(DeletionWorkflowResult deletionResult) {
+    List<DeletionWorkflowError> deletionErrors = deletionResult.getErrors();
+    List<DeletionWorkflowInfo> deletionInfos = deletionResult.getDeletionInfo();
+
+    List<DeletionWorkflowError> rcSessionGroupNotFoundWorkflowErrors = getWorkflowErrorsByRcSessionGroupNotFound(deletionErrors);
+    List<DeletionWorkflowError> workflowErrorsExceptSessionGroupNotFound = new ArrayList<>(deletionErrors);
+    workflowErrorsExceptSessionGroupNotFound.removeAll(rcSessionGroupNotFoundWorkflowErrors);
+
+    this.workflowErrorLogService.logWorkflowErrors(rcSessionGroupNotFoundWorkflowErrors);
+    this.workflowErrorMailService.buildAndSendMail(workflowErrorsExceptSessionGroupNotFound, deletionInfos);
   }
 
-  private static List<DeletionWorkflowError> getSameReasonWorkflowErrors(
-      List<DeletionWorkflowError> workflowErrors, String reason) {
+  private List<DeletionWorkflowError> getWorkflowErrorsByRcSessionGroupNotFound(List<DeletionWorkflowError> workflowErrors) {
     return workflowErrors.stream()
-        .filter(error -> reason.equals(error.getReason()))
+        .filter(error -> RC_SESSION_GROUP_NOT_FOUND_REASON.equals(error.getReason()))
         .collect(Collectors.toList());
   }
 
-  List<DeletionWorkflowError> performDeletionWorkflow(
-      Entry<String, List<String>> userInactiveGroupEntry) {
+  DeletionWorkflowResult performDeletionWorkflow(
+      Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry) {
 
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
 
     try {
       List<User> users =
@@ -108,102 +100,159 @@ public class DeleteInactiveSessionsAndUserService {
         log.info(
             "User with rcUserId: {} not found in users table. Will try to delete it's sessions from db and rocketchat.",
             userInactiveGroupEntry.getKey());
-        workflowErrors.addAll(
-            performUserSessionDeletionForNonExistingUser(userInactiveGroupEntry.getValue()));
+        result.merge(
+            performUserSessionDeletionForNonExistingUser(
+                userInactiveGroupEntry.getValue(), userInactiveGroupEntry.getKey()));
       } else {
         log.info(
             "User with rcUserId: {} found in users table. Will try to delete it's sessions from db and rocketchat.",
             userInactiveGroupEntry.getKey());
-        users.stream()
-            .forEach(
-                u -> workflowErrors.addAll(deleteInactiveGroupsOrUser(userInactiveGroupEntry, u)));
+        users.forEach(u -> result.merge(deleteInactiveGroupsOrUser(userInactiveGroupEntry, u)));
       }
     } catch (NonUniqueResultException ex) {
       log.error(
           "Non unique result for findByRcUserIdAndDeleteDateIsNull found. RcUserId:",
           userInactiveGroupEntry.getKey());
-      return workflowErrors;
+      return result;
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcUserId: {}, unexpected error occurred while deleting user with rcUserId: {}",
           userInactiveGroupEntry.getKey(),
           ex);
     }
-    return workflowErrors;
+    return result;
   }
 
-  private List<DeletionWorkflowError> deleteInactiveGroupsOrUser(
-      Entry<String, List<String>> userInactiveGroupEntry, User user) {
+  private DeletionWorkflowResult deleteInactiveGroupsOrUser(
+      Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry, User user) {
 
     List<Session> userSessionList = sessionRepository.findByUser(user);
     if (allSessionsOfUserAreInactive(userInactiveGroupEntry, userSessionList)) {
       log.info(
           "All sessions of user with rcUserId: {} are inactive. Will try to delete user account.",
           userInactiveGroupEntry.getKey());
-      return deleteUserAccountService.performUserDeletion(user);
+      DeletionWorkflowResult result = new DeletionWorkflowResult();
+      List<DeletionWorkflowError> errors = deleteUserAccountService.performUserDeletion(user);
+      result.addAllErrors(errors);
+
+      // Add deletion info for all groups if deletion was successful (no errors for this user)
+      if (errors.isEmpty()) {
+        userInactiveGroupEntry
+            .getValue()
+            .forEach(
+                groupInfo ->
+                    result.addInfo(
+                        DeletionWorkflowInfo.builder()
+                            .userId(user.getUserId())
+                            .userName(user.getUsername())
+                            .lastMessageDate(groupInfo.getLastMessageDate())
+                            .build()));
+      }
+      return result;
     }
-    return perfomUserSessionDeletion(userInactiveGroupEntry, userSessionList);
+    return performUserSessionDeletion(userInactiveGroupEntry, userSessionList, user);
   }
 
-  private List<DeletionWorkflowError> perfomUserSessionDeletion(
-      Entry<String, List<String>> userInactiveGroupEntry, List<Session> userSessionList) {
-    return userInactiveGroupEntry.getValue().stream()
-        .map(rcGroupId -> performSessionDeletion(rcGroupId, userSessionList))
-        .flatMap(Collection::stream)
-        .collect(Collectors.toList());
+  private DeletionWorkflowResult performUserSessionDeletion(
+      Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry,
+      List<Session> userSessionList,
+      User user) {
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
+    userInactiveGroupEntry
+        .getValue()
+        .forEach(
+            groupInfo -> result.merge(performSessionDeletion(groupInfo, userSessionList, user)));
+    return result;
   }
 
   private boolean allSessionsOfUserAreInactive(
-      Entry<String, List<String>> userInactiveGroupEntry, List<Session> userSessionList) {
+      Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry,
+      List<Session> userSessionList) {
     return userInactiveGroupEntry.getValue().size() == userSessionList.size();
   }
 
-  private List<DeletionWorkflowError> performSessionDeletion(
-      String rcGroupId, List<Session> userSessionList) {
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
+  private DeletionWorkflowResult performSessionDeletion(
+      InactiveGroupInfo groupInfo, List<Session> userSessionList, User user) {
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
     try {
-      Optional<Session> session = findSessionInUserSessionList(rcGroupId, userSessionList);
-      session.ifPresentOrElse(
-          s -> workflowErrors.addAll(deleteSessionService.performSessionDeletion(s)),
-          () ->
-              workflowErrors.addAll(
-                  deleteSessionService.performRocketchatSessionDeletion(rcGroupId)));
+      Optional<Session> session =
+          findSessionInUserSessionList(groupInfo.getGroupId(), userSessionList);
+      if (session.isPresent()) {
+        List<DeletionWorkflowError> errors =
+            deleteSessionService.performSessionDeletion(session.get());
+        result.addAllErrors(errors);
+        if (errors.isEmpty()) {
+          result.addInfo(
+              DeletionWorkflowInfo.builder()
+                  .userId(user.getUserId())
+                  .userName(user.getUsername())
+                  .lastMessageDate(groupInfo.getLastMessageDate())
+                  .build());
+        }
+      } else {
+        List<DeletionWorkflowError> errors =
+            new ArrayList<>(
+                deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
+        result.addAllErrors(errors);
+        if (errors.isEmpty()) {
+          result.addInfo(
+              DeletionWorkflowInfo.builder()
+                  .userId(user.getUserId())
+                  .userName(user.getUsername())
+                  .lastMessageDate(groupInfo.getLastMessageDate())
+                  .build());
+        }
+      }
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcGroupId: {}, unexpected error occurred while deleting user with rcGroupId: {}",
-          rcGroupId,
+          groupInfo.getGroupId(),
           ex);
     }
 
-    return workflowErrors;
+    return result;
   }
 
-  private List<DeletionWorkflowError> performUserSessionDeletionForNonExistingUser(
-      List<String> rcGroupIds) {
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
-    rcGroupIds.forEach(
-        rcGroupId ->
-            workflowErrors.addAll(performUserSessionDeletionForNonExistingUser(rcGroupId)));
-    return workflowErrors;
+  private DeletionWorkflowResult performUserSessionDeletionForNonExistingUser(
+      List<InactiveGroupInfo> groupInfoList, String rcUserId) {
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
+    groupInfoList.forEach(
+        groupInfo ->
+            result.merge(performUserSessionDeletionForNonExistingUser(groupInfo, rcUserId)));
+    return result;
   }
 
-  private Collection<? extends DeletionWorkflowError> performUserSessionDeletionForNonExistingUser(
-      String rcGroupId) {
-    List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
+  private DeletionWorkflowResult performUserSessionDeletionForNonExistingUser(
+      InactiveGroupInfo groupInfo, String rcUserId) {
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
     try {
-      Optional<Session> session = sessionRepository.findByGroupId(rcGroupId);
+      Optional<Session> session = sessionRepository.findByGroupId(groupInfo.getGroupId());
+
+      List<DeletionWorkflowError> errors;
       if (session.isPresent()) {
-        workflowErrors.addAll(deleteSessionService.performSessionDeletion(session.get()));
+        errors = deleteSessionService.performSessionDeletion(session.get());
       } else {
-        workflowErrors.addAll(deleteSessionService.performRocketchatSessionDeletion(rcGroupId));
+        errors =
+            new ArrayList<>(
+                deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
       }
-      return workflowErrors;
+      result.addAllErrors(errors);
+
+      if (errors.isEmpty()) {
+        result.addInfo(
+            DeletionWorkflowInfo.builder()
+                .userId(rcUserId)
+                .userName("N/A (User not found)")
+                .lastMessageDate(groupInfo.getLastMessageDate())
+                .build());
+      }
+      return result;
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcGroupId: {}, unexpected error occurred while deleting user with rcGroupId: {}",
-          rcGroupId,
+          groupInfo.getGroupId(),
           ex);
-      return workflowErrors;
+      return result;
     }
   }
 
