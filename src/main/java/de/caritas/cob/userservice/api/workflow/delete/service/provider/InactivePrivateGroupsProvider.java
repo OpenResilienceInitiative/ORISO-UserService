@@ -36,7 +36,6 @@ public class InactivePrivateGroupsProvider {
   @Value("${session.inactive.deleteWorkflow.check.days}")
   private int sessionInactiveDeleteWorkflowCheckDays;
 
-
   /**
    * Get a map with users and their related inactive Rocket.Chat group info including last message
    * timestamp. Group chats are excluded.

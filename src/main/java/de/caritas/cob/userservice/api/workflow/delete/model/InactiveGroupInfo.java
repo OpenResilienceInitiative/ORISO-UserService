@@ -18,4 +18,3 @@ public class InactiveGroupInfo {
   private String groupId;
   private Date lastMessageDate;
 }
-

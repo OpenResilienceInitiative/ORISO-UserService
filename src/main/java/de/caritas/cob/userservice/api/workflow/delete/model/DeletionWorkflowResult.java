@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.model;
 
+import static java.util.Objects.nonNull;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -7,8 +9,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import static java.util.Objects.nonNull;
 
 /**
  * Represents the result of a deletion workflow operation, containing both errors and successful
@@ -38,6 +38,4 @@ public class DeletionWorkflowResult {
       deletionInfo.addAll(other.getDeletionInfo());
     }
   }
-
 }
-

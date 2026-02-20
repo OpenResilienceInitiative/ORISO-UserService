@@ -153,7 +153,8 @@ public class RocketChatServiceTest {
   private final GroupDTO GROUP_DTO =
       new GroupDTO(GROUP_ID, GROUP_NAME, null, null, 0, 0, null, null, false, false, null, null);
   private final GroupDTO GROUP_DTO_2 =
-      new GroupDTO(RC_GROUP_ID_2, GROUP_NAME, null, null, 0, 0, null, null, false, false, null, null);
+      new GroupDTO(
+          RC_GROUP_ID_2, GROUP_NAME, null, null, 0, 0, null, null, false, false, null, null);
   private final GroupResponseDTO GROUP_RESPONSE_DTO =
       new GroupResponseDTO(GROUP_DTO, true, null, null);
   private final UsersListReponseDTO USERS_LIST_RESPONSE_DTO_EMPTY =

@@ -98,9 +98,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_LogError_WhenFetchOfInactiveGroupsFails()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_LogError_WhenFetchOfInactiveGroupsFails()
+      throws RocketChatGetGroupsListAllException {
     // given
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
     doThrow(new RocketChatGetGroupsListAllException(new RuntimeException()))
@@ -115,9 +114,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_ReturnGroupInfoWithLastMessageDate()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_ReturnGroupInfoWithLastMessageDate()
+      throws RocketChatGetGroupsListAllException {
     // given
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
@@ -247,9 +245,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_ExcludeGroupChats()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_ExcludeGroupChats()
+      throws RocketChatGetGroupsListAllException {
     // given
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
@@ -293,9 +290,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_ReturnEmptyMap_WhenNoInactiveGroupsExist()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_ReturnEmptyMap_WhenNoInactiveGroupsExist()
+      throws RocketChatGetGroupsListAllException {
     // given
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
         .thenReturn(Collections.emptyList());
@@ -310,9 +306,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_HandleNullLastMessageDate()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_HandleNullLastMessageDate()
+      throws RocketChatGetGroupsListAllException {
     // given
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO = easyRandom.nextObject(GroupDTO.class);
@@ -337,9 +332,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_ExcludeAllGroupsIfAllAreGroupChats()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_ExcludeAllGroupsIfAllAreGroupChats()
+      throws RocketChatGetGroupsListAllException {
     // given
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO1 = easyRandom.nextObject(GroupDTO.class);
@@ -370,9 +364,8 @@ public class InactivePrivateGroupsProviderTest {
   }
 
   @Test
-  public void
-      retrieveUserWithInactiveGroupInfoMap_Should_PreserveGroupIdCorrectly()
-          throws RocketChatGetGroupsListAllException {
+  public void retrieveUserWithInactiveGroupInfoMap_Should_PreserveGroupIdCorrectly()
+      throws RocketChatGetGroupsListAllException {
     // given
     EasyRandom easyRandom = new EasyRandom();
     String expectedGroupId = "specific-group-id-12345";
