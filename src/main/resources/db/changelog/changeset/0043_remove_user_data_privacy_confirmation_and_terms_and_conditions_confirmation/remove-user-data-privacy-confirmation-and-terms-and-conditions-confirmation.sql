@@ -1,0 +1,1 @@
+ALTER TABLE `userservice`.`user` DROP COLUMN `data_privacy_confirmation`, `terms_and_conditions_confirmation`;

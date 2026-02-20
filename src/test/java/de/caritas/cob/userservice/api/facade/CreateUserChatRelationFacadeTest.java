@@ -8,7 +8,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -144,7 +143,6 @@ public class CreateUserChatRelationFacadeTest {
 
     verify(rollbackFacade).rollBackUserAccount(captor.capture());
     assertEquals(user, captor.getValue().getUser());
-    assertTrue(captor.getValue().isRollBackUserAccount());
   }
 
   @Test(expected = InternalServerErrorException.class)
@@ -165,7 +163,6 @@ public class CreateUserChatRelationFacadeTest {
 
     verify(rollbackFacade).rollBackUserAccount(captor.capture());
     assertEquals(user, captor.getValue().getUser());
-    assertTrue(captor.getValue().isRollBackUserAccount());
   }
 
   @Test
@@ -212,7 +209,6 @@ public class CreateUserChatRelationFacadeTest {
 
     verify(rollbackFacade).rollBackUserAccount(captor.capture());
     assertEquals(user, captor.getValue().getUser());
-    assertTrue(captor.getValue().isRollBackUserAccount());
   }
 
   @Test(expected = BadRequestException.class)

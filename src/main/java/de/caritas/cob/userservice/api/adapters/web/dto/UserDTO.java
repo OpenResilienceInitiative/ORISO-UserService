@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.helper.UserHelper.AGENCY_ID_MIN;
 import static de.caritas.cob.userservice.api.helper.UserHelper.AGE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.CONSULTING_TYPE_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.STATE_REGEXP;
-import static de.caritas.cob.userservice.api.helper.UserHelper.TERMS_ACCEPTED_REGEXP;
 import static de.caritas.cob.userservice.api.helper.UserHelper.VALID_POSTCODE_REGEX;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
@@ -91,11 +90,6 @@ public class UserDTO implements UserRegistrationDTO {
   @ApiModelProperty(example = "\"16\"", position = 9)
   private String state;
 
-  @Pattern(regexp = TERMS_ACCEPTED_REGEXP, message = "{user.custom.termsAccepted.invalid}")
-  @ApiModelProperty(required = true, example = "\"true\"", position = 10)
-  @JsonProperty("termsAccepted")
-  private String termsAccepted;
-
   @Pattern(regexp = CONSULTING_TYPE_REGEXP, message = "{user.consultingType.invalid}")
   @ApiModelProperty(required = true, example = "\"0\"", position = 11)
   @JsonProperty("consultingType")
@@ -142,14 +136,12 @@ public class UserDTO implements UserRegistrationDTO {
       Long agencyId,
       String password,
       String email,
-      String termsAccepted,
       String consultingTypeId) {
     this.username = username;
     this.postcode = postcode;
     this.agencyId = agencyId;
     this.password = password;
     this.email = email;
-    this.termsAccepted = termsAccepted;
     this.consultingType = consultingTypeId;
   }
 
@@ -180,9 +172,6 @@ public class UserDTO implements UserRegistrationDTO {
         + '\''
         + ", state='"
         + state
-        + '\''
-        + ", termsAccepted='"
-        + termsAccepted
         + '\''
         + ", consultingType='"
         + consultingType

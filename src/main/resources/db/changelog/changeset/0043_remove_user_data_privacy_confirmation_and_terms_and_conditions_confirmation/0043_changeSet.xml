@@ -1,0 +1,6 @@
+<?xml version="1.1" encoding="UTF-8" standalone="no"?>
+<databaseChangeLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+    <changeSet author="LeandroSilva" id="remove_user_data_privacy_confirmation_and_terms_and_conditions_confirmation">
+        <sqlFile path="db/changelog/changeset/0043_remove_user_data_privacy_confirmation_and_terms_and_conditions_confirmation/remove-user-data-privacy-confirmation-and-terms-and-conditions-confirmation.sql" stripComments="true"/>
+    </changeSet>
+</databaseChangeLog>

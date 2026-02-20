@@ -116,11 +116,7 @@ public class CreateSessionFacade {
       return session;
     } catch (Exception ex) {
       rollbackFacade.rollBackUserAccount(
-          RollbackUserAccountInformation.builder()
-              .userId(user.getUserId())
-              .user(user)
-              .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-              .build());
+          RollbackUserAccountInformation.builder().userId(user.getUserId()).user(user).build());
 
       var stepWord = initialized ? "save session data" : "initialize session";
       var message = String.format("Could not %s for user %s.", stepWord, user.getUsername());
