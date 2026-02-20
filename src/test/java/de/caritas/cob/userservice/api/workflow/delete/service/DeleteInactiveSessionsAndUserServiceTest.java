@@ -223,7 +223,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
   @Test
   void
-      deleteInactiveSessionsAndUsers_Should_notLogError_notSendEmail_WhenSessionCouldNotBeFound_BecauseItMayHaveBeenDeletedByPreviousWorkflowRun() {
+      deleteInactiveSessionsAndUsers_Should_logEmptyWorkflowErrors_WhenSessionCouldNotBeFound_BecauseItMayHaveBeenDeletedByPreviousWorkflowRun() {
     // given
     EasyRandom easyRandom = new EasyRandom();
     User user = easyRandom.nextObject(User.class);
@@ -244,13 +244,18 @@ class DeleteInactiveSessionsAndUserServiceTest {
         .thenReturn(userWithInactiveGroupsMap);
     when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Lists.newArrayList(user));
-    when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(easyRandom.nextObject(Session.class), easyRandom.nextObject(Session.class)));
+    when(sessionRepository.findByUser(user))
+        .thenReturn(
+            Arrays.asList(
+                easyRandom.nextObject(Session.class),
+                easyRandom.nextObject(Session.class)));
 
     // when
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.never()).logWorkflowErrors(Mockito.anyList());
+    verify(workflowErrorLogService, Mockito.times(1))
+        .logWorkflowErrors(eq(Collections.emptyList()));
   }
 
   @Test
