@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroupInfo;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -35,17 +36,18 @@ public class InactivePrivateGroupsProvider {
   @Value("${session.inactive.deleteWorkflow.check.days}")
   private int sessionInactiveDeleteWorkflowCheckDays;
 
+
   /**
-   * Get a map with users and their related inactive Rocket.Chat group ids. Group chats are
-   * excluded.
+   * Get a map with users and their related inactive Rocket.Chat group info including last message
+   * timestamp. Group chats are excluded.
    *
-   * @return a map with users and related inactive Rocket.Chat groups ids
+   * @return a map with users and related inactive Rocket.Chat group info
    */
-  public Map<String, List<String>> retrieveUserWithInactiveGroupsMap() {
+  public Map<String, List<InactiveGroupInfo>> retrieveUserWithInactiveGroupInfoMap() {
 
     Set<String> groupChatIdSet = buildSetOfGroupChatGroupdIds();
 
-    Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
+    Map<String, List<InactiveGroupInfo>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
         .filter(
             group -> {
@@ -61,7 +63,11 @@ public class InactivePrivateGroupsProvider {
             group ->
                 userWithInactiveGroupsMap
                     .computeIfAbsent(group.getUser().getId(), v -> new ArrayList<>())
-                    .add(group.getId()));
+                    .add(
+                        InactiveGroupInfo.builder()
+                            .groupId(group.getId())
+                            .lastMessageDate(group.getLastMessage())
+                            .build()));
     return userWithInactiveGroupsMap;
   }
 
