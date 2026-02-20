@@ -158,7 +158,6 @@ public class EmailNotificationFacade {
               .emailDummySuffix(identityClientConfig.getEmailDummySuffix())
               .tenantTemplateSupplier(tenantTemplateSupplier)
               .multiTenancyEnabled(multiTenancyEnabled)
-              .messageClient(messageClient)
               .releaseToggleService(releaseToggleService)
               .build();
       sendMailTasksToMailService(newMessageMails);
