@@ -30,7 +30,6 @@ public class UserHelper {
   public static final long AGENCY_ID_MAX = Long.MAX_VALUE;
   public static final String AGE_REGEXP = "[0-9]+|";
   public static final String STATE_REGEXP = "[0-9]|1[0-6]";
-  public static final String TERMS_ACCEPTED_REGEXP = "true|TRUE";
   public static final String CONSULTING_TYPE_REGEXP = "[0-9]+|";
   public static final int CHAT_MIN_DURATION = 30;
   public static final int CHAT_MAX_DURATION = 180;

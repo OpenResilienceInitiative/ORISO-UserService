@@ -192,7 +192,6 @@ class SessionServiceTest {
           "x@y.de",
           null,
           null,
-          null,
           CONSULTING_TYPE_ID_SUCHT + "",
           "",
           true,

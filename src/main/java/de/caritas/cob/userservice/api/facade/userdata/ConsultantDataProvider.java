@@ -82,7 +82,6 @@ public class ConsultantDataProvider {
             hasAtLeastOneTypeWithAllowedAnonymousConversations(agencyDTOsOf(consultant)))
         .hasArchive(hasArchive(consultant))
         .dataPrivacyConfirmation(consultant.getDataPrivacyConfirmation())
-        .termsAndConditionsConfirmation(consultant.getTermsAndConditionsConfirmation())
         .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(consultant))
         .build();
   }

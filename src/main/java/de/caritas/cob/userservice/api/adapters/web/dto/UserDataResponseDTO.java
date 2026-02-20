@@ -82,8 +82,6 @@ public class UserDataResponseDTO {
 
   private LanguageCode preferredLanguage;
 
-  private LocalDateTime termsAndConditionsConfirmation;
-
   private LocalDateTime dataPrivacyConfirmation;
 
   private Boolean available;

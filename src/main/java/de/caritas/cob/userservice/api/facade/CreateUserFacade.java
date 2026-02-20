@@ -136,10 +136,7 @@ public class CreateUserFacade {
 
   private void rollBackAccountInitialization(String userId, UserDTO userDTO) {
     rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder()
-            .userId(userId)
-            .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-            .build());
+        RollbackUserAccountInformation.builder().userId(userId).build());
     throw new InternalServerErrorException(
         String.format("Could not update account data on registration for: %s", userDTO));
   }

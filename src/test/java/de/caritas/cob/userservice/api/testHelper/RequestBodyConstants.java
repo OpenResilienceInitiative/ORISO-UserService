@@ -21,7 +21,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.POSTCODE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RELATION_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SECRET;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.STATE_VALUE;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.TERMS_ACCEPTED;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_TOO_LONG;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_TOO_SHORT;
@@ -50,9 +49,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
@@ -76,9 +72,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
@@ -104,9 +97,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
@@ -132,9 +122,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
@@ -151,9 +138,6 @@ public class RequestBodyConstants {
           + PASSWORD
           + "\", \"age\": \""
           + INVALID_AGE_VALUE
-          + "\", "
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_U25
           + "\"}";
@@ -172,8 +156,6 @@ public class RequestBodyConstants {
           + "\", "
           + "\"state\": \""
           + STATE_VALUE
-          + "\", \"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_U25
           + "\"}";
@@ -193,8 +175,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"state\": \""
           + STATE_VALUE
-          + "\", \"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_U25
           + "\"}";
@@ -220,9 +200,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
@@ -248,9 +225,6 @@ public class RequestBodyConstants {
           + AGE_VALUE
           + "\", \"gender\": \""
           + GENDER_VALUE
-          + "\","
-          + "\"termsAccepted\": \""
-          + TERMS_ACCEPTED
           + "\", \"consultingType\": \""
           + CONSULTING_TYPE_ID_SUCHT
           + "\"}";
