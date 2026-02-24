@@ -55,8 +55,8 @@ public class WorkflowErrorMailService {
     templateAttributes.add(new TemplateDataDTO().key("subject").value("Deletion workflow report"));
     templateAttributes.add(
         new TemplateDataDTO()
-            .key("text")
-            .value(buildCombinedHtmlText(workflowErrors, workflowInfos)));
+                .key("text")
+                .value(buildHtmlText(workflowErrors, workflowInfos)));
 
     if (!multitenancyEnabled) {
       templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
@@ -69,20 +69,20 @@ public class WorkflowErrorMailService {
     this.mailService.sendErrorEmailNotification(errorMailDTO);
   }
 
-  private String buildCombinedHtmlText(
+  private String buildHtmlText(
       List<DeletionWorkflowError> deletionErrors, List<DeletionWorkflowInfo> deletionInfo) {
     StringBuilder stringBuilder = new StringBuilder();
 
     if (isNotEmpty(deletionInfo)) {
       stringBuilder.append(convertInfoToHtmlText(deletionInfo));
     } else {
-      stringBuilder.append("<h2>No deletion info</h2>");
+      stringBuilder.append("<h2>No successful deletion info</h2>");
     }
 
     if (isNotEmpty(deletionErrors)) {
       stringBuilder.append(convertErrorsToHtmlText(deletionErrors));
     } else {
-      stringBuilder.append("<h2>No errors occured</h2>");
+      stringBuilder.append("<h2>No errors occurred</h2>");
     }
 
     return stringBuilder.toString();
@@ -99,16 +99,17 @@ public class WorkflowErrorMailService {
             .append("<ul>");
 
     deletionInfo.forEach(
-        info -> stringBuilder
-            .append("<li>")
-            .append("User ID: ")
-            .append(info.getUserId())
-            .append("</li><li>User Name: ")
-            .append(info.getUserName())
-            .append("</li><li>Last Message Date: ")
-            .append(info.getLastMessageDate())
-            .append("</li>")
-            .append("<hr>"));
+        info ->
+            stringBuilder
+                .append("<li>")
+                .append("User ID: ")
+                .append(info.getUserId())
+                .append("</li><li>User Name: ")
+                .append(info.getUserName())
+                .append("</li><li>Last Message Date: ")
+                .append(info.getLastMessageDate())
+                .append("</li>")
+                .append("<hr>"));
 
     stringBuilder.append("</ul>");
     return stringBuilder.toString();

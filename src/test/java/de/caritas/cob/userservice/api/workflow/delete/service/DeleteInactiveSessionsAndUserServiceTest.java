@@ -3,11 +3,13 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ALL;
+import static org.hamcrest.Matchers.hasSize;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.hamcrest.MockitoHamcrest.argThat;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -177,7 +179,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
   @Test
   void
-      deleteInactiveSessionsAndUsers_Should_logWorkflowErrorMail_WhenUserHasActiveAndInactiveSessionsAndHasErrors() {
+      deleteInactiveSessionsAndUsers_Should_logWorkflowErrorMail_WhenUserHasActiveAndInactiveSessionsAndHasErrorGroupNotFound() {
     // given
     EasyRandom easyRandom = new EasyRandom();
     User user = easyRandom.nextObject(User.class);
@@ -215,10 +217,9 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.times(1))
-        .logWorkflowErrors(argThat(list -> !list.isEmpty()));
+    verify(workflowErrorLogService, Mockito.times(1)).logWorkflowErrors(argThat(list -> list.size() ==1));
     verify(workflowErrorMailService, Mockito.times(1))
-        .buildAndSendMail(Collections.emptyList(), Collections.emptyList());
+        .buildAndSendMail(eq(Collections.emptyList()), argThat(list -> list.size() == 1));
   }
 
   @Test
@@ -247,8 +248,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     when(sessionRepository.findByUser(user))
         .thenReturn(
             Arrays.asList(
-                easyRandom.nextObject(Session.class),
-                easyRandom.nextObject(Session.class)));
+                easyRandom.nextObject(Session.class), easyRandom.nextObject(Session.class)));
 
     // when
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();

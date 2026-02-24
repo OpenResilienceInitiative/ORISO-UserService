@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
+import static java.util.Comparator.comparingLong;
+
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -22,8 +24,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
-import static java.util.Comparator.comparingLong;
 
 /** Service to trigger deletion of inactive sessions and asker accounts. */
 @Service
@@ -78,15 +78,19 @@ public class DeleteInactiveSessionsAndUserService {
     List<DeletionWorkflowError> deletionErrors = deletionResult.getErrors();
     List<DeletionWorkflowInfo> deletionInfos = deletionResult.getDeletionInfo();
 
-    List<DeletionWorkflowError> rcSessionGroupNotFoundWorkflowErrors = getWorkflowErrorsByRcSessionGroupNotFound(deletionErrors);
-    List<DeletionWorkflowError> workflowErrorsExceptSessionGroupNotFound = new ArrayList<>(deletionErrors);
+    List<DeletionWorkflowError> rcSessionGroupNotFoundWorkflowErrors =
+        getWorkflowErrorsByRcSessionGroupNotFound(deletionErrors);
+    List<DeletionWorkflowError> workflowErrorsExceptSessionGroupNotFound =
+        new ArrayList<>(deletionErrors);
     workflowErrorsExceptSessionGroupNotFound.removeAll(rcSessionGroupNotFoundWorkflowErrors);
 
     this.workflowErrorLogService.logWorkflowErrors(rcSessionGroupNotFoundWorkflowErrors);
-    this.workflowErrorMailService.buildAndSendMail(workflowErrorsExceptSessionGroupNotFound, deletionInfos);
+    this.workflowErrorMailService.buildAndSendMail(
+        workflowErrorsExceptSessionGroupNotFound, deletionInfos);
   }
 
-  private List<DeletionWorkflowError> getWorkflowErrorsByRcSessionGroupNotFound(List<DeletionWorkflowError> workflowErrors) {
+  private List<DeletionWorkflowError> getWorkflowErrorsByRcSessionGroupNotFound(
+      List<DeletionWorkflowError> workflowErrors) {
     return workflowErrors.stream()
         .filter(error -> RC_SESSION_GROUP_NOT_FOUND_REASON.equals(error.getReason()))
         .collect(Collectors.toList());
@@ -149,7 +153,8 @@ public class DeleteInactiveSessionsAndUserService {
       result.merge(performUserSessionDeletion(userInactiveGroupEntry, userSessionList, user));
     }
 
-    addDeletionInfoForUser(result, user.getUserId(), user.getUsername(), userInactiveGroupEntry.getValue());
+    addDeletionInfoForUser(
+        result, user.getUserId(), user.getUsername(), userInactiveGroupEntry.getValue());
     return result;
   }
 
