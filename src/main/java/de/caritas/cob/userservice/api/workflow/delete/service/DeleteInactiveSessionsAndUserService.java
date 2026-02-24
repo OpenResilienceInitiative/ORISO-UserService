@@ -126,12 +126,13 @@ public class DeleteInactiveSessionsAndUserService {
       }
     } catch (NonUniqueResultException ex) {
       log.error(
-          "Non unique result for findByRcUserIdAndDeleteDateIsNull found. RcUserId:",
+          "Non unique result for findByRcUserIdAndDeleteDateIsNull found. RcUserId: {}",
           userInactiveGroupEntry.getKey());
       return result;
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcUserId: {}, unexpected error occurred while deleting user with rcUserId: {}",
+          userInactiveGroupEntry.getKey(),
           userInactiveGroupEntry.getKey(),
           ex);
     }
@@ -148,9 +149,9 @@ public class DeleteInactiveSessionsAndUserService {
           "All sessions of user with rcUserId: {} are inactive. Will try to delete user account.",
           userInactiveGroupEntry.getKey());
       List<DeletionWorkflowError> errors = deleteUserAccountService.performUserDeletion(user);
-      result.addAllErrors(errors);
+      result.addAll(errors);
     } else {
-      result.merge(performUserSessionDeletion(userInactiveGroupEntry, userSessionList, user));
+      result.merge(performUserSessionDeletion(userInactiveGroupEntry, userSessionList));
     }
 
     addDeletionInfoForUser(
@@ -160,13 +161,12 @@ public class DeleteInactiveSessionsAndUserService {
 
   private DeletionWorkflowResult performUserSessionDeletion(
       Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry,
-      List<Session> userSessionList,
-      User user) {
+      List<Session> userSessionList) {
     DeletionWorkflowResult result = new DeletionWorkflowResult();
     userInactiveGroupEntry
         .getValue()
         .forEach(
-            groupInfo -> result.merge(performSessionDeletion(groupInfo, userSessionList, user)));
+            groupInfo -> result.merge(performSessionDeletion(groupInfo, userSessionList)));
     return result;
   }
 
@@ -177,24 +177,22 @@ public class DeleteInactiveSessionsAndUserService {
   }
 
   private DeletionWorkflowResult performSessionDeletion(
-      InactiveGroupInfo groupInfo, List<Session> userSessionList, User user) {
+      InactiveGroupInfo groupInfo, List<Session> userSessionList) {
     DeletionWorkflowResult result = new DeletionWorkflowResult();
     try {
       Optional<Session> session =
           findSessionInUserSessionList(groupInfo.getGroupId(), userSessionList);
-      if (session.isPresent()) {
-        List<DeletionWorkflowError> errors =
-            deleteSessionService.performSessionDeletion(session.get());
-        result.addAllErrors(errors);
-      } else {
-        List<DeletionWorkflowError> errors =
-            new ArrayList<>(
-                deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
-        result.addAllErrors(errors);
-      }
+        List<DeletionWorkflowError> errors;
+        if (session.isPresent()) {
+            errors = deleteSessionService.performSessionDeletion(session.get());
+        } else {
+            errors = new ArrayList<>(deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
+        }
+        result.addAll(errors);
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcGroupId: {}, unexpected error occurred while deleting user with rcGroupId: {}",
+          groupInfo.getGroupId(),
           groupInfo.getGroupId(),
           ex);
     }
@@ -225,11 +223,12 @@ public class DeleteInactiveSessionsAndUserService {
             new ArrayList<>(
                 deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
       }
-      result.addAllErrors(errors);
+      result.addAll(errors);
       return result;
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcGroupId: {}, unexpected error occurred while deleting user with rcGroupId: {}",
+          groupInfo.getGroupId(),
           groupInfo.getGroupId(),
           ex);
       return result;
@@ -241,7 +240,7 @@ public class DeleteInactiveSessionsAndUserService {
       String userId,
       String userName,
       List<InactiveGroupInfo> groupInfos) {
-    result.addInfo(
+    result.addAll(
         DeletionWorkflowInfo.builder()
             .userId(userId)
             .userName(userName)
