@@ -99,16 +99,16 @@ public class WorkflowErrorMailService {
             .append("<ul>");
 
     deletionInfo.forEach(
-        info ->
-            stringBuilder
-                .append("<li>")
-                .append("User ID: ")
-                .append(info.getUserId())
-                .append("</li><li>User Name: ")
-                .append(info.getUserName())
-                .append("</li><li>Last Message Date: ")
-                .append(info.getLastMessageDate())
-                .append("</li><hr>"));
+        info -> stringBuilder
+            .append("<li>")
+            .append("User ID: ")
+            .append(info.getUserId())
+            .append("</li><li>User Name: ")
+            .append(info.getUserName())
+            .append("</li><li>Last Message Date: ")
+            .append(info.getLastMessageDate())
+            .append("</li>")
+            .append("<hr>"));
 
     stringBuilder.append("</ul>");
     return stringBuilder.toString();

@@ -10,9 +10,11 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowResu
 import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroupInfo;
 import de.caritas.cob.userservice.api.workflow.delete.service.provider.InactivePrivateGroupsProvider;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import javax.persistence.NonUniqueResultException;
@@ -20,6 +22,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import static java.util.Comparator.comparingLong;
 
 /** Service to trigger deletion of inactive sessions and asker accounts. */
 @Service
@@ -100,14 +104,21 @@ public class DeleteInactiveSessionsAndUserService {
         log.info(
             "User with rcUserId: {} not found in users table. Will try to delete it's sessions from db and rocketchat.",
             userInactiveGroupEntry.getKey());
-        result.merge(
+        DeletionWorkflowResult userResult =
             performUserSessionDeletionForNonExistingUser(
-                userInactiveGroupEntry.getValue(), userInactiveGroupEntry.getKey()));
+                userInactiveGroupEntry.getValue(), userInactiveGroupEntry.getKey());
+        addDeletionInfoForUser(
+            userResult,
+            userInactiveGroupEntry.getKey(),
+            "N/A (User not found)",
+            userInactiveGroupEntry.getValue());
+        result.merge(userResult);
       } else {
         log.info(
             "User with rcUserId: {} found in users table. Will try to delete it's sessions from db and rocketchat.",
             userInactiveGroupEntry.getKey());
-        users.forEach(u -> result.merge(deleteInactiveGroupsOrUser(userInactiveGroupEntry, u)));
+        users.forEach(
+            user -> result.merge(deleteInactiveGroupsOrUser(userInactiveGroupEntry, user)));
       }
     } catch (NonUniqueResultException ex) {
       log.error(
@@ -127,30 +138,19 @@ public class DeleteInactiveSessionsAndUserService {
       Entry<String, List<InactiveGroupInfo>> userInactiveGroupEntry, User user) {
 
     List<Session> userSessionList = sessionRepository.findByUser(user);
+    DeletionWorkflowResult result = new DeletionWorkflowResult();
     if (allSessionsOfUserAreInactive(userInactiveGroupEntry, userSessionList)) {
       log.info(
           "All sessions of user with rcUserId: {} are inactive. Will try to delete user account.",
           userInactiveGroupEntry.getKey());
-      DeletionWorkflowResult result = new DeletionWorkflowResult();
       List<DeletionWorkflowError> errors = deleteUserAccountService.performUserDeletion(user);
       result.addAllErrors(errors);
-
-      // Add deletion info for all groups if deletion was successful (no errors for this user)
-      if (errors.isEmpty()) {
-        userInactiveGroupEntry
-            .getValue()
-            .forEach(
-                groupInfo ->
-                    result.addInfo(
-                        DeletionWorkflowInfo.builder()
-                            .userId(user.getUserId())
-                            .userName(user.getUsername())
-                            .lastMessageDate(groupInfo.getLastMessageDate())
-                            .build()));
-      }
-      return result;
+    } else {
+      result.merge(performUserSessionDeletion(userInactiveGroupEntry, userSessionList, user));
     }
-    return performUserSessionDeletion(userInactiveGroupEntry, userSessionList, user);
+
+    addDeletionInfoForUser(result, user.getUserId(), user.getUsername(), userInactiveGroupEntry.getValue());
+    return result;
   }
 
   private DeletionWorkflowResult performUserSessionDeletion(
@@ -181,27 +181,11 @@ public class DeleteInactiveSessionsAndUserService {
         List<DeletionWorkflowError> errors =
             deleteSessionService.performSessionDeletion(session.get());
         result.addAllErrors(errors);
-        if (errors.isEmpty()) {
-          result.addInfo(
-              DeletionWorkflowInfo.builder()
-                  .userId(user.getUserId())
-                  .userName(user.getUsername())
-                  .lastMessageDate(groupInfo.getLastMessageDate())
-                  .build());
-        }
       } else {
         List<DeletionWorkflowError> errors =
             new ArrayList<>(
                 deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
         result.addAllErrors(errors);
-        if (errors.isEmpty()) {
-          result.addInfo(
-              DeletionWorkflowInfo.builder()
-                  .userId(user.getUserId())
-                  .userName(user.getUsername())
-                  .lastMessageDate(groupInfo.getLastMessageDate())
-                  .build());
-        }
       }
     } catch (Exception ex) {
       log.info(
@@ -237,15 +221,6 @@ public class DeleteInactiveSessionsAndUserService {
                 deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
       }
       result.addAllErrors(errors);
-
-      if (errors.isEmpty()) {
-        result.addInfo(
-            DeletionWorkflowInfo.builder()
-                .userId(rcUserId)
-                .userName("N/A (User not found)")
-                .lastMessageDate(groupInfo.getLastMessageDate())
-                .build());
-      }
       return result;
     } catch (Exception ex) {
       log.info(
@@ -254,6 +229,27 @@ public class DeleteInactiveSessionsAndUserService {
           ex);
       return result;
     }
+  }
+
+  private void addDeletionInfoForUser(
+      DeletionWorkflowResult result,
+      String userId,
+      String userName,
+      List<InactiveGroupInfo> groupInfos) {
+    result.addInfo(
+        DeletionWorkflowInfo.builder()
+            .userId(userId)
+            .userName(userName)
+            .lastMessageDate(getMaxLastMessageDate(groupInfos))
+            .build());
+  }
+
+  private static Date getMaxLastMessageDate(List<InactiveGroupInfo> groupInfos) {
+    return groupInfos.stream()
+        .map(InactiveGroupInfo::getLastMessageDate)
+        .filter(Objects::nonNull)
+        .max(comparingLong(Date::getTime))
+        .orElse(null);
   }
 
   private Optional<Session> findSessionInUserSessionList(
