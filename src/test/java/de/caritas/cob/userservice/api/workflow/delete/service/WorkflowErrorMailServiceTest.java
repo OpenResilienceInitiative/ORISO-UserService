@@ -98,7 +98,8 @@ public class WorkflowErrorMailServiceTest {
   }
 
   @Test
-  public void buildAndSendErrorMailWithInfo_Should_sendEmail_withEmptyResultsText_When_bothErrorsAndInfoAreEmpty() {
+  public void
+      buildAndSendErrorMailWithInfo_Should_sendEmail_withEmptyResultsText_When_bothErrorsAndInfoAreEmpty() {
     this.workflowErrorMailService.buildAndSendMail(emptyList(), emptyList());
 
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =

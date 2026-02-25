@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowErro
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowInfo;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
-
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -62,9 +61,7 @@ public class WorkflowErrorMailService {
     var templateAttributes = new ArrayList<TemplateDataDTO>();
     templateAttributes.add(new TemplateDataDTO().key("subject").value("Deletion workflow report"));
     templateAttributes.add(
-        new TemplateDataDTO()
-                .key("text")
-                .value(buildHtmlText(workflowErrors, workflowInfos)));
+        new TemplateDataDTO().key("text").value(buildHtmlText(workflowErrors, workflowInfos)));
 
     if (!multitenancyEnabled) {
       templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));

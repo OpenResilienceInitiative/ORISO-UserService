@@ -215,7 +215,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.times(1)).logWorkflowErrors(argThat(list -> list.size() ==1));
+    verify(workflowErrorLogService, Mockito.times(1))
+        .logWorkflowErrors(argThat(list -> list.size() == 1));
     verify(workflowErrorMailService, Mockito.times(1))
         .buildAndSendMail(eq(Collections.emptyList()), argThat(list -> list.size() == 1));
   }

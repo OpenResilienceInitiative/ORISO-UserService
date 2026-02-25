@@ -163,8 +163,7 @@ public class DeleteInactiveSessionsAndUserService {
     DeletionWorkflowResult result = new DeletionWorkflowResult();
     userInactiveGroupEntry
         .getValue()
-        .forEach(
-            groupInfo -> result.merge(performSessionDeletion(groupInfo, userSessionList)));
+        .forEach(groupInfo -> result.merge(performSessionDeletion(groupInfo, userSessionList)));
     return result;
   }
 
@@ -180,13 +179,15 @@ public class DeleteInactiveSessionsAndUserService {
     try {
       Optional<Session> session =
           findSessionInUserSessionList(groupInfo.getGroupId(), userSessionList);
-        List<DeletionWorkflowError> errors;
-        if (session.isPresent()) {
-            errors = deleteSessionService.performSessionDeletion(session.get());
-        } else {
-            errors = new ArrayList<>(deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
-        }
-        result.addAll(errors);
+      List<DeletionWorkflowError> errors;
+      if (session.isPresent()) {
+        errors = deleteSessionService.performSessionDeletion(session.get());
+      } else {
+        errors =
+            new ArrayList<>(
+                deleteSessionService.performRocketchatSessionDeletion(groupInfo.getGroupId()));
+      }
+      result.addAll(errors);
     } catch (Exception ex) {
       log.info(
           "Skip deleting user-session for user with rcGroupId: {}, unexpected error occurred while deleting user with rcGroupId: {}",
