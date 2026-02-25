@@ -9,7 +9,12 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowErro
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowInfo;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +35,9 @@ public class WorkflowErrorMailService {
 
   @Value("${multitenancy.enabled}")
   private Boolean multitenancyEnabled;
+
+  private static final DateTimeFormatter LAST_MESSAGE_DATE_FORMATTER =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
 
   /**
    * Builds an {@link ErrorMailDTO} containing a text with all workflow errors and sends it to the
@@ -76,7 +84,7 @@ public class WorkflowErrorMailService {
     if (isNotEmpty(deletionInfo)) {
       stringBuilder.append(convertInfoToHtmlText(deletionInfo));
     } else {
-      stringBuilder.append("<h2>No successful deletion info</h2>");
+      stringBuilder.append("<h2>No deletion info</h2>");
     }
 
     if (isNotEmpty(deletionErrors)) {
@@ -107,12 +115,20 @@ public class WorkflowErrorMailService {
                 .append("</li><li>User Name: ")
                 .append(info.getUserName())
                 .append("</li><li>Last Message Date: ")
-                .append(info.getLastMessageDate())
+                .append(formatLastMessageDate(info.getLastMessageDate()))
                 .append("</li>")
                 .append("<hr>"));
 
     stringBuilder.append("</ul>");
     return stringBuilder.toString();
+  }
+
+  private String formatLastMessageDate(Date date) {
+    if (date == null) {
+      return "";
+    }
+    return LAST_MESSAGE_DATE_FORMATTER.format(
+        LocalDateTime.ofInstant(date.toInstant(), ZoneOffset.UTC));
   }
 
   private String convertErrorsToHtmlText(List<DeletionWorkflowError> workflowErrors) {

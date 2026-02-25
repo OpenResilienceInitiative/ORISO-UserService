@@ -24,7 +24,7 @@ public class DeletionWorkflowResult {
 
   @Builder.Default private List<DeletionWorkflowInfo> deletionInfo = new ArrayList<>();
 
-  public void addAll(DeletionWorkflowInfo info) {
+  public void add(DeletionWorkflowInfo info) {
     deletionInfo.add(info);
   }
 

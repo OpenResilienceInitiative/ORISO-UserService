@@ -19,6 +19,9 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowErro
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowInfo;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -95,7 +98,7 @@ public class WorkflowErrorMailServiceTest {
   }
 
   @Test
-  public void buildAndSendErrorMailWithInfo_Should_sendNoMail_When_bothErrorsAndInfoAreEmpty() {
+  public void buildAndSendErrorMailWithInfo_Should_sendEmail_withEmptyResultsText_When_bothErrorsAndInfoAreEmpty() {
     this.workflowErrorMailService.buildAndSendMail(emptyList(), emptyList());
 
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
@@ -108,7 +111,7 @@ public class WorkflowErrorMailServiceTest {
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
     assertThat(textData.getValue()).contains("No deletion info");
-    assertThat(textData.getValue()).contains("No errors occured");
+    assertThat(textData.getValue()).contains("No errors occurred");
   }
 
   @Test
@@ -125,7 +128,7 @@ public class WorkflowErrorMailServiceTest {
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
     assertThat(textData.getValue()).contains("No deletion info");
-    assertThat(textData.getValue()).contains("No errors occured");
+    assertThat(textData.getValue()).contains("No errors occurred");
   }
 
   @Test
@@ -256,6 +259,9 @@ public class WorkflowErrorMailServiceTest {
     // given
     ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
     Date lastMessageDate = new Date(1700000000000L); // Fixed date for testing
+    String expectedLastMessageDate =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+            .format(LocalDateTime.ofInstant(lastMessageDate.toInstant(), ZoneOffset.UTC));
     List<DeletionWorkflowInfo> deletionInfo =
         Collections.singletonList(
             DeletionWorkflowInfo.builder()
@@ -278,6 +284,6 @@ public class WorkflowErrorMailServiceTest {
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
     assertThat(textData.getValue()).contains("Last Message Date");
-    assertThat(textData.getValue()).contains(lastMessageDate.toString());
+    assertThat(textData.getValue()).contains(expectedLastMessageDate);
   }
 }

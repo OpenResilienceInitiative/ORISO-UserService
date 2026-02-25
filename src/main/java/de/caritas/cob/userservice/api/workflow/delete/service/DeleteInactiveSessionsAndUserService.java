@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
-import static java.util.Comparator.comparingLong;
-
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -240,19 +238,19 @@ public class DeleteInactiveSessionsAndUserService {
       String userId,
       String userName,
       List<InactiveGroupInfo> groupInfos) {
-    result.addAll(
+    result.add(
         DeletionWorkflowInfo.builder()
             .userId(userId)
             .userName(userName)
-            .lastMessageDate(getMaxLastMessageDate(groupInfos))
+            .lastMessageDate(getLastMessageDate(groupInfos))
             .build());
   }
 
-  private static Date getMaxLastMessageDate(List<InactiveGroupInfo> groupInfos) {
+  private static Date getLastMessageDate(List<InactiveGroupInfo> groupInfos) {
     return groupInfos.stream()
         .map(InactiveGroupInfo::getLastMessageDate)
         .filter(Objects::nonNull)
-        .max(comparingLong(Date::getTime))
+        .max(Date::compareTo)
         .orElse(null);
   }
 
