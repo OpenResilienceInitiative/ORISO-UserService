@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_FREE_TEXT;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -28,6 +29,8 @@ public class WorkflowResultsMailService {
   private final @NonNull MailService mailService;
 
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
+
+  private final UsernameTranscoder usernameTranscoder;
 
   @Value("${app.base.url}")
   private String applicationBaseUrl;
@@ -110,7 +113,7 @@ public class WorkflowResultsMailService {
                 .append("User ID: ")
                 .append(info.getUserId())
                 .append("</li><li>User Name: ")
-                .append(info.getUserName())
+                .append(usernameTranscoder.decodeUsername(info.getUserName()))
                 .append("</li><li>Last Message Date: ")
                 .append(formatLastMessageDate(info.getLastMessageDate()))
                 .append("</li>")

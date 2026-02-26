@@ -7,12 +7,17 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.google.common.collect.Lists;
+
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -43,10 +48,13 @@ public class WorkflowResultsMailServiceTest {
 
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
 
+  @Mock private UsernameTranscoder usernameTranscoder;
+
   @Before
   public void setup() {
     setField(workflowResultsMailService, "applicationBaseUrl", "www.host.de");
     setField(workflowResultsMailService, "multitenancyEnabled", false);
+    doReturn("decodedUsername").when(usernameTranscoder).decodeUsername(any());
   }
 
   @Test
@@ -141,9 +149,10 @@ public class WorkflowResultsMailServiceTest {
         asList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
-                .userName("testUser")
+                .userName("encodedTestUser")
                 .lastMessageDate(lastMessageDate)
                 .build());
+    doReturn("testUser").when(usernameTranscoder).decodeUsername("encodedTestUser");
 
     // when
     this.workflowResultsMailService.buildAndSendMail(emptyList(), deletionInfo);
@@ -214,7 +223,7 @@ public class WorkflowResultsMailServiceTest {
         asList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
-                .userName("testUser")
+                .userName("encodedTestUser")
                 .lastMessageDate(lastMessageDate)
                 .build());
     List<DeletionWorkflowError> workflowErrors =
@@ -226,6 +235,8 @@ public class WorkflowResultsMailServiceTest {
                 .reason("error reason")
                 .identifier("errorId")
                 .build());
+    doReturn("testUser").when(usernameTranscoder).decodeUsername("encodedTestUser");
+
 
     // when
     this.workflowResultsMailService.buildAndSendMail(workflowErrors, deletionInfo);
@@ -245,7 +256,7 @@ public class WorkflowResultsMailServiceTest {
     TemplateDataDTO textData =
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
-    // Verify info section comes first
+    // Verify an info section comes first
     assertThat(textData.getValue()).contains("Successfully deleted users:");
     assertThat(textData.getValue()).contains("user123");
     assertThat(textData.getValue()).contains("testUser");
