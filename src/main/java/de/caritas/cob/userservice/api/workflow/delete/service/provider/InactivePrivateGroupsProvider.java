@@ -65,7 +65,7 @@ public class InactivePrivateGroupsProvider {
                     .add(
                         InactiveGroupInfo.builder()
                             .groupId(group.getId())
-                            .lastMessageDate(group.getLastMessage())
+                            .lastMessageDate(group.getLastMessageDate())
                             .build()));
     return userWithInactiveGroupsMap;
   }

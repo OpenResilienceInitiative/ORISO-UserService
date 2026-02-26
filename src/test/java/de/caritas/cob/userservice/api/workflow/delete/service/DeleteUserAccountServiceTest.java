@@ -42,7 +42,7 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private ActionsRegistry actionsRegistry;
 
-  @Mock private WorkflowErrorMailService workflowErrorMailService;
+  @Mock private WorkflowResultsMailService workflowResultsMailService;
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
@@ -50,7 +50,7 @@ public class DeleteUserAccountServiceTest {
   public void deleteUserAccounts_Should_notPerformAnyDeletion_When_noUserAccountIsMarkedDeleted() {
     this.deleteUserAccountService.deleteUserAccounts();
 
-    verifyNoMoreInteractions(this.workflowErrorMailService);
+    verifyNoMoreInteractions(this.workflowResultsMailService);
     verifyNoMoreInteractions(this.actionsRegistry);
   }
 
@@ -66,7 +66,7 @@ public class DeleteUserAccountServiceTest {
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
-    verifyNoMoreInteractions(this.workflowErrorMailService);
+    verifyNoMoreInteractions(this.workflowResultsMailService);
   }
 
   @Test
@@ -85,7 +85,7 @@ public class DeleteUserAccountServiceTest {
         .buildContainerForType(ConsultantDeletionWorkflowDTO.class);
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseConsultantAction.class), times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
-    verifyNoMoreInteractions(this.workflowErrorMailService);
+    verifyNoMoreInteractions(this.workflowResultsMailService);
   }
 
   @Test
@@ -116,6 +116,6 @@ public class DeleteUserAccountServiceTest {
 
     this.deleteUserAccountService.deleteUserAccounts();
 
-    verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(anyList());
+    verify(this.workflowResultsMailService, times(1)).buildAndSendErrorMail(anyList());
   }
 }

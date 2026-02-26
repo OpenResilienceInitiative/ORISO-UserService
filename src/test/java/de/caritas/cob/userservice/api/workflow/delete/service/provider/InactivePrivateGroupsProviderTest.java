@@ -121,7 +121,7 @@ public class InactivePrivateGroupsProviderTest {
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User1.getUser().setId(RC_USER_ID);
     Date lastMessageDate = new Date();
-    groupDTO1User1.setLastMessage(lastMessageDate);
+    groupDTO1User1.setLastMessageDate(lastMessageDate);
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO1User1);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -151,12 +151,12 @@ public class InactivePrivateGroupsProviderTest {
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User1.getUser().setId(RC_USER_ID);
     Date lastMessageDate1 = new Date(System.currentTimeMillis() - 86400000); // yesterday
-    groupDTO1User1.setLastMessage(lastMessageDate1);
+    groupDTO1User1.setLastMessageDate(lastMessageDate1);
 
     GroupDTO groupDTO2User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO2User1.getUser().setId(RC_USER_ID);
     Date lastMessageDate2 = new Date(System.currentTimeMillis() - 172800000); // 2 days ago
-    groupDTO2User1.setLastMessage(lastMessageDate2);
+    groupDTO2User1.setLastMessageDate(lastMessageDate2);
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO1User1, groupDTO2User1);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -201,17 +201,17 @@ public class InactivePrivateGroupsProviderTest {
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User1.getUser().setId(RC_USER_ID);
     Date lastMessageDate1 = new Date();
-    groupDTO1User1.setLastMessage(lastMessageDate1);
+    groupDTO1User1.setLastMessageDate(lastMessageDate1);
 
     GroupDTO groupDTO2User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO2User1.getUser().setId(RC_USER_ID);
     Date lastMessageDate2 = new Date();
-    groupDTO2User1.setLastMessage(lastMessageDate2);
+    groupDTO2User1.setLastMessageDate(lastMessageDate2);
 
     GroupDTO groupDTO1User2 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User2.getUser().setId(RC_USER_ID_2);
     Date lastMessageDate3 = new Date();
-    groupDTO1User2.setLastMessage(lastMessageDate3);
+    groupDTO1User2.setLastMessageDate(lastMessageDate3);
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO1User1, groupDTO2User1, groupDTO1User2);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -251,15 +251,15 @@ public class InactivePrivateGroupsProviderTest {
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO1User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User1.getUser().setId(RC_USER_ID);
-    groupDTO1User1.setLastMessage(new Date());
+    groupDTO1User1.setLastMessageDate(new Date());
 
     GroupDTO groupDTO2User1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO2User1.getUser().setId(RC_USER_ID);
-    groupDTO2User1.setLastMessage(new Date());
+    groupDTO2User1.setLastMessageDate(new Date());
 
     GroupDTO groupDTO1User2 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1User2.getUser().setId(RC_USER_ID_2);
-    groupDTO1User2.setLastMessage(new Date());
+    groupDTO1User2.setLastMessageDate(new Date());
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO1User1, groupDTO2User1, groupDTO1User2);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -312,7 +312,7 @@ public class InactivePrivateGroupsProviderTest {
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO = easyRandom.nextObject(GroupDTO.class);
     groupDTO.getUser().setId(RC_USER_ID);
-    groupDTO.setLastMessage(null); // No last message date
+    groupDTO.setLastMessageDate(null); // No last message date
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -338,11 +338,11 @@ public class InactivePrivateGroupsProviderTest {
     EasyRandom easyRandom = new EasyRandom();
     GroupDTO groupDTO1 = easyRandom.nextObject(GroupDTO.class);
     groupDTO1.getUser().setId(RC_USER_ID);
-    groupDTO1.setLastMessage(new Date());
+    groupDTO1.setLastMessageDate(new Date());
 
     GroupDTO groupDTO2 = easyRandom.nextObject(GroupDTO.class);
     groupDTO2.getUser().setId(RC_USER_ID_2);
-    groupDTO2.setLastMessage(new Date());
+    groupDTO2.setLastMessageDate(new Date());
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO1, groupDTO2);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))
@@ -372,7 +372,7 @@ public class InactivePrivateGroupsProviderTest {
     GroupDTO groupDTO = easyRandom.nextObject(GroupDTO.class);
     groupDTO.getUser().setId(RC_USER_ID);
     groupDTO.setId(expectedGroupId);
-    groupDTO.setLastMessage(new Date());
+    groupDTO.setLastMessageDate(new Date());
 
     List<GroupDTO> groupDtoResponseList = asList(groupDTO);
     when(this.rocketChatService.fetchAllInactivePrivateGroupsSinceGivenDate(any()))

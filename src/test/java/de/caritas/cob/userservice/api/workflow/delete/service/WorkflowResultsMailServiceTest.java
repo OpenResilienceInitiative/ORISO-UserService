@@ -35,9 +35,9 @@ import org.mockito.junit.MockitoJUnitRunner;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @RunWith(MockitoJUnitRunner.class)
-public class WorkflowErrorMailServiceTest {
+public class WorkflowResultsMailServiceTest {
 
-  @InjectMocks private WorkflowErrorMailService workflowErrorMailService;
+  @InjectMocks private WorkflowResultsMailService workflowResultsMailService;
 
   @Mock private MailService mailService;
 
@@ -45,20 +45,20 @@ public class WorkflowErrorMailServiceTest {
 
   @Before
   public void setup() {
-    setField(workflowErrorMailService, "applicationBaseUrl", "www.host.de");
-    setField(workflowErrorMailService, "multitenancyEnabled", false);
+    setField(workflowResultsMailService, "applicationBaseUrl", "www.host.de");
+    setField(workflowResultsMailService, "multitenancyEnabled", false);
   }
 
   @Test
   public void buildAndSendErrorMail_Should_sendMail_When_workflowErrorsAreNull() {
-    this.workflowErrorMailService.buildAndSendErrorMail(null);
+    this.workflowResultsMailService.buildAndSendErrorMail(null);
 
     verify(this.mailService, times(1)).sendErrorEmailNotification(any());
   }
 
   @Test
   public void buildAndSendErrorMail_Should_sendMail_When_workflowErrorsAreEmpty() {
-    this.workflowErrorMailService.buildAndSendErrorMail(emptyList());
+    this.workflowResultsMailService.buildAndSendErrorMail(emptyList());
 
     verify(this.mailService, times(1)).sendErrorEmailNotification(any());
   }
@@ -67,7 +67,7 @@ public class WorkflowErrorMailServiceTest {
   public void
       buildAndSendErrorMail_Should_buildAndSendExpectedErrorMail_When_workflowErrorsExists() {
     // given
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", true);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", true);
     TemplateDataDTO tenantData = new TemplateDataDTO().key("tenantData");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(Lists.newArrayList(tenantData));
     List<DeletionWorkflowError> workflowErrors =
@@ -82,7 +82,7 @@ public class WorkflowErrorMailServiceTest {
             DeletionWorkflowError.builder().build());
 
     // when
-    this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+    this.workflowResultsMailService.buildAndSendErrorMail(workflowErrors);
 
     // then
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
@@ -94,13 +94,13 @@ public class WorkflowErrorMailServiceTest {
     assertThat(templateData).contains(tenantData);
 
     // clean up
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
   }
 
   @Test
   public void
       buildAndSendErrorMailWithInfo_Should_sendEmail_withEmptyResultsText_When_bothErrorsAndInfoAreEmpty() {
-    this.workflowErrorMailService.buildAndSendMail(emptyList(), emptyList());
+    this.workflowResultsMailService.buildAndSendMail(emptyList(), emptyList());
 
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
         ArgumentCaptor.forClass(ErrorMailDTO.class);
@@ -117,7 +117,7 @@ public class WorkflowErrorMailServiceTest {
 
   @Test
   public void buildAndSendErrorMailWithInfo_Should_sendMail_When_bothErrorsAndInfoAreNull() {
-    this.workflowErrorMailService.buildAndSendMail(null, null);
+    this.workflowResultsMailService.buildAndSendMail(null, null);
 
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
         ArgumentCaptor.forClass(ErrorMailDTO.class);
@@ -135,7 +135,7 @@ public class WorkflowErrorMailServiceTest {
   @Test
   public void buildAndSendErrorMailWithInfo_Should_sendMailExists() {
     // given
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
     Date lastMessageDate = new Date();
     List<DeletionWorkflowInfo> deletionInfo =
         asList(
@@ -146,7 +146,7 @@ public class WorkflowErrorMailServiceTest {
                 .build());
 
     // when
-    this.workflowErrorMailService.buildAndSendMail(emptyList(), deletionInfo);
+    this.workflowResultsMailService.buildAndSendMail(emptyList(), deletionInfo);
 
     // then
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
@@ -171,7 +171,7 @@ public class WorkflowErrorMailServiceTest {
   @Test
   public void buildAndSendErrorMailWithInfo_Should_sendMailWithErrorsOnly_When_onlyErrorsExist() {
     // given
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
     List<DeletionWorkflowError> workflowErrors =
         asList(
             DeletionWorkflowError.builder()
@@ -183,7 +183,7 @@ public class WorkflowErrorMailServiceTest {
                 .build());
 
     // when
-    this.workflowErrorMailService.buildAndSendMail(workflowErrors, emptyList());
+    this.workflowResultsMailService.buildAndSendMail(workflowErrors, emptyList());
 
     // then
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
@@ -208,7 +208,7 @@ public class WorkflowErrorMailServiceTest {
   @Test
   public void buildAndSendErrorMailWithInfo_Should_sendMailWithBothInfoAndErrors_When_bothExist() {
     // given
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
     Date lastMessageDate = new Date();
     List<DeletionWorkflowInfo> deletionInfo =
         asList(
@@ -228,7 +228,7 @@ public class WorkflowErrorMailServiceTest {
                 .build());
 
     // when
-    this.workflowErrorMailService.buildAndSendMail(workflowErrors, deletionInfo);
+    this.workflowResultsMailService.buildAndSendMail(workflowErrors, deletionInfo);
 
     // then
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
@@ -258,7 +258,7 @@ public class WorkflowErrorMailServiceTest {
   @Test
   public void buildAndSendMail_Should_includeLastMessageDateInEmail() {
     // given
-    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
     Date lastMessageDate = new Date(1700000000000L); // Fixed date for testing
     String expectedLastMessageDate =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
@@ -272,7 +272,7 @@ public class WorkflowErrorMailServiceTest {
                 .build());
 
     // when
-    this.workflowErrorMailService.buildAndSendMail(null, deletionInfo);
+    this.workflowResultsMailService.buildAndSendMail(null, deletionInfo);
 
     // then
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =

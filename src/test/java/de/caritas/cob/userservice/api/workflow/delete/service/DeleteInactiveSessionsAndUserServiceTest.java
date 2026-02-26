@@ -50,7 +50,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
   @InjectMocks private DeleteInactiveSessionsAndUserService deleteInactiveSessionsAndUserService;
 
-  @Mock private WorkflowErrorMailService workflowErrorMailService;
+  @Mock private WorkflowResultsMailService workflowResultsMailService;
   @Mock private WorkflowErrorLogService workflowErrorLogService;
   @Mock private UserRepository userRepository;
   @Mock private SessionRepository sessionRepository;
@@ -101,7 +101,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
     // then
     verify(workflowErrorLogService, Mockito.times(1)).logWorkflowErrors(Collections.emptyList());
-    verify(workflowErrorMailService, Mockito.times(1))
+    verify(workflowResultsMailService, Mockito.times(1))
         .buildAndSendMail(argThat(list -> !list.isEmpty()), any());
   }
 
@@ -217,7 +217,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     // then
     verify(workflowErrorLogService, Mockito.times(1))
         .logWorkflowErrors(argThat(list -> list.size() == 1));
-    verify(workflowErrorMailService, Mockito.times(1))
+    verify(workflowResultsMailService, Mockito.times(1))
         .buildAndSendMail(eq(Collections.emptyList()), argThat(list -> list.size() == 1));
   }
 
@@ -439,7 +439,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorMailService, Mockito.times(1))
+    verify(workflowResultsMailService, Mockito.times(1))
         .buildAndSendMail(
             eq(Collections.emptyList()),
             argThat(
@@ -483,7 +483,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorMailService, Mockito.times(1))
+    verify(workflowResultsMailService, Mockito.times(1))
         .buildAndSendMail(
             eq(Collections.emptyList()),
             argThat(

@@ -39,7 +39,7 @@ public class DeleteUserAccountService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ActionsRegistry actionsRegistry;
-  private final @NonNull WorkflowErrorMailService workflowErrorMailService;
+  private final @NonNull WorkflowResultsMailService workflowResultsMailService;
 
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
@@ -47,7 +47,7 @@ public class DeleteUserAccountService {
     workflowErrors.addAll(deleteConsultantsAndCollectPossibleErrors());
 
     if (isNotEmpty(workflowErrors)) {
-      this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      this.workflowResultsMailService.buildAndSendErrorMail(workflowErrors);
     }
   }
 

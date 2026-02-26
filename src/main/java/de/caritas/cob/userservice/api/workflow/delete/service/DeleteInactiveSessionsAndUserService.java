@@ -32,7 +32,7 @@ public class DeleteInactiveSessionsAndUserService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
-  private final @NonNull WorkflowErrorMailService workflowErrorMailService;
+  private final @NonNull WorkflowResultsMailService workflowResultsMailService;
   private final @NonNull WorkflowErrorLogService workflowErrorLogService;
   private final @NonNull DeleteSessionService deleteSessionService;
   private final @NonNull InactivePrivateGroupsProvider inactivePrivateGroupsProvider;
@@ -83,7 +83,7 @@ public class DeleteInactiveSessionsAndUserService {
     workflowErrorsExceptSessionGroupNotFound.removeAll(rcSessionGroupNotFoundWorkflowErrors);
 
     this.workflowErrorLogService.logWorkflowErrors(rcSessionGroupNotFoundWorkflowErrors);
-    this.workflowErrorMailService.buildAndSendMail(
+    this.workflowResultsMailService.buildAndSendMail(
         workflowErrorsExceptSessionGroupNotFound, deletionInfos);
   }
 

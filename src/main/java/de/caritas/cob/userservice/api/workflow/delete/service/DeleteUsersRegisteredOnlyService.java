@@ -28,7 +28,7 @@ public class DeleteUsersRegisteredOnlyService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
-  private final @NonNull WorkflowErrorMailService workflowErrorMailService;
+  private final @NonNull WorkflowResultsMailService workflowResultsMailService;
 
   @Value("${user.registeredonly.deleteWorkflow.check.days}")
   private int userRegisteredOnlyDeleteWorkflowCheckDays;
@@ -58,7 +58,7 @@ public class DeleteUsersRegisteredOnlyService {
             .collect(Collectors.toList());
 
     if (isNotEmpty(workflowErrors)) {
-      workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      workflowResultsMailService.buildAndSendErrorMail(workflowErrors);
     }
   }
 

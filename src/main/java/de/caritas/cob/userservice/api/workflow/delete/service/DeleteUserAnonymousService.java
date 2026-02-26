@@ -27,7 +27,7 @@ public class DeleteUserAnonymousService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
-  private final @NonNull WorkflowErrorMailService workflowErrorMailService;
+  private final @NonNull WorkflowResultsMailService workflowResultsMailService;
 
   @Value("${user.anonymous.deleteworkflow.periodMinutes}")
   private int deletionPeriodMinutes;
@@ -38,7 +38,7 @@ public class DeleteUserAnonymousService {
     List<DeletionWorkflowError> workflowErrors = deleteAnonymousUsersWithOverdueSessions();
 
     if (isNotEmpty(workflowErrors)) {
-      this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      this.workflowResultsMailService.buildAndSendErrorMail(workflowErrors);
     }
   }
 

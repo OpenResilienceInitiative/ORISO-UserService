@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
 /** Service class to build an error mail for all WorkflowErrorLogService workflow errors. */
 @Service
 @RequiredArgsConstructor
-public class WorkflowErrorMailService {
+public class WorkflowResultsMailService {
 
   private final @NonNull MailService mailService;
 
