@@ -56,8 +56,7 @@ public class NewFeedbackEmailSupplier implements EmailSupplier {
     return emptyList();
   }
 
-  private List<MailDTO> buildFeedbackMessageMailsForExistingSession()
-      throws RocketChatGetGroupMembersException {
+  private List<MailDTO> buildFeedbackMessageMailsForExistingSession() {
     if (nonNull(session.getConsultant())) {
       return buildFeedbackMessageMailsForExistingConsultant();
     }
@@ -69,8 +68,7 @@ public class NewFeedbackEmailSupplier implements EmailSupplier {
     return emptyList();
   }
 
-  private List<MailDTO> buildFeedbackMessageMailsForExistingConsultant()
-      throws RocketChatGetGroupMembersException {
+  private List<MailDTO> buildFeedbackMessageMailsForExistingConsultant() {
     Optional<Consultant> sendingConsultantOptional = consultantService.getConsultant(userId);
     if (sendingConsultantOptional.isPresent()) {
       Consultant sendingConsultant = sendingConsultantOptional.get();
@@ -81,16 +79,14 @@ public class NewFeedbackEmailSupplier implements EmailSupplier {
     return emptyList();
   }
 
-  private List<MailDTO> buildMailsDependingOnAuthor(Consultant sendingConsultant)
-      throws RocketChatGetGroupMembersException {
+  private List<MailDTO> buildMailsDependingOnAuthor(Consultant sendingConsultant) {
     var receivingConsultant = session.getConsultant();
     if (areUsersEqual(userId, receivingConsultant)) {
       return buildNotificationMailsForAllOtherConsultants(sendingConsultant);
     }
 
     if (receivingConsultant.getNotifyNewFeedbackMessageFromAdviceSeeker()
-        && didAnotherConsultantWrite()
-        && isLoggedOut(receivingConsultant)) {
+        && didAnotherConsultantWrite()) {
       var mail = buildMailForAssignedConsultant(sendingConsultant, receivingConsultant);
 
       return singletonList(mail);
@@ -126,7 +122,6 @@ public class NewFeedbackEmailSupplier implements EmailSupplier {
         .filter(this::notHimselfAndNotAbsent)
         .filter(this::isMainConsultantOrAssignedToSession)
         .filter(Consultant::getNotifyNewFeedbackMessageFromAdviceSeeker)
-        .filter(this::isLoggedOut)
         .map(consultant -> buildMailForAssignedConsultant(sendingConsultant, consultant))
         .collect(Collectors.toList());
   }
@@ -167,10 +162,6 @@ public class NewFeedbackEmailSupplier implements EmailSupplier {
     return !areUsersEqual(userId, session.getConsultant())
         && !session.getConsultant().getEmail().isEmpty()
         && !session.getConsultant().isAbsent();
-  }
-
-  private boolean isLoggedOut(Consultant consultant) {
-    return !rocketChatService.isLoggedIn(consultant.getRocketChatId()).orElse(false);
   }
 
   private MailDTO buildMailForAssignedConsultant(
