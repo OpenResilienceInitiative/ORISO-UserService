@@ -1876,7 +1876,6 @@ components:
         - postcode
         - agencyId
         - password
-        - termsAccepted
         - consultingType
       properties:
         username:
@@ -1895,9 +1894,6 @@ components:
           type: string
           format: password
           example: pass@w0rd
-        termsAccepted:
-          type: string
-          example: true
         consultingType:
           type: string
           example: 3
@@ -2598,14 +2594,6 @@ components:
         appointmentFeatureEnabled:
           type: boolean
           example: true
-        termsAndConditionsConfirmation:
-          type: string
-          example: 2022-12-07T11:51:01
-          description: "Datetime stamp when the user accepted terms and condition"
-        dataPrivacyConfirmation:
-          type: string
-          example: 2022-12-07T11:51:01
-          description: "Datetime stamp when the user accepted data privacy"
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
 
@@ -2632,14 +2620,6 @@ components:
             $ref: '#/components/schemas/EmailToggle'
         preferredLanguage:
           $ref: '#/components/schemas/LanguageCode'
-        termsAndConditionsConfirmation:
-          type: boolean
-          example: true
-          description: Flag that indicates has the user accepted new terms and conditions text
-        dataPrivacyConfirmation:
-          type: boolean
-          example: true
-          description: Flag that indicates does the user accepted new data privacy text
         available:
           description: mark consultant as (not) available for one-on-one chats, no effect on others
           type: boolean
@@ -2672,14 +2652,6 @@ components:
           example: de, en
           items:
             $ref: '#/components/schemas/LanguageCode'
-        termsAndConditionsConfirmation:
-          type: boolean
-          example: true
-          description: Flag that indicates has the user accepted new terms and conditions text
-        dataPrivacyConfirmation:
-          type: boolean
-          example: true
-          description: Flag that indicates does the user accepted new data privacy text
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
 

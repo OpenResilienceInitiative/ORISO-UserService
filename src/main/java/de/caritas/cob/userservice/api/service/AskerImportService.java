@@ -43,7 +43,6 @@ import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -597,7 +596,6 @@ public class AskerImportService {
         record.getAgencyId(),
         record.getPassword(),
         record.getEmail(),
-        new Date().toString(),
         Integer.toString(consultingTypeId));
   }
 
@@ -609,7 +607,6 @@ public class AskerImportService {
         record.getAgencyId(),
         record.getPassword(),
         record.getEmail(),
-        new Date().toString(),
         Integer.toString(consultingTypeId));
   }
 

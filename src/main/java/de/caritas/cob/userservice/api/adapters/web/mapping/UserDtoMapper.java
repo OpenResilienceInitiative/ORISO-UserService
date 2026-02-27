@@ -97,8 +97,6 @@ public class UserDtoMapper {
         && isNull(patchUserDTO.getWalkThroughEnabled())
         && isNull(patchUserDTO.getEmailToggles())
         && isNull(patchUserDTO.getPreferredLanguage())
-        && isNull(patchUserDTO.getDataPrivacyConfirmation())
-        && isNull(patchUserDTO.getTermsAndConditionsConfirmation())
         && isNull(patchUserDTO.getAvailable())
         && isNull(patchUserDTO.getEmailNotifications())) {
       return Optional.empty();
@@ -124,12 +122,6 @@ public class UserDtoMapper {
           emailToggles.stream()
               .collect(Collectors.toMap(this::mapEmailType, EmailToggle::getState));
       map.putAll(emailToggleMap);
-    }
-    if (nonNull(patchUserDTO.getTermsAndConditionsConfirmation())) {
-      map.put("termsAndConditionsConfirmation", patchUserDTO.getTermsAndConditionsConfirmation());
-    }
-    if (nonNull(patchUserDTO.getDataPrivacyConfirmation())) {
-      map.put("dataPrivacyConfirmation", patchUserDTO.getDataPrivacyConfirmation());
     }
     if (nonNull(patchUserDTO.getAvailable())) {
       map.put("available", patchUserDTO.getAvailable());

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.DecodeUsernameJsonSerializer;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
-import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -81,10 +80,6 @@ public class UserDataResponseDTO {
   private Boolean appointmentFeatureEnabled;
 
   private LanguageCode preferredLanguage;
-
-  private LocalDateTime termsAndConditionsConfirmation;
-
-  private LocalDateTime dataPrivacyConfirmation;
 
   private Boolean available;
 

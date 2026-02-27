@@ -72,7 +72,6 @@ public class CreateAnonymousEnquiryFacade {
         .username(usernameRegistry.generateUniqueUsername())
         .password(userHelper.getRandomPassword())
         .postcode(DEFAULT_ANONYMOUS_POSTCODE)
-        .termsAccepted("true")
         .build();
   }
 }

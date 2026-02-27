@@ -62,7 +62,7 @@ public class AnonymousConversationCreatorService {
       sessionService.saveSession(session);
 
     } catch (Exception ex) {
-      rollBackAnonymousConversation(userDTO, user);
+      rollBackAnonymousConversation(user);
       throw new InternalServerErrorException(
           String.format(
               "Could not create session for user %s. %s", user.getUsername(), ex.getMessage()));
@@ -93,13 +93,9 @@ public class AnonymousConversationCreatorService {
     return consultantAgencyService.getConsultantsOfAgencies(agencyList);
   }
 
-  private void rollBackAnonymousConversation(UserDTO userDTO, User user) {
+  private void rollBackAnonymousConversation(User user) {
     rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder()
-            .userId(user.getUserId())
-            .user(user)
-            .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-            .build());
+        RollbackUserAccountInformation.builder().userId(user.getUserId()).user(user).build());
   }
 
   private void sendNewAnonymousEnquiryLiveEvent(

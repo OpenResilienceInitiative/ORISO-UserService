@@ -22,7 +22,6 @@ import de.caritas.cob.userservice.api.model.NotificationSettings;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
@@ -33,7 +32,6 @@ import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDT
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -56,7 +54,6 @@ public class NewMessageEmailSupplier implements EmailSupplier {
   private final String emailDummySuffix;
   private boolean multiTenancyEnabled;
   private final TenantTemplateSupplier tenantTemplateSupplier;
-  private final MessageClient messageClient;
 
   private final ReleaseToggleService releaseToggleService;
 
@@ -107,7 +104,6 @@ public class NewMessageEmailSupplier implements EmailSupplier {
       return consultantList.stream()
           .filter(agency -> !agency.getConsultant().getEmail().isEmpty())
           .filter(agency -> wantsToReceiveNotifications(agency.getConsultant()))
-          .filter(isConsultantLoggedOut())
           .map(this::toNewConsultantMessageMailDTO)
           .collect(Collectors.toList());
     }
@@ -201,20 +197,11 @@ public class NewMessageEmailSupplier implements EmailSupplier {
           userId);
     } else if (!isAdviceSeekerWithEmail()) {
       log.info("Cannot send email. Advice seeker ({}) has no genuine address.", userId);
-    } else if (isAdviceSeekerLoggedOut()) {
+    } else {
       return buildMailForAskerList();
     }
 
     return emptyList();
-  }
-
-  private Predicate<ConsultantAgency> isConsultantLoggedOut() {
-    return agency ->
-        !messageClient.isLoggedIn(agency.getConsultant().getRocketChatId()).orElse(false);
-  }
-
-  private boolean isAdviceSeekerLoggedOut() {
-    return !messageClient.isLoggedIn(session.getUser().getRcUserId()).orElse(false);
   }
 
   private List<MailDTO> buildMailForAskerList() {

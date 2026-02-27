@@ -60,8 +60,6 @@ public class AskerDataProvider {
         .consultingTypes(getConsultingTypes(user))
         .hasAnonymousConversations(false)
         .hasArchive(false)
-        .dataPrivacyConfirmation(user.getDataPrivacyConfirmation())
-        .termsAndConditionsConfirmation(user.getTermsAndConditionsConfirmation())
         .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(user))
         .build();
   }
