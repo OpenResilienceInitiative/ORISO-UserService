@@ -24,11 +24,11 @@ public class DeletionWorkflowResult {
 
   @Builder.Default private List<DeletionWorkflowInfo> deletionInfo = new ArrayList<>();
 
-  public void add(DeletionWorkflowInfo info) {
+  public void addInfo(DeletionWorkflowInfo info) {
     deletionInfo.add(info);
   }
 
-  public void addAll(Collection<? extends DeletionWorkflowError> errorList) {
+  public void addErrors(Collection<? extends DeletionWorkflowError> errorList) {
     errors.addAll(errorList);
   }
 
