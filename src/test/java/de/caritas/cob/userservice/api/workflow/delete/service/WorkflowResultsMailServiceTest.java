@@ -169,7 +169,7 @@ public class WorkflowResultsMailServiceTest {
     TemplateDataDTO textData =
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
-    assertThat(textData.getValue()).contains("Successfully deleted users:");
+    assertThat(textData.getValue()).contains("Perform deletion for users:");
     assertThat(textData.getValue()).contains("user123");
     assertThat(textData.getValue()).contains("testUser");
   }
@@ -253,7 +253,7 @@ public class WorkflowResultsMailServiceTest {
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
     // Verify an info section comes first
-    assertThat(textData.getValue()).contains("Successfully deleted users:");
+    assertThat(textData.getValue()).contains("Perform deletion for users:");
     assertThat(textData.getValue()).contains("user123");
     assertThat(textData.getValue()).contains("testUser");
     // Verify errors section

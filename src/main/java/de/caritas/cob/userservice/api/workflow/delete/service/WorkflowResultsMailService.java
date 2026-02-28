@@ -103,7 +103,7 @@ public class WorkflowResultsMailService {
             .append("(")
             .append(deletionInfo.size())
             .append(") ")
-            .append("Successfully deleted users:</h2>")
+            .append("Perform deletion for users:</h2>")
             .append("<ul>");
 
     deletionInfo.forEach(
