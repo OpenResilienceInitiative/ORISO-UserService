@@ -173,8 +173,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Arrays.asList(session1, session2));
-    when(deleteSessionService.performSessionDeletion(session1))
-        .thenReturn(Collections.emptyList());
+    when(deleteSessionService.performSessionDeletion(session1)).thenReturn(Collections.emptyList());
 
     // when
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
@@ -290,10 +289,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
         .thenReturn(userWithInactiveGroupsMap);
     when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Lists.newArrayList());
-    when(sessionRepository.findByGroupId(session1.getGroupId()))
-        .thenReturn(Optional.of(session1));
-    when(deleteSessionService.performSessionDeletion(session1))
-        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(session1.getGroupId())).thenReturn(Optional.of(session1));
+    when(deleteSessionService.performSessionDeletion(session1)).thenReturn(Collections.emptyList());
 
     // when
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
