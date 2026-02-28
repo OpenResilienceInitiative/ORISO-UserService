@@ -22,7 +22,7 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupsLi
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroupInfo;
+import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroup;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collections;
@@ -64,7 +64,7 @@ public class InactivePrivateGroupsProviderTest {
         .fetchAllInactivePrivateGroupsSinceGivenDate(any());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
@@ -129,15 +129,15 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
     assertThat(result.size(), is(1));
     assertThat(result.containsKey(RC_USER_ID), is(true));
-    List<InactiveGroupInfo> groupInfoList = result.get(RC_USER_ID);
+    List<InactiveGroup> groupInfoList = result.get(RC_USER_ID);
     assertThat(groupInfoList.size(), is(1));
-    InactiveGroupInfo groupInfo = groupInfoList.get(0);
+    InactiveGroup groupInfo = groupInfoList.get(0);
     assertThat(groupInfo.getGroupId(), is(groupDTO1User1.getId()));
     assertThat(groupInfo.getLastMessageDate(), is(lastMessageDate));
   }
@@ -164,17 +164,17 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
     assertThat(result.size(), is(1));
     assertThat(result.containsKey(RC_USER_ID), is(true));
-    List<InactiveGroupInfo> groupInfoList = result.get(RC_USER_ID);
+    List<InactiveGroup> groupInfoList = result.get(RC_USER_ID);
     assertThat(groupInfoList.size(), is(2));
 
     // Verify first group info
-    InactiveGroupInfo groupInfo1 =
+    InactiveGroup groupInfo1 =
         groupInfoList.stream()
             .filter(g -> g.getGroupId().equals(groupDTO1User1.getId()))
             .findFirst()
@@ -183,7 +183,7 @@ public class InactivePrivateGroupsProviderTest {
     assertThat(groupInfo1.getLastMessageDate(), is(lastMessageDate1));
 
     // Verify second group info
-    InactiveGroupInfo groupInfo2 =
+    InactiveGroup groupInfo2 =
         groupInfoList.stream()
             .filter(g -> g.getGroupId().equals(groupDTO2User1.getId()))
             .findFirst()
@@ -219,7 +219,7 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
@@ -271,7 +271,7 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(Collections.singletonList(chat));
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
@@ -298,7 +298,7 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
@@ -320,13 +320,13 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
     assertThat(result.size(), is(1));
     assertThat(result.containsKey(RC_USER_ID), is(true));
-    InactiveGroupInfo groupInfo = result.get(RC_USER_ID).get(0);
+    InactiveGroup groupInfo = result.get(RC_USER_ID).get(0);
     assertThat(groupInfo.getGroupId(), is(groupDTO.getId()));
     assertThat(groupInfo.getLastMessageDate(), is(nullValue()));
   }
@@ -356,7 +356,7 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(asList(chat1, chat2));
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then
@@ -380,7 +380,7 @@ public class InactivePrivateGroupsProviderTest {
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());
 
     // when
-    Map<String, List<InactiveGroupInfo>> result =
+    Map<String, List<InactiveGroup>> result =
         inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap();
 
     // then

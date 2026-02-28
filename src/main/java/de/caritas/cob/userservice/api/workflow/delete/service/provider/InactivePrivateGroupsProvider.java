@@ -7,7 +7,7 @@ import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroupInfo;
+import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroup;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -42,11 +42,11 @@ public class InactivePrivateGroupsProvider {
    *
    * @return a map with users and related inactive Rocket.Chat group info
    */
-  public Map<String, List<InactiveGroupInfo>> retrieveUserWithInactiveGroupInfoMap() {
+  public Map<String, List<InactiveGroup>> retrieveUserWithInactiveGroupInfoMap() {
 
     Set<String> groupChatIdSet = buildSetOfGroupChatGroupdIds();
 
-    Map<String, List<InactiveGroupInfo>> userWithInactiveGroupsMap = new HashMap<>();
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
         .filter(
             group -> {
@@ -63,7 +63,7 @@ public class InactivePrivateGroupsProvider {
                 userWithInactiveGroupsMap
                     .computeIfAbsent(group.getUser().getId(), v -> new ArrayList<>())
                     .add(
-                        InactiveGroupInfo.builder()
+                        InactiveGroup.builder()
                             .groupId(group.getId())
                             .lastMessageDate(group.getLastMessageDate())
                             .build()));
