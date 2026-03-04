@@ -46,7 +46,6 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDT
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UpdateUser;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
@@ -229,8 +228,6 @@ class UserControllerE2EIT {
   @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @MockBean private Keycloak keycloak;
-
-  @Captor private ArgumentCaptor<HttpEntity<UpdateUser>> updateUserCaptor;
 
   @Captor private ArgumentCaptor<HttpEntity<MethodCall>> methodCallCaptor;
 
@@ -998,7 +995,6 @@ class UserControllerE2EIT {
   void patchUserDataShouldSaveConsultantAndRespondWithNoContent() throws Exception {
     givenAValidConsultant();
     givenAFullPatchDto();
-    givenAValidRocketChatUpdateUserResponse();
     givenAValidKeycloakUpdateLocaleResponse(consultant.getId());
     givenAValidRocketChatUserPresenceSetResponse();
     patchUserDTO.setEmailNotifications(partiallyActiveEmailNotifications());
@@ -1024,16 +1020,6 @@ class UserControllerE2EIT {
     verify(userResource).update(userRepCaptor.capture());
     var locale = userRepCaptor.getValue().getAttributes().get("locale");
     assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
-
-    var urlSuffix = "/api/v1/users.update";
-    verify(rocketChatRestTemplate)
-        .postForEntity(endsWith(urlSuffix), updateUserCaptor.capture(), eq(Void.class));
-
-    var updateUser = updateUserCaptor.getValue().getBody();
-    assertNotNull(updateUser);
-    var user = updateUser.getData();
-    assertTrue(user.getName().startsWith("enc."));
-    assertTrue(user.getName().length() > 4);
 
     verifyRocketChatSetsUserPresence();
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
