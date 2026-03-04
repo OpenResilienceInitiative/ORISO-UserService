@@ -72,6 +72,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
@@ -217,6 +218,7 @@ public class RocketChatService implements MessageClient {
   }
 
   @Override
+  @CacheEvict(key = "#chatUserId", value = "rocketChatUserCache")
   public boolean updateUser(String chatUserId, String displayName) {
     var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_UPDATE);
     var updateUser = mapper.updateUserOf(chatUserId, displayName);
