@@ -146,6 +146,7 @@ public class WorkflowResultsMailServiceTest {
         asList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
+                .rcUserId("rc-user-123")
                 .userName("encodedTestUser")
                 .lastMessageDate(lastMessageDate)
                 .build());
@@ -171,6 +172,8 @@ public class WorkflowResultsMailServiceTest {
     assertThat(textData).isNotNull();
     assertThat(textData.getValue()).contains("Perform deletion for users:");
     assertThat(textData.getValue()).contains("user123");
+    assertThat(textData.getValue()).contains("User rocketchat ID:");
+    assertThat(textData.getValue()).contains("rc-user-123");
     assertThat(textData.getValue()).contains("testUser");
   }
 
@@ -220,6 +223,7 @@ public class WorkflowResultsMailServiceTest {
         asList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
+                .rcUserId("rc-user-123")
                 .userName("encodedTestUser")
                 .lastMessageDate(lastMessageDate)
                 .build());
@@ -255,6 +259,8 @@ public class WorkflowResultsMailServiceTest {
     // Verify an info section comes first
     assertThat(textData.getValue()).contains("Perform deletion for users:");
     assertThat(textData.getValue()).contains("user123");
+    assertThat(textData.getValue()).contains("User rocketchat ID:");
+    assertThat(textData.getValue()).contains("rc-user-123");
     assertThat(textData.getValue()).contains("testUser");
     // Verify errors section
     assertThat(textData.getValue()).contains("Errors during deletion workflow");
@@ -274,6 +280,7 @@ public class WorkflowResultsMailServiceTest {
         Collections.singletonList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
+                .rcUserId("rc-user-123")
                 .userName("testUser")
                 .lastMessageDate(lastMessageDate)
                 .build());
@@ -291,7 +298,12 @@ public class WorkflowResultsMailServiceTest {
     TemplateDataDTO textData =
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
+    assertThat(textData.getValue()).contains("User rocketchat ID:");
+    assertThat(textData.getValue()).contains("rc-user-123");
     assertThat(textData.getValue()).contains("Last Message Date");
     assertThat(textData.getValue()).contains(expectedLastMessageDate);
+
+    // Ensure username is passed through the transcoder in info rendering.
+    verify(usernameTranscoder, times(1)).decodeUsername("testUser");
   }
 }

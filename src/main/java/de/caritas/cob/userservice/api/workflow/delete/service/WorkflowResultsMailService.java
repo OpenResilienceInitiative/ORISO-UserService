@@ -112,6 +112,8 @@ public class WorkflowResultsMailService {
                 .append("<li>")
                 .append("User ID: ")
                 .append(info.getUserId())
+                .append("User rocketchat ID: ")
+                .append(info.getRcUserId())
                 .append("</li><li>User Name: ")
                 .append(usernameTranscoder.decodeUsername(info.getUserName()))
                 .append("</li><li>Last Message Date: ")
@@ -138,7 +140,8 @@ public class WorkflowResultsMailService {
             .append("(")
             .append(workflowErrors.size())
             .append(") ")
-            .append("Errors during deletion workflow:</h2>");
+            .append("Errors during deletion workflow:</h2>")
+            .append("<ul>");
 
     workflowErrors.forEach(
         workflowError ->

@@ -151,6 +151,7 @@ public class DeleteInactiveSessionsAndUserService {
       final List<InactiveGroup> inactiveGroups, final User user) {
     return DeletionWorkflowInfo.builder()
         .userId(user.getUserId())
+        .rcUserId(user.getRcUserId())
         .userName(user.getUsername())
         .lastMessageDate(getLastMessageDate(inactiveGroups))
         .build();

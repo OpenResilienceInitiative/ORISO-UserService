@@ -107,6 +107,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
                 (List<DeletionWorkflowInfo> infoList) ->
                     infoList.size() == 1
                         && infoList.get(0).getUserId().equals(user.getUserId())
+                        && infoList.get(0).getRcUserId().equals(user.getRcUserId())
                         && infoList.get(0).getUserName().equals(user.getUsername())
                         && infoList.get(0).getLastMessageDate().equals(lastMessageDate)));
   }
@@ -462,6 +463,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
                 (List<DeletionWorkflowInfo> infoList) ->
                     infoList.size() == 1
                         && infoList.get(0).getUserId().equals(user.getUserId())
+                        && infoList.get(0).getRcUserId().equals(user.getRcUserId())
                         && infoList.get(0).getUserName().equals(user.getUsername())
                         && infoList.get(0).getLastMessageDate().equals(lastMessageDate)));
   }

@@ -13,5 +13,6 @@ public class DeletionWorkflowInfo {
 
   private String userId;
   private String userName;
+  private String rcUserId;
   private Date lastMessageDate;
 }
