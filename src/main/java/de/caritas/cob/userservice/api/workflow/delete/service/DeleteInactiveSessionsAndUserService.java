@@ -43,8 +43,7 @@ public class DeleteInactiveSessionsAndUserService {
   private static final int CHUNK_SIZE = 1000;
 
   /**
-   * Deletes all inactive sessions and even the asker accounts if there are no more active
-   * sessions.
+    * Deletes all inactive sessions and even the asker accounts if there are no more active sessions.
    */
   public void deleteInactiveSessionsAndUsers() {
 
