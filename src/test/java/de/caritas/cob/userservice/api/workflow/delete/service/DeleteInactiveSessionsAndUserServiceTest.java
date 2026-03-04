@@ -225,7 +225,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     verify(workflowErrorLogService, Mockito.times(1))
         .logWorkflowErrors(argThat(list -> list.size() == 1));
     verify(workflowResultsMailService, Mockito.times(1))
-        .buildAndSendMail(eq(Collections.emptyList()), argThat(list -> list.size() == 1));
+        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
   }
 
   @Test
@@ -298,14 +298,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     // then
     verify(deleteSessionService, times(1)).performSessionDeletion(session1);
     verify(workflowResultsMailService, times(1))
-        .buildAndSendMail(
-            eq(Collections.emptyList()),
-            argThat(
-                (List<DeletionWorkflowInfo> infoList) ->
-                    infoList.size() == 1
-                        && infoList.get(0).getUserId().equals(user.getUserId())
-                        && infoList.get(0).getUserName().equals("N/A (User not found)")
-                        && infoList.get(0).getLastMessageDate().equals(lastMessageDate)));
+        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
   }
 
   @Test
@@ -475,7 +468,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
   @Test
   void
-      deleteInactiveSessionsAndUsers_Should_CollectDeletionInfoWithLastMessageDate_WhenSessionDeletionIsSuccessful() {
+      deleteInactiveSessionsAndUsers_Should_NotCollectDeletionInfo_WhenNotAllSessionsAreInactive() {
     // given
     EasyRandom easyRandom = new EasyRandom();
     User user = easyRandom.nextObject(User.class);
@@ -507,13 +500,6 @@ class DeleteInactiveSessionsAndUserServiceTest {
 
     // then
     verify(workflowResultsMailService, Mockito.times(1))
-        .buildAndSendMail(
-            eq(Collections.emptyList()),
-            argThat(
-                (List<DeletionWorkflowInfo> infoList) ->
-                    infoList.size() == 1
-                        && infoList.get(0).getUserId().equals(user.getUserId())
-                        && infoList.get(0).getUserName().equals(user.getUsername())
-                        && infoList.get(0).getLastMessageDate().equals(lastMessageDate)));
+        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
   }
 }

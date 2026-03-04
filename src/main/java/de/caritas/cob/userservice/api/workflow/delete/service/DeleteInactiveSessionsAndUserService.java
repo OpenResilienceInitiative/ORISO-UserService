@@ -43,7 +43,7 @@ public class DeleteInactiveSessionsAndUserService {
   private static final int CHUNK_SIZE = 1000;
 
   /**
-   * Deletes all inactive sessions and even the asker accounts, if there are no more active
+   * Deletes all inactive sessions and even the asker accounts if there are no more active
    * sessions.
    */
   public void deleteInactiveSessionsAndUsers() {
@@ -108,7 +108,6 @@ public class DeleteInactiveSessionsAndUserService {
         List<DeletionWorkflowError> userErrors =
             performUserSessionDeletionForNonExistingUser(userInactiveGroupsEntry.getValue());
         result.addErrors(userErrors);
-        result.addInfo(buildNotFoundUserInfo(userInactiveGroupsEntry.getValue(), rcUserId));
       } else {
         log.info(
             "User with rcUserId: {} found in users table. Will try to delete it's sessions from db and rocketchat.",
@@ -136,12 +135,12 @@ public class DeleteInactiveSessionsAndUserService {
     List<Session> userSessionList = sessionRepository.findByUser(user);
     DeletionWorkflowResult result = new DeletionWorkflowResult();
     final List<InactiveGroup> inactiveGroups = userInactiveGroupEntry.getValue();
-    result.addInfo(buildUserInfo(inactiveGroups, user));
     if (allSessionsOfUserAreInactive(inactiveGroups, userSessionList)) {
       log.info(
           "All sessions of user with rcUserId: {} are inactive. Will try to delete user account.",
           userInactiveGroupEntry.getKey());
       result.addErrors(deleteUserAccountService.performUserDeletion(user));
+      result.addInfo(buildUserInfo(inactiveGroups, user));
     } else {
       result.addErrors(performUserSessionDeletion(inactiveGroups, userSessionList));
     }
@@ -154,15 +153,6 @@ public class DeleteInactiveSessionsAndUserService {
     return DeletionWorkflowInfo.builder()
         .userId(user.getUserId())
         .userName(user.getUsername())
-        .lastMessageDate(getLastMessageDate(inactiveGroups))
-        .build();
-  }
-
-  private DeletionWorkflowInfo buildNotFoundUserInfo(
-      final List<InactiveGroup> inactiveGroups, final String userId) {
-    return DeletionWorkflowInfo.builder()
-        .userId(userId)
-        .userName("N/A (User not found)")
         .lastMessageDate(getLastMessageDate(inactiveGroups))
         .build();
   }
