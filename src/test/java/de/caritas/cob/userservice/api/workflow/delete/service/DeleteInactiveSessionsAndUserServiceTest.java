@@ -68,7 +68,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
   }
 
   @Test
-  void deleteInactiveSessionsAndUsers_Should_SendWorkflowErrorsMail_When_userNotFoundReason() {
+  void
+      deleteInactiveSessionsAndUsers_Should_SendWorkflowErrorsMail_When_DeletionErrorWithReasonUserNotFound() {
     // given
     EasyRandom easyRandom = new EasyRandom();
     User user = easyRandom.nextObject(User.class);
@@ -78,7 +79,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
         new HashMap<>() {
           {
             put(
-                user.getUserId(),
+                user.getRcUserId(),
                 Collections.singletonList(
                     InactiveGroup.builder()
                         .groupId(session.getGroupId())
@@ -88,7 +89,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
         };
     when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
         .thenReturn(userWithInactiveGroupsMap);
-    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(user.getRcUserId()))
         .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Collections.singletonList(session));
     DeletionWorkflowError deletionWorkflowError = Mockito.mock(DeletionWorkflowError.class);

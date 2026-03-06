@@ -118,8 +118,7 @@ public class WorkflowResultsMailService {
                 .append(usernameTranscoder.decodeUsername(info.getUserName()))
                 .append("</li><li>Last Message Date: ")
                 .append(formatLastMessageDate(info.getLastMessageDate()))
-                .append("</li>")
-                .append("<hr>"));
+                .append("<hr></li>"));
 
     stringBuilder.append("</ul>");
     return stringBuilder.toString();
@@ -157,8 +156,9 @@ public class WorkflowResultsMailService {
                 .append(workflowError.getReason())
                 .append("</li><li>Timestamp = ")
                 .append(workflowError.getTimestamp())
-                .append("</li><hr>"));
+                .append("<hr></li>"));
 
+    stringBuilder.append("</ul>");
     return stringBuilder.toString();
   }
 }

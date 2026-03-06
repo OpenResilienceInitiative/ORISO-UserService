@@ -44,7 +44,7 @@ public class InactivePrivateGroupsProvider {
    */
   public Map<String, List<InactiveGroup>> retrieveUserWithInactiveGroupInfoMap() {
 
-    Set<String> groupChatIdSet = buildSetOfGroupChatGroupdIds();
+    Set<String> groupChatIdSet = buildSetOfGroupChatGroupIds();
 
     Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
@@ -70,7 +70,7 @@ public class InactivePrivateGroupsProvider {
     return userWithInactiveGroupsMap;
   }
 
-  private Set<String> buildSetOfGroupChatGroupdIds() {
+  private Set<String> buildSetOfGroupChatGroupIds() {
     List<Chat> chatList = IterableUtils.toList(chatRepository.findAll());
     return chatList.stream().map(Chat::getGroupId).collect(Collectors.toSet());
   }
