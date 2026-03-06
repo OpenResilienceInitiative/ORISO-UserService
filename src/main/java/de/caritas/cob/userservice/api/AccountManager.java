@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api;
 
 import static java.util.Objects.isNull;
 
+import de.caritas.cob.userservice.api.actions.session.PostConsultantDisplayNameChangedAliasMessageCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -47,6 +48,9 @@ public class AccountManager implements AccountManaging {
   private final ConsultantAgencyRepository consultantAgencyRepository;
 
   private final SessionRepository sessionRepository;
+
+  private final PostConsultantDisplayNameChangedAliasMessageCommand
+      postConsultantDisplayNameChangedAliasMessageCommand;
 
   @Override
   public Optional<Map<String, Object>> findConsultant(String id) {
@@ -164,8 +168,13 @@ public class AccountManager implements AccountManaging {
     userServiceMapper
         .displayNameOf(patchMap)
         .ifPresent(
-            displayName ->
-                messageClient.updateUser(savedConsultant.getRocketChatId(), displayName));
+            displayName -> {
+              var updated =
+                  messageClient.updateUser(savedConsultant.getRocketChatId(), displayName);
+              if (updated) {
+                postConsultantDisplayNameChangedAliasMessageCommand.execute(savedConsultant);
+              }
+            });
 
     return userServiceMapper.mapOf(savedConsultant, patchMap);
   }

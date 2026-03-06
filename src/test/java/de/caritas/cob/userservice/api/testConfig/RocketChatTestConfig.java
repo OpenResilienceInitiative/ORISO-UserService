@@ -107,6 +107,11 @@ public class RocketChatTestConfig {
 
       @Override
       public void deleteUser(String rcUserId) {}
+
+      @Override
+      public boolean updateUser(String chatUserId, String displayName) {
+        return true;
+      }
     };
   }
 }
