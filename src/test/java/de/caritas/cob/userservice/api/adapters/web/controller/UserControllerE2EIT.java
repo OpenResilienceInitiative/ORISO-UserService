@@ -63,6 +63,7 @@ import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.apiclient.MessageServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
@@ -94,6 +95,9 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
+import de.caritas.cob.userservice.messageservice.generated.web.MessageControllerApi;
+import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
+import de.caritas.cob.userservice.messageservice.generated.web.model.MessageType;
 import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -199,8 +203,6 @@ class UserControllerE2EIT {
   @MockBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
-  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
-
   @MockBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
@@ -213,15 +215,17 @@ class UserControllerE2EIT {
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @MockBean
-  @Qualifier("topicControllerApiPrimary")
-  private TopicControllerApi topicControllerApi;
-
   @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean
-  @Qualifier("mailsControllerApi")
-  private MailsControllerApi mailsControllerApi;
+  @MockBean private TopicControllerApi topicControllerApi;
+
+  @MockBean private MailsControllerApi mailsControllerApi;
+
+  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
+
+  @MockBean private MessageServiceApiControllerFactory messageServiceApiControllerFactory;
+
+  @MockBean private MessageControllerApi messageControllerApi;
 
   @MockBean private ApplicationSettingsService applicationSettingsService;
 
@@ -245,6 +249,7 @@ class UserControllerE2EIT {
   private DeleteUserAccountDTO deleteUserAccountDto;
   private UserInfoResponseDTO userInfoResponse;
   private UserResource userResource;
+  private List<Session> sessionsToDelete = new ArrayList<>();
 
   @AfterEach
   void reset() {
@@ -286,10 +291,17 @@ class UserControllerE2EIT {
     userInfoResponse = null;
     identityConfig.setDisplayNameAllowedForConsultants(false);
     userResource = null;
+    sessionsToDelete.forEach(
+        s -> {
+          if (sessionRepository.existsById(s.getId())) {
+            sessionRepository.deleteById(s.getId());
+          }
+        });
+    sessionsToDelete = new ArrayList<>();
   }
 
   @BeforeEach
-  public void setUp() {
+  void setUp() {
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -298,6 +310,9 @@ class UserControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+    when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
+    when(messageControllerApi.getApiClient())
+        .thenReturn(mock(de.caritas.cob.userservice.messageservice.generated.ApiClient.class));
   }
 
   @Test
@@ -1134,6 +1149,43 @@ class UserControllerE2EIT {
                 .content(objectMapper.writeValueAsString(patchDto))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void patchUserDataShouldPostDisplayNameChangedAliasMessageToAllConsultantSessions()
+      throws Exception {
+    givenAValidConsultant();
+    givenDisplayNameAllowedForConsultants();
+    givenAValidKeycloakLoginResponse();
+    givenAValidRocketChatUpdateUserResponse();
+    var sessionInProgress =
+        givenASessionForConsultant(consultant, Session.SessionStatus.IN_PROGRESS);
+    var sessionDone = givenASessionForConsultant(consultant, Session.SessionStatus.DONE);
+    var sessionInArchive = givenASessionForConsultant(consultant, Session.SessionStatus.IN_ARCHIVE);
+    sessionsToDelete.addAll(List.of(sessionInProgress, sessionDone, sessionInArchive));
+
+    var patchDto = new HashMap<String, Object>(1);
+    patchDto.put("displayName", RandomStringUtils.randomAlphabetic(8));
+
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .cookie(RC_TOKEN_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patchDto))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+
+    var expectedMessage =
+        new AliasOnlyMessageDTO().messageType(MessageType.CONSULTANT_DISPLAY_NAME_CHANGED);
+    verify(messageControllerApi)
+        .saveAliasOnlyMessage(sessionInProgress.getGroupId(), expectedMessage);
+    verify(messageControllerApi).saveAliasOnlyMessage(sessionDone.getGroupId(), expectedMessage);
+    verify(messageControllerApi)
+        .saveAliasOnlyMessage(sessionInArchive.getGroupId(), expectedMessage);
   }
 
   @Test
@@ -2004,6 +2056,22 @@ class UserControllerE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+  }
+
+  private Session givenASessionForConsultant(
+      Consultant sessionConsultant, Session.SessionStatus status) {
+    var sessionUser = userRepository.findAll().iterator().next();
+    var session = new Session();
+    session.setConsultant(sessionConsultant);
+    session.setUser(sessionUser);
+    session.setStatus(status);
+    session.setPostcode("12345");
+    session.setConsultingTypeId(0);
+    session.setGroupId("test-group-" + RandomStringUtils.randomAlphanumeric(8));
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setLanguageCode(LanguageCode.de);
+    session.setIsConsultantDirectlySet(false);
+    return sessionRepository.save(session);
   }
 
   private void givenConsultingTypeServiceResponse(Integer consultingTypeId) {

@@ -26,6 +26,15 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   List<Session> findByConsultantAndStatus(Consultant consultant, SessionStatus sessionStatus);
 
   /**
+   * Find all {@link Session}s by a consultant and a list of session statuses.
+   *
+   * @param consultant {@link Consultant}
+   * @param statuses list of {@link SessionStatus}
+   * @return A list of {@link Session}s for the specific consultant and statuses
+   */
+  List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
+
+  /**
    * Find a {@link Session} list by a consultant and a session status ordered by update date desc.
    *
    * @param consultant {@link Consultant}
