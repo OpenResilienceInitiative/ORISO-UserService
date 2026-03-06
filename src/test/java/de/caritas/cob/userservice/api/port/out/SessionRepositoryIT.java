@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.port.out;
 
-import static de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
@@ -54,16 +53,14 @@ class SessionRepositoryIT {
   void findByConsultantAndStatusIn_Should_returnOnlySessionsWithMatchingStatuses() {
     var consultant = givenAConsultant();
     var sessionInProgress = givenASessionForConsultant(consultant, IN_PROGRESS);
-    var sessionDone = givenASessionForConsultant(consultant, DONE);
     var sessionInArchive = givenASessionForConsultant(consultant, IN_ARCHIVE);
     var sessionNew = givenASessionForConsultant(consultant, NEW);
 
     var result =
-        underTest.findByConsultantAndStatusIn(consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE));
+        underTest.findByConsultantAndStatusIn(consultant, List.of(IN_PROGRESS, IN_ARCHIVE));
 
-    assertEquals(3, result.size());
+    assertEquals(2, result.size());
     assertTrue(result.stream().anyMatch(s -> s.getId().equals(sessionInProgress.getId())));
-    assertTrue(result.stream().anyMatch(s -> s.getId().equals(sessionDone.getId())));
     assertTrue(result.stream().anyMatch(s -> s.getId().equals(sessionInArchive.getId())));
     assertFalse(result.stream().anyMatch(s -> s.getId().equals(sessionNew.getId())));
   }

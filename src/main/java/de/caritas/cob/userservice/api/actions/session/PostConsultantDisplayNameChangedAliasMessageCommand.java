@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.actions.session;
 
-import static de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.messageservice.generated.web.model.MessageType.CONSULTANT_DISPLAY_NAME_CHANGED;
@@ -24,15 +23,14 @@ import org.springframework.stereotype.Component;
 
 /**
  * Action to post a {@code CONSULTANT_DISPLAY_NAME_CHANGED} alias message into all sessions
- * (IN_PROGRESS, DONE, IN_ARCHIVE) of a consultant via the message service.
+ * (IN_PROGRESS, IN_ARCHIVE) of a consultant via the message service.
  */
 @Slf4j
 @Component
 public class PostConsultantDisplayNameChangedAliasMessageCommand extends AliasMessageCommand
     implements ActionCommand<Consultant> {
 
-  private static final List<SessionStatus> RELEVANT_STATUSES =
-      List.of(IN_PROGRESS, DONE, IN_ARCHIVE);
+  private static final List<SessionStatus> RELEVANT_STATUSES = List.of(IN_PROGRESS, IN_ARCHIVE);
 
   private final SessionRepository sessionRepository;
 
