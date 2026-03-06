@@ -109,7 +109,18 @@ public class CreateEnquiryMessageFacadeTest {
 
   private final GroupDTO GROUP_DTO =
       new GroupDTO(
-          RC_GROUP_ID, USERNAME, null, null, 0, 0, ROCKET_CHAT_USER_DTO, null, true, false, null);
+          RC_GROUP_ID,
+          USERNAME,
+          null,
+          null,
+          0,
+          0,
+          ROCKET_CHAT_USER_DTO,
+          null,
+          true,
+          false,
+          null,
+          null);
   private final GroupResponseDTO GROUP_RESPONSE_DTO =
       new GroupResponseDTO(GROUP_DTO, true, null, null);
   private final GroupDTO FEEDBACK_GROUP_DTO_2 =
@@ -124,6 +135,7 @@ public class CreateEnquiryMessageFacadeTest {
           null,
           true,
           false,
+          null,
           null);
   private final GroupResponseDTO FEEDBACK_GROUP_RESPONSE_DTO_2 =
       new GroupResponseDTO(FEEDBACK_GROUP_DTO_2, true, null, null);

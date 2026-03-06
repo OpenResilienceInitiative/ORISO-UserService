@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.workflow.delete.model.InactiveGroup;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -36,16 +37,16 @@ public class InactivePrivateGroupsProvider {
   private int sessionInactiveDeleteWorkflowCheckDays;
 
   /**
-   * Get a map with users and their related inactive Rocket.Chat group ids. Group chats are
-   * excluded.
+   * Get a map with users and their related inactive Rocket.Chat group info including last message
+   * timestamp. Group chats are excluded.
    *
-   * @return a map with users and related inactive Rocket.Chat groups ids
+   * @return a map with users and related inactive Rocket.Chat group info
    */
-  public Map<String, List<String>> retrieveUserWithInactiveGroupsMap() {
+  public Map<String, List<InactiveGroup>> retrieveUserWithInactiveGroupInfoMap() {
 
-    Set<String> groupChatIdSet = buildSetOfGroupChatGroupdIds();
+    Set<String> groupChatIdSet = buildSetOfGroupChatGroupIds();
 
-    Map<String, List<String>> userWithInactiveGroupsMap = new HashMap<>();
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
     fetchAllInactivePrivateGroups().stream()
         .filter(
             group -> {
@@ -61,11 +62,15 @@ public class InactivePrivateGroupsProvider {
             group ->
                 userWithInactiveGroupsMap
                     .computeIfAbsent(group.getUser().getId(), v -> new ArrayList<>())
-                    .add(group.getId()));
+                    .add(
+                        InactiveGroup.builder()
+                            .groupId(group.getId())
+                            .lastMessageDate(group.getLastMessageDate())
+                            .build()));
     return userWithInactiveGroupsMap;
   }
 
-  private Set<String> buildSetOfGroupChatGroupdIds() {
+  private Set<String> buildSetOfGroupChatGroupIds() {
     List<Chat> chatList = IterableUtils.toList(chatRepository.findAll());
     return chatList.stream().map(Chat::getGroupId).collect(Collectors.toSet());
   }
