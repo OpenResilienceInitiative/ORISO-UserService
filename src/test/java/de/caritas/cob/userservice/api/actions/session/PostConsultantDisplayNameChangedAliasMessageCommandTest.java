@@ -6,7 +6,6 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROG
 import static de.caritas.cob.userservice.messageservice.generated.web.model.MessageType.CONSULTANT_DISPLAY_NAME_CHANGED;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -63,7 +62,9 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
 
     command.execute(consultant);
 
+    verifyNoInteractions(messageServiceApiControllerFactory);
     verifyNoInteractions(messageControllerApi);
+    verifyNoInteractions(identityClient);
   }
 
   @Test
@@ -88,11 +89,36 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
 
     var expectedMessageType =
         new AliasOnlyMessageDTO().messageType(CONSULTANT_DISPLAY_NAME_CHANGED);
-    verify(messageControllerApi, times(1))
-        .saveAliasOnlyMessage("group-in-progress", expectedMessageType);
-    verify(messageControllerApi, times(1)).saveAliasOnlyMessage("group-done", expectedMessageType);
-    verify(messageControllerApi, times(1))
-        .saveAliasOnlyMessage("group-in-archive", expectedMessageType);
+    verify(messageControllerApi).saveAliasOnlyMessage("group-in-progress", expectedMessageType);
+    verify(messageControllerApi).saveAliasOnlyMessage("group-done", expectedMessageType);
+    verify(messageControllerApi).saveAliasOnlyMessage("group-in-archive", expectedMessageType);
+    verify(identityClient).loginUser(any(), any());
+    verify(messageServiceApiControllerFactory).createControllerApi();
+  }
+
+  @Test
+  void execute_Should_skipSessionsWithNullGroupId() {
+    var keycloakLoginResponseDTO = new KeycloakLoginResponseDTO();
+    keycloakLoginResponseDTO.setAccessToken("token");
+    when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
+    when(identityClientConfig.getTechnicalUser()).thenReturn(new TechnicalUserConfig());
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(new HttpHeaders());
+    when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
+
+    var sessionWithGroup = givenSessionWithGroupId("group-in-progress");
+    var sessionWithoutGroup = givenSessionWithGroupId(null);
+    var consultant = easyRandom.nextObject(Consultant.class);
+
+    when(sessionRepository.findByConsultantAndStatusIn(
+            consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE)))
+        .thenReturn(List.of(sessionWithGroup, sessionWithoutGroup));
+
+    command.execute(consultant);
+
+    var expectedMessageType =
+        new AliasOnlyMessageDTO().messageType(CONSULTANT_DISPLAY_NAME_CHANGED);
+    verify(messageControllerApi).saveAliasOnlyMessage("group-in-progress", expectedMessageType);
+    verify(messageControllerApi).saveAliasOnlyMessage(any(), any());
   }
 
   @Test
@@ -102,7 +128,7 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
 
     command.execute(consultant);
 
-    verify(sessionRepository, times(1))
+    verify(sessionRepository)
         .findByConsultantAndStatusIn(consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE));
   }
 

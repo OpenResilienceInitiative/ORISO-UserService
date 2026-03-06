@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.messageservice.generated.ApiClient;
 import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageType;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -34,13 +35,19 @@ public abstract class AliasMessageCommand {
    * @param messageType the {@link MessageType} to post
    */
   protected void postAliasOnlyMessage(String groupId, MessageType messageType) {
+    postAliasOnlyMessages(List.of(groupId), messageType);
+  }
+
+  protected void postAliasOnlyMessages(List<String> groupIds, MessageType messageType) {
     try {
       var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
       addDefaultHeaders(messageControllerApi.getApiClient());
-      messageControllerApi.saveAliasOnlyMessage(
-          groupId, new AliasOnlyMessageDTO().messageType(messageType));
+      groupIds.forEach(
+          groupId ->
+              messageControllerApi.saveAliasOnlyMessage(
+                  groupId, new AliasOnlyMessageDTO().messageType(messageType)));
     } catch (Exception e) {
-      log.error("Unable to post alias message of type {} to group {}", messageType, groupId);
+      log.error("Unable to post alias messages of type {} to groups {}", messageType, groupIds);
       log.error(getStackTrace(e));
     }
   }
