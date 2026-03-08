@@ -20,7 +20,7 @@ jobs:
       FAIL_WEBHOOK_SECRET: ${{ secrets.MS_TEAMS_FAIL_WEBHOOK_URI }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Prepare environment variables
         run: |
           raw=$(git branch -r --contains ${{ github.ref }})
@@ -65,7 +65,7 @@ jobs:
   push_to_registry:
     strategy:
       matrix:
-        registry: [ "docker.pkg.github.com", "ghcr.io" ]
+        registry: ["ghcr.io"]
     needs: [ test ]
     name: Push Docker image to GitHub Packages
     runs-on: ubuntu-latest
@@ -74,7 +74,7 @@ jobs:
       IMAGE_WEBHOOK_SECRET: ${{ secrets.MS_TEAMS_IMAGE_WEBHOOK_URI }}
       FAIL_WEBHOOK_SECRET: ${{ secrets.MS_TEAMS_FAIL_WEBHOOK_URI }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Download buildfiles artifact
         uses: actions/download-artifact@v4
         with:
@@ -143,17 +143,8 @@ jobs:
           echo "### Publish Docker image :x:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- It seems that something has gone wrong" >> $GITHUB_STEP_SUMMARY
-      - name: Run Trivy vulnerability image scanner
-        if: ${{ (matrix.registry == 'ghcr.io') }}
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.DOCKER_REGISTRY }}/${{ env.REPO_NAME_WITHOUT_PREFIX }}:${{ env.DOCKER_IMAGE_TAG }}'
-          format: 'table'
-          exit-code: '0'
-          vuln-type: 'os,library'
-          severity: 'CRITICAL'
       - name: Microsoft Teams Fail Card
-        if: ${{ (env.FAIL_WEBHOOK_SECRET != null) && (env.FAIL_WEBHOOK_SECRET != '') && (matrix.registry == 'ghcr.io') && (failure() || cancelled()) }}
+        if: ${{ (env.FAIL_WEBHOOK_SECRET != null) && (env.FAIL_WEBHOOK_SECRET != '') && (failure() || cancelled()) }}
         uses: toko-bifrost/ms-teams-deploy-card@3.1.2
         with:
           github-token: ${{ github.token }}
@@ -167,7 +158,7 @@ jobs:
             - text: View CI
               url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - name: Microsoft Teams Image Card
-        if: ${{ (env.IMAGE_WEBHOOK_SECRET != null) && (env.IMAGE_WEBHOOK_SECRET != '') && (matrix.registry == 'ghcr.io') && success() }}
+        if: ${{ (env.IMAGE_WEBHOOK_SECRET != null) && (env.IMAGE_WEBHOOK_SECRET != '') && success() }}
         uses: toko-bifrost/ms-teams-deploy-card@3.1.2
         with:
           github-token: ${{ github.token }}
