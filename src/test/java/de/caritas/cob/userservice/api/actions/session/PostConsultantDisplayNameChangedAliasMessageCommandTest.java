@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.actions.session;
 
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE;
+import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
+import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static de.caritas.cob.userservice.messageservice.generated.web.model.MessageType.CONSULTANT_DISPLAY_NAME_CHANGED;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -47,7 +50,7 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
   private final EasyRandom easyRandom = new EasyRandom();
 
   @Test
-  void execute_Should_doNothing_When_consultantIsNull() {
+  void execute_Should_doNothingWhenConsultantIsNull() {
     command.execute(null);
 
     verifyNoInteractions(sessionRepository);
@@ -55,7 +58,7 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
   }
 
   @Test
-  void execute_Should_doNothing_When_consultantHasNoSessions() {
+  void execute_Should_doNothingWhenConsultantHasNoSessions() {
     var consultant = easyRandom.nextObject(Consultant.class);
     when(sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
         .thenReturn(List.of());
@@ -68,7 +71,7 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
   }
 
   @Test
-  void execute_Should_postAliasMessage_For_each_session_of_all_relevant_statuses() {
+  void execute_Should_postAliasMessageForEachSessionOfAllRelevantStatuses() {
     var keycloakLoginResponseDTO = new KeycloakLoginResponseDTO();
     keycloakLoginResponseDTO.setAccessToken("token");
     when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
@@ -77,27 +80,25 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
     when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
 
     var sessionInProgress = givenSessionWithGroupId("group-in-progress");
-    var sessionDone = givenSessionWithGroupId("group-done");
     var sessionInArchive = givenSessionWithGroupId("group-in-archive");
     var consultant = easyRandom.nextObject(Consultant.class);
 
     when(sessionRepository.findByConsultantAndStatusIn(
-            consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE)))
-        .thenReturn(List.of(sessionInProgress, sessionDone, sessionInArchive));
+            consultant, List.of(IN_PROGRESS, IN_ARCHIVE)))
+        .thenReturn(List.of(sessionInProgress, sessionInArchive));
 
     command.execute(consultant);
 
     var expectedMessageType =
         new AliasOnlyMessageDTO().messageType(CONSULTANT_DISPLAY_NAME_CHANGED);
     verify(messageControllerApi).saveAliasOnlyMessage("group-in-progress", expectedMessageType);
-    verify(messageControllerApi).saveAliasOnlyMessage("group-done", expectedMessageType);
     verify(messageControllerApi).saveAliasOnlyMessage("group-in-archive", expectedMessageType);
     verify(identityClient).loginUser(any(), any());
     verify(messageServiceApiControllerFactory).createControllerApi();
   }
 
   @Test
-  void execute_Should_skipSessionsWithNullGroupId() {
+  void execute_Should_skipSessionsWithBlankGroupId() {
     var keycloakLoginResponseDTO = new KeycloakLoginResponseDTO();
     keycloakLoginResponseDTO.setAccessToken("token");
     when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
@@ -110,7 +111,7 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
     var consultant = easyRandom.nextObject(Consultant.class);
 
     when(sessionRepository.findByConsultantAndStatusIn(
-            consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE)))
+            consultant, List.of(IN_PROGRESS, IN_ARCHIVE)))
         .thenReturn(List.of(sessionWithGroup, sessionWithoutGroup));
 
     command.execute(consultant);
@@ -122,14 +123,22 @@ class PostConsultantDisplayNameChangedAliasMessageCommandTest {
   }
 
   @Test
-  void execute_Should_query_sessions_with_all_three_relevant_statuses() {
+  void execute_Should_queryOnlyRelevantStatuses() {
     var consultant = easyRandom.nextObject(Consultant.class);
     when(sessionRepository.findByConsultantAndStatusIn(any(), any())).thenReturn(List.of());
 
     command.execute(consultant);
 
     verify(sessionRepository)
-        .findByConsultantAndStatusIn(consultant, List.of(IN_PROGRESS, DONE, IN_ARCHIVE));
+        .findByConsultantAndStatusIn(
+            eq(consultant),
+            argThat(
+                statuses ->
+                    statuses.contains(IN_PROGRESS)
+                        && statuses.contains(IN_ARCHIVE)
+                        && !statuses.contains(DONE)
+                        && !statuses.contains(NEW)
+                        && !statuses.contains(INITIAL)));
   }
 
   private Session givenSessionWithGroupId(String groupId) {

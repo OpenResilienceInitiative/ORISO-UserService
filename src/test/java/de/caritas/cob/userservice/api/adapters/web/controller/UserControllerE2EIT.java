@@ -1161,9 +1161,8 @@ class UserControllerE2EIT {
     givenAValidRocketChatUpdateUserResponse();
     var sessionInProgress =
         givenASessionForConsultant(consultant, Session.SessionStatus.IN_PROGRESS);
-    var sessionDone = givenASessionForConsultant(consultant, Session.SessionStatus.DONE);
     var sessionInArchive = givenASessionForConsultant(consultant, Session.SessionStatus.IN_ARCHIVE);
-    sessionsToDelete.addAll(List.of(sessionInProgress, sessionDone, sessionInArchive));
+    sessionsToDelete.addAll(List.of(sessionInProgress, sessionInArchive));
 
     var patchDto = new HashMap<String, Object>(1);
     patchDto.put("displayName", RandomStringUtils.randomAlphabetic(8));
@@ -1183,7 +1182,6 @@ class UserControllerE2EIT {
         new AliasOnlyMessageDTO().messageType(MessageType.CONSULTANT_DISPLAY_NAME_CHANGED);
     verify(messageControllerApi)
         .saveAliasOnlyMessage(sessionInProgress.getGroupId(), expectedMessage);
-    verify(messageControllerApi).saveAliasOnlyMessage(sessionDone.getGroupId(), expectedMessage);
     verify(messageControllerApi)
         .saveAliasOnlyMessage(sessionInArchive.getGroupId(), expectedMessage);
   }
