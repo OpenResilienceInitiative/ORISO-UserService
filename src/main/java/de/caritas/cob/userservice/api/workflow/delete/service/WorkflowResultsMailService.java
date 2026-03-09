@@ -112,7 +112,7 @@ public class WorkflowResultsMailService {
                 .append("<li>")
                 .append("User ID: ")
                 .append(info.getUserId())
-                .append("User rocketchat ID: ")
+                .append("</li><li>User rocketchat ID: ")
                 .append(info.getRcUserId())
                 .append("</li><li>User Name: ")
                 .append(usernameTranscoder.decodeUsername(info.getUserName()))

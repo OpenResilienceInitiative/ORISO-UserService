@@ -21,9 +21,6 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowErro
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowInfo;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -62,7 +59,7 @@ public class WorkflowResultsMailServiceTest {
   }
 
   @Test
-  public void buildAndSendErrorMail_Should_sendMail_When_workflowErrorsAreEmpty() {
+  public void buildASendErrorMail_Should_sendMail_When_workflowErrorsAreEmpty() {
     this.workflowResultsMailService.buildAndSendErrorMail(emptyList());
 
     verify(this.mailService, times(1)).sendErrorEmailNotification(any());
@@ -269,26 +266,113 @@ public class WorkflowResultsMailServiceTest {
   }
 
   @Test
-  public void buildAndSendMail_Should_includeLastMessageDateInEmail() {
+  public void buildAndSendMail_Should_renderMarkup_with_headers_When_bothCollectionsAreEmpty() {
+    // when
+    this.workflowResultsMailService.buildAndSendMail(emptyList(), emptyList());
+
+    // then
+    String htmlText = captureTextTemplateValue();
+    assertThat(htmlText).isEqualTo("<h2>No deletion info</h2><h2>No errors occurred</h2>");
+  }
+
+  @Test
+  public void buildAndSendMail_Should_renderMarkup_When_onlyInfoCollectionHasData() {
     // given
-    ReflectionTestUtils.setField(workflowResultsMailService, "multitenancyEnabled", false);
-    Date lastMessageDate = new Date(1700000000000L); // Fixed date for testing
-    String expectedLastMessageDate =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
-            .format(LocalDateTime.ofInstant(lastMessageDate.toInstant(), ZoneOffset.UTC));
+    Date lastMessageDate = new Date(1700000000000L);
     List<DeletionWorkflowInfo> deletionInfo =
         Collections.singletonList(
             DeletionWorkflowInfo.builder()
                 .userId("user123")
                 .rcUserId("rc-user-123")
-                .userName("testUser")
+                .userName("encodedTestUser")
                 .lastMessageDate(lastMessageDate)
+                .build());
+    doReturn("testUser").when(usernameTranscoder).decodeUsername("encodedTestUser");
+
+    // when
+    this.workflowResultsMailService.buildAndSendMail(emptyList(), deletionInfo);
+
+    // then
+    String htmlText = captureTextTemplateValue();
+    assertThat(htmlText).contains("<h2>(1) Perform deletion for users:</h2>");
+    assertThat(htmlText).contains("<ul>");
+    assertThat(htmlText).contains("<li>User ID: user123</li>");
+    assertThat(htmlText).contains("<li>User rocketchat ID: rc-user-123</li>");
+    assertThat(htmlText).contains("<li>User Name: testUser</li>");
+    assertThat(htmlText).contains("<li>Last Message Date: 2023-11-14T22:13:20.000Z");
+    assertThat(htmlText).contains("<hr></li>");
+    assertThat(htmlText).contains("</ul>");
+    assertThat(htmlText).contains("<h2>No errors occurred</h2>");
+  }
+
+  @Test
+  public void buildAndSendMail_Should_renderMarkup_When_onlyErrorCollectionHasData() {
+    // given
+    List<DeletionWorkflowError> workflowErrors =
+        Collections.singletonList(
+            DeletionWorkflowError.builder()
+                .deletionSourceType(ASKER)
+                .deletionTargetType(ROCKET_CHAT)
+                .timestamp(nowInUtc())
+                .reason("test reason")
+                .identifier("id123")
                 .build());
 
     // when
-    this.workflowResultsMailService.buildAndSendMail(null, deletionInfo);
+    this.workflowResultsMailService.buildAndSendMail(workflowErrors, emptyList());
 
     // then
+    String htmlText = captureTextTemplateValue();
+    assertThat(htmlText).contains("<h2>No deletion info</h2>");
+    assertThat(htmlText).contains("<h2>(1) Errors during deletion workflow:</h2>");
+    assertThat(htmlText).contains("<ul>");
+    assertThat(htmlText).contains("<li>SourceType = ASKER</li>");
+    assertThat(htmlText).contains("<li>TargetType = ROCKET_CHAT</li>");
+    assertThat(htmlText).contains("<li>Identifier = id123</li>");
+    assertThat(htmlText).contains("<li>Reason = test reason</li>");
+    assertThat(htmlText).contains("<li>Timestamp = ");
+    assertThat(htmlText).contains("<hr></li>");
+    assertThat(htmlText).contains("</ul>");
+  }
+
+  @Test
+  public void buildAndSendMail_Should_renderMarkup_When_bothCollectionsHaveData() {
+    // given
+    Date lastMessageDate = new Date(1700000000000L);
+    List<DeletionWorkflowInfo> deletionInfo =
+        Collections.singletonList(
+            DeletionWorkflowInfo.builder()
+                .userId("user123")
+                .rcUserId("rc-user-123")
+                .userName("encodedTestUser")
+                .lastMessageDate(lastMessageDate)
+                .build());
+    List<DeletionWorkflowError> workflowErrors =
+        Collections.singletonList(
+            DeletionWorkflowError.builder()
+                .deletionSourceType(ASKER)
+                .deletionTargetType(ROCKET_CHAT)
+                .timestamp(nowInUtc())
+                .reason("error reason")
+                .identifier("errorId")
+                .build());
+    doReturn("testUser").when(usernameTranscoder).decodeUsername("encodedTestUser");
+
+    // when
+    this.workflowResultsMailService.buildAndSendMail(workflowErrors, deletionInfo);
+
+    // then
+    String htmlText = captureTextTemplateValue();
+    assertThat(htmlText).contains("<h2>(1) Perform deletion for users:</h2>");
+    assertThat(htmlText).contains("<h2>(1) Errors during deletion workflow:</h2>");
+    assertThat(htmlText.indexOf("<h2>(1) Perform deletion for users:</h2>"))
+        .isLessThan(htmlText.indexOf("<h2>(1) Errors during deletion workflow:</h2>"));
+    assertThat(htmlText).contains("<li>User ID: user123</li>");
+    assertThat(htmlText).contains("<li>Reason = error reason</li>");
+    assertThat(htmlText).contains("<hr></li>");
+  }
+
+  private String captureTextTemplateValue() {
     ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
         ArgumentCaptor.forClass(ErrorMailDTO.class);
     verify(this.mailService, times(1))
@@ -298,12 +382,6 @@ public class WorkflowResultsMailServiceTest {
     TemplateDataDTO textData =
         templateData.stream().filter(t -> "text".equals(t.getKey())).findFirst().orElse(null);
     assertThat(textData).isNotNull();
-    assertThat(textData.getValue()).contains("User rocketchat ID:");
-    assertThat(textData.getValue()).contains("rc-user-123");
-    assertThat(textData.getValue()).contains("Last Message Date");
-    assertThat(textData.getValue()).contains(expectedLastMessageDate);
-
-    // Ensure username is passed through the transcoder in info rendering.
-    verify(usernameTranscoder, times(1)).decodeUsername("testUser");
+    return textData.getValue();
   }
 }
