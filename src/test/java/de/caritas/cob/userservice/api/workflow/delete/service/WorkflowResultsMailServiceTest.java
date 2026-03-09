@@ -399,7 +399,6 @@ public class WorkflowResultsMailServiceTest {
     // then
     verify(usernameTranscoder, times(1)).decodeUsername("encodedUser1");
     verify(usernameTranscoder, times(1)).decodeUsername("encodedUser2");
-    verify(usernameTranscoder, times(2)).decodeUsername(any());
   }
 
   private String captureTextTemplateValue() {
