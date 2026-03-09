@@ -397,8 +397,8 @@ public class WorkflowResultsMailServiceTest {
     this.workflowResultsMailService.buildAndSendMail(emptyList(), deletionInfo);
 
     // then
-    verify(usernameTranscoder, times(1)).decodeUsername("encodedUser1");
-    verify(usernameTranscoder, times(1)).decodeUsername("encodedUser2");
+    verify(usernameTranscoder).decodeUsername("encodedUser1");
+    verify(usernameTranscoder).decodeUsername("encodedUser2");
   }
 
   private String captureTextTemplateValue() {
