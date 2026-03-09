@@ -48,7 +48,6 @@ public class WorkflowResultsMailServiceTest {
   public void setup() {
     setField(workflowResultsMailService, "applicationBaseUrl", "www.host.de");
     setField(workflowResultsMailService, "multitenancyEnabled", false);
-    doReturn("decodedUsername").when(usernameTranscoder).decodeUsername(any());
   }
 
   @Test
@@ -370,6 +369,37 @@ public class WorkflowResultsMailServiceTest {
     assertThat(htmlText).contains("<li>User ID: user123</li>");
     assertThat(htmlText).contains("<li>Reason = error reason</li>");
     assertThat(htmlText).contains("<hr></li>");
+  }
+
+  @Test
+  public void buildAndSendMail_Should_callUsernameTranscoder_ForEachDeletionInfoEntry() {
+    // given
+    Date lastMessageDate = new Date(1700000000000L);
+    List<DeletionWorkflowInfo> deletionInfo =
+        asList(
+            DeletionWorkflowInfo.builder()
+                .userId("user123")
+                .rcUserId("rc-user-123")
+                .userName("encodedUser1")
+                .lastMessageDate(lastMessageDate)
+                .build(),
+            DeletionWorkflowInfo.builder()
+                .userId("user456")
+                .rcUserId("rc-user-456")
+                .userName("encodedUser2")
+                .lastMessageDate(lastMessageDate)
+                .build());
+
+    doReturn("decodedUser1").when(usernameTranscoder).decodeUsername("encodedUser1");
+    doReturn("decodedUser2").when(usernameTranscoder).decodeUsername("encodedUser2");
+
+    // when
+    this.workflowResultsMailService.buildAndSendMail(emptyList(), deletionInfo);
+
+    // then
+    verify(usernameTranscoder, times(1)).decodeUsername("encodedUser1");
+    verify(usernameTranscoder, times(1)).decodeUsername("encodedUser2");
+    verify(usernameTranscoder, times(2)).decodeUsername(any());
   }
 
   private String captureTextTemplateValue() {
