@@ -21,6 +21,7 @@ import javax.persistence.NonUniqueResultException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to trigger deletion of inactive sessions and asker accounts. */
@@ -42,6 +43,9 @@ public class DeleteInactiveSessionsAndUserService {
 
   private static final int CHUNK_SIZE = 1000;
 
+  @Value("${session.inactive.deleteWorkflow.max.deletions:0}")
+  private int maxDeletions;
+
   /**
    * Deletes all inactive sessions and even the asker accounts if there are no more active sessions.
    */
@@ -53,6 +57,15 @@ public class DeleteInactiveSessionsAndUserService {
     log.info("Total users with inactive groups: " + userWithInactiveGroupsMap.size());
     List<Entry<String, List<InactiveGroup>>> entries =
         new ArrayList<>(userWithInactiveGroupsMap.entrySet());
+
+    // Hardcoded fix: Since the DeleteWorkflow was disabled for a long time, the DeleteInfoLog will
+    // become large. To avoid problems here, there is a fixed limitation on the number of
+    // sessions/accounts to be deleted.
+    if (maxDeletions > 0 && entries.size() > maxDeletions) {
+      log.info(
+          "Limiting deletion to {} entries (total available: {}).", maxDeletions, entries.size());
+      entries = entries.subList(0, maxDeletions);
+    }
     int totalChunks = (int) Math.ceil((double) entries.size() / CHUNK_SIZE);
 
     DeletionWorkflowResult deletionWorkflowResult = new DeletionWorkflowResult();
