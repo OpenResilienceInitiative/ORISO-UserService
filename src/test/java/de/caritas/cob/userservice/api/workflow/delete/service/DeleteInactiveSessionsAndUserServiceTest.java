@@ -3,10 +3,11 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ALL;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,9 +40,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @Slf4j
@@ -92,7 +93,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(user.getRcUserId()))
         .thenReturn(Lists.newArrayList(user));
     when(sessionRepository.findByUser(user)).thenReturn(Collections.singletonList(session));
-    DeletionWorkflowError deletionWorkflowError = Mockito.mock(DeletionWorkflowError.class);
+    DeletionWorkflowError deletionWorkflowError = mock(DeletionWorkflowError.class);
     when(deleteUserAccountService.performUserDeletion(user))
         .thenReturn(Collections.singletonList(deletionWorkflowError));
 
@@ -100,8 +101,8 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.times(1)).logWorkflowErrors(Collections.emptyList());
-    verify(workflowResultsMailService, Mockito.times(1))
+    verify(workflowErrorLogService).logWorkflowErrors(Collections.emptyList());
+    verify(workflowResultsMailService)
         .buildAndSendMail(
             argThat(list -> !list.isEmpty()),
             argThat(
@@ -147,7 +148,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(deleteUserAccountService, Mockito.times(1)).performUserDeletion(user);
+    verify(deleteUserAccountService).performUserDeletion(user);
   }
 
   @Test
@@ -181,7 +182,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(deleteSessionService, Mockito.times(1)).performSessionDeletion(session1);
+    verify(deleteSessionService).performSessionDeletion(session1);
   }
 
   @Test
@@ -224,10 +225,9 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.times(1))
-        .logWorkflowErrors(argThat(list -> list.size() == 1));
-    verify(workflowResultsMailService, Mockito.times(1))
-        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
+    verify(workflowErrorLogService).logWorkflowErrors(argThat(list -> list.size() == 1));
+    verify(workflowResultsMailService)
+        .buildAndSendMail(Collections.emptyList(), Collections.emptyList());
   }
 
   @Test
@@ -264,8 +264,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowErrorLogService, Mockito.times(1))
-        .logWorkflowErrors(eq(Collections.emptyList()));
+    verify(workflowErrorLogService).logWorkflowErrors(Collections.emptyList());
   }
 
   @Test
@@ -298,9 +297,9 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(deleteSessionService, times(1)).performSessionDeletion(session1);
-    verify(workflowResultsMailService, times(1))
-        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
+    verify(deleteSessionService).performSessionDeletion(session1);
+    verify(workflowResultsMailService)
+        .buildAndSendMail(Collections.emptyList(), Collections.emptyList());
   }
 
   @Test
@@ -334,7 +333,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(deleteSessionService, times(1)).performRocketchatSessionDeletion(anyString());
+    verify(deleteSessionService).performRocketchatSessionDeletion(anyString());
   }
 
   @Test
@@ -457,7 +456,7 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowResultsMailService, Mockito.times(1))
+    verify(workflowResultsMailService)
         .buildAndSendMail(
             eq(Collections.emptyList()),
             argThat(
@@ -502,7 +501,147 @@ class DeleteInactiveSessionsAndUserServiceTest {
     deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
 
     // then
-    verify(workflowResultsMailService, Mockito.times(1))
-        .buildAndSendMail(eq(Collections.emptyList()), eq(Collections.emptyList()));
+    verify(workflowResultsMailService)
+        .buildAndSendMail(Collections.emptyList(), Collections.emptyList());
+  }
+
+  // ── maxDeletions tests ────────────────────────────────────────────────────
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_ProcessAllEntries_WhenMaxDeletionsIsZero() {
+    // given – maxDeletions = 0 → no limit
+    ReflectionTestUtils.setField(deleteInactiveSessionsAndUserService, "maxDeletions", 0);
+
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 5; i++) {
+      userWithInactiveGroupsMap.put(
+          "user" + i,
+          Collections.singletonList(
+              InactiveGroup.builder().groupId("group" + i).lastMessageDate(new Date()).build()));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
+        .thenReturn(userWithInactiveGroupsMap);
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
+    when(deleteSessionService.performRocketchatSessionDeletion(anyString()))
+        .thenReturn(Collections.emptyList());
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    verify(deleteSessionService, times(5)).performRocketchatSessionDeletion(anyString());
+  }
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_LimitProcessedEntries_WhenMaxDeletionsIsSet() {
+    // given – maxDeletions = 3, but 10 entries available
+    ReflectionTestUtils.setField(deleteInactiveSessionsAndUserService, "maxDeletions", 3);
+
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 10; i++) {
+      userWithInactiveGroupsMap.put(
+          "user" + i,
+          Collections.singletonList(
+              InactiveGroup.builder().groupId("group" + i).lastMessageDate(new Date()).build()));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
+        .thenReturn(userWithInactiveGroupsMap);
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
+    when(deleteSessionService.performRocketchatSessionDeletion(anyString()))
+        .thenReturn(Collections.emptyList());
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    verify(deleteSessionService, times(3)).performRocketchatSessionDeletion(anyString());
+  }
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_ProcessAllEntries_WhenMaxDeletionsExceedsTotalCount() {
+    // given – maxDeletions = 100, but only 5 entries available
+    ReflectionTestUtils.setField(deleteInactiveSessionsAndUserService, "maxDeletions", 100);
+
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 5; i++) {
+      userWithInactiveGroupsMap.put(
+          "user" + i,
+          Collections.singletonList(
+              InactiveGroup.builder().groupId("group" + i).lastMessageDate(new Date()).build()));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
+        .thenReturn(userWithInactiveGroupsMap);
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
+    when(deleteSessionService.performRocketchatSessionDeletion(anyString()))
+        .thenReturn(Collections.emptyList());
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    verify(deleteSessionService, times(5)).performRocketchatSessionDeletion(anyString());
+  }
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_LogLimitMessage_WhenMaxDeletionsIsApplied() {
+    // given
+    ReflectionTestUtils.setField(deleteInactiveSessionsAndUserService, "maxDeletions", 2);
+
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 5; i++) {
+      userWithInactiveGroupsMap.put(
+          "user" + i,
+          Collections.singletonList(
+              InactiveGroup.builder().groupId("group" + i).lastMessageDate(new Date()).build()));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
+        .thenReturn(userWithInactiveGroupsMap);
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
+    when(deleteSessionService.performRocketchatSessionDeletion(anyString()))
+        .thenReturn(Collections.emptyList());
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    List<ILoggingEvent> logsList = listAppender.list;
+    assertTrue(
+        logsList.stream()
+            .anyMatch(
+                event -> event.getFormattedMessage().contains("Limiting deletion to 2 entries")));
+  }
+
+  @Test
+  void deleteInactiveSessionsAndUsers_Should_NotLogLimitMessage_WhenMaxDeletionsIsZero() {
+    // given – maxDeletions = 0 → no limit, so no log message about limiting should appear
+    ReflectionTestUtils.setField(deleteInactiveSessionsAndUserService, "maxDeletions", 0);
+
+    Map<String, List<InactiveGroup>> userWithInactiveGroupsMap = new HashMap<>();
+    for (int i = 0; i < 3; i++) {
+      userWithInactiveGroupsMap.put(
+          "user" + i,
+          Collections.singletonList(
+              InactiveGroup.builder().groupId("group" + i).lastMessageDate(new Date()).build()));
+    }
+    when(inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupInfoMap())
+        .thenReturn(userWithInactiveGroupsMap);
+    when(userRepository.findAllByRcUserIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Collections.emptyList());
+    when(sessionRepository.findByGroupId(anyString())).thenReturn(Optional.empty());
+    when(deleteSessionService.performRocketchatSessionDeletion(anyString()))
+        .thenReturn(Collections.emptyList());
+
+    // when
+    deleteInactiveSessionsAndUserService.deleteInactiveSessionsAndUsers();
+
+    // then
+    List<ILoggingEvent> logsList = listAppender.list;
+    assertTrue(
+        logsList.stream()
+            .noneMatch(event -> event.getFormattedMessage().contains("Limiting deletion to")));
   }
 }
