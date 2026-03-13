@@ -2254,6 +2254,7 @@ components:
         - "MASTER_KEY_LOST"
         - "REASSIGN_CONSULTANT"
         - "REASSIGN_CONSULTANT_RESET_LAST_MESSAGE"
+        - "CONSULTANT_DISPLAY_NAME_CHANGED"
 
     LastMessageDTO:
       type: object

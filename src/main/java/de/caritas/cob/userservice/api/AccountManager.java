@@ -2,7 +2,7 @@ package de.caritas.cob.userservice.api;
 
 import static java.util.Objects.isNull;
 
-import de.caritas.cob.userservice.api.actions.session.PostConsultantDisplayNameChangedAliasMessageCommand;
+import de.caritas.cob.userservice.api.actions.session.AsyncAliasMessageCommandExecutor;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -49,8 +49,7 @@ public class AccountManager implements AccountManaging {
 
   private final SessionRepository sessionRepository;
 
-  private final PostConsultantDisplayNameChangedAliasMessageCommand
-      postConsultantDisplayNameChangedAliasMessageCommand;
+  private final AsyncAliasMessageCommandExecutor asyncAliasMessageCommandExecutor;
 
   @Override
   public Optional<Map<String, Object>> findConsultant(String id) {
@@ -172,7 +171,7 @@ public class AccountManager implements AccountManaging {
               var updated =
                   messageClient.updateUser(savedConsultant.getRocketChatId(), displayName);
               if (updated) {
-                postConsultantDisplayNameChangedAliasMessageCommand.execute(savedConsultant);
+                asyncAliasMessageCommandExecutor.executeDisplayNameChanged(savedConsultant);
               }
             });
 
