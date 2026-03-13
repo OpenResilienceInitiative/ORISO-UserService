@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -171,7 +172,8 @@ public class AccountManager implements AccountManaging {
               var updated =
                   messageClient.updateUser(savedConsultant.getRocketChatId(), displayName);
               if (updated) {
-                asyncAliasMessageCommandExecutor.executeDisplayNameChanged(savedConsultant);
+                asyncAliasMessageCommandExecutor.executeDisplayNameChanged(
+                    savedConsultant, TenantContext.getCurrentTenant());
               }
             });
 

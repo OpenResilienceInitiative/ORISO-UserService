@@ -95,7 +95,7 @@ class AccountManagerTest {
     accountManager.patchUser(patchMap);
 
     verify(messageClient).updateUser(consultant.getRocketChatId(), "New Name");
-    verify(asyncAliasMessageCommandExecutor).executeDisplayNameChanged(consultant);
+    verify(asyncAliasMessageCommandExecutor).executeDisplayNameChanged(eq(consultant), any());
   }
 
   @Test
