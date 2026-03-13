@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.actions.session.PostConsultantDisplayNameChangedAliasMessageCommand;
+import de.caritas.cob.userservice.api.actions.session.AsyncAliasMessageCommandExecutor;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -42,9 +42,7 @@ class AccountManagerTest {
   @Mock MessageClient messageClient;
   @Mock SessionRepository sessionRepository;
 
-  @Mock
-  PostConsultantDisplayNameChangedAliasMessageCommand
-      postConsultantDisplayNameChangedAliasMessageCommand;
+  @Mock AsyncAliasMessageCommandExecutor asyncAliasMessageCommandExecutor;
 
   @Mock Page<Consultant.ConsultantBase> page;
 
@@ -97,7 +95,7 @@ class AccountManagerTest {
     accountManager.patchUser(patchMap);
 
     verify(messageClient).updateUser(consultant.getRocketChatId(), "New Name");
-    verify(postConsultantDisplayNameChangedAliasMessageCommand).execute(consultant);
+    verify(asyncAliasMessageCommandExecutor).executeDisplayNameChanged(eq(consultant), any());
   }
 
   @Test
@@ -117,7 +115,7 @@ class AccountManagerTest {
     accountManager.patchUser(patchMap);
 
     verify(messageClient).updateUser(consultant.getRocketChatId(), "New Name");
-    verifyNoInteractions(postConsultantDisplayNameChangedAliasMessageCommand);
+    verifyNoInteractions(asyncAliasMessageCommandExecutor);
   }
 
   @Test
@@ -136,6 +134,6 @@ class AccountManagerTest {
     accountManager.patchUser(patchMap);
 
     verify(messageClient, never()).updateUser(anyString(), anyString());
-    verifyNoInteractions(postConsultantDisplayNameChangedAliasMessageCommand);
+    verifyNoInteractions(asyncAliasMessageCommandExecutor);
   }
 }

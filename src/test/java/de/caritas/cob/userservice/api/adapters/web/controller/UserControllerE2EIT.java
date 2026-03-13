@@ -4,7 +4,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
 import static java.util.Objects.nonNull;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
@@ -1180,10 +1182,15 @@ class UserControllerE2EIT {
 
     var expectedMessage =
         new AliasOnlyMessageDTO().messageType(MessageType.CONSULTANT_DISPLAY_NAME_CHANGED);
-    verify(messageControllerApi)
-        .saveAliasOnlyMessage(sessionInProgress.getGroupId(), expectedMessage);
-    verify(messageControllerApi)
-        .saveAliasOnlyMessage(sessionInArchive.getGroupId(), expectedMessage);
+    var groupIdInProgress = sessionInProgress.getGroupId();
+    var groupIdInArchive = sessionInArchive.getGroupId();
+    await()
+        .atMost(5, SECONDS)
+        .untilAsserted(
+            () -> {
+              verify(messageControllerApi).saveAliasOnlyMessage(groupIdInProgress, expectedMessage);
+              verify(messageControllerApi).saveAliasOnlyMessage(groupIdInArchive, expectedMessage);
+            });
   }
 
   @Test
