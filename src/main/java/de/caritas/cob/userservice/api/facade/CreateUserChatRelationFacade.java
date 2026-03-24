@@ -1,0 +1,247 @@
+package de.caritas.cob.userservice.api.facade;
+
+import static java.util.Objects.isNull;
+import static org.apache.logging.log4j.util.Strings.isBlank;
+import static org.apache.logging.log4j.util.Strings.isNotBlank;
+
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.DataDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
+import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
+import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.UserAgencyService;
+import de.caritas.cob.userservice.api.service.user.UserService;
+import java.util.List;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.auditing.AuditingHandler;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+
+/** Facade to encapsulate the steps to initialize a chat/agency relation. */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class CreateUserChatRelationFacade {
+
+  private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull UserService userService;
+  private final @NonNull UserAgencyService userAgencyService;
+  private final @NonNull RollbackFacade rollbackFacade;
+  private final AuditingHandler auditingHandler;
+
+  /**
+   * Creates an user-chat/agency relation for the provided {@link User}. Either provide username and
+   * password in {@link UserDTO} (new user account registrations) or valid {@link
+   * RocketChatCredentials} (for new consulting type registrations).
+   *
+   * @param userDTO {@link UserDTO}
+   * @param user {@link User}
+   * @param rocketChatCredentials {@link RocketChatCredentials}
+   */
+  public void initializeUserChatAgencyRelation(
+      UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
+
+    DataDTO rcUserCredentials = obtainValidUserCredentials(userDTO, user, rocketChatCredentials);
+    updateRocketChatUserIdInDatabase(
+        user, rcUserCredentials.getUserId(), Boolean.parseBoolean(userDTO.getTermsAccepted()));
+    createUserChatAgencyRelation(userDTO, user);
+  }
+
+  private DataDTO obtainValidUserCredentials(
+      UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
+
+    if (isNewUserAccountRegistration(user, rocketChatCredentials)) {
+      try {
+        return validateUserCredentials(
+            obtainRocketChatloginData(userDTO, user),
+            user,
+            rocketChatCredentials,
+            Boolean.parseBoolean(userDTO.getTermsAccepted()));
+      } catch (RocketChatLoginException e) {
+        log.error("RocketChat login failed for user {}: {}", userDTO.getUsername(), e.getMessage());
+        throw new InternalServerErrorException(
+            "RocketChat login failed", LogService::logInternalServerError);
+      }
+    }
+    return new DataDTO(
+        rocketChatCredentials.getRocketChatUserId(),
+        rocketChatCredentials.getRocketChatToken(),
+        null);
+  }
+
+  private boolean isNewUserAccountRegistration(
+      User user, RocketChatCredentials rocketChatCredentials) {
+    return (isNull(rocketChatCredentials) || isNull(rocketChatCredentials.getRocketChatUserId()))
+        && isNull(user.getRcUserId());
+  }
+
+  private DataDTO obtainRocketChatloginData(UserDTO userDTO, User user)
+      throws RocketChatLoginException {
+    String encodedUsername = new UsernameTranscoder().encodeUsername(userDTO.getUsername());
+
+    // First, create the user in RocketChat
+    try {
+      rocketChatService.createUser(encodedUsername, userDTO.getPassword(), userDTO.getEmail());
+    } catch (RocketChatLoginException e) {
+      log.warn("User {} might already exist in RocketChat: {}", encodedUsername, e.getMessage());
+      // Continue with login attempt even if creation fails (user might already exist)
+    }
+
+    // Then login the user
+    ResponseEntity<LoginResponseDTO> rcUserResponse =
+        rocketChatService.loginUserFirstTime(encodedUsername, userDTO.getPassword());
+
+    checkIfRocketLoginSucceeded(userDTO, user, rcUserResponse);
+
+    return rcUserResponse.getBody().getData();
+  }
+
+  private void checkIfRocketLoginSucceeded(
+      UserDTO userDTO, User user, ResponseEntity<LoginResponseDTO> rcUserResponse)
+      throws RocketChatLoginException {
+    if (isNull(rcUserResponse)
+        || !rcUserResponse.getStatusCode().equals(HttpStatus.OK)
+        || isNull(rcUserResponse.getBody())) {
+      throw new RocketChatLoginException("Rocket.Chat login failed - invalid response");
+    }
+  }
+
+  private DataDTO validateUserCredentials(
+      DataDTO dataDTO,
+      User user,
+      RocketChatCredentials rocketChatCredentials,
+      boolean deleteUserOnRollback) {
+    String rcUserToken = obtainValidRcToken(dataDTO, rocketChatCredentials);
+    String rcUserId = obtainValidRcUserId(dataDTO, rocketChatCredentials);
+
+    log.info(
+        "Validating RocketChat credentials for user {}: token={}, userId={}",
+        user.getUsername(),
+        rcUserToken,
+        rcUserId);
+
+    if (isBlank(rcUserToken) || isBlank(rcUserId)) {
+      log.warn("RocketChat credentials are blank for user {}, rolling back", user.getUsername());
+      rollBackAndLogRocketChatLoginError(user, deleteUserOnRollback);
+    }
+
+    dataDTO.setUserId(rcUserId);
+    dataDTO.setAuthToken(rcUserToken);
+    return dataDTO;
+  }
+
+  private String obtainValidRcToken(DataDTO dataDTO, RocketChatCredentials rocketChatCredentials) {
+    return isNull(rocketChatCredentials) || isNull(rocketChatCredentials.getRocketChatToken())
+        ? dataDTO.getAuthToken()
+        : rocketChatCredentials.getRocketChatToken();
+  }
+
+  private String obtainValidRcUserId(DataDTO dataDTO, RocketChatCredentials rocketChatCredentials) {
+    return isNull(rocketChatCredentials) || isNull(rocketChatCredentials.getRocketChatUserId())
+        ? dataDTO.getUserId()
+        : rocketChatCredentials.getRocketChatUserId();
+  }
+
+  private void updateRocketChatUserIdInDatabase(
+      User user, String rcUserId, boolean deleteUserOnRollback) {
+    if (isNotBlank(user.getRcUserId())) {
+      return;
+    }
+
+    user.setRcUserId(rcUserId);
+    try {
+      User updatedUser = userService.saveUser(user);
+      checkUpdatedUserId(user, updatedUser, deleteUserOnRollback);
+    } catch (Exception e) {
+      rollBackAndLogMariaDbError(user, e, deleteUserOnRollback);
+    }
+  }
+
+  private void checkUpdatedUserId(User user, User updatedUser, boolean deleteUserOnRollback) {
+    if (isBlank(updatedUser.getRcUserId())) {
+      rollBackAndLogMariaDbError(
+          user,
+          new IllegalArgumentException("Rocket.Chat user ID is empty."),
+          deleteUserOnRollback);
+    }
+  }
+
+  private void createUserChatAgencyRelation(UserDTO userDTO, User user) {
+    UserAgency userAgency = new UserAgency(user, userDTO.getAgencyId());
+    checkIfAlreadyAssignedToAgency(user, userAgency);
+
+    try {
+      auditingHandler.markCreated(userAgency);
+      userAgencyService.saveUserAgency(userAgency);
+
+    } catch (InternalServerErrorException serviceException) {
+      rollbackFacade.rollBackUserAccount(
+          RollbackUserAccountInformation.builder()
+              .userId(user.getUserId())
+              .user(user)
+              .userAgency(userAgency)
+              .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
+              .build());
+      throw new InternalServerErrorException(
+          "Could not create user-agency relation for group chat registration",
+          LogService::logDatabaseError);
+    }
+  }
+
+  private void checkIfAlreadyAssignedToAgency(User user, UserAgency userAgency) {
+    List<UserAgency> userAgencies = userAgencyService.getUserAgenciesByUser(user);
+
+    if (userAgencies.stream()
+        .anyMatch(agency -> agency.getAgencyId().equals(userAgency.getAgencyId()))) {
+      throw new BadRequestException(
+          String.format(
+              "User %s already assigned to chat relation agency %s",
+              user.getUserId(), userAgency.getAgencyId()));
+    }
+  }
+
+  private void rollBackAndLogRocketChatLoginError(User user, boolean deleteUser) {
+    rollBackAndLogRocketChatLoginError(
+        user, new RocketChatLoginException("Rocket.Chat login error."), deleteUser);
+  }
+
+  private void rollBackAndLogRocketChatLoginError(
+      User user, RocketChatLoginException exception, boolean deleteUser) {
+    rollBackUserAccount(user, deleteUser);
+    throw new InternalServerErrorException(
+        String.format(
+            "Rocket.Chat login for Group Chat registration was not successful for user %s. %s",
+            user.getUsername(), isBlank(exception.getMessage()) ? "" : exception.getMessage()),
+        LogService::logRocketChatError);
+  }
+
+  private void rollBackAndLogMariaDbError(User user, Exception exception, boolean deleteUser) {
+    rollBackUserAccount(user, deleteUser);
+    throw new InternalServerErrorException(
+        String.format(
+            "Could not update Rocket.Chat user ID for user %s. %s",
+            user.getUsername(), exception.getMessage()),
+        LogService::logDatabaseError);
+  }
+
+  private void rollBackUserAccount(User user, boolean deleteUser) {
+    rollbackFacade.rollBackUserAccount(
+        RollbackUserAccountInformation.builder()
+            .userId(user.getUserId())
+            .user(user)
+            .rollBackUserAccount(deleteUser)
+            .build());
+  }
+}
