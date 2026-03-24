@@ -11,7 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Appointment;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.UUID;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

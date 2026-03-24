@@ -47,13 +47,14 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import jakarta.ws.rs.BadRequestException;
+import javax.ws.rs.BadRequestException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Service for sessions */
 @Service
@@ -136,7 +137,7 @@ public class SessionService {
               .map(Session::getAgencyId)
               .filter(Objects::nonNull)
               .collect(Collectors.toList());
-      List<AgencyDTO> agencies = agencyService.getAgencies(agencyIds);
+      List<AgencyDTO> agencies = getAgenciesSafely(agencyIds, "user " + userId);
       sessionResponseDTOs = convertToUserSessionResponseDTO(sessions, agencies);
     }
     return sessionResponseDTOs;
@@ -477,7 +478,20 @@ public class SessionService {
             .map(Session::getAgencyId)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
-    return agencyService.getAgencies(new ArrayList<>(agencyIds));
+    return getAgenciesSafely(new ArrayList<>(agencyIds), "session list lookup");
+  }
+
+  private List<AgencyDTO> getAgenciesSafely(List<Long> agencyIds, String context) {
+    if (agencyIds == null || agencyIds.isEmpty()) {
+      return emptyList();
+    }
+    try {
+      return agencyService.getAgencies(agencyIds);
+    } catch (HttpClientErrorException.Forbidden e) {
+      // Do not break login/session bootstrap when agency service denies access for this token.
+      log.warn("Forbidden while loading agencies for {}: {}", context, e.getMessage());
+      return emptyList();
+    }
   }
 
   /**

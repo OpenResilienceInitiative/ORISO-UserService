@@ -1,12 +1,17 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.*;
 import java.util.concurrent.*;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +29,10 @@ public class MatrixEventListenerService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull UserRepository userRepository;
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull SessionRepository sessionRepository;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -215,12 +224,9 @@ public class MatrixEventListenerService {
       String roomId = roomEntry.getKey();
       Map<String, Object> roomData = (Map<String, Object>) roomEntry.getValue();
 
-      // Check if we're tracking this room
-      if (!roomToSessionMap.containsKey(roomId)) {
-        log.debug(
-            "🔷 Ignoring room {} (not registered, {} rooms tracked)",
-            roomId,
-            roomToSessionMap.size());
+      // Resolve session context even if room wasn't explicitly registered by UI.
+      Optional<Long> sessionIdOpt = resolveSessionIdForRoom(roomId);
+      if (sessionIdOpt.isEmpty()) {
         continue;
       }
 
@@ -298,6 +304,8 @@ public class MatrixEventListenerService {
 
     String msgtype = (String) content.get("msgtype");
     String body = (String) content.get("body");
+    String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
+    String threadRootId = extractThreadRootId(content);
 
     log.info(
         "📩 New Matrix message in room {}: {} (type: {})",
@@ -306,7 +314,7 @@ public class MatrixEventListenerService {
         msgtype);
 
     // Get users who should receive notification (exclude sender)
-    Set<String> userIds = roomToUsersMap.get(roomId);
+    Set<String> userIds = getRecipientCandidatesForRoom(roomId);
     if (userIds == null || userIds.isEmpty()) {
       return;
     }
@@ -314,7 +322,7 @@ public class MatrixEventListenerService {
     // Trigger LiveService directMessage event for all users except sender
     List<String> recipientIds =
         userIds.stream()
-            .filter(userId -> !userId.equals(senderId))
+            .filter(userId -> senderDomainUserId == null || !userId.equals(senderDomainUserId))
             .collect(java.util.stream.Collectors.toList());
 
     if (!recipientIds.isEmpty()) {
@@ -329,12 +337,98 @@ public class MatrixEventListenerService {
             () -> {
               try {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+                if (threadRootId != null && !threadRootId.isBlank()) {
+                  eventNotificationService.createThreadReplyNotificationFromRoom(
+                      roomId, senderDomainUserId, body, threadRootId, true);
+                } else {
+                  eventNotificationService.createMessageNotificationFromRoom(
+                      roomId, senderDomainUserId, body, true);
+                }
               } catch (Exception e) {
                 log.error("❌ Failed to send LiveService notification", e);
               }
             });
       }
     }
+  }
+
+  private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+    return userRepository
+        .findByMatrixUserIdAndDeleteDateIsNull(matrixUserId)
+        .map(user -> user.getUserId())
+        .or(
+            () ->
+                consultantRepository
+                    .findByMatrixUserIdAndDeleteDateIsNull(matrixUserId)
+                    .map(consultant -> consultant.getId()))
+        .orElse(null);
+  }
+
+  private Optional<Long> resolveSessionIdForRoom(String roomId) {
+    Long cached = roomToSessionMap.get(roomId);
+    if (cached != null) {
+      return Optional.of(cached);
+    }
+
+    Optional<Session> sessionOpt = sessionRepository.findByMatrixRoomId(roomId);
+    if (sessionOpt.isEmpty()) {
+      return Optional.empty();
+    }
+
+    Session session = sessionOpt.get();
+    roomToSessionMap.put(roomId, session.getId());
+    roomToUsersMap.put(roomId, buildRecipientSet(session));
+    return Optional.of(session.getId());
+  }
+
+  private Set<String> getRecipientCandidatesForRoom(String roomId) {
+    Set<String> cached = roomToUsersMap.get(roomId);
+    if (cached != null && !cached.isEmpty()) {
+      return cached;
+    }
+
+    Optional<Session> sessionOpt = sessionRepository.findByMatrixRoomId(roomId);
+    if (sessionOpt.isEmpty()) {
+      return Collections.emptySet();
+    }
+
+    Session session = sessionOpt.get();
+    Set<String> recipients = buildRecipientSet(session);
+    roomToSessionMap.put(roomId, session.getId());
+    roomToUsersMap.put(roomId, recipients);
+    return recipients;
+  }
+
+  private Set<String> buildRecipientSet(Session session) {
+    Set<String> userIds = new HashSet<>();
+    if (session.getUser() != null && session.getUser().getUserId() != null) {
+      userIds.add(session.getUser().getUserId());
+    }
+    if (session.getConsultant() != null && session.getConsultant().getId() != null) {
+      userIds.add(session.getConsultant().getId());
+    }
+    return userIds;
+  }
+
+  @SuppressWarnings("unchecked")
+  private String extractThreadRootId(Map<String, Object> content) {
+    if (content == null) {
+      return null;
+    }
+    Object relatesToRaw = content.get("m.relates_to");
+    if (!(relatesToRaw instanceof Map)) {
+      return null;
+    }
+    Map<String, Object> relatesTo = (Map<String, Object>) relatesToRaw;
+    String relType = String.valueOf(relatesTo.getOrDefault("rel_type", ""));
+    if (!"m.thread".equals(relType)) {
+      return null;
+    }
+    Object eventId = relatesTo.get("event_id");
+    return eventId != null ? String.valueOf(eventId) : null;
   }
 
   /**

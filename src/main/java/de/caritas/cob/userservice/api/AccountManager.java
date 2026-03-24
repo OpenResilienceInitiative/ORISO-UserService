@@ -2,8 +2,11 @@ package de.caritas.cob.userservice.api;
 
 import static java.util.Objects.isNull;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
@@ -16,6 +19,9 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -50,11 +56,15 @@ public class AccountManager implements AccountManaging {
 
   private final ConsultantAgencyRepository consultantAgencyRepository;
 
+  private final AuthenticatedUser authenticatedUser;
+
   private final SessionRepository sessionRepository;
 
   private final AppointmentService appointmentService;
 
   private final PatchConsultantSaga patchConsultantSaga;
+
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Override
   public Optional<Map<String, Object>> findConsultant(String id) {
@@ -96,13 +106,14 @@ public class AccountManager implements AccountManaging {
 
     var direction = isAscending ? Direction.ASC : Direction.DESC;
     var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
+    var effectiveTenantId = resolveEffectiveTenantId();
     Page<ConsultantBase> consultantPage;
     if (!shouldFilterByAgencies) {
-      consultantPage = consultantRepository.findAllByInfix(infix, pageRequest);
+      consultantPage = consultantRepository.findAllByInfix(infix, effectiveTenantId, pageRequest);
     } else {
       consultantPage =
           consultantRepository.findAllByInfixAndAgencyIds(
-              infix, agenciesToFilterConsultants, pageRequest);
+              infix, agenciesToFilterConsultants, effectiveTenantId, pageRequest);
     }
 
     var consultantIds =
@@ -211,5 +222,46 @@ public class AccountManager implements AccountManaging {
     return () -> {
       throw new InternalServerErrorException(message);
     };
+  }
+
+  private Long resolveEffectiveTenantId() {
+    Long tokenTenantId = getTenantIdFromAccessToken();
+    if (tokenTenantId != null) {
+      return tokenTenantId;
+    }
+    return TenantContext.getCurrentTenant();
+  }
+
+  private Long getTenantIdFromAccessToken() {
+    try {
+      String accessToken = authenticatedUser.getAccessToken();
+      if (accessToken == null || accessToken.isBlank()) {
+        return null;
+      }
+      String[] tokenParts = accessToken.split("\\.");
+      if (tokenParts.length < 2) {
+        return null;
+      }
+      String payload = new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
+      JsonNode payloadNode = objectMapper.readTree(payload);
+      JsonNode tenantIdNode = payloadNode.get("tenantId");
+      if (tenantIdNode == null || tenantIdNode.isNull()) {
+        return null;
+      }
+      if (tenantIdNode.isNumber()) {
+        return tenantIdNode.asLong();
+      }
+      if (tenantIdNode.isTextual()) {
+        String tenantIdText = tenantIdNode.asText();
+        if (tenantIdText.isBlank()) {
+          return null;
+        }
+        return Long.parseLong(tenantIdText);
+      }
+      return null;
+    } catch (Exception exception) {
+      log.warn("Could not resolve tenantId from authenticated access token", exception);
+      return null;
+    }
   }
 }

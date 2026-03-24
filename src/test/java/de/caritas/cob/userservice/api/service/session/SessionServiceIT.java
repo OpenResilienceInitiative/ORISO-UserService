@@ -173,7 +173,7 @@ class SessionServiceIT {
     session.setIsConsultantDirectlySet(false);
     sessionService.saveSession(session);
     assertThrows(
-        jakarta.ws.rs.BadRequestException.class,
+        javax.ws.rs.BadRequestException.class,
         () -> {
           sessionService.findGroupIdByConsultantAndUser(
               "473f7c4b-f011-4fc2-847c-ceb636a5b399", "1da238c6-cd46-4162-80f1-bff74eafe77f");

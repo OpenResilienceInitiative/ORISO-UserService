@@ -35,7 +35,7 @@ import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConvers
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

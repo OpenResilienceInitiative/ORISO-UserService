@@ -2486,6 +2486,10 @@ components:
           type: string
           format: email
           example: maxmuster@mann.com
+        magicLinkLoginEnabled:
+          type: boolean
+          example: false
+          description: indicates if magic-link login is enabled for this account
         available:
           description: consultants can mark themselves as not available for one-on-one chats
           type: boolean
@@ -2576,6 +2580,10 @@ components:
           type: boolean
           example: true
           description: indicates if 2FA is supposed to be encouraged
+        magicLinkLoginEnabled:
+          type: boolean
+          example: false
+          description: indicates if magic-link login should be enabled for this account
         displayName:
           type: string
           minLength: 1

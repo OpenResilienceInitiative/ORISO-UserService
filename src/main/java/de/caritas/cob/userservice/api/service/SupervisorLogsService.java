@@ -1,9 +1,14 @@
 package de.caritas.cob.userservice.api.service;
 
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import lombok.Builder;
 import lombok.Data;
@@ -19,13 +24,15 @@ import org.springframework.stereotype.Service;
 public class SupervisorLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+  private final @NonNull AuthenticatedUser authenticatedUser;
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
   public SupervisorLogsResult listSupervisorLogs(int page, int perPage) {
     final int safePerPage = Math.min(Math.max(perPage, 1), 200);
     final int safePage = Math.max(page, 1);
     final int offset = (safePage - 1) * safePerPage;
 
-    final Long tenantId = TenantContext.isTechnicalOrSuperAdminContext() ? null : TenantContext.getCurrentTenant();
+    final Long tenantId = resolveEffectiveTenantId();
 
     MapSqlParameterSource params =
         new MapSqlParameterSource()
@@ -41,7 +48,7 @@ public class SupervisorLogsService {
                 + "    SELECT COUNT(*)\n"
                 + "    FROM session_supervisor ss\n"
                 + "    JOIN session s ON s.id = ss.session_id\n"
-                + "    WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId)\n"
+                + "    WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
                 + "  )\n"
                 + "  +\n"
                 + "  (\n"
@@ -49,7 +56,7 @@ public class SupervisorLogsService {
                 + "    FROM session_supervisor ss\n"
                 + "    JOIN session s ON s.id = ss.session_id\n"
                 + "    WHERE ss.removed_date IS NOT NULL\n"
-                + "      AND (:tenantId IS NULL OR s.tenant_id = :tenantId)\n"
+                + "      AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
                 + "  ) AS total",
             params,
             Long.class);
@@ -74,7 +81,7 @@ public class SupervisorLogsService {
                 + "  JOIN session s ON s.id = ss.session_id\n"
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
                 + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
-                + "  WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId)\n"
+                + "  WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
                 + "\n"
                 + "  UNION ALL\n"
                 + "\n"
@@ -95,7 +102,7 @@ public class SupervisorLogsService {
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
                 + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
                 + "  WHERE ss.removed_date IS NOT NULL\n"
-                + "    AND (:tenantId IS NULL OR s.tenant_id = :tenantId)\n"
+                + "    AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
                 + ") e\n"
                 + "ORDER BY e.eventDate DESC\n"
                 + "LIMIT :limit OFFSET :offset",
@@ -126,6 +133,48 @@ public class SupervisorLogsService {
           .actorName(rs.getString("actorName"))
           .notes(rs.getString("notes"))
           .build();
+    }
+  }
+
+  private Long resolveEffectiveTenantId() {
+    Long tokenTenantId = getTenantIdFromAccessToken();
+    if (tokenTenantId != null) {
+      // tenantId=0 is global context (super-admin/technical): no tenant restriction.
+      return tokenTenantId == 0L ? null : tokenTenantId;
+    }
+    return TenantContext.isTechnicalOrSuperAdminContext() ? null : TenantContext.getCurrentTenant();
+  }
+
+  private Long getTenantIdFromAccessToken() {
+    try {
+      String accessToken = authenticatedUser.getAccessToken();
+      if (accessToken == null || accessToken.isBlank()) {
+        return null;
+      }
+      String[] tokenParts = accessToken.split("\\.");
+      if (tokenParts.length < 2) {
+        return null;
+      }
+      String payload =
+          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
+      JsonNode payloadNode = objectMapper.readTree(payload);
+      JsonNode tenantIdNode = payloadNode.get("tenantId");
+      if (tenantIdNode == null || tenantIdNode.isNull()) {
+        return null;
+      }
+      if (tenantIdNode.isNumber()) {
+        return tenantIdNode.asLong();
+      }
+      if (tenantIdNode.isTextual()) {
+        String tenantIdText = tenantIdNode.asText();
+        if (tenantIdText.isBlank()) {
+          return null;
+        }
+        return Long.parseLong(tenantIdText);
+      }
+      return null;
+    } catch (Exception exception) {
+      return null;
     }
   }
 

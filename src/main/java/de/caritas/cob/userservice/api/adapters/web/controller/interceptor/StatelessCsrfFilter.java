@@ -10,11 +10,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -84,7 +84,8 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
   @RequiredArgsConstructor
   private static final class DefaultRequiresCsrfMatcher implements RequestMatcher {
 
-    private final Pattern allowedMethods = Pattern.compile("^(HEAD|TRACE|OPTIONS)$");
+    // CSRF checks are only needed for state-changing requests.
+    private final Pattern allowedMethods = Pattern.compile("^(GET|HEAD|TRACE|OPTIONS)$");
     private final @NonNull CsrfSecurityProperties csrfSecurityProperties;
 
     @Override
@@ -93,6 +94,11 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
     }
 
     private boolean isWhiteListUrl(HttpServletRequest request) {
+      // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF token.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/users/magic-link/")) {
+        return true;
+      }
       List<String> csrfWhitelist =
           new ArrayList<>(Arrays.asList(csrfSecurityProperties.getWhitelist().getConfigUris()));
       csrfWhitelist.addAll(Arrays.asList(csrfSecurityProperties.getWhitelist().getAdminUris()));

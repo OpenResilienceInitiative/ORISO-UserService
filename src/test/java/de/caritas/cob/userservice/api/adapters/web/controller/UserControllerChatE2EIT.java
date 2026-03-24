@@ -84,7 +84,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import javax.transaction.Transactional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;

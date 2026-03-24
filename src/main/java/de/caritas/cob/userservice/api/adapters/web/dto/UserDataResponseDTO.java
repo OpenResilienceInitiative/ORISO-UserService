@@ -72,6 +72,8 @@ public class UserDataResponseDTO {
 
   @JsonIgnore private Boolean encourage2fa;
 
+  private Boolean magicLinkLoginEnabled;
+
   private Boolean e2eEncryptionEnabled;
 
   private Boolean isWalkThroughEnabled;

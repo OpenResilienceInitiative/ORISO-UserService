@@ -31,6 +31,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
@@ -99,6 +101,9 @@ import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
@@ -110,9 +115,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.InternalServerErrorException;
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.InternalServerErrorException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -174,6 +179,7 @@ public class UserController implements UsersApi {
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
   private final @NotNull IdentityClient identityClient;
+  private final @NonNull MagicLinkLoginService magicLinkLoginService;
 
   private final @NotNull AdminUserFacade adminUserFacade;
 
@@ -181,6 +187,7 @@ public class UserController implements UsersApi {
   private boolean featureTopicsEnabled;
 
   private final @NonNull SessionDeleteService sessionDeleteService;
+  private final @NonNull EventNotificationService eventNotificationService;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -190,6 +197,24 @@ public class UserController implements UsersApi {
       return ResponseEntity.ok().build();
     }
     return ResponseEntity.notFound().build();
+  }
+
+  @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
+  public ResponseEntity<Void> requestMagicLink(@Valid @RequestBody MagicLinkRequestDTO requestDTO) {
+    var result = magicLinkLoginService.requestMagicLink(requestDTO.getUsername());
+    if (result == de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult.NOT_ENABLED) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    return ResponseEntity.noContent().build();
+  }
+
+  @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/consume")
+  public ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(
+      @Valid @RequestBody MagicLinkConsumeDTO consumeDTO) {
+    return magicLinkLoginService
+        .consumeMagicLink(consumeDTO.getToken())
+        .map(ResponseEntity::ok)
+        .orElseGet(() -> ResponseEntity.badRequest().build());
   }
 
   /**
@@ -610,6 +635,8 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> patchUser(PatchUserDTO patchUserDTO) {
+    validateMagicLinkTogglePrerequisites(patchUserDTO);
+
     var userId = authenticatedUser.getUserId();
     var patchMap =
         userDtoMapper
@@ -642,6 +669,28 @@ public class UserController implements UsersApi {
             });
 
     return ResponseEntity.noContent().build();
+  }
+
+  private void validateMagicLinkTogglePrerequisites(PatchUserDTO patchUserDTO) {
+    if (!Boolean.TRUE.equals(patchUserDTO.getMagicLinkLoginEnabled())) {
+      return;
+    }
+
+    String email = null;
+    if (authenticatedUser.isConsultant()) {
+      email = userAccountProvider.retrieveValidatedConsultant().getEmail();
+    } else if (authenticatedUser.isAdviceSeeker()) {
+      email = userAccountProvider.retrieveValidatedUser().getEmail();
+    }
+
+    boolean hasRealEmail =
+        nonNull(email)
+            && !email.isBlank()
+            && !email.endsWith(identityClientConfig.getEmailDummySuffix());
+    if (!hasRealEmail) {
+      throw new BadRequestException(
+          "Magic link login can only be enabled when a profile email is set.");
+    }
   }
 
   /**
@@ -810,6 +859,8 @@ public class UserController implements UsersApi {
         authenticatedUser.getRoles(),
         authenticatedUser.getUserId(),
         TenantContext.getCurrentTenantData());
+    eventNotificationService.createMessageNotificationFromRoom(
+        newMessageNotificationDTO.getRcGroupId(), authenticatedUser.getUserId(), null, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

@@ -9,6 +9,8 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 
 import com.neovisionaries.i18n.LanguageCode;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
@@ -42,6 +44,8 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.util.List;
 import java.util.Set;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -80,10 +84,13 @@ public class CreateConsultantSaga {
 
   private final @NonNull SessionService sessionService;
 
+  private final ObjectMapper objectMapper = new ObjectMapper();
+
   private Consultant createNewConsultantWithoutAppointment(
       CreateConsultantDTO createConsultantDTO) {
-    validateTenantId(createConsultantDTO);
     setCurrentTenant(createConsultantDTO);
+    validateTenantId(createConsultantDTO);
+    ensureTenantIdResolved(createConsultantDTO);
 
     assertLicensesNotExceeded(createConsultantDTO);
 
@@ -151,7 +158,7 @@ public class CreateConsultantSaga {
 
   private void validateTenantId(CreateConsultantDTO createConsultantDTO) {
     if (multiTenancyEnabled) {
-      if (authenticatedUser.isTenantSuperAdmin()) {
+      if (isGlobalTenantContext()) {
         if (createConsultantDTO.getTenantId() == null) {
           throw new BadRequestException(
               "TenantId must be set if consultant is created by superadmin");
@@ -163,12 +170,14 @@ public class CreateConsultantSaga {
   }
 
   private void checkIfTenantIdMatch(CreateConsultantDTO createConsultantDTO) {
+    Long effectiveTenantId = resolveEffectiveTenantId();
     if (createConsultantDTO.getTenantId() != null
-        && !createConsultantDTO.getTenantId().equals(TenantContext.getCurrentTenant())) {
+        && effectiveTenantId != null
+        && !createConsultantDTO.getTenantId().equals(effectiveTenantId)) {
       log.error(
           "TenantId of createConsultantDTO {} does not match current tenant {}",
           createConsultantDTO.getTenantId(),
-          TenantContext.getCurrentTenant());
+          effectiveTenantId);
       throw new BadRequestException(
           "TenantId of createConsultantDTO does not match current tenant");
     }
@@ -360,9 +369,25 @@ public class CreateConsultantSaga {
   }
 
   private void setCurrentTenant(CreateConsultantDTO createConsultantDTO) {
-    if (multiTenancyEnabled
-        && (!authenticatedUser.isTenantSuperAdmin() && createConsultantDTO.getTenantId() == null)) {
-      createConsultantDTO.setTenantId(TenantContext.getCurrentTenant());
+    if (createConsultantDTO.getTenantId() == null) {
+      Long effectiveTenantId = resolveEffectiveTenantId();
+      if (effectiveTenantId != null && effectiveTenantId > 0) {
+        createConsultantDTO.setTenantId(effectiveTenantId);
+      }
+    }
+  }
+
+  private void ensureTenantIdResolved(CreateConsultantDTO createConsultantDTO) {
+    if (createConsultantDTO.getTenantId() != null) {
+      return;
+    }
+    Long effectiveTenantId = resolveEffectiveTenantId();
+    if (effectiveTenantId != null && effectiveTenantId > 0) {
+      createConsultantDTO.setTenantId(effectiveTenantId);
+      return;
+    }
+    if (isGlobalTenantContext()) {
+      throw new BadRequestException("TenantId must be set if consultant is created by superadmin");
     }
   }
 
@@ -415,6 +440,7 @@ public class CreateConsultantSaga {
         .firstName(consultantCreationInput.getFirstName())
         .lastName(consultantCreationInput.getLastName())
         .email(consultantCreationInput.getEmail())
+        .magicLinkLoginEnabled(false)
         .build();
   }
 
@@ -439,6 +465,7 @@ public class CreateConsultantSaga {
         .matrixUserId(matrixUserId)
         .matrixPassword(matrixPassword)
         .encourage2fa(true)
+        .magicLinkLoginEnabled(false)
         .notifyEnquiriesRepeating(true)
         .notifyNewChatMessageFromAdviceSeeker(true)
         .languageFormal(consultantCreationInput.isLanguageFormal())
@@ -477,7 +504,7 @@ public class CreateConsultantSaga {
     if (multiTenancyEnabled) {
       TenantDTO tenantById = tenantAdminService.getTenantById(createConsultantDTO.getTenantId());
       long numberOfActiveConsultants =
-          authenticatedUser.isTenantSuperAdmin()
+          isGlobalTenantContext()
               ? consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId())
               : consultantService.getNumberOfActiveConsultants();
 
@@ -500,5 +527,50 @@ public class CreateConsultantSaga {
   public void rollbackCreateNewConsultant(Consultant newConsultant) {
     log.info("Rollback creation of consultant with id {}", newConsultant.getId());
     rollbackFacade.rollbackConsultantAccount(newConsultant);
+  }
+
+  private boolean isGlobalTenantContext() {
+    Long effectiveTenantId = resolveEffectiveTenantId();
+    return effectiveTenantId != null && effectiveTenantId == 0L;
+  }
+
+  private Long resolveEffectiveTenantId() {
+    Long tokenTenantId = getTenantIdFromAccessToken();
+    if (tokenTenantId != null) {
+      return tokenTenantId;
+    }
+    return TenantContext.getCurrentTenant();
+  }
+
+  private Long getTenantIdFromAccessToken() {
+    try {
+      String accessToken = authenticatedUser.getAccessToken();
+      if (accessToken == null || accessToken.isBlank()) {
+        return null;
+      }
+      String[] tokenParts = accessToken.split("\\.");
+      if (tokenParts.length < 2) {
+        return null;
+      }
+      String payload = new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
+      JsonNode payloadNode = objectMapper.readTree(payload);
+      JsonNode tenantIdNode = payloadNode.get("tenantId");
+      if (tenantIdNode == null || tenantIdNode.isNull()) {
+        return null;
+      }
+      if (tenantIdNode.isNumber()) {
+        return tenantIdNode.asLong();
+      }
+      if (tenantIdNode.isTextual()) {
+        String tenantIdText = tenantIdNode.asText();
+        if (tenantIdText.isBlank()) {
+          return null;
+        }
+        return Long.parseLong(tenantIdText);
+      }
+      return null;
+    } catch (Exception exception) {
+      return null;
+    }
   }
 }

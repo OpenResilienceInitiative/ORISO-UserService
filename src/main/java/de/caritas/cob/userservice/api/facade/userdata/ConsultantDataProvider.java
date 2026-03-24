@@ -23,12 +23,15 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Exte
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.stereotype.Component;
 
 /** Provider for consultant information. */
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class ConsultantDataProvider {
 
@@ -71,6 +74,7 @@ public class ConsultantDataProvider {
         .languages(languageStringsOf(consultant.getLanguages()))
         .preferredLanguage(preferredLanguageOf(consultant.getLanguageCode()))
         .encourage2fa(consultant.getEncourage2fa())
+        .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
         .absenceMessage(consultant.getAbsenceMessage())
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencyDTOsOf(consultant))
@@ -100,7 +104,14 @@ public class ConsultantDataProvider {
   }
 
   private List<AgencyDTO> agencyDTOsOf(Consultant consultant) {
-    return agencyService.getAgencies(agencyIdsOf(consultant.getConsultantAgencies()));
+    try {
+      return agencyService.getAgencies(agencyIdsOf(consultant.getConsultantAgencies()));
+    } catch (HttpClientErrorException.Forbidden e) {
+      // Do not block login when agency-service scope denies this token;
+      // return a minimal consultant profile instead of surfacing a 500.
+      log.warn("Forbidden while loading agencies for consultant {}: {}", consultant.getId(), e.getMessage());
+      return List.of();
+    }
   }
 
   private Set<String> languageStringsOf(Set<Language> languages) {

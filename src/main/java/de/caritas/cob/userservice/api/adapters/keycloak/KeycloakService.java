@@ -34,8 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
-import jakarta.ws.rs.BadRequestException;
-import jakarta.ws.rs.core.Response;
+import javax.ws.rs.BadRequestException;
+import javax.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Synchronized;
@@ -43,7 +43,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
-import org.keycloak.representations.idm.ErrorRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Value;
@@ -78,6 +77,8 @@ public class KeycloakService implements IdentityClient {
   private static final String ENDPOINT_OTP_VERIFY_EMAIL = "/send-verification-mail/{username}";
   private static final String ENDPOINT_OTP_FINISH_EMAIL = "/setup-otp-mail/{username}";
   private static final String LOCALE = "locale";
+  private static final String TENANT_ID_ATTRIBUTE = "tenantId";
+  private static final String USER_ID_ATTRIBUTE = "userId";
 
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -355,7 +356,21 @@ public class KeycloakService implements IdentityClient {
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
     try (var response = keycloakClient.getUsersResource().create(kcUser)) {
       if (response.getStatus() == HttpStatus.CREATED.value()) {
-        return new KeycloakCreateUserResponseDTO(getCreatedUserId(response.getLocation()));
+        final String createdUserId = getCreatedUserId(response.getLocation());
+        try {
+          updateIdentityAttributesAfterCreate(user, createdUserId);
+        } catch (Exception exception) {
+          log.error(
+              "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
+              createdUserId,
+              exception);
+          rollBackUser(createdUserId);
+          throw new InternalServerErrorException(
+              String.format(
+                  "Could not persist mandatory keycloak user attributes for user %s", createdUserId),
+              exception);
+        }
+        return new KeycloakCreateUserResponseDTO(createdUserId);
       }
       handleCreateKeycloakUserError(response);
     }
@@ -365,25 +380,35 @@ public class KeycloakService implements IdentityClient {
   }
 
   private void handleCreateKeycloakUserError(Response response) {
+    final int status = response.getStatus();
+    String rawResponse = "";
+
     try {
-      String errorMsg = response.readEntity(ErrorRepresentation.class).getErrorMessage();
-      if (errorMsg.equals(identityClientConfig.getErrorMessageDuplicatedEmail())) {
-        throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
-      }
-      if (errorMsg.equals(identityClientConfig.getErrorMessageDuplicatedUsername())) {
-        throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
-      }
+      // Read once from response stream; this is the most stable source across Keycloak versions.
+      rawResponse = Optional.ofNullable(response.readEntity(String.class)).orElse("");
     } catch (Exception e) {
-      // Handle parsing errors gracefully - log the error and continue
-      log.warn("Could not parse Keycloak error response: {}", e.getMessage());
-      // Try to read the raw response for debugging
-      try {
-        String rawResponse = response.readEntity(String.class);
-        log.warn("Raw Keycloak error response: {}", rawResponse);
-      } catch (Exception ex) {
-        log.warn("Could not read raw response: {}", ex.getMessage());
-      }
+      log.warn("Could not read raw Keycloak error response: {}", e.getMessage());
     }
+
+    String combinedError = rawResponse.toLowerCase();
+
+    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedEmail().toLowerCase())
+        || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
+      throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+    }
+
+    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
+        || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
+      throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
+    }
+
+    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
+    keycloakError =
+        !rawResponse.isBlank()
+            ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
+            : String.format("Keycloak create-user failed with status %s", status);
+
+    log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
   }
 
   /**
@@ -454,16 +479,42 @@ public class KeycloakService implements IdentityClient {
 
   private void updateTenantId(UserDTO userDTO, UserRepresentation kcUser) {
     if (TRUE.equals(multiTenancyEnabled)) {
-      Map<String, List<String>> attributes = new HashMap<>();
-      var list = new ArrayList<String>();
-      if (userDTO.getTenantId() != null) {
-        list.add(userDTO.getTenantId().toString());
-      } else {
-        list.add(TenantContext.getCurrentTenant().toString());
+      Map<String, List<String>> attributes =
+          kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
+      var tenantId = resolveTenantId(userDTO);
+      if (tenantId != null) {
+        attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
       }
-      attributes.put("tenantId", list);
       kcUser.setAttributes(attributes);
     }
+  }
+
+  private void updateIdentityAttributesAfterCreate(UserDTO userDTO, String keycloakUserId) {
+    var userResource = keycloakClient.getUsersResource().get(keycloakUserId);
+    var representation = userResource.toRepresentation();
+    Map<String, List<String>> attributes =
+        representation.getAttributes() == null
+            ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(representation.getAttributes());
+
+    attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
+    var tenantId = resolveTenantId(userDTO);
+    if (tenantId != null) {
+      attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
+    }
+
+    representation.setAttributes(attributes);
+    userResource.update(representation);
+  }
+
+  private Long resolveTenantId(UserDTO userDTO) {
+    if (userDTO.getTenantId() != null) {
+      return userDTO.getTenantId();
+    }
+    if (TRUE.equals(multiTenancyEnabled) && TenantContext.getCurrentTenant() != null) {
+      return TenantContext.getCurrentTenant();
+    }
+    return null;
   }
 
   private String getCreatedUserId(final URI location) {

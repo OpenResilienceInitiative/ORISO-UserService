@@ -36,6 +36,8 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import lombok.NonNull;
@@ -294,10 +296,67 @@ public class EmailNotificationFacade {
     TenantContext.clear();
   }
 
+  @Async
+  public void sendInquiryAcceptedNotification(
+      User user, Consultant consultant, TenantData tenantData) {
+    TenantContext.setCurrentTenantData(tenantData);
+    try {
+      if (!hasUserValidEmailAddress(user) || !shouldSendInquiryAcceptedNotification(user)) {
+        return;
+      }
+
+      var consultantName =
+          consultant != null && isNotBlank(consultant.getFullName())
+              ? consultant.getFullName()
+              : "Ihre Beraterin/Ihr Berater";
+
+      var templateAttributes = new ArrayList<TemplateDataDTO>();
+      templateAttributes.add(
+          new TemplateDataDTO().key("subject").value("Ihre Anfrage wurde angenommen"));
+      templateAttributes.add(
+          new TemplateDataDTO()
+              .key("text")
+              .value(
+                  String.format(
+                      "Gute Nachrichten: %s hat Ihre Anfrage angenommen. "
+                          + "Melden Sie sich an, um die Antwort zu lesen.",
+                      consultantName)));
+
+      if (!multiTenancyEnabled) {
+        templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
+      } else {
+        templateAttributes.addAll(tenantTemplateSupplier.getTemplateAttributes());
+      }
+
+      var language =
+          de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.fromValue(
+              user.getLanguageCode().toString());
+      var mailDTO =
+          new MailDTO()
+              .template(EmailSupplier.TEMPLATE_FREE_TEXT)
+              .email(user.getEmail())
+              .language(language)
+              .templateData(templateAttributes);
+      mailService.sendEmailNotification(new MailsDTO().mails(List.of(mailDTO)));
+    } catch (Exception exception) {
+      log.error("EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
+    }
+    TenantContext.clear();
+  }
+
   private boolean shouldSendReassignmentNotificationForConsultant(
       Consultant existingConsultantById) {
     if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
       return wantsToReceiveNotificationsAboutReassignment(existingConsultantById);
+    }
+    return true;
+  }
+
+  private boolean shouldSendInquiryAcceptedNotification(User user) {
+    if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
+      var notificationSettings = deserializeNotificationSettingsDTOOrDefaultIfNull(user);
+      return user.isNotificationsEnabled()
+          && !Boolean.FALSE.equals(notificationSettings.getNewChatMessageNotificationEnabled());
     }
     return true;
   }

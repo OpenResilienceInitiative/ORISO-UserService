@@ -4,26 +4,28 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
+import javax.servlet.http.HttpServletRequest;
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
+import org.keycloak.KeycloakSecurityContext;
+import org.keycloak.adapters.KeycloakConfigResolver;
+import org.keycloak.adapters.springboot.KeycloakSpringBootConfigResolver;
+import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Scope;
+import org.springframework.context.annotation.ScopedProxyMode;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.WebApplicationContext;
 
 @Data
 @Configuration
@@ -37,23 +39,36 @@ public class KeycloakConfig {
   }
 
   @Bean
+  @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
+  public KeycloakAuthenticationToken keycloakAuthenticationToken(HttpServletRequest request) {
+    return (KeycloakAuthenticationToken) request.getUserPrincipal();
+  }
+
+  @Bean
+  @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
+  public KeycloakSecurityContext keycloakSecurityContext(KeycloakAuthenticationToken token) {
+    return token.getAccount().getKeycloakSecurityContext();
+  }
+
+  @Bean
+  @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
   public AuthenticatedUser authenticatedUser(HttpServletRequest request) {
+    var userPrincipal = request.getUserPrincipal();
     var authenticatedUser = new AuthenticatedUser();
 
-    var authentication = SecurityContextHolder.getContext().getAuthentication();
-    if (authentication instanceof JwtAuthenticationToken jwtAuth) {
-      Jwt jwt = jwtAuth.getToken();
-      Map<String, Object> claimMap = jwt.getClaims();
+    if (nonNull(userPrincipal)) {
+      var authToken = (KeycloakAuthenticationToken) userPrincipal;
+      var securityContext = authToken.getAccount().getKeycloakSecurityContext();
+      var claimMap = securityContext.getToken().getOtherClaims();
 
       try {
         if (claimMap.containsKey("username")) {
           authenticatedUser.setUsername(claimMap.get("username").toString());
-        } else if (claimMap.containsKey("preferred_username")) {
-          authenticatedUser.setUsername(claimMap.get("preferred_username").toString());
         }
-        authenticatedUser.setUserId(jwt.getSubject());
-        authenticatedUser.setAccessToken(jwt.getTokenValue());
-        authenticatedUser.setRoles(extractRealmRoles(claimMap));
+        // Use the subject (sub) field for userId instead of otherClaims
+        authenticatedUser.setUserId(securityContext.getToken().getSubject());
+        authenticatedUser.setAccessToken(securityContext.getTokenString());
+        authenticatedUser.setRoles(securityContext.getToken().getRealmAccess().getRoles());
       } catch (Exception exception) {
         throw new KeycloakException("Keycloak data missing.", exception);
       }
@@ -68,20 +83,6 @@ public class KeycloakConfig {
     return authenticatedUser;
   }
 
-  private Set<String> extractRealmRoles(Map<String, Object> claims) {
-    Object realmAccess = claims.get("realm_access");
-    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
-      Object roles = realmAccessMap.get("roles");
-      if (roles instanceof Collection<?> rolesCollection) {
-        return rolesCollection.stream()
-            .filter(String.class::isInstance)
-            .map(String.class::cast)
-            .collect(Collectors.toSet());
-      }
-    }
-    return Set.of();
-  }
-
   @Bean
   public Keycloak keycloak() {
     return KeycloakBuilder.builder()
@@ -91,6 +92,15 @@ public class KeycloakConfig {
         .password(config.getAdminPassword())
         .clientId(config.getAdminClientId())
         .build();
+  }
+
+  /**
+   * Use the KeycloakSpringBootConfigResolver to be able to save the Keycloak settings in the spring
+   * application properties.
+   */
+  @Bean
+  public KeycloakConfigResolver keyCloakConfigResolver() {
+    return new KeycloakSpringBootConfigResolver();
   }
 
   @URL private String authServerUrl;

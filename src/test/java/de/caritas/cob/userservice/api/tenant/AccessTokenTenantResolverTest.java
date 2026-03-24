@@ -6,21 +6,21 @@ import static org.mockito.Mockito.when;
 import com.google.common.collect.Maps;
 import java.util.HashMap;
 import java.util.Optional;
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
 import org.mockito.Answers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 @ExtendWith(MockitoExtension.class)
 class AccessTokenTenantResolverTest {
   @Mock HttpServletRequest authenticatedRequest;
 
   @Mock(answer = Answers.RETURNS_DEEP_STUBS)
-  JwtAuthenticationToken token;
+  KeycloakAuthenticationToken token;
 
   @InjectMocks AccessTokenTenantResolver accessTokenTenantResolver;
 
@@ -30,7 +30,8 @@ class AccessTokenTenantResolverTest {
     when(authenticatedRequest.getUserPrincipal()).thenReturn(token);
 
     HashMap<String, Object> claimMap = givenClaimMapContainingTenantId(1);
-    when(token.getToken().getClaims()).thenReturn(claimMap);
+    when(token.getAccount().getKeycloakSecurityContext().getToken().getOtherClaims())
+        .thenReturn(claimMap);
 
     // when
     Optional<Long> resolvedTenantId = accessTokenTenantResolver.resolve(authenticatedRequest);

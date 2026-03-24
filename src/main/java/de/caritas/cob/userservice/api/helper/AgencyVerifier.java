@@ -9,11 +9,14 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Verifier class for agency verifications. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyVerifier {
 
   private final @NonNull AgencyService agencyService;
@@ -40,13 +43,18 @@ public class AgencyVerifier {
   }
 
   public void checkIfConsultingTypeMatchesToAgency(UserDTO userDTO) {
-
-    if (isNull(
-        getVerifiedAgency(userDTO.getAgencyId(), Integer.parseInt(userDTO.getConsultingType())))) {
-      throw new BadRequestException(
-          String.format(
-              "Agency with id %s does not match to consulting" + " type %s",
-              userDTO.getAgencyId(), userDTO.getConsultingType()));
+    try {
+      if (isNull(
+          getVerifiedAgency(userDTO.getAgencyId(), Integer.parseInt(userDTO.getConsultingType())))) {
+        throw new BadRequestException(
+            String.format(
+                "Agency with id %s does not match to consulting" + " type %s",
+                userDTO.getAgencyId(), userDTO.getConsultingType()));
+      }
+    } catch (HttpClientErrorException.Forbidden | HttpClientErrorException.Unauthorized e) {
+      log.warn(
+          "Skipping strict agency verification during registration due to downstream auth error: {}",
+          e.getMessage());
     }
   }
 }

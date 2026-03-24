@@ -5,11 +5,16 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import io.swagger.annotations.Api;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +42,9 @@ public class SessionSupervisorController {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull UserAccountService userAccountService;
+  private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
+  private final @NonNull SessionService sessionService;
 
   /**
    * Add a supervisor to a session.
@@ -61,6 +69,51 @@ public class SessionSupervisorController {
     SessionSupervisor supervisor =
         sessionSupervisorFacade.addSupervisor(
             sessionId, request.getSupervisorConsultantId(), currentConsultant, request.getNotes());
+    String accessToken = authenticatedUser.getAccessToken();
+    String supervisorDisplayName =
+        supervisor.getSupervisorConsultant().getDisplayName() != null
+            ? supervisor.getSupervisorConsultant().getDisplayName()
+            : supervisor.getSupervisorConsultant().getFullName();
+
+    if (supervisor.getSession() != null
+        && supervisor.getSession().getUser() != null
+        && supervisor.getSession().getUser().getUserId() != null) {
+      eventNotificationService.createSupervisorAddedNotification(
+          supervisor.getSession(),
+          supervisor.getSession().getUser().getUserId(),
+          supervisorDisplayName);
+    }
+
+    supervisorAddedEmailNotificationService.notifySupervisorAdded(
+        supervisor.getSession() != null ? supervisor.getSession().getUser() : null,
+        supervisor.getSupervisorConsultant(),
+          supervisorDisplayName,
+        supervisor.getSession() != null ? supervisor.getSession().getId() : null,
+          TenantContext.getCurrentTenantData(),
+          accessToken);
+
+    if (supervisor.getSession() != null
+        && supervisor.getSupervisorConsultant() != null
+        && supervisor.getSupervisorConsultant().getId() != null) {
+      String roomRef =
+          supervisor.getSession().getMatrixRoomId() != null
+                  && !supervisor.getSession().getMatrixRoomId().isBlank()
+              ? supervisor.getSession().getMatrixRoomId()
+              : supervisor.getSession().getGroupId();
+      eventNotificationService.createEvent(
+          supervisor.getSupervisorConsultant().getId(),
+          "supervisor.assigned",
+          EventNotificationService.CATEGORY_SYSTEM,
+          "Supervisor assignment",
+          String.format(
+              "You were added as supervisor to chat #%s.",
+              supervisor.getSession().getId()),
+          roomRef != null
+              ? "/sessions/consultant/sessionView/" + roomRef + "/" + supervisor.getSession().getId()
+              : null,
+          supervisor.getSession().getId(),
+          supervisor.getSession().getTenantId());
+    }
 
     SessionSupervisorResponseDTO response = mapToDTO(supervisor);
     return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -82,7 +135,39 @@ public class SessionSupervisorController {
       return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
 
+    String accessToken = authenticatedUser.getAccessToken();
+    Optional<SessionSupervisor> supervisorToRemove =
+        sessionSupervisorFacade.getSupervisors(sessionId).stream()
+            .filter(item -> item.getId().equals(supervisorId))
+            .findFirst();
     sessionSupervisorFacade.removeSupervisor(sessionId, supervisorId, currentConsultant);
+    sessionService
+        .getSession(sessionId)
+        .ifPresent(
+            session -> {
+              String supervisorDisplayName =
+                  supervisorToRemove
+                          .map(SessionSupervisor::getSupervisorConsultant)
+                          .map(
+                              consultant ->
+                                  consultant.getDisplayName() != null
+                                      ? consultant.getDisplayName()
+                                      : consultant.getFullName())
+                          .orElse("A supervisor");
+              if (session.getUser() != null && session.getUser().getUserId() != null) {
+                eventNotificationService.createSupervisorRemovedNotification(
+                    session, session.getUser().getUserId(), supervisorDisplayName);
+              }
+              supervisorToRemove.ifPresent(
+                  item ->
+                      supervisorAddedEmailNotificationService.notifySupervisorRemoved(
+                          session.getUser(),
+                          item.getSupervisorConsultant(),
+                          supervisorDisplayName,
+                          session.getId(),
+                          TenantContext.getCurrentTenantData(),
+                          accessToken));
+            });
     return ResponseEntity.noContent().build();
   }
 

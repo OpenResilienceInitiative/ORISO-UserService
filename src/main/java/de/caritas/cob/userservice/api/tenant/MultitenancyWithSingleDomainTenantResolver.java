@@ -1,13 +1,17 @@
 package de.caritas.cob.userservice.api.tenant;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
 import java.util.Optional;
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,7 +28,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 public class MultitenancyWithSingleDomainTenantResolver implements TenantResolver {
 
   private static final String USERS_CONSULTANTS = "/users/consultants/";
-  private static final String USERS_CONSULTANTS_BY_ID_URL_REGEX = USERS_CONSULTANTS + "[a-z0-9-]+";
+  private static final String USERS_CONSULTANTS_BY_ID_URL_REGEX =
+      USERS_CONSULTANTS + "[0-9a-fA-F-]{36}";
 
   @Value("${feature.multitenancy.with.single.domain.enabled}")
   private boolean multitenancyWithSingleDomain;
@@ -35,12 +40,18 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
 
   private final @NonNull ConsultantService consultantService;
 
+  private final @NonNull TenantService tenantService;
+
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
+
   @Override
   public Optional<Long> resolve(HttpServletRequest request) {
     if (multitenancyWithSingleDomain) {
       Optional<Long> tenantIDfromAgency = resolveTenantFromAgency();
       if (tenantIDfromAgency.isEmpty() && requestParameterContainsConsultantId()) {
         return resolveTenantFromConsultantRequestParameter();
+      } else if (tenantIDfromAgency.isEmpty()) {
+        return resolveMainTenantIdFromApplicationSettings();
       } else {
         return tenantIDfromAgency;
       }
@@ -82,6 +93,22 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
     AgencyDTO agency = agencyService.getAgency(agencyId.get());
     validateResolvedAgencyContainsTenant(agency);
     return Optional.of(agency.getTenantId());
+  }
+
+  private Optional<Long> resolveMainTenantIdFromApplicationSettings() {
+    ApplicationSettingsDTO applicationSettings = applicationSettingsService.getApplicationSettings();
+    SettingDTO mainTenantSubdomainForSingleDomainMultitenancy =
+        applicationSettings.getMainTenantSubdomainForSingleDomainMultitenancy();
+    if (mainTenantSubdomainForSingleDomainMultitenancy == null
+        || mainTenantSubdomainForSingleDomainMultitenancy.getValue() == null
+        || mainTenantSubdomainForSingleDomainMultitenancy.getValue().isBlank()) {
+      log.warn("Main tenant subdomain not available in application settings.");
+      return Optional.empty();
+    }
+    return Optional.of(
+        tenantService
+            .getRestrictedTenantData(mainTenantSubdomainForSingleDomainMultitenancy.getValue())
+            .getId());
   }
 
   private void validateResolvedAgencyContainsTenant(AgencyDTO agency) {

@@ -63,6 +63,7 @@ public class UserServiceMapper {
     map.put("username", user.getUsername());
     map.put("email", user.getEmail());
     map.put("encourage2fa", user.getEncourage2fa());
+    map.put("magicLinkLoginEnabled", user.getMagicLinkLoginEnabled());
     map.put("chatUserId", user.getRcUserId());
     map.put("preferredLanguage", user.getLanguageCode().toString());
 
@@ -76,6 +77,7 @@ public class UserServiceMapper {
     map.put("lastName", consultant.getLastName());
     map.put("email", consultant.getEmail());
     map.put("encourage2fa", consultant.getEncourage2fa());
+    map.put("magicLinkLoginEnabled", consultant.getMagicLinkLoginEnabled());
     map.put("notifyEnquiriesRepeating", consultant.getNotifyEnquiriesRepeating());
     map.put(
         "notifyNewChatMessageFromAdviceSeeker",
@@ -116,7 +118,10 @@ public class UserServiceMapper {
     consultantPage.forEach(
         consultantBase -> {
           var fullConsultant = fullConsultantLookupMap.get(consultantBase.getId());
-          var agencies = mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap);
+          var agencies =
+              nonNull(fullConsultant)
+                  ? mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap)
+                  : new ArrayList<Map<String, Object>>();
           var consultantMap = mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap);
           consultants.add(consultantMap);
         });
@@ -238,7 +243,7 @@ public class UserServiceMapper {
       List<Map<String, Object>> agencies,
       Map<Long, String> tenantIdsToNameMap) {
     var status =
-        isNull(fullConsultant.getStatus())
+        isNull(fullConsultant) || isNull(fullConsultant.getStatus())
             ? ConsultantStatus.ERROR.toString()
             : fullConsultant.getStatus().toString();
 
@@ -248,23 +253,29 @@ public class UserServiceMapper {
     map.put("firstName", consultantBase.getFirstName());
     map.put("lastName", consultantBase.getLastName());
     map.put("status", status);
-    map.put("username", fullConsultant.getUsername());
-    map.put("absenceMessage", fullConsultant.getAbsenceMessage());
-    map.put("isAbsent", fullConsultant.isAbsent());
-    map.put("isLanguageFormal", fullConsultant.isLanguageFormal());
-    map.put("isTeamConsultant", fullConsultant.isTeamConsultant());
-    map.put("isSupervisor", fullConsultant.isSupervisor());
+    map.put("username", nonNull(fullConsultant) ? fullConsultant.getUsername() : null);
+    map.put("absenceMessage", nonNull(fullConsultant) ? fullConsultant.getAbsenceMessage() : null);
+    map.put("isAbsent", nonNull(fullConsultant) && fullConsultant.isAbsent());
+    map.put("isLanguageFormal", nonNull(fullConsultant) && fullConsultant.isLanguageFormal());
+    map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
+    map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put(
         "createdAt",
-        nonNull(fullConsultant.getCreateDate()) ? fullConsultant.getCreateDate().toString() : null);
+        nonNull(fullConsultant) && nonNull(fullConsultant.getCreateDate())
+            ? fullConsultant.getCreateDate().toString()
+            : null);
     map.put(
         "updatedAt",
-        nonNull(fullConsultant.getUpdateDate()) ? fullConsultant.getUpdateDate().toString() : null);
+        nonNull(fullConsultant) && nonNull(fullConsultant.getUpdateDate())
+            ? fullConsultant.getUpdateDate().toString()
+            : null);
     map.put(
         "deletedAt",
-        nonNull(fullConsultant.getDeleteDate()) ? fullConsultant.getDeleteDate().toString() : null);
+        nonNull(fullConsultant) && nonNull(fullConsultant.getDeleteDate())
+            ? fullConsultant.getDeleteDate().toString()
+            : null);
     map.put("agencies", agencies);
-    Long tenantId = fullConsultant.getTenantId();
+    Long tenantId = nonNull(fullConsultant) ? fullConsultant.getTenantId() : null;
     map.put("tenantId", tenantId);
     map.put(
         "tenantName",
@@ -367,6 +378,9 @@ public class UserServiceMapper {
     if (patchMap.containsKey("encourage2fa")) {
       consultant.setEncourage2fa((Boolean) patchMap.get("encourage2fa"));
     }
+    if (patchMap.containsKey("magicLinkLoginEnabled")) {
+      consultant.setMagicLinkLoginEnabled((Boolean) patchMap.get("magicLinkLoginEnabled"));
+    }
     if (patchMap.containsKey("preferredLanguage")) {
       var preferredLanguage = (String) patchMap.get("preferredLanguage");
       consultant.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
@@ -426,6 +440,9 @@ public class UserServiceMapper {
     }
     if (patchMap.containsKey("encourage2fa")) {
       adviceSeeker.setEncourage2fa((Boolean) patchMap.get("encourage2fa"));
+    }
+    if (patchMap.containsKey("magicLinkLoginEnabled")) {
+      adviceSeeker.setMagicLinkLoginEnabled((Boolean) patchMap.get("magicLinkLoginEnabled"));
     }
     if (patchMap.containsKey("preferredLanguage")) {
       var preferredLanguage = (String) patchMap.get("preferredLanguage");

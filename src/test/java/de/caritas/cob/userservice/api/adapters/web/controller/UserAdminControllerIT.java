@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -109,6 +110,8 @@ class UserAdminControllerIT {
   @MockBean private AdminDtoMapper adminDtoMapper;
 
   @MockBean private AuthenticatedUser authenticatedUser;
+
+  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()

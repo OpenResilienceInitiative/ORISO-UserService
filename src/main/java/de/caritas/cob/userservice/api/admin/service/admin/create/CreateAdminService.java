@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -77,19 +78,26 @@ public class CreateAdminService {
   private ArrayList<UserRole> getUserRolesForTenantAdmin() {
     if (multitenancyWithSingleDomain) {
       return Lists.newArrayList(
-          UserRole.USER_ADMIN, UserRole.AGENCY_ADMIN, UserRole.SINGLE_TENANT_ADMIN);
+          UserRole.USER_ADMIN,
+          UserRole.AGENCY_ADMIN,
+          UserRole.SINGLE_TENANT_ADMIN,
+          UserRole.TENANT_ADMIN);
     } else {
       return Lists.newArrayList(
           UserRole.USER_ADMIN,
           UserRole.AGENCY_ADMIN,
           UserRole.SINGLE_TENANT_ADMIN,
+          UserRole.TENANT_ADMIN,
           UserRole.TOPIC_ADMIN);
     }
   }
 
   private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
     final String keycloakUserId = createKeycloakUser(createAdminDTO);
-    final String password = userHelper.getRandomPassword();
+    final String password =
+        StringUtils.isNotBlank(createAdminDTO.getPassword())
+            ? createAdminDTO.getPassword()
+            : userHelper.getRandomPassword();
     identityClient.updatePassword(keycloakUserId, password);
     getDefaultRoles(adminType).stream()
         .forEach(role -> identityClient.updateRole(keycloakUserId, role));

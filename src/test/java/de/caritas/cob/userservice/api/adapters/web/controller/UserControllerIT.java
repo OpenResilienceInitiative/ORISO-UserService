@@ -56,7 +56,7 @@ import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.*;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import lombok.val;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -64,6 +64,7 @@ import org.hibernate.service.spi.ServiceException;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -274,6 +275,8 @@ class UserControllerIT {
   @MockBean private StopChatFacade stopChatFacade;
   @MockBean private GetChatMembersFacade getChatMembersFacade;
   @MockBean private CreateUserFacade createUserFacade;
+
+  @MockBean KeycloakConfigResolver resolver;
 
   @MockBean
   @SuppressWarnings("unused")

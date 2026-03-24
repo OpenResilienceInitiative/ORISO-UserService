@@ -2,11 +2,12 @@ package de.caritas.cob.userservice.api.tenant;
 
 import java.util.Map;
 import java.util.Optional;
+import javax.servlet.http.HttpServletRequest;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.keycloak.KeycloakSecurityContext;
+import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
 import org.springframework.stereotype.Component;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import jakarta.servlet.http.HttpServletRequest;
 
 @AllArgsConstructor
 @Component
@@ -28,18 +29,34 @@ public class AccessTokenTenantResolver implements TenantResolver {
 
   private Optional<Long> getUserTenantIdAttribute(Map<String, Object> claimMap) {
     if (claimMap.containsKey(TENANT_ID)) {
-      Integer tenantId = (Integer) claimMap.get(TENANT_ID);
-      return Optional.of(Long.valueOf(tenantId));
+      Object tenantIdClaim = claimMap.get(TENANT_ID);
+      if (tenantIdClaim instanceof Long) {
+        return Optional.of((Long) tenantIdClaim);
+      }
+      if (tenantIdClaim instanceof Integer) {
+        return Optional.of(Long.valueOf((Integer) tenantIdClaim));
+      }
+      if (tenantIdClaim instanceof String) {
+        try {
+          return Optional.of(Long.parseLong((String) tenantIdClaim));
+        } catch (NumberFormatException ex) {
+          log.warn("Invalid tenantId claim value: {}", tenantIdClaim);
+          return Optional.empty();
+        }
+      }
+      log.warn("Unsupported tenantId claim type: {}", tenantIdClaim.getClass().getName());
+      return Optional.empty();
     } else {
       return Optional.empty();
     }
   }
 
   private Map<String, Object> getClaimMap(HttpServletRequest request) {
-    if (request.getUserPrincipal() instanceof JwtAuthenticationToken jwtAuth) {
-      return jwtAuth.getToken().getClaims();
-    }
-    return Map.of();
+    KeycloakSecurityContext keycloakSecContext =
+        ((KeycloakAuthenticationToken) request.getUserPrincipal())
+            .getAccount()
+            .getKeycloakSecurityContext();
+    return keycloakSecContext.getToken().getOtherClaims();
   }
 
   @Override

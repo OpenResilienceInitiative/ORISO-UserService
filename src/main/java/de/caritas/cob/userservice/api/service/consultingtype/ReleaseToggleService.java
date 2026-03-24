@@ -19,11 +19,21 @@ public class ReleaseToggleService {
 
     String toggleKeyName = toggle.getValue();
     if (releaseToggles != null && releaseToggles.containsKey(toggleKeyName)) {
-      return nullAsFalse(Boolean.parseBoolean((String) releaseToggles.get(toggleKeyName)));
+      return nullAsFalse(asBoolean(releaseToggles.get(toggleKeyName)));
     } else {
       log.debug("Release toggle not found: {}", toggle);
       return false;
     }
+  }
+
+  private Boolean asBoolean(Object rawValue) {
+    if (rawValue instanceof Boolean) {
+      return (Boolean) rawValue;
+    }
+    if (rawValue instanceof String) {
+      return Boolean.parseBoolean((String) rawValue);
+    }
+    return false;
   }
 
   private boolean nullAsFalse(Boolean topicsInRegistrationEnabled) {

@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -69,6 +70,8 @@ class ConversationControllerIT {
   @SuppressWarnings("unused")
   @MockBean
   private AuthenticatedUser authenticatedUser;
+
+  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {

@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -211,12 +212,8 @@ public class CreateChatFacade {
     Session session = new Session();
     session.setConsultant(consultant);
 
-    // Use system user for group chats (user_id is NOT NULL in database)
-    var systemUser =
-        userRepository
-            .findByUserIdAndDeleteDateIsNull("group-chat-system")
-            .orElseThrow(
-                () -> new InternalServerErrorException("System user not found for group chats"));
+    // Use a tenant-scoped system user for group chats (user_id is NOT NULL in database).
+    var systemUser = resolveOrCreateGroupChatSystemUser(consultant);
     session.setUser(systemUser);
 
     // Get consulting type from agency
@@ -363,5 +360,31 @@ public class CreateChatFacade {
       }
       throw new InternalServerErrorException("Failed to create group chat: " + e.getMessage());
     }
+  }
+
+  private User resolveOrCreateGroupChatSystemUser(Consultant consultant) {
+    Long tenantId = consultant.getTenantId();
+    String tenantScopedSystemUserId = "group-chat-system-" + (tenantId == null ? "default" : tenantId);
+
+    return userRepository
+        .findByUserIdAndDeleteDateIsNull(tenantScopedSystemUserId)
+        .or(() -> userRepository.findByUserIdAndDeleteDateIsNull("group-chat-system"))
+        .orElseGet(
+            () -> {
+              log.warn(
+                  "Group chat system user not found for tenant {}. Creating fallback system user {}.",
+                  tenantId,
+                  tenantScopedSystemUserId);
+              User fallbackSystemUser =
+                  new User(
+                      tenantScopedSystemUserId,
+                      null,
+                      tenantScopedSystemUserId,
+                      tenantScopedSystemUserId + "@oriso.local",
+                      true);
+              fallbackSystemUser.setTenantId(tenantId);
+              fallbackSystemUser.setNotificationsEnabled(false);
+              return userRepository.save(fallbackSystemUser);
+            });
   }
 }

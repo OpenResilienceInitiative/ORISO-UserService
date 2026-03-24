@@ -86,7 +86,7 @@ import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResp
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

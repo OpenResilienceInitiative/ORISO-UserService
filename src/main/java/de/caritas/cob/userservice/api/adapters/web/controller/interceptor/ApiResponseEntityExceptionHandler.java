@@ -15,7 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthor
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.net.UnknownHostException;
-import jakarta.validation.ConstraintViolationException;
+import javax.validation.ConstraintViolationException;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -279,7 +279,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       HttpStatus status,
       WebRequest request) {
     if (HttpStatus.INTERNAL_SERVER_ERROR.equals(status)) {
-      request.setAttribute("jakarta.servlet.error.exception", ex, 0);
+      request.setAttribute("javax.servlet.error.exception", ex, 0);
     }
 
     return new ResponseEntity<>(body, headers, status);

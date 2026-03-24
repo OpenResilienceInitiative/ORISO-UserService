@@ -25,12 +25,15 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.SetUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.stereotype.Component;
 
 /** Provider for asker information. */
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class AskerDataProvider {
 
@@ -58,6 +61,7 @@ public class AskerDataProvider {
             .email(observeUserEmailAddress(user))
             .isAbsent(false)
             .encourage2fa(user.getEncourage2fa())
+            .magicLinkLoginEnabled(user.getMagicLinkLoginEnabled())
             .isFormalLanguage(user.isLanguageFormal())
             .preferredLanguage(LanguageCode.fromValue(user.getLanguageCode().toString()))
             .isInTeamAgency(false)
@@ -96,7 +100,14 @@ public class AskerDataProvider {
 
     Set<Session> sessionList = SetUtils.emptyIfNull(user.getSessions());
     List<Long> agencyIds = mergeAgencyIdsFromSessionAndUser(user, sessionList);
-    List<AgencyDTO> agencyDTOs = this.agencyService.getAgencies(agencyIds);
+    List<AgencyDTO> agencyDTOs;
+    try {
+      agencyDTOs = this.agencyService.getAgencies(agencyIds);
+    } catch (HttpClientErrorException.Forbidden e) {
+      // Login must not fail if downstream agency lookup denies this token scope.
+      log.warn("Forbidden while loading agencies for user {}: {}", user.getUserId(), e.getMessage());
+      agencyDTOs = Collections.emptyList();
+    }
     LinkedHashMap<String, Object> consultingTypes = new LinkedHashMap<>();
     for (int type : consultingTypeManager.getAllConsultingTypeIds()) {
       consultingTypes.put(

@@ -7,10 +7,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -64,6 +64,12 @@ public class HttpTenantFilter extends OncePerRequestFilter {
   }
 
   private void resolveSubdomain(Long resolvedTenant) {
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(resolvedTenant)) {
+      // Global/super-admin context has no concrete tenant entity (id 0).
+      // Skip tenant-service lookup to avoid /tenant/public/id/0 404.
+      TenantContext.setCurrentSubdomain("");
+      return;
+    }
     var currentSubdomain = tenantService.getRestrictedTenantData(resolvedTenant).getSubdomain();
     TenantContext.setCurrentSubdomain(currentSubdomain);
   }

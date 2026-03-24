@@ -34,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Facade to encapsulate the steps to initialize a new session. */
 @Service
@@ -161,9 +162,19 @@ public class CreateSessionFacade {
 
   private AgencyDTO obtainVerifiedAgency(
       UserDTO userDTO, ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO) {
-    var agencyDTO =
-        agencyVerifier.getVerifiedAgency(
-            userDTO.getAgencyId(), requireNonNull(extendedConsultingTypeResponseDTO.getId()));
+    AgencyDTO agencyDTO;
+    try {
+      agencyDTO =
+          agencyVerifier.getVerifiedAgency(
+              userDTO.getAgencyId(), requireNonNull(extendedConsultingTypeResponseDTO.getId()));
+    } catch (HttpClientErrorException.Forbidden | HttpClientErrorException.Unauthorized ex) {
+      log.warn(
+          "Agency verification unavailable while creating session (agencyId={}): {}. "
+              + "Using registration agency id as fallback.",
+          userDTO.getAgencyId(),
+          ex.getMessage());
+      agencyDTO = new AgencyDTO().id(userDTO.getAgencyId()).teamAgency(false);
+    }
 
     if (isNull(agencyDTO)) {
       throw new BadRequestException(

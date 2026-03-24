@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -55,6 +56,17 @@ public class SecurityHeaderSupplier {
     this.addKeycloakAuthorizationHeader(header, accessToken);
 
     return header;
+  }
+
+  /**
+   * Creates headers using current user's access token if present; otherwise uses the provided
+   * fallback token (e.g. technical user token).
+   */
+  public HttpHeaders getKeycloakAndCsrfHttpHeadersWithFallback(String fallbackAccessToken) {
+    var currentAccessToken = authenticatedUser.getAccessToken();
+    return StringUtils.isNotBlank(currentAccessToken)
+        ? getKeycloakAndCsrfHttpHeaders(currentAccessToken)
+        : getKeycloakAndCsrfHttpHeaders(fallbackAccessToken);
   }
 
   private void addKeycloakAuthorizationHeader(HttpHeaders httpHeaders, String accessToken) {

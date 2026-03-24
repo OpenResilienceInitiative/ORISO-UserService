@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveFromGroupOperationService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -17,6 +18,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
@@ -27,7 +30,7 @@ import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
-import jakarta.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,11 +53,14 @@ public class AssignEnquiryFacade {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull UnauthorizedMembersProvider unauthorizedMembersProvider;
   private final @NonNull StatisticsService statisticsService;
+  private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull HttpServletRequest httpServletRequest;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull EventNotificationService eventNotificationService;
 
   /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
@@ -77,6 +83,8 @@ public class AssignEnquiryFacade {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(session.getUser().getUserId());
+    eventNotificationService.createInquiryAcceptedNotification(session, consultant);
     supplyAsync(updateRocketChatRooms(session, consultant, TenantContext.getCurrentTenant()))
         .thenRun(
             () -> {
@@ -130,6 +138,8 @@ public class AssignEnquiryFacade {
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
 
     sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        session.getUser(), consultant, TenantContext.getCurrentTenantData());
 
     // Create Matrix room and invite user
     try {

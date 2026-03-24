@@ -44,7 +44,7 @@ import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import java.util.LinkedHashMap;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;

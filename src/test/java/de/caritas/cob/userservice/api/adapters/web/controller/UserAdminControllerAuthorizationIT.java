@@ -35,7 +35,7 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.List;
 import java.util.UUID;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -6,17 +6,17 @@ import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EntityListeners;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
-import jakarta.validation.constraints.Size;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.EntityListeners;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
+import javax.persistence.Id;
+import javax.persistence.Lob;
+import javax.persistence.OneToMany;
+import javax.persistence.Table;
+import javax.persistence.Transient;
+import javax.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
@@ -109,6 +109,9 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "encourage_2fa", nullable = false, columnDefinition = "bit default true")
   private Boolean encourage2fa;
 
+  @Column(name = "magic_link_login_enabled", nullable = false, columnDefinition = "bit default false")
+  private Boolean magicLinkLoginEnabled;
+
   @Enumerated(EnumType.STRING)
   @Column(length = 2, nullable = false, columnDefinition = "varchar(2) default 'de'")
   private LanguageCode languageCode;
@@ -137,6 +140,7 @@ public class User implements TenantAware, NotificationsAware {
     this.email = email;
     this.languageFormal = languageFormal;
     setEncourage2fa(true);
+    setMagicLinkLoginEnabled(false);
     setLanguageCode(LanguageCode.de);
     this.termsAndConditionsConfirmation = LocalDateTime.now();
     this.dataPrivacyConfirmation = LocalDateTime.now();

@@ -94,6 +94,7 @@ public class UserDtoMapper {
   public Optional<Map<String, Object>> mapOf(PatchUserDTO patchUserDTO, AuthenticatedUser user) {
     if (isNull(patchUserDTO.getEncourage2fa())
         && isNull(patchUserDTO.getDisplayName())
+        && isNull(patchUserDTO.getMagicLinkLoginEnabled())
         && isNull(patchUserDTO.getWalkThroughEnabled())
         && isNull(patchUserDTO.getEmailToggles())
         && isNull(patchUserDTO.getPreferredLanguage())
@@ -111,6 +112,9 @@ public class UserDtoMapper {
     }
     if (nonNull(patchUserDTO.getDisplayName())) {
       map.put(DISPLAY_NAME, patchUserDTO.getDisplayName());
+    }
+    if (nonNull(patchUserDTO.getMagicLinkLoginEnabled())) {
+      map.put("magicLinkLoginEnabled", patchUserDTO.getMagicLinkLoginEnabled());
     }
     if (nonNull(patchUserDTO.getWalkThroughEnabled())) {
       map.put("walkThroughEnabled", patchUserDTO.getWalkThroughEnabled());

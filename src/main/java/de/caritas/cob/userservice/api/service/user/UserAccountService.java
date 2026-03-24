@@ -17,8 +17,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.NonNull;
@@ -44,6 +46,7 @@ public class UserAccountService {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   private final @NonNull StatisticsService statisticsService;
+  private final @NonNull SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
 
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
@@ -123,17 +126,50 @@ public class UserAccountService {
 
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
+    Optional<Consultant> consultantOpt =
     consultantService
         .getConsultant(userId)
-        .ifPresent(consultant -> updateConsultantEmail(consultant, email));
-    userService.getUser(userId).ifPresent(user -> updateUserEmail(user, email));
+        .map(
+            consultant -> {
+              updateConsultantEmail(consultant, email);
+              return consultant;
+            });
+    Optional<User> userOpt =
+        userService
+            .getUser(userId)
+            .map(
+                user -> {
+                  updateUserEmail(user, email);
+                  return user;
+                });
+
+    optionalEmail.ifPresent(
+        updatedEmail -> {
+          Long tenantId =
+              userOpt.map(User::getTenantId).orElse(consultantOpt.map(Consultant::getTenantId).orElse(null));
+          String username =
+              userOpt.map(User::getUsername).orElse(consultantOpt.map(Consultant::getUsername).orElse(userId));
+          supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
+              username,
+              updatedEmail,
+              tenantId,
+              TenantContext.getCurrentTenantData(),
+              authenticatedUser.getAccessToken());
+        });
   }
 
   private void updateConsultantEmail(Consultant consultant, String email) {
     UserUpdateDataDTO userUpdateDataDTO = new UserUpdateDataDTO(email, true);
     UserUpdateRequestDTO requestDTO =
         new UserUpdateRequestDTO(consultant.getRocketChatId(), userUpdateDataDTO);
+    try {
     this.rocketChatService.updateUser(requestDTO);
+    } catch (Exception ex) {
+      log.warn(
+          "Skipping Rocket.Chat consultant email update for consultant {} due to error: {}",
+          consultant.getId(),
+          ex.getMessage());
+    }
 
     consultant.setEmail(email);
     this.consultantService.saveConsultant(consultant);
@@ -144,7 +180,14 @@ public class UserAccountService {
     UserUpdateRequestDTO requestDTO =
         new UserUpdateRequestDTO(user.getRcUserId(), userUpdateDataDTO);
     if (user.getRcUserId() != null) {
+      try {
       this.rocketChatService.updateUser(requestDTO);
+      } catch (Exception ex) {
+        log.warn(
+            "Skipping Rocket.Chat user email update for user {} due to error: {}",
+            user.getUserId(),
+            ex.getMessage());
+      }
     } else {
       log.warn(
           "Skip update user email in RocketChat because user does not have rcUserId (maybe a newly registered user?)");

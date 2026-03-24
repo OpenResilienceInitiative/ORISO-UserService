@@ -21,6 +21,8 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
+  Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
+
   List<Consultant> findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List<Long> agencyIds);
 
   List<Consultant> findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(Long agencyId);
@@ -33,22 +35,28 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
       value =
           "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
               + "FROM Consultant c "
-              + "WHERE"
-              + "  ?1 = '*' "
-              + "  OR ("
+              + "WHERE "
+              + "  (?2 IS NULL OR ?2 = 0 OR c.tenantId = ?2) "
+              + "  AND "
+              + "  ("
+              + "    ?1 = '*' "
+              + "    OR ("
               + "    UPPER(c.id) = UPPER(?1)"
               + "    OR UPPER(c.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.email) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    )"
               + "  )")
-  Page<ConsultantBase> findAllByInfix(String infix, Pageable pageable);
+  Page<ConsultantBase> findAllByInfix(String infix, Long tenantId, Pageable pageable);
 
   @Query(
       value =
           "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
-              + "WHERE"
+              + "WHERE "
+              + " (?3 IS NULL OR ?3 = 0 OR c.tenantId = ?3) "
+              + " AND "
               + " ca.agencyId IN (?2) "
               + " AND ("
               + "  ?1 = '*' "
@@ -60,7 +68,7 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
               + "  )"
               + ")")
   Page<ConsultantBase> findAllByInfixAndAgencyIds(
-      String infix, Collection<Long> agencyIds, Pageable pageable);
+      String infix, Collection<Long> agencyIds, Long tenantId, Pageable pageable);
 
   long countByDeleteDateIsNull();
 

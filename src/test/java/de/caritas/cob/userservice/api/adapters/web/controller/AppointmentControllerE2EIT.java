@@ -33,12 +33,13 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentMatchers;
 import org.mockito.MockitoAnnotations;
 import org.springframework.amqp.core.Message;
@@ -82,6 +83,8 @@ class AppointmentControllerE2EIT {
   @MockBean private AuthenticatedUser authenticatedUser;
 
   @MockBean private Clock clock;
+
+  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 

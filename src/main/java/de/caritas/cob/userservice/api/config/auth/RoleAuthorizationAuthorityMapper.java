@@ -19,10 +19,27 @@ public class RoleAuthorizationAuthorityMapper implements GrantedAuthoritiesMappe
     Set<String> roleNames =
         authorities.stream()
             .map(GrantedAuthority::getAuthority)
-            .map(String::toLowerCase)
+            .map(this::normalizeRoleName)
             .collect(Collectors.toSet());
 
     return mapAuthorities(roleNames);
+  }
+
+  /**
+   * Keycloak/Spring can provide authorities with a ROLE_ prefix (e.g. ROLE_tenant-admin). Strip
+   * that prefix so role lookup works against our canonical realm role values.
+   */
+  private String normalizeRoleName(String authority) {
+    if (authority == null) {
+      return null;
+    }
+    String normalized = authority.toLowerCase();
+    if (normalized.startsWith("role_")) {
+      normalized = normalized.substring("role_".length());
+    }
+    // Some adapters normalize role names to underscore notation (e.g. USER_ADMIN).
+    normalized = normalized.replace('_', '-');
+    return normalized;
   }
 
   private Set<GrantedAuthority> mapAuthorities(Set<String> roleNames) {

@@ -98,7 +98,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import jakarta.servlet.http.Cookie;
+import javax.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;

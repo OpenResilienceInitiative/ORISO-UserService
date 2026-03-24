@@ -39,6 +39,9 @@ public class AgencyMatrixCredentialClient {
 
     HttpHeaders headers = securityHeaderSupplier.getCsrfHttpHeaders();
     tenantHeaderSupplier.addTenantHeader(headers);
+    // In single-domain multitenancy, non-auth internal calls can miss tenant context.
+    // Passing agencyId lets AgencyService resolve the tenant from the target agency.
+    headers.add("agencyId", String.valueOf(agencyId));
 
     try {
       ResponseEntity<AgencyMatrixCredentialsDTO> response =
