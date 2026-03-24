@@ -209,8 +209,15 @@ public class MatrixSynapseService {
     }
 
     try {
-      String adminUsername = "caritas_admin";
-      String adminPassword = "@CaritasAdmin2025!";
+      String adminUsername = matrixConfig.getAdminUsername();
+      String adminPassword = matrixConfig.getAdminPassword();
+      if (adminUsername == null
+          || adminUsername.isBlank()
+          || adminPassword == null
+          || adminPassword.isBlank()) {
+        log.warn("Matrix admin credentials are not configured; skipping privileged sync login.");
+        return null;
+      }
 
       // Try to login first
       String token = loginUser(adminUsername, adminPassword);
@@ -984,9 +991,20 @@ public class MatrixSynapseService {
 
       return response.getBody();
     } catch (Exception ex) {
-      log.error("Matrix Error: Request to {} failed. Reason: {}", url, ex.getMessage());
+      log.error(
+          "Matrix Error: Request to {} failed. Reason: {}",
+          sanitizeUrlForLog(url),
+          ex.getMessage());
       return null;
     }
+  }
+
+  private String sanitizeUrlForLog(String url) {
+    if (url == null) {
+      return "null";
+    }
+    int queryStart = url.indexOf('?');
+    return queryStart >= 0 ? url.substring(0, queryStart) : url;
   }
 
   /**

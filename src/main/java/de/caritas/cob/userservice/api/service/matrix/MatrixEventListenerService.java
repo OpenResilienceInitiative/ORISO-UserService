@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.*;
 import java.util.concurrent.*;
@@ -173,8 +174,6 @@ public class MatrixEventListenerService {
         syncUrl += "?timeout=30000";
       }
 
-      log.debug("🔷 Matrix sync: {}", syncUrl);
-
       // Call Matrix sync endpoint
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
@@ -303,15 +302,11 @@ public class MatrixEventListenerService {
     }
 
     String msgtype = (String) content.get("msgtype");
-    String body = (String) content.get("body");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
+    PrivacyEnvelope privacyEnvelope = buildPrivacyEnvelope(event, roomId, senderId, msgtype, content);
 
-    log.info(
-        "📩 New Matrix message in room {}: {} (type: {})",
-        roomId,
-        body != null && body.length() > 50 ? body.substring(0, 50) + "..." : body,
-        msgtype);
+    safeContentLog("matrix.message.received", privacyEnvelope);
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
@@ -339,10 +334,10 @@ public class MatrixEventListenerService {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, body, threadRootId, true);
+                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
                 } else {
                   eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, body, true);
+                      roomId, senderDomainUserId, true, privacyEnvelope);
                 }
               } catch (Exception e) {
                 log.error("❌ Failed to send LiveService notification", e);
@@ -429,6 +424,77 @@ public class MatrixEventListenerService {
     }
     Object eventId = relatesTo.get("event_id");
     return eventId != null ? String.valueOf(eventId) : null;
+  }
+
+  private void safeContentLog(String marker, PrivacyEnvelope envelope) {
+    if (envelope == null) {
+      log.debug("🔒 {} room=unknown", marker);
+      return;
+    }
+    log.debug(
+        "🔒 {} room={} messageId={} sender={} contentClass={} hasAttachment={} ts={}",
+        marker,
+        envelope.getRoomId(),
+        envelope.getMessageId(),
+        envelope.getSenderId(),
+        envelope.getContentClass(),
+        envelope.isHasAttachment(),
+        envelope.getTimestamp());
+  }
+
+  @SuppressWarnings("unchecked")
+  private PrivacyEnvelope buildPrivacyEnvelope(
+      Map<String, Object> event,
+      String roomId,
+      String senderId,
+      String msgtype,
+      Map<String, Object> content) {
+    String contentClass = classifyContent(msgtype);
+    boolean hasAttachment =
+        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+            || (content != null && (content.containsKey("url") || content.containsKey("file")));
+
+    Long timestamp = null;
+    Object timestampRaw = event.get("origin_server_ts");
+    if (timestampRaw instanceof Number) {
+      timestamp = ((Number) timestampRaw).longValue();
+    }
+
+    Object eventIdRaw = event.get("event_id");
+    String eventId = eventIdRaw == null ? null : String.valueOf(eventIdRaw);
+
+    return PrivacyEnvelope.builder()
+        .messageId(eventId)
+        .roomId(roomId)
+        .senderId(senderId)
+        .timestamp(timestamp)
+        .hasAttachment(hasAttachment)
+        .contentClass(contentClass)
+        .build();
+  }
+
+  private String classifyContent(String msgtype) {
+    if (msgtype == null || msgtype.isBlank()) {
+      return "UNKNOWN";
+    }
+    switch (msgtype) {
+      case "m.text":
+        return "TEXT";
+      case "m.image":
+        return "IMAGE";
+      case "m.file":
+        return "FILE";
+      case "m.audio":
+        return "AUDIO";
+      case "m.video":
+        return "VIDEO";
+      case "m.notice":
+        return "NOTICE";
+      case "m.emote":
+        return "EMOTE";
+      default:
+        return "OTHER";
+    }
   }
 
   /**
