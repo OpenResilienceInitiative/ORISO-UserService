@@ -1,0 +1,15 @@
+name: PR Validation & Quality Checks
+
+# This workflow calls the reusable workflow from the .github repository
+# Copy this file to: .github/workflows/pr-validation.yml in each repository
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  validate-and-label:
+    uses: OpenResilienceInitiative/.github/.github/workflows/pr-validation.yml@main
+    permissions:
+      contents: read
+      pull-requests: write

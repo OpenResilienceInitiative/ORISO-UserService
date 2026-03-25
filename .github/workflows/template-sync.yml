@@ -1,0 +1,16 @@
+name: Sync PR and Issue Templates
+
+# This workflow calls the reusable workflow from the .github repository
+# Copy this file to: .github/workflows/template-sync.yml in each repository
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM UTC
+
+jobs:
+  sync-templates:
+    uses: OpenResilienceInitiative/.github/.github/workflows/template-sync.yml@main
+    permissions:
+      contents: write
+      pull-requests: write

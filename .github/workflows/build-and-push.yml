@@ -1,0 +1,31 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  trigger-kubernetes-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger ORISO-Kubernetes build-and-push workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          script: |
+            // The ORISO-Kubernetes build-and-push.yml runs a matrix across all services.
+            // It will check out the latest ORISO-UserService code and rebuild its image.
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: 'OpenResilienceInitiative',
+                repo: 'ORISO-Kubernetes',
+                workflow_id: 'build-and-push.yml',
+                ref: 'main'
+              });
+              console.log('✅ Triggered ORISO-Kubernetes build-and-push workflow for ORISO-UserService');
+            } catch (error) {
+              core.setFailed(`❌ Failed to trigger ORISO-Kubernetes build: ${error.message}`);
+            }
