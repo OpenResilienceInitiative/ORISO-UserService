@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.config.auth;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.*;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTenantFilter;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import org.keycloak.adapters.springsecurity.KeycloakConfiguration;
@@ -43,6 +44,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
   private boolean multitenancy;
 
   private HttpTenantFilter tenantFilter;
+  private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
   /**
    * Processes HTTP requests and checks for a valid spring security authentication for the
@@ -52,10 +54,12 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
       @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
           KeycloakClientRequestFactory keycloakClientRequestFactory,
       CsrfSecurityProperties csrfSecurityProperties,
-      @Nullable HttpTenantFilter tenantFilter) {
+      @Nullable HttpTenantFilter tenantFilter,
+      @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter) {
     this.keycloakClientRequestFactory = keycloakClientRequestFactory;
     this.csrfSecurityProperties = csrfSecurityProperties;
     this.tenantFilter = tenantFilter;
+    this.ipPrivacyHeaderFilter = ipPrivacyHeaderFilter;
   }
 
   /**
@@ -71,6 +75,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         http.csrf()
             .disable()
             .addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
+    if (ipPrivacyHeaderFilter != null) {
+      httpSecurity = httpSecurity.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
+    }
 
     httpSecurity = enableTenantFilterIfMultitenancyEnabled(httpSecurity);
 

@@ -5,7 +5,6 @@ import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
@@ -31,7 +30,6 @@ public class AgencyService {
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
-  private final @NonNull KeycloakClient keycloakClient;
   /**
    * Returns the {@link AgencyDTO} for the provided agencyId. Agency will be cached for further
    * requests.
@@ -107,11 +105,9 @@ public class AgencyService {
   }
 
   private void addDefaultHeaders(ApiClient apiClient) {
-    // Registration/public flows can be unauthenticated (no user token in request scope).
-    // In those cases, fall back to a technical token so agency lookup still works.
-    var headers =
-        this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeadersWithFallback(
-            keycloakClient.getBearerToken());
+    // Registration/public flows must stay unauthenticated. Only forward Authorization when a real
+    // user token already exists in request context.
+    var headers = this.securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders();
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }

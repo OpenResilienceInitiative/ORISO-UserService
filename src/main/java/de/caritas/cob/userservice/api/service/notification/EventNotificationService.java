@@ -94,6 +94,28 @@ public class EventNotificationService {
   }
 
   @Transactional
+  public void createCounselorRenamedNotification(
+      Session session, String recipientUserId, String oldDisplayName, String newDisplayName) {
+    if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
+    String previous = safeValue(oldDisplayName, "your counselor");
+    String updated = safeValue(newDisplayName, "your counselor");
+    String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
+    createEvent(
+        recipientUserId,
+        "counselor.renamed",
+        CATEGORY_SYSTEM,
+        "Counselor name updated",
+        String.format(
+            "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
+            previous, updated, changedAt),
+        buildSessionActionPath(session),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview, boolean matrixRoom) {
     createMessageNotificationFromRoom(
