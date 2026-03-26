@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -38,6 +39,7 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
@@ -448,6 +450,8 @@ public class EventNotificationService {
                           }
                           return safeValue(candidate, "User");
                         }))
+        .or(
+            () -> identityTombstoneService.resolveDisplayLabel(senderUserId))
         .orElse("Someone");
   }
 

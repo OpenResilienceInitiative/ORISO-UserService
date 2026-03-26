@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelation
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.DeletionPauseRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
@@ -45,7 +47,9 @@ import lombok.RequiredArgsConstructor;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -62,6 +66,7 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AdminUserFacade adminUserFacade;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
+  private final @NonNull AuthenticatedUser authenticatedUser;
 
   /**
    * Creates the root hal based navigation entity.
@@ -188,6 +193,22 @@ public class UserAdminController implements UseradminApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/deletion/pause",
+        "/service/useradmin/consultants/{consultantId}/deletion/pause"
+      })
+  public ResponseEntity<Void> pauseConsultantDeletion(
+      @PathVariable String consultantId,
+      @Valid @RequestBody DeletionPauseRequestDTO deletionPauseRequestDTO) {
+    this.consultantAdminFacade.pauseConsultantDeletion(
+        consultantId,
+        deletionPauseRequestDTO.getReason(),
+        deletionPauseRequestDTO.getMonths(),
+        authenticatedUser.getUserId());
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
   /**
    * Entry point to update a consultant.
    *
@@ -284,6 +305,22 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> markAskerForDeletion(String askerId) {
     this.askerUserAdminFacade.markAskerForDeletion(askerId);
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  @PostMapping(
+      value = {
+        "/useradmin/askers/{askerId}/deletion/pause",
+        "/service/useradmin/askers/{askerId}/deletion/pause"
+      })
+  public ResponseEntity<Void> pauseAskerDeletion(
+      @PathVariable String askerId,
+      @Valid @RequestBody DeletionPauseRequestDTO deletionPauseRequestDTO) {
+    this.askerUserAdminFacade.pauseAskerDeletion(
+        askerId,
+        deletionPauseRequestDTO.getReason(),
+        deletionPauseRequestDTO.getMonths(),
+        authenticatedUser.getUserId());
     return new ResponseEntity<>(HttpStatus.OK);
   }
 

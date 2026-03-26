@@ -54,4 +54,5 @@
   <include file="db/changelog/changeset/0047_add_matrix_password/0047_changeSet.xml"/>
   <include file="db/changelog/changeset/0048_add_event_notifications/0048_changeSet.xml"/>
   <include file="db/changelog/changeset/0049_add_magic_link_login_toggle/0049_changeSet.xml"/>
+  <include file="db/changelog/changeset/0050_security05_deletion_lifecycle/0050_changeSet.xml"/>
 </databaseChangeLog>

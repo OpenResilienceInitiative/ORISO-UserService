@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service.consultant;
 
-import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
@@ -25,6 +24,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +49,7 @@ public class ConsultantAdminService {
   private final @NonNull AccountManager accountManager;
 
   private final @NonNull AppointmentService appointmentService;
+  private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
   /**
    * Finds a {@link Consultant} by the given consultant id and throws a {@link NoContentException}
@@ -136,8 +137,22 @@ public class ConsultantAdminService {
           consultantId);
     }
 
-    consultant.setDeleteDate(nowInUtc());
+    deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
     consultant.setStatus(ConsultantStatus.IN_DELETION);
+    this.consultantRepository.save(consultant);
+  }
+
+  public void pauseConsultantDeletion(
+      String consultantId, String reason, Integer months, String pausedBy) {
+    var consultant =
+        this.consultantRepository
+            .findById(consultantId)
+            .orElseThrow(
+                () -> new NotFoundException("Consultant with id %s does not exist", consultantId));
+    if (consultant.getDeleteDate() == null) {
+      throw new NotFoundException("Consultant with id %s is not marked for deletion", consultantId);
+    }
+    deletionLifecycleService.pauseConsultantDeletion(consultant, reason, months, pausedBy);
     this.consultantRepository.save(consultant);
   }
 

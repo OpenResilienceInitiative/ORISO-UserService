@@ -91,6 +91,10 @@ public class UserService {
     return userRepository.findByUserIdAndDeleteDateIsNull(userId);
   }
 
+  public Optional<User> findDeletedById(String userId) {
+    return userRepository.findById(userId).filter(user -> user.getDeleteDate() != null);
+  }
+
   /**
    * Saves an {@link User} to the database.
    *
