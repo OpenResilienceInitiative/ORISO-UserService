@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -20,6 +21,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,12 +33,16 @@ public class EventNotificationService {
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
+  private static final String REDACTED_PREVIEW = "[content hidden]";
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
+  @Value("${privacy.notificationPreviewMode:NONE}")
+  private String notificationPreviewMode;
 
   @Transactional
   public void createInquiryAcceptedNotification(Session session, Consultant consultant) {
@@ -90,10 +96,38 @@ public class EventNotificationService {
   }
 
   @Transactional
+  public void createCounselorRenamedNotification(
+      Session session, String recipientUserId, String oldDisplayName, String newDisplayName) {
+    if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
+    String previous = safeValue(oldDisplayName, "your counselor");
+    String updated = safeValue(newDisplayName, "your counselor");
+    String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
+    createEvent(
+        recipientUserId,
+        "counselor.renamed",
+        CATEGORY_SYSTEM,
+        "Counselor name updated",
+        String.format(
+            "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
+            previous, updated, changedAt),
+        buildSessionActionPath(session),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview, boolean matrixRoom) {
     createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, matrixRoom, false, null);
+        roomId, senderUserId, messagePreview, matrixRoom, false, null, null);
+  }
+
+  @Transactional
+  public void createMessageNotificationFromRoom(
+      String roomId, String senderUserId, boolean matrixRoom, PrivacyEnvelope envelope) {
+    createMessageNotificationFromRoom(roomId, senderUserId, null, matrixRoom, false, null, envelope);
   }
 
   @Transactional
@@ -104,6 +138,19 @@ public class EventNotificationService {
       boolean matrixRoom,
       boolean supervisorMessage,
       String senderDisplayName) {
+    createMessageNotificationFromRoom(
+        roomId, senderUserId, messagePreview, matrixRoom, supervisorMessage, senderDisplayName, null);
+  }
+
+  @Transactional
+  public void createMessageNotificationFromRoom(
+      String roomId,
+      String senderUserId,
+      String messagePreview,
+      boolean matrixRoom,
+      boolean supervisorMessage,
+      String senderDisplayName,
+      PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
       return;
     }
@@ -119,11 +166,7 @@ public class EventNotificationService {
 
     Session session = sessionOpt.get();
     String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
-    String preview = normalizePreview(cleanMessageBody(messagePreview));
-    String text =
-        String.format(
-            "%s sent a new message%s",
-            senderLabel, preview.isBlank() ? "." : ": \"" + preview + "\"");
+    String text = buildMessageNotificationText(senderLabel, messagePreview, envelope);
 
     if (!supervisorMessage
         && session.getUser() != null
@@ -161,11 +204,22 @@ public class EventNotificationService {
   public void createThreadReplyNotificationFromRoom(
       String roomId,
       String senderUserId,
+      String threadRootId,
+      boolean matrixRoom,
+      PrivacyEnvelope envelope) {
+    createThreadReplyNotificationFromRoom(
+        roomId, senderUserId, null, threadRootId, matrixRoom, false, null, null, envelope);
+  }
+
+  @Transactional
+  public void createThreadReplyNotificationFromRoom(
+      String roomId,
+      String senderUserId,
       String messagePreview,
       String threadRootId,
       boolean matrixRoom) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, messagePreview, threadRootId, matrixRoom, false, null, null);
+        roomId, senderUserId, messagePreview, threadRootId, matrixRoom, false, null, null, null);
   }
 
   @Transactional
@@ -178,6 +232,29 @@ public class EventNotificationService {
       boolean supervisorMessage,
       String senderDisplayName,
       String threadParentPreview) {
+    createThreadReplyNotificationFromRoom(
+        roomId,
+        senderUserId,
+        messagePreview,
+        threadRootId,
+        matrixRoom,
+        supervisorMessage,
+        senderDisplayName,
+        threadParentPreview,
+        null);
+  }
+
+  @Transactional
+  public void createThreadReplyNotificationFromRoom(
+      String roomId,
+      String senderUserId,
+      String messagePreview,
+      String threadRootId,
+      boolean matrixRoom,
+      boolean supervisorMessage,
+      String senderDisplayName,
+      String threadParentPreview,
+      PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
       return;
     }
@@ -193,14 +270,9 @@ public class EventNotificationService {
 
     Session session = sessionOpt.get();
     String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
-    String preview = normalizePreview(cleanMessageBody(messagePreview));
-    String parentPreview = normalizePreview(cleanMessageBody(threadParentPreview));
     String text =
-        String.format(
-            "%s replied under thread \"%s\"%s",
-            senderLabel,
-            parentPreview.isBlank() ? "message" : parentPreview,
-            preview.isBlank() ? "." : ": \"" + preview + "\"");
+        buildThreadReplyNotificationText(
+            senderLabel, messagePreview, threadParentPreview, envelope);
 
     if (!supervisorMessage
         && session.getUser() != null
@@ -378,6 +450,8 @@ public class EventNotificationService {
                           }
                           return safeValue(candidate, "User");
                         }))
+        .or(
+            () -> identityTombstoneService.resolveDisplayLabel(senderUserId))
         .orElse("Someone");
   }
 
@@ -409,6 +483,76 @@ public class EventNotificationService {
     }
     String normalized = messagePreview.replaceAll("\\s+", " ").trim();
     return normalized.length() > 120 ? normalized.substring(0, 117) + "..." : normalized;
+  }
+
+  private String buildMessageNotificationText(
+      String senderLabel, String messagePreview, PrivacyEnvelope envelope) {
+    NotificationPreviewMode mode = currentPreviewMode();
+    String contentLabel = contentLabel(envelope);
+    if (mode == NotificationPreviewMode.NONE) {
+      return String.format("%s sent a new %s.", senderLabel, contentLabel);
+    }
+    if (mode == NotificationPreviewMode.MASKED) {
+      return String.format("%s sent a new %s: %s", senderLabel, contentLabel, REDACTED_PREVIEW);
+    }
+    String preview = normalizePreview(cleanMessageBody(messagePreview));
+    if (!preview.isBlank()) {
+      return String.format("%s sent a new message: \"%s\"", senderLabel, preview);
+    }
+    return String.format(
+        "%s sent a new %s (messageId: %s).",
+        senderLabel, contentLabel, envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
+  }
+
+  private String buildThreadReplyNotificationText(
+      String senderLabel, String messagePreview, String threadParentPreview, PrivacyEnvelope envelope) {
+    NotificationPreviewMode mode = currentPreviewMode();
+    if (mode == NotificationPreviewMode.NONE) {
+      return String.format("%s replied in a thread.", senderLabel);
+    }
+    if (mode == NotificationPreviewMode.MASKED) {
+      return String.format("%s replied in a thread: %s", senderLabel, REDACTED_PREVIEW);
+    }
+    String preview = normalizePreview(cleanMessageBody(messagePreview));
+    String parentPreview = normalizePreview(cleanMessageBody(threadParentPreview));
+    if (!preview.isBlank() || !parentPreview.isBlank()) {
+      return String.format(
+          "%s replied under thread \"%s\"%s",
+          senderLabel,
+          parentPreview.isBlank() ? "message" : parentPreview,
+          preview.isBlank() ? "." : ": \"" + preview + "\"");
+    }
+    return String.format(
+        "%s replied in a thread (messageId: %s).",
+        senderLabel, envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
+  }
+
+  private String contentLabel(PrivacyEnvelope envelope) {
+    if (envelope == null || envelope.getContentClass() == null) {
+      return "message";
+    }
+    switch (envelope.getContentClass()) {
+      case "IMAGE":
+        return "image";
+      case "FILE":
+        return "file";
+      case "AUDIO":
+        return "audio message";
+      case "VIDEO":
+        return "video message";
+      case "NOTICE":
+        return "notice";
+      default:
+        return "message";
+    }
+  }
+
+  private NotificationPreviewMode currentPreviewMode() {
+    try {
+      return NotificationPreviewMode.valueOf(safeValue(notificationPreviewMode, "NONE").toUpperCase());
+    } catch (IllegalArgumentException ex) {
+      return NotificationPreviewMode.NONE;
+    }
   }
 
   private String cleanMessageBody(String messagePreview) {
@@ -530,6 +674,12 @@ public class EventNotificationService {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
     }
+  }
+
+  private enum NotificationPreviewMode {
+    NONE,
+    MASKED,
+    FULL
   }
 }
 

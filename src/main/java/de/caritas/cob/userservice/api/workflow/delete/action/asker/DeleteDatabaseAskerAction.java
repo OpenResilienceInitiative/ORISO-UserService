@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWorkflowDTO> {
 
   private final @NonNull UserRepository userRepository;
+  private final @NonNull IdentityTombstoneService identityTombstoneService;
 
   /**
    * Deletes the given {@link User} in database.
@@ -30,6 +32,7 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
     try {
+      identityTombstoneService.recordDeletedUser(actionTarget.getUser());
       this.userRepository.delete(actionTarget.getUser());
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);

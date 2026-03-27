@@ -53,4 +53,5 @@
 	<include file="db/changelog/changeset/0045_add_hint_and_create_date_to_chat/0045_changeSet.xml"/>
 	<include file="db/changelog/changeset/0046_remove_feeback_related_columns/0046_changeSet.xml"/>
 	<include file="db/changelog/changeset/0047_add_matrix_password/0047_changeSet.xml"/>
+  <include file="db/changelog/changeset/0050_security05_deletion_lifecycle/0050_changeSet.xml"/>
 </databaseChangeLog>
