@@ -36,5 +36,7 @@ public interface AdminRepository extends CrudRepository<Admin, String> {
   @Query(value = "SELECT a FROM Admin a WHERE tenantId = ?1 AND type = ?2")
   List<Admin> findByTenantIdAndType(Long tenantId, Admin.AdminType type);
 
+  List<Admin> findByType(Admin.AdminType type);
+
   List<Admin> findAllByIdIn(Set<String> adminIds);
 }

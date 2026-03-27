@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
@@ -244,4 +245,10 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   List<Session> findByConsultantAndTeamSessionAndStatus(
       Consultant consultant, boolean isTeamSession, SessionStatus status);
+
+  @Query("SELECT max(s.enquiryMessageDate) FROM Session s WHERE s.user = :user")
+  LocalDateTime findMaxEnquiryMessageDateByUser(@Param("user") User user);
+
+  @Query("SELECT max(s.updateDate) FROM Session s WHERE s.consultant = :consultant")
+  LocalDateTime findMaxUpdateDateByConsultant(@Param("consultant") Consultant consultant);
 }

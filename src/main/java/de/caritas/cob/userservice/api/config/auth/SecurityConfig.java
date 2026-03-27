@@ -240,6 +240,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
         .antMatchers(
+            "/users/inactive-accounts/audit-logs", "/service/users/inactive-accounts/audit-logs")
+        .hasAuthority(TECHNICAL_DEFAULT)
+        .antMatchers(
             "/users/consultants/sessions/{sessionId:[0-9]+}",
             "/users/sessions/{sessionId:[0-9]+}/archive",
             "/users/sessions/{sessionId:[0-9]+}")
