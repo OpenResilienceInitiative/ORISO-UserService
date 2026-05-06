@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api.service.session;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 /**
@@ -20,11 +22,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class DirectSessionMatrixRoomService {
 
-  private static final String CONSULTANT_FALLBACK_MATRIX_PASSWORD = "@Consultant123";
-
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionService sessionService;
+  private final @NonNull UserHelper userHelper;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both
@@ -45,7 +46,7 @@ public class DirectSessionMatrixRoomService {
     }
 
     try {
-      ensureConsultantMatrixAccount(consultant);
+      String consultantPassword = ensureConsultantMatrixCredentials(consultant);
       var user = session.getUser();
       if (user == null || user.getMatrixUserId() == null) {
         log.warn(
@@ -59,12 +60,14 @@ public class DirectSessionMatrixRoomService {
             consultant.getUsername());
         return;
       }
+      if (consultantPassword == null || consultantPassword.isBlank()) {
+        log.error(
+            "Consultant {} has no Matrix password, cannot provision direct-session room",
+            consultant.getUsername());
+        return;
+      }
 
       var consultantMatrixUsername = extractLocalpart(consultant.getMatrixUserId());
-      var consultantPassword =
-          consultant.getMatrixPassword() != null
-              ? consultant.getMatrixPassword()
-              : CONSULTANT_FALLBACK_MATRIX_PASSWORD;
 
       if (consultantMatrixUsername == null) {
         log.warn(
@@ -157,22 +160,25 @@ public class DirectSessionMatrixRoomService {
     }
   }
 
-  private void ensureConsultantMatrixAccount(Consultant consultant) {
+  private @Nullable String ensureConsultantMatrixCredentials(Consultant consultant) {
     if (consultant.getMatrixUserId() != null) {
-      return;
+      return consultant.getMatrixPassword();
     }
+    String generatedMatrixPassword = userHelper.getRandomPassword();
     try {
       var response =
           matrixSynapseService.createUser(
               consultant.getUsername(),
-              CONSULTANT_FALLBACK_MATRIX_PASSWORD,
+              generatedMatrixPassword,
               consultant.getFirstName() + " " + consultant.getLastName());
       if (response != null && response.getBody() != null && response.getBody().getUserId() != null) {
         consultant.setMatrixUserId(response.getBody().getUserId());
+        consultant.setMatrixPassword(generatedMatrixPassword);
         consultantRepository.save(consultant);
         log.info(
             "Created Matrix account for consultant {} during direct-session provisioning",
             consultant.getUsername());
+        return generatedMatrixPassword;
       }
     } catch (Exception ex) {
       log.error(
@@ -180,6 +186,7 @@ public class DirectSessionMatrixRoomService {
           consultant.getUsername(),
           ex);
     }
+    return null;
   }
 
   private String extractLocalpart(String matrixUserId) {

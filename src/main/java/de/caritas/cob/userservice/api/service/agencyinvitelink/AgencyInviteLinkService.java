@@ -98,19 +98,24 @@ public class AgencyInviteLinkService {
   public RedeemResult redeem(String token) {
     AgencyInviteLink link =
         repository
-            .findByToken(token)
-            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+            .findByTokenAndStatus(token, STATUS_ACTIVE)
+            .orElseThrow(
+                () ->
+                    repository
+                        .findByToken(token)
+                        .map(
+                            existing -> {
+                              if (STATUS_USED.equals(existing.getStatus())) {
+                                throw new BadRequestException("Invite link already used");
+                              }
+                              throw new BadRequestException("Invite link is not active");
+                            })
+                        .orElseThrow(() -> new NotFoundException("Invite link not found")));
 
-    if (STATUS_USED.equals(link.getStatus())) {
-      throw new BadRequestException("Invite link already used");
-    }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(STATUS_EXPIRED);
       repository.save(link);
       throw new BadRequestException("Invite link expired");
-    }
-    if (!STATUS_ACTIVE.equals(link.getStatus())) {
-      throw new BadRequestException("Invite link is not active");
     }
 
     link.setStatus(STATUS_USED);
