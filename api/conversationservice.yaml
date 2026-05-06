@@ -369,6 +369,10 @@ components:
         numAvailableConsultants:
           type: integer
           minimum: 0
+        peopleAhead:
+          type: integer
+          minimum: 0
+          description: Number of anonymous enquiries created before this one in the same consulting type and still waiting (status NEW).
         status:
           type: string
           enum:

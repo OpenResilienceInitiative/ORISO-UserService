@@ -23,6 +23,8 @@ import io.swagger.annotations.Api;
 import javax.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import java.util.Collections;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -157,8 +159,22 @@ public class ConversationController implements ConversationsApi {
     }
 
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
-    var consultants = messenger.findAvailableConsultants(consultingTypeId);
-    var anonymousEnquiry = mapper.anonymousEnquiryOf(sessionMap, consultants);
+    /*
+     * findAvailableConsultants goes through RocketChat — during the Matrix
+     * migration RocketChat is unreachable and throws. Catch and degrade to
+     * an empty set so the waiting-room poll still gets peopleAhead + status,
+     * which is what the asker UI actually needs in real time.
+     */
+    Set<String> consultants;
+    try {
+      consultants = messenger.findAvailableConsultants(consultingTypeId);
+    } catch (Exception ex) {
+      consultants = Collections.emptySet();
+    }
+    var peopleAhead =
+        messenger.countPendingEnquiriesAheadOf(
+            mapper.agencyIdOf(sessionMap), mapper.createDateOf(sessionMap));
+    var anonymousEnquiry = mapper.anonymousEnquiryOf(sessionMap, consultants, peopleAhead);
 
     return ResponseEntity.ok(anonymousEnquiry);
   }

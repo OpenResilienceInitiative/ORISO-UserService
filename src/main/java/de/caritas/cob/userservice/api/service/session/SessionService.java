@@ -351,8 +351,36 @@ public class SessionService {
 
   private List<Session> retrieveRegisteredSessions(List<Long> consultantAgencyIds) {
     return this.sessionRepository
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateAsc(
-            consultantAgencyIds, SessionStatus.NEW, RegistrationType.REGISTERED);
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+            consultantAgencyIds, SessionStatus.NEW, RegistrationType.REGISTERED)
+        .stream()
+        // Anonymous-style registrations can be created via /users/askers/new and therefore have
+        // registrationType REGISTERED. Keep them hidden in consultant inquiries until consent.
+        .filter(this::isVisibleRegisteredEnquiryForConsultant)
+        .collect(Collectors.toList());
+  }
+
+  private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
+    if (!isAnonymousStyleRegistration(session)) {
+      return true;
+    }
+    return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
+  }
+
+  private boolean isAnonymousStyleRegistration(Session session) {
+    if (isNull(session)) {
+      return false;
+    }
+
+    if ("00000".equals(session.getPostcode())) {
+      return true;
+    }
+
+    if (nonNull(session.getUser()) && nonNull(session.getUser().getUsername())) {
+      return session.getUser().getUsername().startsWith("Anonymous-");
+    }
+
+    return false;
   }
 
   /**

@@ -95,7 +95,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages",
             "/users/magic-link/request",
-            "/users/magic-link/consume")
+            "/users/magic-link/consume",
+            "/users/invitelinks/*/redeem")
         .permitAll()
         .antMatchers(
             HttpMethod.POST,
@@ -107,7 +108,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .regexMatchers(HttpMethod.POST, ".*/users/magic-link/(request|consume)$")
         .permitAll()
         .antMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
-        .hasAnyAuthority(ANONYMOUS_DEFAULT)
+        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
         .antMatchers("/users/notifications")
         .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
         .antMatchers("/users/data")

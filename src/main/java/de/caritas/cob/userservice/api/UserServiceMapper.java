@@ -329,6 +329,13 @@ public class UserServiceMapper {
     map.put("adviceSeekerId", session.getUser().getUserId());
     map.put("status", session.getStatus().toString());
     map.put("consultingTypeId", session.getConsultingTypeId());
+    if (nonNull(session.getAgencyId())) {
+      map.put("agencyId", session.getAgencyId());
+    }
+    if (nonNull(session.getCreateDate())) {
+      map.put("createDate", session.getCreateDate());
+    }
+    map.put("registrationType", session.getRegistrationType());
 
     return Optional.of(map);
   }

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotBlank;
@@ -25,6 +26,7 @@ public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
 
   @GetMapping
   public ResponseEntity<EventNotificationService.NotificationFeedResponse> getFeed(
@@ -88,6 +90,16 @@ public class EventNotificationController {
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName());
     }
+
+    // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
+    redisMessageMirrorService.mirrorOutgoingMessage(
+        null,
+        request.getRoomId(),
+        authenticatedUser.getUsername(),
+        authenticatedUser.getRoles() != null && authenticatedUser.getRoles().contains("consultant"),
+        request.getMessagePreview(),
+        null);
+
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 

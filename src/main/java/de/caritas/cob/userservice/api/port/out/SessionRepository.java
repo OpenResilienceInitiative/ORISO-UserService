@@ -53,11 +53,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param agencyIds ids of agencies to search for
    * @param sessionStatus {@link SessionStatus} to search for
    * @param registrationType {@link RegistrationType} to search for
-   * @return A list of {@link Session}s for the specific agency ids and status orderd by creation
-   *     date ascending
+   * @return A list of {@link Session}s for the specific agency ids and status ordered by creation
+   *     date descending (newest first — matches how the consultant list UI presents them and
+   *     avoids an extra client-side sort pass that was reordering items during streaming loads).
    */
-  List<Session> findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateAsc(
-      List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
+  List<Session>
+      findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+          List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
 
   /**
    * Find a {@link Session} by agency ids with status and team session where consultant is not the
@@ -191,6 +193,37 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       RegistrationType registrationType,
       SessionStatus sessionStatus,
       Pageable pageable);
+
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.consultingTypeId IN :consultingTypeIds "
+          + "AND s.registrationType = :registrationType "
+          + "AND s.status = :sessionStatus "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultants(
+      @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("registrationType") RegistrationType registrationType,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      Pageable pageable);
+
+  /**
+   * Count enquiries for the given agency that are still waiting for a consultant (status NEW) and
+   * were created before the reference date — i.e. the number of people queued ahead of the asker
+   * in the same agency. Registration type is intentionally ignored: on this deployment all
+   * asker sessions land as REGISTERED regardless of whether they went through the anonymous or
+   * full-registration flow, so filtering on it would always return zero.
+   */
+  @Query(
+      "SELECT COUNT(s) FROM Session s "
+          + "WHERE s.agencyId = :agencyId "
+          + "AND s.status = :sessionStatus "
+          + "AND s.createDate < :beforeDate")
+  long countPendingEnquiriesAheadOf(
+      @Param("agencyId") Long agencyId,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("beforeDate") LocalDateTime beforeDate);
 
   /** Find all sessions by a given {@link SessionStatus}. */
   List<Session> findByStatus(SessionStatus status);

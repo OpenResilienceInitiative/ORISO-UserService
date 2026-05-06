@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.StringConverter;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -91,6 +93,15 @@ public class Messenger implements Messaging {
     }
 
     return presentUserIds;
+  }
+
+  @Override
+  public long countPendingEnquiriesAheadOf(Long agencyId, LocalDateTime beforeDate) {
+    if (agencyId == null || beforeDate == null) {
+      return 0L;
+    }
+    return sessionRepository.countPendingEnquiriesAheadOf(
+        agencyId, SessionStatus.NEW, beforeDate);
   }
 
   @Override
