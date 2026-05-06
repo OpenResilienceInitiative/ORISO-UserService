@@ -99,6 +99,12 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
           && request.getRequestURI().toLowerCase().contains("/users/magic-link/")) {
         return true;
       }
+      // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
+      // hits it before any session / CSRF cookie exists.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
+        return true;
+      }
       List<String> csrfWhitelist =
           new ArrayList<>(Arrays.asList(csrfSecurityProperties.getWhitelist().getConfigUris()));
       csrfWhitelist.addAll(Arrays.asList(csrfSecurityProperties.getWhitelist().getAdminUris()));

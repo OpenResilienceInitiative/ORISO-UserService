@@ -29,6 +29,8 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
 
   List<Consultant> findAllByDeleteDateNotNull();
 
+  List<Consultant> findByDeleteDateIsNull();
+
   List<Consultant> findAllByIdIn(List<String> ids);
 
   @Query(

@@ -6,7 +6,9 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.*;
 import java.util.concurrent.*;
@@ -30,6 +32,7 @@ public class MatrixEventListenerService {
   private final @NonNull SessionService sessionService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
@@ -173,8 +176,6 @@ public class MatrixEventListenerService {
         syncUrl += "?timeout=30000";
       }
 
-      log.debug("🔷 Matrix sync: {}", syncUrl);
-
       // Call Matrix sync endpoint
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
@@ -303,15 +304,23 @@ public class MatrixEventListenerService {
     }
 
     String msgtype = (String) content.get("msgtype");
-    String body = (String) content.get("body");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
+    String messageBody = extractMessageBody(content);
+    PrivacyEnvelope privacyEnvelope = buildPrivacyEnvelope(event, roomId, senderId, msgtype, content);
 
-    log.info(
-        "📩 New Matrix message in room {}: {} (type: {})",
+    safeContentLog("matrix.message.received", privacyEnvelope);
+
+    // Debug mirror: capture actual Matrix timeline messages so Redis Commander can show them.
+    // This is feature-flagged/TTL-bound in RedisMessageMirrorService.
+    Long sessionId = roomToSessionMap.get(roomId);
+    redisMessageMirrorService.mirrorOutgoingMessage(
+        sessionId,
         roomId,
-        body != null && body.length() > 50 ? body.substring(0, 50) + "..." : body,
-        msgtype);
+        senderId,
+        senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
+        messageBody,
+        event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null);
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
@@ -330,8 +339,8 @@ public class MatrixEventListenerService {
 
       // Use existing LiveService notification service
       // Note: We need to convert Matrix room ID to session/group ID
-      Long sessionId = roomToSessionMap.get(roomId);
-      if (sessionId != null) {
+      Long mappedSessionId = roomToSessionMap.get(roomId);
+      if (mappedSessionId != null) {
         // Trigger notification asynchronously to not block sync loop
         executorService.submit(
             () -> {
@@ -339,10 +348,10 @@ public class MatrixEventListenerService {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, body, threadRootId, true);
+                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
                 } else {
                   eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, body, true);
+                      roomId, senderDomainUserId, true, privacyEnvelope);
                 }
               } catch (Exception e) {
                 log.error("❌ Failed to send LiveService notification", e);
@@ -429,6 +438,104 @@ public class MatrixEventListenerService {
     }
     Object eventId = relatesTo.get("event_id");
     return eventId != null ? String.valueOf(eventId) : null;
+  }
+
+  private void safeContentLog(String marker, PrivacyEnvelope envelope) {
+    if (envelope == null) {
+      log.debug("🔒 {} room=unknown", marker);
+      return;
+    }
+    log.debug(
+        "🔒 {} room={} messageId={} sender={} contentClass={} hasAttachment={} ts={}",
+        marker,
+        envelope.getRoomId(),
+        envelope.getMessageId(),
+        envelope.getSenderId(),
+        envelope.getContentClass(),
+        envelope.isHasAttachment(),
+        envelope.getTimestamp());
+  }
+
+  @SuppressWarnings("unchecked")
+  private PrivacyEnvelope buildPrivacyEnvelope(
+      Map<String, Object> event,
+      String roomId,
+      String senderId,
+      String msgtype,
+      Map<String, Object> content) {
+    String contentClass = classifyContent(msgtype);
+    boolean hasAttachment =
+        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+            || (content != null && (content.containsKey("url") || content.containsKey("file")));
+
+    Long timestamp = null;
+    Object timestampRaw = event.get("origin_server_ts");
+    if (timestampRaw instanceof Number) {
+      timestamp = ((Number) timestampRaw).longValue();
+    }
+
+    Object eventIdRaw = event.get("event_id");
+    String eventId = eventIdRaw == null ? null : String.valueOf(eventIdRaw);
+
+    return PrivacyEnvelope.builder()
+        .messageId(eventId)
+        .roomId(roomId)
+        .senderId(senderId)
+        .timestamp(timestamp)
+        .hasAttachment(hasAttachment)
+        .contentClass(contentClass)
+        .build();
+  }
+
+  private String classifyContent(String msgtype) {
+    if (msgtype == null || msgtype.isBlank()) {
+      return "UNKNOWN";
+    }
+    switch (msgtype) {
+      case "m.text":
+        return "TEXT";
+      case "m.image":
+        return "IMAGE";
+      case "m.file":
+        return "FILE";
+      case "m.audio":
+        return "AUDIO";
+      case "m.video":
+        return "VIDEO";
+      case "m.notice":
+        return "NOTICE";
+      case "m.emote":
+        return "EMOTE";
+      default:
+        return "OTHER";
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private String extractMessageBody(Map<String, Object> content) {
+    if (content == null) {
+      return null;
+    }
+
+    Object body = content.get("body");
+    if (body != null) {
+      return String.valueOf(body);
+    }
+
+    Object formattedBody = content.get("formatted_body");
+    if (formattedBody != null) {
+      return String.valueOf(formattedBody);
+    }
+
+    Object relatesToRaw = content.get("m.relates_to");
+    if (relatesToRaw instanceof Map) {
+      Object eventId = ((Map<String, Object>) relatesToRaw).get("event_id");
+      if (eventId != null) {
+        return "thread-reply:" + eventId;
+      }
+    }
+
+    return null;
   }
 
   /**

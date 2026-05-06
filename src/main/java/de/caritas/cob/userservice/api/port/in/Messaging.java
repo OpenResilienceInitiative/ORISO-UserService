@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.in;
 
 import de.caritas.cob.userservice.api.model.Chat;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -32,4 +33,6 @@ public interface Messaging {
   boolean getAvailability(String consultantId);
 
   Set<String> findAvailableConsultants(int consultingTypeId);
+
+  long countPendingEnquiriesAheadOf(Long agencyId, LocalDateTime beforeDate);
 }

@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.service.user;
 
-import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
-
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
@@ -21,6 +19,8 @@ import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailN
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.NonNull;
@@ -47,6 +47,7 @@ public class UserAccountService {
 
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
+  private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
@@ -121,6 +122,7 @@ public class UserAccountService {
    * @param optionalEmail the new email address, potentially empty
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
+    ensureCurrentAccountIsWritable();
     optionalEmail.ifPresentOrElse(
         identityClient::changeEmailAddress, identityClient::deleteEmailAddress);
 
@@ -230,7 +232,7 @@ public class UserAccountService {
   public void deactivateAndFlagUserAccountForDeletion() {
     User user = retrieveValidatedUser();
     this.identityClient.deactivateUser(user.getUserId());
-    user.setDeleteDate(nowInUtc());
+    deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);
     fireAccountDeletionStatisticsEvent(user);
   }
@@ -252,6 +254,7 @@ public class UserAccountService {
    * @param mobileToken the new mobile device identifier token
    */
   public void updateUserMobileToken(String mobileToken) {
+    ensureCurrentAccountIsWritable();
     this.userService
         .getUser(this.authenticatedUser.getUserId())
         .ifPresent(user -> updateMobileToken(user, mobileToken));
@@ -268,7 +271,35 @@ public class UserAccountService {
    * @param mobileToken the mobile device identifier token to be added
    */
   public void addMobileAppToken(String mobileToken) {
+    ensureCurrentAccountIsWritable();
     this.userService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
     this.consultantService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
+  }
+
+  private void ensureCurrentAccountIsWritable() {
+    this.userService
+        .getUser(this.authenticatedUser.getUserId())
+        .ifPresent(this::assertWritable);
+    this.consultantService
+        .getConsultant(this.authenticatedUser.getUserId())
+        .ifPresent(this::assertWritable);
+  }
+
+  private void assertWritable(User user) {
+    if (user.getDeleteDate() == null) {
+      return;
+    }
+    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+      throw new ForbiddenException("Account is in read-only safeguard mode.");
+    }
+  }
+
+  private void assertWritable(Consultant consultant) {
+    if (consultant.getDeleteDate() == null) {
+      return;
+    }
+    if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+      throw new ForbiddenException("Account is in read-only safeguard mode.");
+    }
   }
 }

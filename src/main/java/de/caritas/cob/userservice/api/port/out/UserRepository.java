@@ -20,6 +20,8 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   List<User> findAllByDeleteDateNotNull();
 
+  List<User> findAllByDeleteDateIsNull();
+
   Optional<User> findByUsernameInAndDeleteDateIsNull(Collection<String> usernames);
 
   /**

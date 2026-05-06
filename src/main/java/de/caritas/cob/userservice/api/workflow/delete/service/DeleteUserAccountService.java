@@ -40,6 +40,7 @@ public class DeleteUserAccountService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull WorkflowErrorMailService workflowErrorMailService;
+  private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
@@ -53,6 +54,9 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> deleteAskersAndCollectPossibleErrors() {
     return this.userRepository.findAllByDeleteDateNotNull().stream()
+        .map(deletionLifecycleService::normalizeUserLifecycle)
+        .peek(userRepository::save)
+        .filter(deletionLifecycleService::isReadyForHardDelete)
         .map(this::performUserDeletion)
         .flatMap(Collection::stream)
         .collect(Collectors.toList());
@@ -78,6 +82,9 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> deleteConsultantsAndCollectPossibleErrors() {
     return this.consultantRepository.findAllByDeleteDateNotNull().stream()
+        .map(deletionLifecycleService::normalizeConsultantLifecycle)
+        .peek(consultantRepository::save)
+        .filter(deletionLifecycleService::isReadyForHardDelete)
         .map(this::performConsultantDeletion)
         .flatMap(Collection::stream)
         .collect(Collectors.toList());

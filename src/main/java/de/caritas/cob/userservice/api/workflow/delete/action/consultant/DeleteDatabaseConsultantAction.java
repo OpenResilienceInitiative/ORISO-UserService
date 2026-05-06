@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,7 @@ public class DeleteDatabaseConsultantAction
 
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull IdentityTombstoneService identityTombstoneService;
 
   /**
    * Deletes the given {@link Consultant} in database.
@@ -52,6 +54,7 @@ public class DeleteDatabaseConsultantAction
     }
 
     try {
+      identityTombstoneService.recordDeletedConsultant(actionTarget.getConsultant());
       this.consultantRepository.delete(actionTarget.getConsultant());
     } catch (Exception e) {
       handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant in database");

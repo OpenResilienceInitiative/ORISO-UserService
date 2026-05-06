@@ -16,10 +16,14 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAc
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Language;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -39,6 +43,8 @@ public class ConsultantUpdateService {
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AppointmentService appointmentService;
+  private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull EventNotificationService eventNotificationService;
 
   /**
    * Updates the basic data of consultant with given id.
@@ -49,8 +55,6 @@ public class ConsultantUpdateService {
    */
   public Consultant updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
-    System.out.println("=== SUPERVISOR DEBUG: Received updateConsultantDTO.isSupervisor: " + updateConsultantDTO.getIsSupervisor());
-    log.info("Received updateConsultantDTO.isSupervisor: {}", updateConsultantDTO.getIsSupervisor());
     this.userAccountInputValidator.validateAbsence(
         new UpdateConsultantDTOAbsenceInputAdapter(updateConsultantDTO));
 
@@ -62,6 +66,9 @@ public class ConsultantUpdateService {
                     new BadRequestException(
                         String.format("Consultant with id %s does not exist", consultantId)));
 
+    String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
+    String nextDisplayName =
+        displayNameOf(updateConsultantDTO.getFirstname(), updateConsultantDTO.getLastname());
     UserDTO userDTO = buildValidatedUserDTO(updateConsultantDTO, consultant);
     this.identityClient.updateUserData(
         consultant.getId(),
@@ -101,6 +108,7 @@ public class ConsultantUpdateService {
 
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant);
     appointmentService.syncConsultantData(updatedConsultant);
+    emitCounselorRenameNotificationsIfNeeded(consultant, previousDisplayName, nextDisplayName);
     return updatedConsultant;
   }
 
@@ -132,17 +140,8 @@ public class ConsultantUpdateService {
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     // Always update supervisor field if provided (even if false)
-    System.out.println("=== SUPERVISOR DEBUG: Checking isSupervisor: DTO value = " + updateConsultantDTO.getIsSupervisor() + ", consultant current value = " + consultant.isSupervisor());
-    log.info("Checking isSupervisor: DTO value = {}, consultant current value = {}", updateConsultantDTO.getIsSupervisor(), consultant.isSupervisor());
     if (updateConsultantDTO.getIsSupervisor() != null) {
-      System.out.println("=== SUPERVISOR DEBUG: Updating supervisor field for consultant " + consultant.getId() + ": " + updateConsultantDTO.getIsSupervisor());
-      log.info("Updating supervisor field for consultant {}: {}", consultant.getId(), updateConsultantDTO.getIsSupervisor());
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
-      System.out.println("=== SUPERVISOR DEBUG: Consultant supervisor field after update: " + consultant.isSupervisor());
-      log.info("Consultant supervisor field after update: {}", consultant.isSupervisor());
-    } else {
-      System.out.println("=== SUPERVISOR DEBUG: isSupervisor is null in DTO, skipping update");
-      log.info("isSupervisor is null in DTO, skipping update");
     }
     consultant.setUpdateDate(nowInUtc());
     if (updateConsultantDTO.getTermsAndConditionsConfirmation() != null
@@ -167,5 +166,36 @@ public class ConsultantUpdateService {
             .map(LanguageCode::getByCode)
             .map(languageCode -> new Language(consultant, languageCode))
             .collect(Collectors.toSet());
+  }
+
+  private void emitCounselorRenameNotificationsIfNeeded(
+      Consultant consultant, String previousDisplayName, String nextDisplayName) {
+    if (consultant == null || consultant.getId() == null) {
+      return;
+    }
+    if (previousDisplayName.equals(nextDisplayName)) {
+      return;
+    }
+    var activeStatuses = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    var sessions = sessionRepository.findByConsultantAndStatusIn(consultant, activeStatuses);
+    sessions.stream()
+        .filter(session -> session.getUser() != null && session.getUser().getUserId() != null)
+        .forEach(
+            session ->
+                eventNotificationService.createCounselorRenamedNotification(
+                    session, session.getUser().getUserId(), previousDisplayName, nextDisplayName));
+    log.info(
+        "Counselor rename event created for consultantId={} from='{}' to='{}' sessions={}",
+        consultant.getId(),
+        previousDisplayName,
+        nextDisplayName,
+        sessions.size());
+  }
+
+  private String displayNameOf(String firstName, String lastName) {
+    String first = firstName == null ? "" : firstName.trim();
+    String last = lastName == null ? "" : lastName.trim();
+    String combined = (first + " " + last).trim();
+    return combined.isBlank() ? "Counselor" : combined;
   }
 }

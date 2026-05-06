@@ -212,6 +212,11 @@ public class ConsultantAdminFacade {
     this.consultantAdminService.markConsultantForDeletion(consultantId, forceDeleteSessions);
   }
 
+  public void pauseConsultantDeletion(
+      String consultantId, String reason, Integer months, String pausedBy) {
+    this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
+  }
+
   /**
    * Retrieves all consultants of the agency with given id.
    *

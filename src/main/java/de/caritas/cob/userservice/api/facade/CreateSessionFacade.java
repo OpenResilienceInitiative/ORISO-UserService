@@ -23,7 +23,9 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
+import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.List;
@@ -50,6 +52,7 @@ public class CreateSessionFacade {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
+  private final @NonNull DirectSessionMatrixRoomService directSessionMatrixRoomService;
 
   /**
    * Creates a new session for the provided user.
@@ -130,7 +133,10 @@ public class CreateSessionFacade {
             consultant, user, userDTO, agencyDTO.getTeamAgency());
     sessionDataService.saveSessionData(session, fromUserDTO(userDTO));
     session.setConsultant(consultant);
-    sessionService.saveSession(session);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    session = sessionService.saveSession(session);
+
+    directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
 
     return new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED);
   }
@@ -190,10 +196,17 @@ public class CreateSessionFacade {
       User user, Long topicId, Long agencyId) {
     List<Session> sessions = sessionService.getSessionsForUserByMainTopicId(user, topicId);
 
+    /* Only ACTIVE sessions (NEW / IN_PROGRESS) block a new enquiry. A user
+       whose previous topic+agency session is DONE or IN_ARCHIVE must be able
+       to re-open a fresh enquiry from their profile. */
     var sessionsWithSameAgencyAndTopic =
         sessions.stream()
             .filter(
                 session -> session.getAgencyId() != null && session.getAgencyId().equals(agencyId))
+            .filter(
+                session ->
+                    session.getStatus() == Session.SessionStatus.NEW
+                        || session.getStatus() == Session.SessionStatus.IN_PROGRESS)
             .collect(Collectors.toList());
 
     if (CollectionUtils.isNotEmpty(sessionsWithSameAgencyAndTopic)) {

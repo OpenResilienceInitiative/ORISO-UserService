@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.config.auth;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.*;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTenantFilter;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import org.keycloak.adapters.springsecurity.KeycloakConfiguration;
@@ -43,6 +44,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
   private boolean multitenancy;
 
   private HttpTenantFilter tenantFilter;
+  private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
   /**
    * Processes HTTP requests and checks for a valid spring security authentication for the
@@ -52,10 +54,12 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
       @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
           KeycloakClientRequestFactory keycloakClientRequestFactory,
       CsrfSecurityProperties csrfSecurityProperties,
-      @Nullable HttpTenantFilter tenantFilter) {
+      @Nullable HttpTenantFilter tenantFilter,
+      @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter) {
     this.keycloakClientRequestFactory = keycloakClientRequestFactory;
     this.csrfSecurityProperties = csrfSecurityProperties;
     this.tenantFilter = tenantFilter;
+    this.ipPrivacyHeaderFilter = ipPrivacyHeaderFilter;
   }
 
   /**
@@ -71,6 +75,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         http.csrf()
             .disable()
             .addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
+    if (ipPrivacyHeaderFilter != null) {
+      httpSecurity = httpSecurity.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
+    }
 
     httpSecurity = enableTenantFilterIfMultitenancyEnabled(httpSecurity);
 
@@ -88,7 +95,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages",
             "/users/magic-link/request",
-            "/users/magic-link/consume")
+            "/users/magic-link/consume",
+            "/users/invitelinks/*/redeem")
         .permitAll()
         .antMatchers(
             HttpMethod.POST,
@@ -100,7 +108,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .regexMatchers(HttpMethod.POST, ".*/users/magic-link/(request|consume)$")
         .permitAll()
         .antMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
-        .hasAnyAuthority(ANONYMOUS_DEFAULT)
+        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
         .antMatchers("/users/notifications")
         .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
         .antMatchers("/users/data")
@@ -219,12 +227,22 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers(
             HttpMethod.PUT, "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
         .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+        .antMatchers(
+            HttpMethod.POST,
+            "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
+            "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause",
+            "/service/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
+            "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause")
+        .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
         .antMatchers("/useradmin", "/useradmin/**")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/users/consultants/search")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+        .antMatchers(
+            "/users/inactive-accounts/audit-logs", "/service/users/inactive-accounts/audit-logs")
+        .hasAuthority(TECHNICAL_DEFAULT)
         .antMatchers(
             "/users/consultants/sessions/{sessionId:[0-9]+}",
             "/users/sessions/{sessionId:[0-9]+}/archive",

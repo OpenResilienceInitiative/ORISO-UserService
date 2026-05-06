@@ -290,12 +290,20 @@ public class UserController implements UsersApi {
     var rocketChatCredentials =
         RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
+    /* Additional enquiries from the profile page go through the normal
+       enquiry pipeline — the consultant is NOT pre-assigned here. The asker
+       lands on the "write first message" screen, the enquiry sits in the
+       agency queue, and a consultant picks it up. Direct-chat with a
+       specific consultant is a separate flow (QR code / ?cid=… link).
+       The empty constraint list keeps this endpoint permissive so existing
+       askers can raise new enquiries even when they already had a past
+       session for the same topic+agency. */
     var response =
         createNewSessionFacade.initializeNewSession(
             newRegistrationDto,
             user,
             rocketChatCredentials,
-            Lists.newArrayList(ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID));
+            Lists.newArrayList());
 
     return new ResponseEntity<>(response, response.getStatus());
   }

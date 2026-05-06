@@ -40,7 +40,10 @@ public class SecurityHeaderSupplier {
    */
   public HttpHeaders getKeycloakAndCsrfHttpHeaders() {
     var header = getCsrfHttpHeaders();
-    this.addKeycloakAuthorizationHeader(header, authenticatedUser.getAccessToken());
+    var currentAccessToken = authenticatedUser.getAccessToken();
+    if (StringUtils.isNotBlank(currentAccessToken)) {
+      this.addKeycloakAuthorizationHeader(header, currentAccessToken);
+    }
     return header;
   }
 
@@ -67,6 +70,14 @@ public class SecurityHeaderSupplier {
     return StringUtils.isNotBlank(currentAccessToken)
         ? getKeycloakAndCsrfHttpHeaders(currentAccessToken)
         : getKeycloakAndCsrfHttpHeaders(fallbackAccessToken);
+  }
+
+  /**
+   * Creates headers with CSRF values and adds Authorization only when the current request context
+   * already has a user token. This keeps public flows unauthenticated.
+   */
+  public HttpHeaders getOptionalKeycloakAndCsrfHttpHeaders() {
+    return getKeycloakAndCsrfHttpHeaders();
   }
 
   private void addKeycloakAuthorizationHeader(HttpHeaders httpHeaders, String accessToken) {

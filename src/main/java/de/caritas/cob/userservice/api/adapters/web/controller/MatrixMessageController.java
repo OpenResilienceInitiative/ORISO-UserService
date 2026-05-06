@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
@@ -30,6 +31,7 @@ public class MatrixMessageController {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
+  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
 
   /**
    * Send a message to a Matrix room.
@@ -123,6 +125,15 @@ public class MatrixMessageController {
       String roomId = session.get().getMatrixRoomId();
 
       var response = matrixSynapseService.sendMessage(roomId, message, accessToken);
+      Object eventId = response != null ? response.get("event_id") : null;
+
+      redisMessageMirrorService.mirrorOutgoingMessage(
+          sessionId,
+          roomId,
+          keycloakUsername,
+          isConsultant,
+          message,
+          eventId == null ? null : String.valueOf(eventId));
 
       log.info("Message sent to room {} by {}", roomId, matrixUsername);
       return ResponseEntity.ok(Map.of("success", true));

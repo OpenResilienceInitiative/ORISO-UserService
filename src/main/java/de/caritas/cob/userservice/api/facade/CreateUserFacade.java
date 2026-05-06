@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static java.util.Objects.isNull;
+import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -231,7 +232,25 @@ public class CreateUserFacade {
               language);
     }
 
+    if (shouldClearPrivacyConfirmations(role, userDTO) && nonNull(user)) {
+      user.setTermsAndConditionsConfirmation(null);
+      user.setDataPrivacyConfirmation(null);
+      user = userService.saveUser(user);
+    }
+
     return user;
+  }
+
+  private boolean shouldClearPrivacyConfirmations(UserRole role, UserDTO userDTO) {
+    if (role == UserRole.ANONYMOUS) {
+      return true;
+    }
+
+    // Anonymous chat currently registers through /users/askers/new with role USER.
+    // Detect that path by its synthetic postcode / username and clear confirmations
+    // so the first in-chat privacy gate is shown and persisted only after explicit acceptance.
+    return StringUtils.equals("00000", userDTO.getPostcode())
+        || StringUtils.startsWith(userDTO.getUsername(), "Anonymous-");
   }
 
   private ExtendedConsultingTypeResponseDTO obtainConsultingTypeSettings(UserDTO userDTO) {

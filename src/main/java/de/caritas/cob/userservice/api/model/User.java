@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -94,6 +95,25 @@ public class User implements TenantAware, NotificationsAware {
 
   @Column(name = "delete_date", columnDefinition = "datetime")
   private LocalDateTime deleteDate;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "deletion_lifecycle_state", length = 32)
+  private DeletionLifecycleState deletionLifecycleState = DeletionLifecycleState.ACTIVE;
+
+  @Column(name = "deletion_read_only_until", columnDefinition = "datetime")
+  private LocalDateTime deletionReadOnlyUntil;
+
+  @Column(name = "deletion_paused_until", columnDefinition = "datetime")
+  private LocalDateTime deletionPausedUntil;
+
+  @Column(name = "deletion_pause_reason", length = 512)
+  private String deletionPauseReason;
+
+  @Column(name = "deletion_paused_by", length = 64)
+  private String deletionPausedBy;
+
+  @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
+  private LocalDateTime deletionPauseCreatedAt;
 
   @Column(name = "tenant_id")
   private Long tenantId;
