@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.Optional;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -96,21 +97,21 @@ public class AgencyInviteLinkService {
    */
   @Transactional
   public RedeemResult redeem(String token) {
-    AgencyInviteLink link =
-        repository
-            .findByTokenAndStatus(token, STATUS_ACTIVE)
-            .orElseThrow(
-                () ->
-                    repository
-                        .findByToken(token)
-                        .map(
-                            existing -> {
-                              if (STATUS_USED.equals(existing.getStatus())) {
-                                throw new BadRequestException("Invite link already used");
-                              }
-                              throw new BadRequestException("Invite link is not active");
-                            })
-                        .orElseThrow(() -> new NotFoundException("Invite link not found")));
+    Optional<AgencyInviteLink> activeLink = repository.findByTokenAndStatus(token, STATUS_ACTIVE);
+
+    AgencyInviteLink link;
+    if (activeLink.isEmpty()) {
+      Optional<AgencyInviteLink> anyLink = repository.findByToken(token);
+      if (anyLink.isPresent()) {
+        AgencyInviteLink existing = anyLink.get();
+        if (STATUS_USED.equals(existing.getStatus())) {
+          throw new BadRequestException("Invite link already used");
+        }
+        throw new BadRequestException("Invite link is not active");
+      }
+      throw new NotFoundException("Invite link not found");
+    }
+    link = activeLink.get();
 
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(STATUS_EXPIRED);

@@ -1,38 +1,84 @@
-# Online-Beratung UserService
+# ORISO UserService
 
-The UserService provides different functionalities from creating and updating user accounts and their sessions, providing session lists up to creating and editing Rocket.Chat groups.
+## Overview
+Spring Boot service for managing users, consultants, and askers in the Online Beratung platform.
 
-It most importantly covers the lifecycle of a consultation/session:
-  - registration of new users/askers
-  - handling and creation of enquiries
-  - creation of associated sessions and their Rocket.Chat group(s)
-  - assignment of consultants to sessions and the corresponding Rocket.Chat group(s)
+## Quick Start
 
-Furthermore it handles the different kinds of consultations:
-  - single/direct 1:1 counseling
-  - team counseling
-  - group chat counseling
-  - anonymous counseling (no registration requried)
+### Run in Kubernetes
+The service automatically starts via Kubernetes deployment using Maven Spring Boot plugin.
 
-In addition to that it provides different lists of sessions for consultants and askers:
-  - asker sessions
-  - enquiries/anonymous enquiries
-  - sessions directly assigned to consultant
-  - team sessions
-  - group chats
+```bash
+# Check service status
+kubectl get pods -n caritas | grep userservice
+kubectl logs -n caritas -l app=userservice --tail=100
+```
 
-Moreover it also offers different workflows for deactivating expired group chats, deactivating old anonymous user accounts and deleting user accounts.
-On top of that the UserService includes useful admin API calls to administrate user accounts.
+### Run Locally (Development)
+```bash
+cd /home/caritas/Desktop/online-beratung/caritas-workspace/ORISO-UserService
+chmod +x mvnw
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local -DskipTests
+```
 
-## Help and Documentation
-In the project [documentation](https://onlineberatung.github.io/documentation/docs/setup/setup-backend) you'll find information for setting up and running the project.
-You can find some detailled information of the service architecture and its processes in the repository [documentation](https://github.com/Onlineberatung/onlineBeratung-userService/tree/master/documentation).
+## Configuration
 
-## License
-The project is licensed under the AGPLv3 which you'll find [here](https://github.com/Onlineberatung/onlineBeratung-userService/blob/master/LICENSE).
+### Database Connection
+**MariaDB ClusterIP:** `10.43.123.72:3306`
 
-## Code of Conduct
-Please have a look at our [Code of Conduct](https://github.com/Onlineberatung/.github/blob/master/CODE_OF_CONDUCT.md) before participating in the community.
+```properties
+# application-local.properties
+spring.datasource.url=jdbc:mariadb://10.43.123.72:3306/userservice
+spring.datasource.username=userservice
+spring.datasource.password=userservice
+```
 
-## Contributing
-Please read our [contribution guidelines](https://github.com/Onlineberatung/.github/blob/master/CONTRIBUTING.md) before contributing to this project.
+### Liquibase
+**STATUS:** ⚠️ **DISABLED**
+
+```properties
+spring.liquibase.enabled=false
+```
+
+Database schemas are managed separately in `ORISO-Database` repository.
+
+### Keycloak
+```properties
+keycloak.auth-server-url=http://localhost:8080
+keycloak.realm=online-beratung
+keycloak.resource=user-service
+```
+
+### RabbitMQ
+```properties
+spring.rabbitmq.host=localhost
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=user
+spring.rabbitmq.password=password
+```
+
+## Important Notes
+- **Port:** `8082`
+- **Profile:** `local`
+- **Liquibase:** DISABLED - schemas managed in ORISO-Database
+- **Database:** Uses MariaDB ClusterIP (NOT localhost)
+- **Host Network:** Enabled in Kubernetes for direct localhost access
+- **Inter-service Communication:** Uses localhost URLs for other services
+
+## Kubernetes Deployment Path
+```
+/home/caritas/Desktop/online-beratung/caritas-workspace/ORISO-UserService
+```
+
+## Health Check
+```bash
+curl http://localhost:8082/actuator/health
+```
+
+## Dependencies
+- Java 17
+- Spring Boot 2.7.14
+- MariaDB
+- RabbitMQ
+- Keycloak
+

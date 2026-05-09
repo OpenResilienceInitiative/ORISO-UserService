@@ -126,6 +126,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/matrix/sync/**")
         .permitAll()
         .antMatchers(
+            "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign")
+        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+        .antMatchers(
             "/users/email",
             "/users/mails/messages/new",
             "/users/drafts",
@@ -137,7 +140,6 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/chat/{chatId:[0-9]+}/join",
             "/users/chat/{chatId:[0-9]+}/members",
             "/users/chat/{chatId:[0-9]+}/leave",
-            "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
             "/users/consultants/toggleWalkThrough",
             "/matrix/**")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -175,7 +177,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers(HttpMethod.GET, "/users/sessions/room/{sessionId:[0-9]+}")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
-        .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers(
             "/users/sessions/open",
             "/users/sessions/consultants/new",

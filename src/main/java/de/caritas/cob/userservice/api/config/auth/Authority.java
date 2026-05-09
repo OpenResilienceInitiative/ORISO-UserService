@@ -49,6 +49,9 @@ public enum Authority {
   SINGLE_TENANT_ADMIN(
       UserRole.SINGLE_TENANT_ADMIN, singletonList(AuthorityValue.SINGLE_TENANT_ADMIN)),
   TENANT_ADMIN(UserRole.TENANT_ADMIN, singletonList(AuthorityValue.TENANT_ADMIN)),
+  /** Same API gates as {@link #RESTRICTED_AGENCY_ADMIN}; realm role still distinguishes full vs restricted in code. */
+  AGENCY_ADMIN(
+      UserRole.AGENCY_ADMIN, singletonList(AuthorityValue.RESTRICTED_AGENCY_ADMIN)),
 
   RESTRICTED_CONSULTANT_ADMIN(
       UserRole.RESTRICTED_CONSULTANT_ADMIN, List.of(CONSULTANT_CREATE, CONSULTANT_UPDATE)),
