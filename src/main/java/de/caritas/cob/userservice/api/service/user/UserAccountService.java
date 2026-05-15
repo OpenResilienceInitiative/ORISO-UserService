@@ -90,12 +90,21 @@ public class UserAccountService {
    * @return the validated {@link Consultant}
    */
   public Consultant retrieveValidatedConsultantById(String consultantId) {
-    return this.consultantService
-        .getConsultant(consultantId)
-        .orElseThrow(
-            () ->
-                new InternalServerErrorException(
-                    String.format("Consultant with id %s not found", consultantId)));
+    Optional<Consultant> active = this.consultantService.getConsultant(consultantId);
+    if (active.isPresent()) {
+      return active.get();
+    }
+    // Check whether the consultant exists but has been soft-deleted / flagged for deletion.
+    // In that case we must not leak a 500; a 403 is the appropriate response.
+    boolean softDeleted =
+        this.consultantService.findConsultantIncludingDeleted(consultantId).isPresent();
+    if (softDeleted) {
+      throw new ForbiddenException(
+          String.format(
+              "Consultant with id %s is flagged for deletion and cannot log in", consultantId));
+    }
+    throw new InternalServerErrorException(
+        String.format("Consultant with id %s not found", consultantId));
   }
 
   /**

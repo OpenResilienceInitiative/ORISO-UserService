@@ -64,6 +64,16 @@ public class DeletionLifecycleService {
     if (user.getDeletionLifecycleState() == DeletionLifecycleState.PENDING_DELETION) {
       transitionToReadOnlySafeguard(user, user.getDeletionPausedBy());
     }
+    // Backfill: records migrated directly into READ_ONLY_SAFEGUARD may have no window set.
+    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        && user.getDeletionReadOnlyUntil() == null) {
+      user.setDeletionReadOnlyUntil(
+          LocalDateTime.now(ZoneOffset.UTC).plusHours(resolveReadOnlyHours(user.getTenantId())));
+      log.info(
+          "Backfilled deletionReadOnlyUntil for userId={} tenantId={}",
+          user.getUserId(),
+          user.getTenantId());
+    }
     clearExpiredPauseIfNecessary(user);
     return user;
   }
@@ -78,6 +88,17 @@ public class DeletionLifecycleService {
     }
     if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.PENDING_DELETION) {
       transitionToReadOnlySafeguard(consultant, consultant.getDeletionPausedBy());
+    }
+    // Backfill: records migrated directly into READ_ONLY_SAFEGUARD may have no window set.
+    // Start the safeguard window now so the scheduler can eventually finalize them.
+    if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        && consultant.getDeletionReadOnlyUntil() == null) {
+      consultant.setDeletionReadOnlyUntil(
+          LocalDateTime.now(ZoneOffset.UTC).plusHours(resolveReadOnlyHours(consultant.getTenantId())));
+      log.info(
+          "Backfilled deletionReadOnlyUntil for consultantId={} tenantId={}",
+          consultant.getId(),
+          consultant.getTenantId());
     }
     clearExpiredPauseIfNecessary(consultant);
     return consultant;
