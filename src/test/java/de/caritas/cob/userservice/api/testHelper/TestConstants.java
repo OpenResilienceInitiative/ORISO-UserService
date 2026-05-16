@@ -383,73 +383,47 @@ public class TestConstants {
   public static final String VALID_STATE = "1";
   public static final String INVALID_STATE = "xxx";
   public static final Consultant CONSULTANT =
-      new Consultant(
-          CONSULTANT_ID,
-          ROCKETCHAT_ID,
-          null, // matrixUserId
-          null, // matrixPassword
-          USERNAME,
-          FIRST_NAME,
-          LAST_NAME,
-          EMAIL,
-          IS_ABSENT,
-          IS_TEAM_CONSULTANT,
-          ABSENCE_MESSAGE,
-          IS_LANGUAGE_FORMAL,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username(USERNAME)
+          .firstName(FIRST_NAME)
+          .lastName(LAST_NAME)
+          .email(EMAIL)
+          .absent(IS_ABSENT)
+          .teamConsultant(IS_TEAM_CONSULTANT)
+          .absenceMessage(ABSENCE_MESSAGE)
+          .languageFormal(IS_LANGUAGE_FORMAL)
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final Consultant CONSULTANT_2 =
-      new Consultant(
-          CONSULTANT_ID_2,
-          ROCKETCHAT_ID,
-          null, // matrixUserId
-          null, // matrixPassword
-          USERNAME,
-          "first name",
-          "last name",
-          EMAIL,
-          false,
-          false,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          true,
-          "{'initialEnquiryNotificationEnabled': 'true','newChatMessageNotificationEnabled': 'true', 'reassignmentNotificationEnabled': 'true','appointmentNotificationEnabled': 'true'}");
+      Consultant.builder()
+          .id(CONSULTANT_ID_2)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username(USERNAME)
+          .firstName("first name")
+          .lastName("last name")
+          .email(EMAIL)
+          .absent(false)
+          .teamConsultant(false)
+          .languageFormal(false)
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(true)
+          .notificationsSettings("{'initialEnquiryNotificationEnabled': 'true','newChatMessageNotificationEnabled': 'true', 'reassignmentNotificationEnabled': 'true','appointmentNotificationEnabled': 'true'}")
+          .build();
 
   public static final SessionConsultantForUserDTO CONSULTANT_DTO =
       new SessionConsultantForUserDTO();
@@ -470,71 +444,36 @@ public class TestConstants {
           GROUP_MEMBER_SYS_USER, GROUP_MEMBER_TECH_USER, GROUP_MEMBER_USER_1, GROUP_MEMBER_USER_2);
   public static final User USER = new User(USER_ID, null, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
   public static final User USER_WITH_RC_ID =
-      new User(
-          USER_ID,
-          null,
-          USERNAME,
-          EMAIL,
-          RC_USER_ID,
-          IS_LANGUAGE_FORMAL,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          nowInUtc(),
-          null,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      User.builder()
+          .userId(USER_ID)
+          .username(USERNAME)
+          .email(EMAIL)
+          .rcUserId(RC_USER_ID)
+          .languageFormal(IS_LANGUAGE_FORMAL)
+          .deleteDate(nowInUtc())
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final User USER_NO_RC_USER_ID =
-      new User(
-          USER_ID,
-          null,
-          USERNAME,
-          EMAIL,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          nowInUtc(),
-          null,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      User.builder()
+          .userId(USER_ID)
+          .username(USERNAME)
+          .email(EMAIL)
+          .languageFormal(false)
+          .deleteDate(nowInUtc())
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final User USER_NO_RC_USER_ID_2 =
-      new User(
-          USER_ID_2,
-          null,
-          USERNAME,
-          EMAIL,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          nowInUtc(),
-          null,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      User.builder()
+          .userId(USER_ID_2)
+          .username(USERNAME)
+          .email(EMAIL)
+          .languageFormal(false)
+          .deleteDate(nowInUtc())
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final String ACCESS_TOKEN = "DASDLAJS835u83hKSAJDF";
   public static final AuthenticatedUser AUTHENTICATED_USER =
       new AuthenticatedUser(USER_ID, USERNAME, null, ACCESS_TOKEN, null);
@@ -651,73 +590,47 @@ public class TestConstants {
   public static final Set<ConsultantAgency> CONSULTANT_AGENCIES_SET =
       new HashSet<>(Arrays.asList(CONSULTANT_AGENCIES));
   public static final Consultant CONSULTANT_WITH_AGENCY =
-      new Consultant(
-          CONSULTANT_ID,
-          ROCKETCHAT_ID,
-          null, // matrixUserId
-          null, // matrixPassword
-          USERNAME,
-          "first name",
-          "last name",
-          EMAIL,
-          false,
-          false,
-          "absent",
-          false,
-          null,
-          null,
-          null,
-          new HashSet<>(Arrays.asList(CONSULTANT_AGENCIES)),
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username(USERNAME)
+          .firstName("first name")
+          .lastName("last name")
+          .email(EMAIL)
+          .absent(false)
+          .teamConsultant(false)
+          .absenceMessage("absent")
+          .languageFormal(false)
+          .consultantAgencies(new HashSet<>(Arrays.asList(CONSULTANT_AGENCIES)))
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final Consultant CONSULTANT_WITH_AGENCY_2 =
-      new Consultant(
-          CONSULTANT_ID_2,
-          ROCKETCHAT_ID,
-          null, // matrixUserId
-          null, // matrixPassword
-          USERNAME,
-          "first name",
-          "last name",
-          EMAIL,
-          false,
-          false,
-          null,
-          false,
-          null,
-          null,
-          null,
-          new HashSet<>(Collections.singletonList(CONSULTANT_AGENCY_2)),
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID_2)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username(USERNAME)
+          .firstName("first name")
+          .lastName("last name")
+          .email(EMAIL)
+          .absent(false)
+          .teamConsultant(false)
+          .consultantAgencies(new HashSet<>(Collections.singletonList(CONSULTANT_AGENCY_2)))
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   /** UserAgency */
   public static final UserAgency USER_AGENCY = new UserAgency(USER, AGENCY_ID);
 
@@ -847,27 +760,17 @@ public class TestConstants {
       new HashSet<>(
           Arrays.asList(U25_SESSION_WITHOUT_CONSULTANT, SESSION_WITHOUT_CONSULTANT_NO_RC_USER_ID));
   public static final User USER_WITH_SESSIONS =
-      new User(
-          USER_ID,
-          null,
-          USERNAME,
-          EMAIL,
-          RC_USER_ID,
-          IS_LANGUAGE_FORMAL,
-          SESSION_SET,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          nowInUtc(),
-          null,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      User.builder()
+          .userId(USER_ID)
+          .username(USERNAME)
+          .email(EMAIL)
+          .rcUserId(RC_USER_ID)
+          .languageFormal(IS_LANGUAGE_FORMAL)
+          .sessions(SESSION_SET)
+          .deleteDate(nowInUtc())
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   public static final SessionDTO SESSION_DTO_U25 =
       new SessionDTO()
           .id(SESSION_ID)
@@ -954,67 +857,65 @@ public class TestConstants {
           CHAT_DURATION,
           CHAT_REPETITIVE,
           CHAT_AGENCY_ID,
-          CHAT_HINT_MESSAGE);
+          CHAT_HINT_MESSAGE,
+          null);
 
   public static final CreateChatResponseDTO CREATE_CHAT_RESPONSE_DTO =
       new CreateChatResponseDTO().groupId(RC_GROUP_ID);
   public static final Chat ACTIVE_CHAT =
-      new Chat(
-          CHAT_ID,
-          CHAT_TOPIC,
-          0,
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          CHAT_DURATION_30,
-          IS_REPETITIVE,
-          CHAT_INTERVAL_WEEKLY,
-          IS_ACTIVE,
-          CHAT_MAX_PARTICIPANTS,
-          RC_GROUP_ID,
-          CONSULTANT,
-          Sets.newHashSet(),
-          null,
-          nowInUtc(),
-          nowInUtc(),
-          null);
+      Chat.builder()
+          .id(CHAT_ID)
+          .topic(CHAT_TOPIC)
+          .consultingTypeId(0)
+          .initialStartDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .startDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .duration(CHAT_DURATION_30)
+          .repetitive(IS_REPETITIVE)
+          .chatInterval(CHAT_INTERVAL_WEEKLY)
+          .active(IS_ACTIVE)
+          .maxParticipants(CHAT_MAX_PARTICIPANTS)
+          .groupId(RC_GROUP_ID)
+          .chatOwner(CONSULTANT)
+          .chatUsers(Sets.newHashSet())
+          .updateDate(nowInUtc())
+          .createDate(nowInUtc())
+          .build();
   public static final Chat INACTIVE_CHAT =
-      new Chat(
-          CHAT_ID_2,
-          CHAT_TOPIC,
-          0,
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          CHAT_DURATION_30,
-          IS_REPETITIVE,
-          ChatInterval.WEEKLY,
-          IS_NOT_ACTIVE,
-          CHAT_MAX_PARTICIPANTS,
-          RC_GROUP_ID,
-          CONSULTANT,
-          Sets.newHashSet(),
-          null,
-          nowInUtc(),
-          nowInUtc(),
-          null);
+      Chat.builder()
+          .id(CHAT_ID_2)
+          .topic(CHAT_TOPIC)
+          .consultingTypeId(0)
+          .initialStartDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .startDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .duration(CHAT_DURATION_30)
+          .repetitive(IS_REPETITIVE)
+          .chatInterval(ChatInterval.WEEKLY)
+          .active(IS_NOT_ACTIVE)
+          .maxParticipants(CHAT_MAX_PARTICIPANTS)
+          .groupId(RC_GROUP_ID)
+          .chatOwner(CONSULTANT)
+          .chatUsers(Sets.newHashSet())
+          .updateDate(nowInUtc())
+          .createDate(nowInUtc())
+          .build();
   public static final Chat CHAT_V2 =
-      new Chat(
-          CHAT_ID_3,
-          CHAT_TOPIC,
-          null,
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME),
-          CHAT_DURATION_30,
-          IS_REPETITIVE,
-          ChatInterval.WEEKLY,
-          IS_NOT_ACTIVE,
-          CHAT_MAX_PARTICIPANTS,
-          RC_GROUP_ID,
-          CONSULTANT,
-          Set.of(new ChatAgency(null, CHAT_AGENCY_ID)),
-          null,
-          nowInUtc(),
-          nowInUtc(),
-          CHAT_HINT_MESSAGE);
+      Chat.builder()
+          .id(CHAT_ID_3)
+          .topic(CHAT_TOPIC)
+          .initialStartDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .startDate(LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME))
+          .duration(CHAT_DURATION_30)
+          .repetitive(IS_REPETITIVE)
+          .chatInterval(ChatInterval.WEEKLY)
+          .active(IS_NOT_ACTIVE)
+          .maxParticipants(CHAT_MAX_PARTICIPANTS)
+          .groupId(RC_GROUP_ID)
+          .chatOwner(CONSULTANT)
+          .chatAgencies(Set.of(new ChatAgency(null, CHAT_AGENCY_ID)))
+          .updateDate(nowInUtc())
+          .createDate(nowInUtc())
+          .hintMessage(CHAT_HINT_MESSAGE)
+          .build();
   public static final ChatAgency CHAT_AGENCY = new ChatAgency(ACTIVE_CHAT, AGENCY_ID);
   public static final Set<ChatAgency> CHAT_AGENCIES =
       new HashSet<>(Collections.singletonList(CHAT_AGENCY));

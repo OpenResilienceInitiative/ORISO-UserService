@@ -55,37 +55,19 @@ class SessionDataProviderTest {
   private final EasyRandom easyRandom = new EasyRandom();
   private final User USER = new User(USER_ID, null, USERNAME, EMAIL, false);
   private final Consultant CONSULTANT =
-      new Consultant(
-          CONSULTANT_ID,
-          USERNAME,
-          ROCKETCHAT_ID,
-          "first name",
-          "last name",
-          "consultant@cob.de",
-          false,
-          false,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(USERNAME)
+          .username(ROCKETCHAT_ID)
+          .firstName("first name")
+          .lastName("last name")
+          .email("consultant@cob.de")
+          .absent(false)
+          .teamConsultant(false)
+          .languageFormal(false)
+          .status(ConsultantStatus.CREATED)
+          .languageCode(LanguageCode.de)
+          .build();
   private final Session INITIALIZED_SESSION_SUCHT =
       Session.builder()
           .id(1L)

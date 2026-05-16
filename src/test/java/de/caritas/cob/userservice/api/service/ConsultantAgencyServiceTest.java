@@ -45,37 +45,19 @@ public class ConsultantAgencyServiceTest {
   private final String CONSULTANT_ROCKETCHAT_ID = "xN3Mobksn3xdp7gEk";
   private final Long AGENCY_ID = 1L;
   private final Consultant CONSULTANT =
-      new Consultant(
-          CONSULTANT_ID,
-          CONSULTANT_ROCKETCHAT_ID,
-          "consultant",
-          "first name",
-          "last name",
-          "consultant@cob.de",
-          false,
-          false,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(CONSULTANT_ROCKETCHAT_ID)
+          .username("consultant")
+          .firstName("first name")
+          .lastName("last name")
+          .email("consultant@cob.de")
+          .absent(false)
+          .teamConsultant(false)
+          .languageFormal(false)
+          .status(ConsultantStatus.CREATED)
+          .languageCode(LanguageCode.de)
+          .build();
   private final ConsultantAgency CONSULTANT_AGENCY =
       new ConsultantAgency(
           AGENCY_ID, CONSULTANT, 1L, nowInUtc(), nowInUtc(), nowInUtc(), null, null);

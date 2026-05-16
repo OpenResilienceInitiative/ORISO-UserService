@@ -37,7 +37,7 @@ class AccountManagerTest {
     // given
     Mockito.when(
             consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.any(PageRequest.class)))
+                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
@@ -46,7 +46,7 @@ class AccountManagerTest {
 
     // then
     Mockito.verify(consultantRepository)
-        .findAllByInfix(Mockito.eq("infix"), Mockito.any(PageRequest.class));
+        .findAllByInfix(Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -54,7 +54,10 @@ class AccountManagerTest {
     // given
     Mockito.when(
             consultantRepository.findAllByInfixAndAgencyIds(
-                Mockito.eq("infix"), Mockito.anyCollection(), Mockito.any(PageRequest.class)))
+                Mockito.eq("infix"),
+                Mockito.anyCollection(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
@@ -66,6 +69,7 @@ class AccountManagerTest {
         .findAllByInfixAndAgencyIds(
             Mockito.eq("infix"),
             Mockito.eq(Lists.newArrayList(1L)),
+            Mockito.isNull(),
             Mockito.any(PageRequest.class));
   }
 }

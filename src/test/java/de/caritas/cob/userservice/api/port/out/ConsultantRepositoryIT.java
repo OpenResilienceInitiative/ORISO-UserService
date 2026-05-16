@@ -218,7 +218,7 @@ class ConsultantRepositoryIT {
     var notMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsNotMatching(notMatching, infix);
 
-    var consultantPage = underTest.findAllByInfix(infix, Pageable.unpaged());
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching;
     assertEquals(allMatching, consultantPage.getTotalElements());
@@ -232,7 +232,7 @@ class ConsultantRepositoryIT {
     var notMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsNotMatching(notMatching, infix);
 
-    var consultantPage = underTest.findAllByInfix(infix, Pageable.unpaged());
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     assertEquals(0, consultantPage.getTotalElements());
     assertEquals(0, matchingIds.size());
@@ -245,7 +245,7 @@ class ConsultantRepositoryIT {
     givenConsultantsMatchingEmail(pageSize + 1, infix);
 
     var pageRequest = PageRequest.of(0, pageSize);
-    var consultantPage = underTest.findAllByInfix(infix, pageRequest);
+    var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
     assertEquals(pageSize, consultantPage.getNumberOfElements());
     assertEquals(2, consultantPage.getTotalPages());
@@ -262,7 +262,7 @@ class ConsultantRepositoryIT {
 
     var pageRequest = PageRequest.of(0, pageSize);
     var consultantPage =
-        underTest.findAllByInfixAndAgencyIds(infix, Lists.newArrayList(), pageRequest);
+        underTest.findAllByInfixAndAgencyIds(infix, Lists.newArrayList(), null, pageRequest);
 
     assertEquals(0, consultantPage.getNumberOfElements());
   }
@@ -278,7 +278,7 @@ class ConsultantRepositoryIT {
     var pageRequest = PageRequest.of(0, pageSize);
     var consultantPage =
         underTest.findAllByInfixAndAgencyIds(
-            infix, Lists.newArrayList(1L, 2L, 5L, 7L), pageRequest);
+            infix, Lists.newArrayList(1L, 2L, 5L, 7L), null, pageRequest);
 
     assertEquals(pageSize, consultantPage.getNumberOfElements());
     assertEquals(2, consultantPage.getTotalPages());
@@ -300,7 +300,7 @@ class ConsultantRepositoryIT {
 
     // when
     var consultantPage =
-        underTest.findAllByInfixAndAgencyIds(infix, filteredAgencyIds, pageRequest);
+        underTest.findAllByInfixAndAgencyIds(infix, filteredAgencyIds, null, pageRequest);
 
     // then
     assertTrue(pageSize >= consultantPage.getNumberOfElements());
@@ -333,7 +333,7 @@ class ConsultantRepositoryIT {
 
     var sort = Sort.by("lastName").descending();
     var pageRequest = PageRequest.of(0, pageSize, sort);
-    var consultantPage = underTest.findAllByInfix(infix, pageRequest);
+    var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
     assertEquals(pageSize, consultantPage.getTotalElements());
     assertEquals(pageSize, matchingIds.size());
@@ -354,7 +354,7 @@ class ConsultantRepositoryIT {
 
     var sort = Sort.by("firstName").ascending();
     var pageRequest = PageRequest.of(0, pageSize, sort);
-    var consultantPage = underTest.findAllByInfix(infix, pageRequest);
+    var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
     assertEquals(pageSize, consultantPage.getTotalElements());
     assertEquals(pageSize, matchingIds.size());
@@ -380,7 +380,7 @@ class ConsultantRepositoryIT {
     var notMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsNotMatching(notMatching, transformedInfix);
 
-    var consultantPage = underTest.findAllByInfix(infix, Pageable.unpaged());
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching;
     assertEquals(allMatching, consultantPage.getTotalElements());
@@ -402,7 +402,7 @@ class ConsultantRepositoryIT {
     var notMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsNotMatching(notMatching, transformedInfix);
 
-    var consultantPage = underTest.findAllByInfix("*", Pageable.unpaged());
+    var consultantPage = underTest.findAllByInfix("*", null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching + notMatching + before;
     assertEquals(allMatching, consultantPage.getTotalElements());

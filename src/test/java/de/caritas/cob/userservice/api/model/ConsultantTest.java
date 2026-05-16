@@ -16,37 +16,26 @@ public class ConsultantTest {
   private static final String FIRSTNAME = "firstname";
   private static final String LASTNAME = "lastname";
   private static final Consultant CONSULTANT =
-      new Consultant(
-          "yyy",
-          "XXX",
-          "consultant",
-          FIRSTNAME,
-          LASTNAME,
-          "consultant@domain.de",
-          false,
-          false,
-          null,
-          false,
-          null,
-          1L,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id("yyy")
+          .rocketChatId("XXX")
+          .username("consultant")
+          .firstName(FIRSTNAME)
+          .lastName(LASTNAME)
+          .email("consultant@domain.de")
+          .absent(false)
+          .teamConsultant(false)
+          .languageFormal(false)
+          .tenantId(1L)
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
 
   @Test
   public void getFullName_Should_Return_FirstnameAndLastname() {

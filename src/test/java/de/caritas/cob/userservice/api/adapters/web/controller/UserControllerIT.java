@@ -91,37 +91,26 @@ class UserControllerIT {
   private final String VALID_ENQUIRY_MESSAGE_BODY = "{\"message\": \"" + MESSAGE + "\"}";
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Consultant TEAM_CONSULTANT =
-      new Consultant(
-          CONSULTANT_ID,
-          ROCKETCHAT_ID,
-          "consultant",
-          "first name",
-          "last name",
-          "consultant@cob.de",
-          false,
-          true,
-          "",
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username("consultant")
+          .firstName("first name")
+          .lastName("last name")
+          .email("consultant@cob.de")
+          .absent(false)
+          .teamConsultant(true)
+          .absenceMessage("")
+          .languageFormal(false)
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   private final Set<String> ROLES_WITH_USER =
       new HashSet<>(Arrays.asList("dummyRoleA", UserRole.USER.getValue(), "dummyRoleB"));
   private final SessionDTO SESSION_DTO =
