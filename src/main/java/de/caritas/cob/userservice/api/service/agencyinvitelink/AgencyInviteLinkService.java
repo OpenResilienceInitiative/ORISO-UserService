@@ -100,17 +100,16 @@ public class AgencyInviteLinkService {
         repository
             .findByTokenAndStatus(token, STATUS_ACTIVE)
             .orElseThrow(
-                () ->
-                    repository
-                        .findByToken(token)
-                        .map(
-                            existing -> {
-                              if (STATUS_USED.equals(existing.getStatus())) {
-                                throw new BadRequestException("Invite link already used");
-                              }
-                              throw new BadRequestException("Invite link is not active");
-                            })
-                        .orElseThrow(() -> new NotFoundException("Invite link not found")));
+                () -> {
+                  AgencyInviteLink existing =
+                      repository
+                          .findByToken(token)
+                          .orElseThrow(() -> new NotFoundException("Invite link not found"));
+                  if (STATUS_USED.equals(existing.getStatus())) {
+                    throw new BadRequestException("Invite link already used");
+                  }
+                  throw new BadRequestException("Invite link is not active");
+                });
 
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(STATUS_EXPIRED);
