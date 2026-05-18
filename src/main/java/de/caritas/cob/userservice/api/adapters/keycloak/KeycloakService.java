@@ -603,7 +603,7 @@ public class KeycloakService implements IdentityClient {
     // Check if role has been assigned successfully
     List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
     for (RoleRepresentation role : userRoles) {
-      if (role.toString().equalsIgnoreCase(roleName)) {
+      if (role.getName() != null && role.getName().equalsIgnoreCase(roleName)) {
         log.debug("Added role \"user\" to {}", userId);
         isRoleUpdated = true;
       }

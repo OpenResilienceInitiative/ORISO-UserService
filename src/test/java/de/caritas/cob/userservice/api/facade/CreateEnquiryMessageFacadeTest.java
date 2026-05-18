@@ -210,27 +210,16 @@ class CreateEnquiryMessageFacadeTest {
     consultant.setId(USER_ID);
     consultant.setRocketChatId(RC_USER_ID);
     this.user =
-        new User(
-            USER_ID,
-            null,
-            USERNAME,
-            EMAIL,
-            RC_USER_ID,
-            IS_LANGUAGE_FORMAL,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            true,
-            LanguageCode.de,
-            null,
-            null,
-            false,
-            null);
+        User.builder()
+            .userId(USER_ID)
+            .username(USERNAME)
+            .email(EMAIL)
+            .rcUserId(RC_USER_ID)
+            .languageFormal(IS_LANGUAGE_FORMAL)
+            .encourage2fa(true)
+            .languageCode(LanguageCode.de)
+            .notificationsEnabled(false)
+            .build();
     this.extendedConsultingTypeResponseDTO = new ExtendedConsultingTypeResponseDTO();
     this.extendedConsultingTypeResponseDTO.setWelcomeMessage(new WelcomeMessageDTO());
     this.userInfoResponseDTO = new UserInfoResponseDTO();

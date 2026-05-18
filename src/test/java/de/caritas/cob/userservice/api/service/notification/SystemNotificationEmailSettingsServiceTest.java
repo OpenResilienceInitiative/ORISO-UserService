@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
@@ -24,7 +24,7 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnTrueWhenToggleAndValidSmtpAreEnabled() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    when(tenantAdminService.getTenantById(1L)).thenReturn(validTenantSettings());
+    doReturn(validTenantSettings()).when(tenantAdminService).getTenantById(1L);
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 
@@ -35,7 +35,7 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnFalseWhenSmtpConfigIsIncomplete() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    when(tenantAdminService.getTenantById(1L)).thenReturn(invalidTenantSettingsMissingHost());
+    doReturn(invalidTenantSettingsMissingHost()).when(tenantAdminService).getTenantById(1L);
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 
@@ -46,7 +46,7 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnFalseWhenSystemEmailToggleIsDisabled() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    when(tenantAdminService.getTenantById(1L)).thenReturn(systemEmailDisabledTenantSettings());
+    doReturn(systemEmailDisabledTenantSettings()).when(tenantAdminService).getTenantById(1L);
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 

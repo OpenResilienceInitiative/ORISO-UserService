@@ -18,6 +18,10 @@ UPDATE user
 SET deletion_lifecycle_state = CASE
   WHEN delete_date IS NULL THEN 'ACTIVE'
   ELSE 'READ_ONLY_SAFEGUARD'
+END,
+deletion_read_only_until = CASE
+  WHEN delete_date IS NOT NULL THEN DATE_ADD(NOW(), INTERVAL 48 HOUR)
+  ELSE NULL
 END
 WHERE deletion_lifecycle_state IS NULL;
 
@@ -25,6 +29,10 @@ UPDATE consultant
 SET deletion_lifecycle_state = CASE
   WHEN delete_date IS NULL THEN 'ACTIVE'
   ELSE 'READ_ONLY_SAFEGUARD'
+END,
+deletion_read_only_until = CASE
+  WHEN delete_date IS NOT NULL THEN DATE_ADD(NOW(), INTERVAL 48 HOUR)
+  ELSE NULL
 END
 WHERE deletion_lifecycle_state IS NULL;
 

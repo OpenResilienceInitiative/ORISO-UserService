@@ -109,7 +109,8 @@ public class CreateChatV2FacadeTest {
             CHAT_DURATION,
             CHAT_REPETITIVE,
             999L,
-            "hint");
+            "hint",
+            null);
 
     try {
       createChatFacade.createChatV2(chatWithNonMatchingAgency, consultant);

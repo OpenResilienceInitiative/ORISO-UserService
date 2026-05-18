@@ -46,6 +46,17 @@ public class ConsultantService {
   }
 
   /**
+   * Find a {@link Consultant} by ID regardless of soft-delete state (includes deleted records).
+   * Used to distinguish "not found" from "found but flagged for deletion".
+   *
+   * @param consultantId consultant ID
+   * @return An {@link Optional} with the {@link Consultant} if it exists in the DB at all
+   */
+  public Optional<Consultant> findConsultantIncludingDeleted(String consultantId) {
+    return consultantRepository.findById(consultantId);
+  }
+
+  /**
    * Returns a {@link Consultant} by the provided Rocket.Chat user ID.
    *
    * @param rcUserId Rocket.Chat user ID

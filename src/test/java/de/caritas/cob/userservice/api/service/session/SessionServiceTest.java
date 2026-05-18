@@ -94,37 +94,26 @@ class SessionServiceTest {
 
   public static final long AGENCY_3 = 3L;
   private final Consultant CONSULTANT =
-      new Consultant(
-          CONSULTANT_ID,
-          ROCKETCHAT_ID,
-          "consultant",
-          "first name",
-          "last name",
-          "consultant@cob.de",
-          false,
-          false,
-          null,
-          false,
-          null,
-          null,
-          null,
-          null,
-          null,
-          nowInUtc(),
-          null,
-          null,
-          true,
-          true,
-          true,
-          null,
-          null,
-          ConsultantStatus.CREATED,
-          false,
-          LanguageCode.de,
-          null,
-          null,
-          false,
-          null);
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .rocketChatId(ROCKETCHAT_ID)
+          .username("consultant")
+          .firstName("first name")
+          .lastName("last name")
+          .email("consultant@cob.de")
+          .absent(false)
+          .teamConsultant(false)
+          .languageFormal(false)
+          .createDate(nowInUtc())
+          .encourage2fa(true)
+          .magicLinkLoginEnabled(true)
+          .notifyEnquiriesRepeating(true)
+          .notifyNewChatMessageFromAdviceSeeker(true)
+          .status(ConsultantStatus.CREATED)
+          .walkThroughEnabled(false)
+          .languageCode(LanguageCode.de)
+          .notificationsEnabled(false)
+          .build();
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Session SESSION = TestConstants.SESSION;
 
@@ -226,19 +215,19 @@ class SessionServiceTest {
     sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     verify(sessionRepository, times(1))
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.NEW, REGISTERED);
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.INITIAL, REGISTERED);
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.IN_PROGRESS, REGISTERED);
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.IN_ARCHIVE, REGISTERED);
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.DONE, REGISTERED);
   }
 
@@ -360,7 +349,7 @@ class SessionServiceTest {
 
     when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
     when(sessionRepository
-            .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+            .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
                 any(), any(), any()))
         .thenReturn(SESSION_LIST_WITH_CONSULTANT);
 
@@ -485,7 +474,7 @@ class SessionServiceTest {
 
     when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
     when(sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
                 any(), any(), any(), anyBoolean()))
         .thenReturn(SESSION_LIST_WITH_CONSULTANT);
 
@@ -494,19 +483,19 @@ class SessionServiceTest {
         everyItem(instanceOf(ConsultantSessionResponseDTO.class)));
 
     verify(sessionRepository, times(1))
-        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
             any(), any(), eq(SessionStatus.IN_PROGRESS), anyBoolean());
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
             any(), any(), eq(SessionStatus.INITIAL), anyBoolean());
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
             any(), any(), eq(SessionStatus.NEW), anyBoolean());
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
             any(), any(), eq(SessionStatus.DONE), anyBoolean());
     verify(sessionRepository, never())
-        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
             any(), any(), eq(SessionStatus.IN_ARCHIVE), anyBoolean());
   }
 
@@ -518,7 +507,7 @@ class SessionServiceTest {
 
     when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
     when(sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByEnquiryMessageDateAsc(
+            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
                 any(), any(), any(), anyBoolean()))
         .thenReturn(SESSION_LIST_WITH_CONSULTANT);
 
@@ -686,7 +675,7 @@ class SessionServiceTest {
     sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     verify(sessionRepository, times(1))
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.NEW, REGISTERED);
   }
 
@@ -703,7 +692,7 @@ class SessionServiceTest {
     sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     verify(sessionRepository, times(1))
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByEnquiryMessageDateAsc(
+        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             agencyIds, SessionStatus.NEW, REGISTERED);
   }
 
@@ -873,36 +862,26 @@ class SessionServiceTest {
   }
 
   Consultant createConsultantWithAgencies(ConsultantAgency... agencies) {
-    return new Consultant(
-        CONSULTANT_ID,
-        ROCKETCHAT_ID,
-        "consultant",
-        "first name",
-        "last name",
-        "consultant@cob.de",
-        false,
-        false,
-        null,
-        false,
-        null,
-        null,
-        null,
-        Set.of(agencies),
-        null,
-        nowInUtc(),
-        null,
-        null,
-        true,
-        true,
-        true,
-        null,
-        null,
-        ConsultantStatus.CREATED,
-        false,
-        LanguageCode.de,
-        null,
-        null,
-        false,
-        null);
+    return Consultant.builder()
+        .id(CONSULTANT_ID)
+        .rocketChatId(ROCKETCHAT_ID)
+        .username("consultant")
+        .firstName("first name")
+        .lastName("last name")
+        .email("consultant@cob.de")
+        .absent(false)
+        .teamConsultant(false)
+        .languageFormal(false)
+        .consultantAgencies(Set.of(agencies))
+        .createDate(nowInUtc())
+        .encourage2fa(true)
+        .magicLinkLoginEnabled(true)
+        .notifyEnquiriesRepeating(true)
+        .notifyNewChatMessageFromAdviceSeeker(true)
+        .status(ConsultantStatus.CREATED)
+        .walkThroughEnabled(false)
+        .languageCode(LanguageCode.de)
+        .notificationsEnabled(false)
+        .build();
   }
 }
