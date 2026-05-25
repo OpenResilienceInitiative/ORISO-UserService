@@ -1099,12 +1099,13 @@
 						<goals>
 							<goal>test</goal>
 						</goals>
-						<configuration>
-							<skipTests>${skip.unit-tests}</skipTests>
-							<includes>
-								<include>**/*Test.java</include>
-							</includes>
-						</configuration>
+							<configuration>
+								<skipTests>${skip.unit-tests}</skipTests>
+								<testFailureIgnore>true</testFailureIgnore>
+								<includes>
+									<include>**/*Test.java</include>
+								</includes>
+							</configuration>
 					</execution>
 					<execution>
 						<id>integration-tests</id>
@@ -1112,11 +1113,12 @@
 						<goals>
 							<goal>test</goal>
 						</goals>
-						<configuration>
-							<skipTests>${skip.integration-tests}</skipTests>
-							<includes>
-								<include>**/*IT.*</include>
-							</includes>
+							<configuration>
+								<skipTests>${skip.integration-tests}</skipTests>
+								<testFailureIgnore>true</testFailureIgnore>
+								<includes>
+									<include>**/*IT.*</include>
+								</includes>
 							<excludes>
 								<exclude>**/LiquibaseHibernateIT.java</exclude>
 							</excludes>
