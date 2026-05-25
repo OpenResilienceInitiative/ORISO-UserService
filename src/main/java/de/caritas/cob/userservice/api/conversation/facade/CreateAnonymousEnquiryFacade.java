@@ -73,6 +73,8 @@ public class CreateAnonymousEnquiryFacade {
         .password(userHelper.getRandomPassword())
         .postcode(DEFAULT_ANONYMOUS_POSTCODE)
         .termsAccepted("true")
+        .mainTopicId(createAnonymousEnquiryDTO.getMainTopicId())
+        .consultantId(createAnonymousEnquiryDTO.getConsultantId())
         .build();
   }
 }

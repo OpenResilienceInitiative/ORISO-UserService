@@ -40,3 +40,5 @@ consultants-import.txt*
 #local helper files
 *localdev*
 *.jar
+run-local-remote-db.sh
+.env.local

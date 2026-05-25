@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Copy to run-local-remote-db.sh, set your password, then: chmod +x run-local-remote-db.sh && ./run-local-remote-db.sh
+# run-local-remote-db.sh is gitignored — do not commit secrets.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+export JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home}"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+export SPRING_DATASOURCE_URL="jdbc:mariadb://46.224.170.69:32491/userservice"
+export SPRING_DATASOURCE_USERNAME=root
+export SPRING_DATASOURCE_PASSWORD='CHANGE_ME'
+
+export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso-dev.site/service/consultingtypes"
+export AGENCY_SERVICE_API_URL="https://api.oriso-dev.site/service"
+export TENANT_SERVICE_API_URL="https://api.oriso-dev.site/service"
+export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso-dev.site"
+
+export ROCKET_CHAT_BASE_URL="http://localhost:3000/api/v1"
+export ROCKET_CHAT_MONGO_URL="mongodb://localhost:27017/rocketchat?retryWrites=false"
+export ROCKET_TECHNICAL_USERNAME="rocket-chat-technical-user"
+export ROCKET_TECHNICAL_PASSWORD="technical"
+
+export SPRING_DATA_MONGODB_URI="mongodb://localhost:27017/userservice"
+
+echo "Datasource: ${SPRING_DATASOURCE_URL}"
+mvn spring-boot:run -Dspring-boot.run.profiles=local -Dspotless.check.skip=true

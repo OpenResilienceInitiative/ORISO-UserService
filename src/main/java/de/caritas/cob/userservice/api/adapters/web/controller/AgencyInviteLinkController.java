@@ -1,12 +1,15 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -22,51 +26,125 @@ public class AgencyInviteLinkController {
 
   private final @NonNull AgencyInviteLinkService agencyInviteLinkService;
 
+  // ---------------------------------------------------------------------------------------------
+  // POST /useradmin/invitelinks — create a new topic-based invite link.
+  // ---------------------------------------------------------------------------------------------
   @PreAuthorize(
       "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
   @PostMapping("/useradmin/invitelinks")
   public ResponseEntity<AgencyInviteLinkResponseDTO> create(
       @RequestBody CreateInviteLinkRequestDTO request) {
-    AgencyInviteLink link =
-        agencyInviteLinkService.create(
-            request == null ? null : request.getAgencyId(),
-            request == null ? null : request.getExpiresInDays());
+    CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
+    if (request != null) {
+      cmd.setTopicId(request.getTopicId());
+      cmd.setLinkKind(request.getLinkKind());
+      cmd.setChatType(request.getChatType());
+      cmd.setAnonymity(request.getAnonymity());
+      cmd.setConsultantId(request.getConsultantId());
+      cmd.setNotes(request.getNotes());
+      cmd.setExpiresInDays(request.getExpiresInDays());
+    }
+    AgencyInviteLink link = agencyInviteLinkService.create(cmd);
     return new ResponseEntity<>(AgencyInviteLinkResponseDTO.from(link), HttpStatus.CREATED);
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // GET /useradmin/invitelinks — paged, filtered list for the caller's tenant.
+  // ---------------------------------------------------------------------------------------------
   @PreAuthorize(
       "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
   @GetMapping("/useradmin/invitelinks")
-  public ResponseEntity<List<AgencyInviteLinkResponseDTO>> list() {
-    List<AgencyInviteLinkResponseDTO> out =
-        agencyInviteLinkService.list().stream()
+  public ResponseEntity<PagedInviteLinksResponseDTO> list(
+      @RequestParam(value = "linkKind", required = false) String linkKind,
+      @RequestParam(value = "topicId", required = false) Long topicId,
+      @RequestParam(value = "chatType", required = false) String chatType,
+      @RequestParam(value = "status", required = false) String status,
+      @RequestParam(value = "page", required = false, defaultValue = "0") int page,
+      @RequestParam(value = "size", required = false, defaultValue = "20") int size) {
+    Page<AgencyInviteLink> result =
+        agencyInviteLinkService.list(linkKind, topicId, chatType, status, page, size);
+    List<AgencyInviteLinkResponseDTO> content =
+        result.getContent().stream()
             .map(AgencyInviteLinkResponseDTO::from)
             .collect(Collectors.toList());
-    return ResponseEntity.ok(out);
+    PagedInviteLinksResponseDTO body = new PagedInviteLinksResponseDTO();
+    body.content = content;
+    body.totalElements = result.getTotalElements();
+    body.totalPages = result.getTotalPages();
+    body.page = result.getNumber();
+    body.size = result.getSize();
+    return ResponseEntity.ok(body);
   }
 
-  /**
-   * Public — no auth. Redeems the token and returns the agency info the client needs to run the
-   * standard asker registration. Path is under {@code /users/} so the existing {@code
-   * /service/users/*} ingress covers it without adding a new nginx route.
-   */
+  // ---------------------------------------------------------------------------------------------
+  // POST /users/invitelinks/{token}/redeem — public; creates an anonymous enquiry session.
+  // ---------------------------------------------------------------------------------------------
   @PostMapping("/users/invitelinks/{token}/redeem")
-  public ResponseEntity<AgencyInviteLinkService.RedeemResult> redeem(@PathVariable String token) {
+  public ResponseEntity<CreateAnonymousEnquiryResponseDTO> redeem(@PathVariable String token) {
     return ResponseEntity.ok(agencyInviteLinkService.redeem(token));
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // DTOs
+  // ---------------------------------------------------------------------------------------------
+
   public static class CreateInviteLinkRequestDTO {
-    private Long agencyId;
+    private Long topicId;
+    private String linkKind;
+    private String chatType;
+    private String anonymity;
+    private String consultantId;
+    private String notes;
     private Long expiresInDays;
 
-    public Long getAgencyId() {
-      return agencyId;
+    public Long getTopicId() {
+      return topicId;
     }
 
-    public void setAgencyId(Long agencyId) {
-      this.agencyId = agencyId;
+    public void setTopicId(Long topicId) {
+      this.topicId = topicId;
+    }
+
+    public String getLinkKind() {
+      return linkKind;
+    }
+
+    public void setLinkKind(String linkKind) {
+      this.linkKind = linkKind;
+    }
+
+    public String getChatType() {
+      return chatType;
+    }
+
+    public void setChatType(String chatType) {
+      this.chatType = chatType;
+    }
+
+    public String getAnonymity() {
+      return anonymity;
+    }
+
+    public void setAnonymity(String anonymity) {
+      this.anonymity = anonymity;
+    }
+
+    public String getConsultantId() {
+      return consultantId;
+    }
+
+    public void setConsultantId(String consultantId) {
+      this.consultantId = consultantId;
+    }
+
+    public String getNotes() {
+      return notes;
+    }
+
+    public void setNotes(String notes) {
+      this.notes = notes;
     }
 
     public Long getExpiresInDays() {
@@ -82,8 +160,12 @@ public class AgencyInviteLinkController {
     private Long id;
     private String token;
     private Long tenantId;
-    private Long agencyId;
-    private Integer consultingTypeId;
+    private Long topicId;
+    private String linkKind;
+    private String chatType;
+    private String anonymity;
+    private String consultantId;
+    private String notes;
     private String createdByUserId;
     private String createdByUsername;
     private LocalDateTime createDate;
@@ -97,8 +179,12 @@ public class AgencyInviteLinkController {
       dto.id = link.getId();
       dto.token = link.getToken();
       dto.tenantId = link.getTenantId();
-      dto.agencyId = link.getAgencyId();
-      dto.consultingTypeId = link.getConsultingTypeId();
+      dto.topicId = link.getTopicId();
+      dto.linkKind = link.getLinkKind();
+      dto.chatType = link.getChatType();
+      dto.anonymity = link.getAnonymity();
+      dto.consultantId = link.getConsultantId();
+      dto.notes = link.getNotes();
       dto.createdByUserId = link.getCreatedByUserId();
       dto.createdByUsername = link.getCreatedByUsername();
       dto.createDate = link.getCreateDate();
@@ -121,12 +207,28 @@ public class AgencyInviteLinkController {
       return tenantId;
     }
 
-    public Long getAgencyId() {
-      return agencyId;
+    public Long getTopicId() {
+      return topicId;
     }
 
-    public Integer getConsultingTypeId() {
-      return consultingTypeId;
+    public String getLinkKind() {
+      return linkKind;
+    }
+
+    public String getChatType() {
+      return chatType;
+    }
+
+    public String getAnonymity() {
+      return anonymity;
+    }
+
+    public String getConsultantId() {
+      return consultantId;
+    }
+
+    public String getNotes() {
+      return notes;
     }
 
     public String getCreatedByUserId() {
@@ -155,6 +257,34 @@ public class AgencyInviteLinkController {
 
     public String getStatus() {
       return status;
+    }
+  }
+
+  public static class PagedInviteLinksResponseDTO {
+    public List<AgencyInviteLinkResponseDTO> content;
+    public long totalElements;
+    public int totalPages;
+    public int page;
+    public int size;
+
+    public List<AgencyInviteLinkResponseDTO> getContent() {
+      return content;
+    }
+
+    public long getTotalElements() {
+      return totalElements;
+    }
+
+    public int getTotalPages() {
+      return totalPages;
+    }
+
+    public int getPage() {
+      return page;
+    }
+
+    public int getSize() {
+      return size;
     }
   }
 }
