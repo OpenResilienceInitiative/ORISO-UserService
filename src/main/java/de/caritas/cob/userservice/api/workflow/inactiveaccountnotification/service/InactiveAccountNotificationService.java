@@ -66,7 +66,11 @@ public class InactiveAccountNotificationService {
       Optional<LocalDateTime> lastActivity = askerActivityCalculator.lastActivity(user);
       if (isInactive(lastActivity, cutoff)) {
         emitForRecipients(
-            InactiveAccountRole.ASKER, user.getUserId(), user.getTenantId(), lastActivity.orElse(null), now);
+            InactiveAccountRole.ASKER,
+            user.getUserId(),
+            user.getTenantId(),
+            lastActivity.orElse(null),
+            now);
       }
     }
   }
@@ -90,7 +94,11 @@ public class InactiveAccountNotificationService {
       Optional<LocalDateTime> lastActivity = adminActivityCalculator.lastActivity(admin);
       if (isInactive(lastActivity, cutoff)) {
         emitForRecipients(
-            InactiveAccountRole.ADMIN, admin.getId(), admin.getTenantId(), lastActivity.orElse(null), now);
+            InactiveAccountRole.ADMIN,
+            admin.getId(),
+            admin.getTenantId(),
+            lastActivity.orElse(null),
+            now);
       }
     }
   }
@@ -107,7 +115,8 @@ public class InactiveAccountNotificationService {
       LocalDateTime now) {
     for (Admin recipient : recipientResolver.resolveRecipients(accountTenantId)) {
       String fingerprint =
-          buildFingerprint(role, accountId, recipient.getId(), lastActivityAt, inactivityThresholdDays);
+          buildFingerprint(
+              role, accountId, recipient.getId(), lastActivityAt, inactivityThresholdDays);
       if (auditLogRepository.existsByNotificationFingerprint(fingerprint)) {
         continue;
       }

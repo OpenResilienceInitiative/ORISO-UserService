@@ -45,7 +45,8 @@ public class AgencyVerifier {
   public void checkIfConsultingTypeMatchesToAgency(UserDTO userDTO) {
     try {
       if (isNull(
-          getVerifiedAgency(userDTO.getAgencyId(), Integer.parseInt(userDTO.getConsultingType())))) {
+          getVerifiedAgency(
+              userDTO.getAgencyId(), Integer.parseInt(userDTO.getConsultingType())))) {
         throw new BadRequestException(
             String.format(
                 "Agency with id %s does not match to consulting" + " type %s",

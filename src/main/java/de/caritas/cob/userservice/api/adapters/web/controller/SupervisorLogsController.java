@@ -28,7 +28,8 @@ public class SupervisorLogsController {
       @RequestParam(name = "perPage", defaultValue = "20") @Min(1) @Max(200) int perPage) {
     SupervisorLogsResult result = supervisorLogsService.listSupervisorLogs(page, perPage);
     return ResponseEntity.ok(
-        new SupervisorLogsResponseDTO(result.getData(), result.getTotal(), result.getPage(), result.getPerPage()));
+        new SupervisorLogsResponseDTO(
+            result.getData(), result.getTotal(), result.getPage(), result.getPerPage()));
   }
 
   public static class SupervisorLogsResponseDTO {
@@ -46,5 +47,3 @@ public class SupervisorLogsController {
     }
   }
 }
-
-

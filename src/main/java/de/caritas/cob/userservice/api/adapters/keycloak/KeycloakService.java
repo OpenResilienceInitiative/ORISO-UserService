@@ -26,7 +26,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -367,7 +366,8 @@ public class KeycloakService implements IdentityClient {
           rollBackUser(createdUserId);
           throw new InternalServerErrorException(
               String.format(
-                  "Could not persist mandatory keycloak user attributes for user %s", createdUserId),
+                  "Could not persist mandatory keycloak user attributes for user %s",
+                  createdUserId),
               exception);
         }
         return new KeycloakCreateUserResponseDTO(createdUserId);
@@ -397,7 +397,8 @@ public class KeycloakService implements IdentityClient {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
+    if (combinedError.contains(
+            identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }

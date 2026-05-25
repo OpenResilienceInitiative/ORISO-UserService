@@ -44,8 +44,10 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
-  private static final String ENDPOINT_POWER_LEVELS = "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
-  private static final String ENDPOINT_MEMBERSHIP = "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final String ENDPOINT_POWER_LEVELS =
+      "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
+  private static final String ENDPOINT_MEMBERSHIP =
+      "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -1065,8 +1067,8 @@ public class MatrixSynapseService {
   }
 
   /**
-   * Sets the power level (permissions) for a user in a Matrix room.
-   * Power level 100 = admin, 50 = moderator, 0 = default user
+   * Sets the power level (permissions) for a user in a Matrix room. Power level 100 = admin, 50 =
+   * moderator, 0 = default user
    *
    * @param roomId The Matrix room ID
    * @param userId The Matrix user ID (e.g., @user:domain.com)
@@ -1074,7 +1076,8 @@ public class MatrixSynapseService {
    * @param accessToken Access token of user with permission to set power levels
    * @return true if successful, false otherwise
    */
-  public boolean setUserPowerLevel(String roomId, String userId, int powerLevel, String accessToken) {
+  public boolean setUserPowerLevel(
+      String roomId, String userId, int powerLevel, String accessToken) {
     try {
       String url = matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", roomId));
 
@@ -1083,7 +1086,8 @@ public class MatrixSynapseService {
       HttpEntity<Void> getRequest = new HttpEntity<>(headers);
 
       ResponseEntity<java.util.Map> currentResponse =
-          restTemplate.exchange(url, org.springframework.http.HttpMethod.GET, getRequest, java.util.Map.class);
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, getRequest, java.util.Map.class);
 
       if (currentResponse.getBody() == null) {
         log.error("Failed to get current power levels for room {}", roomId);
@@ -1092,19 +1096,22 @@ public class MatrixSynapseService {
 
       // Update power levels
       @SuppressWarnings("unchecked")
-      java.util.Map<String, Object> powerLevels = new java.util.HashMap<>(currentResponse.getBody());
-      
+      java.util.Map<String, Object> powerLevels =
+          new java.util.HashMap<>(currentResponse.getBody());
+
       @SuppressWarnings("unchecked")
-      java.util.Map<String, Integer> users = 
-          (java.util.Map<String, Integer>) powerLevels.getOrDefault("users", new java.util.HashMap<>());
-      
+      java.util.Map<String, Integer> users =
+          (java.util.Map<String, Integer>)
+              powerLevels.getOrDefault("users", new java.util.HashMap<>());
+
       // Create new map to avoid modifying the original
       java.util.Map<String, Integer> updatedUsers = new java.util.HashMap<>(users);
       updatedUsers.put(userId, powerLevel);
       powerLevels.put("users", updatedUsers);
 
       // Send updated power levels
-      HttpEntity<java.util.Map<String, Object>> updateRequest = new HttpEntity<>(powerLevels, headers);
+      HttpEntity<java.util.Map<String, Object>> updateRequest =
+          new HttpEntity<>(powerLevels, headers);
       restTemplate.put(url, updateRequest);
 
       log.info("Set power level {} for user {} in room {}", powerLevel, userId, roomId);
@@ -1118,7 +1125,8 @@ public class MatrixSynapseService {
           ex.getResponseBodyAsString());
       return false;
     } catch (Exception e) {
-      log.error("Failed to set power level for user {} in room {}: {}", userId, roomId, e.getMessage());
+      log.error(
+          "Failed to set power level for user {} in room {}: {}", userId, roomId, e.getMessage());
       return false;
     }
   }
@@ -1133,14 +1141,16 @@ public class MatrixSynapseService {
    */
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
-      String url = matrixConfig.getApiUrl(
-          ENDPOINT_MEMBERSHIP.replace("{roomId}", roomId).replace("{userId}", userId));
+      String url =
+          matrixConfig.getApiUrl(
+              ENDPOINT_MEMBERSHIP.replace("{roomId}", roomId).replace("{userId}", userId));
 
       java.util.Map<String, Object> membershipEvent = new java.util.HashMap<>();
       membershipEvent.put("membership", "leave");
 
       HttpHeaders headers = getClientHttpHeaders(accessToken);
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(membershipEvent, headers);
+      HttpEntity<java.util.Map<String, Object>> request =
+          new HttpEntity<>(membershipEvent, headers);
 
       restTemplate.put(url, request);
 

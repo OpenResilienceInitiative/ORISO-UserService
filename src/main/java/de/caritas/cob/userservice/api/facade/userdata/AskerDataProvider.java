@@ -28,8 +28,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.SetUtils;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Provider for asker information. */
 @Component
@@ -105,7 +105,8 @@ public class AskerDataProvider {
       agencyDTOs = this.agencyService.getAgencies(agencyIds);
     } catch (HttpClientErrorException.Forbidden e) {
       // Login must not fail if downstream agency lookup denies this token scope.
-      log.warn("Forbidden while loading agencies for user {}: {}", user.getUserId(), e.getMessage());
+      log.warn(
+          "Forbidden while loading agencies for user {}: {}", user.getUserId(), e.getMessage());
       agencyDTOs = Collections.emptyList();
     }
     LinkedHashMap<String, Object> consultingTypes = new LinkedHashMap<>();

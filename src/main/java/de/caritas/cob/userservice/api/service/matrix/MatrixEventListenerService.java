@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
-import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -307,7 +306,8 @@ public class MatrixEventListenerService {
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
     String messageBody = extractMessageBody(content);
-    PrivacyEnvelope privacyEnvelope = buildPrivacyEnvelope(event, roomId, senderId, msgtype, content);
+    PrivacyEnvelope privacyEnvelope =
+        buildPrivacyEnvelope(event, roomId, senderId, msgtype, content);
 
     safeContentLog("matrix.message.received", privacyEnvelope);
 

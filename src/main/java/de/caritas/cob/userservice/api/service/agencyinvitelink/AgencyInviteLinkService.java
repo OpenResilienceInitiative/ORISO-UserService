@@ -62,7 +62,8 @@ public class AgencyInviteLinkService {
             .createdByUserId(authenticatedUser.getUserId())
             .createdByUsername(authenticatedUser.getUsername())
             .createDate(now)
-            .expiresAt(expiresInDays != null && expiresInDays > 0 ? now.plusDays(expiresInDays) : null)
+            .expiresAt(
+                expiresInDays != null && expiresInDays > 0 ? now.plusDays(expiresInDays) : null)
             .status(STATUS_ACTIVE)
             .build();
     return repository.save(link);
@@ -85,7 +86,10 @@ public class AgencyInviteLinkService {
       }
       results = repository.findAllByTenantIdOrderByCreateDateDesc(tenantId);
     }
-    return results.stream().map(this::autoExpireIfNeeded).sorted(Comparator.comparing(AgencyInviteLink::getCreateDate).reversed()).collect(Collectors.toList());
+    return results.stream()
+        .map(this::autoExpireIfNeeded)
+        .sorted(Comparator.comparing(AgencyInviteLink::getCreateDate).reversed())
+        .collect(Collectors.toList());
   }
 
   /**
@@ -186,8 +190,7 @@ public class AgencyInviteLinkService {
 
   private Long resolveTenantIdFromUser() {
     try {
-      Object tenantClaim =
-          de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant();
+      Object tenantClaim = de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant();
       if (tenantClaim == null) {
         return null;
       }

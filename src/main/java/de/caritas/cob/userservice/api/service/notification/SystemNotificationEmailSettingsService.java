@@ -87,39 +87,39 @@ public class SystemNotificationEmailSettingsService {
 
   private Optional<SupervisorAddedEmailSettings> toSupervisorAddedEmailSettings(
       Map<String, Object> tenantAsMap, Long tenantId) {
-      Object settingsObj = tenantAsMap.get(KEY_SETTINGS);
-      if (!(settingsObj instanceof Map<?, ?>)) {
-        return Optional.empty();
+    Object settingsObj = tenantAsMap.get(KEY_SETTINGS);
+    if (!(settingsObj instanceof Map<?, ?>)) {
+      return Optional.empty();
+    }
+    Map<?, ?> settings = (Map<?, ?>) settingsObj;
+
+    boolean systemEmailEnabled = asBoolean(settings.get(KEY_SYSTEM_EMAIL_TOGGLE));
+    Object smtpObj = settings.get(KEY_SMTP);
+    if (!(smtpObj instanceof Map<?, ?>)) {
+      return Optional.empty();
+    }
+
+    Map<?, ?> smtpMap = (Map<?, ?>) smtpObj;
+    boolean smtpEnabled = asBoolean(smtpMap.get(KEY_SMTP_ENABLED));
+    boolean smtpConfigValid = hasValidSmtpConfiguration(smtpMap);
+    if (!(systemEmailEnabled && smtpEnabled && smtpConfigValid)) {
+      if (systemEmailEnabled && smtpEnabled && !smtpConfigValid) {
+        log.warn(
+            "SMTP is enabled for tenant {} but configuration is incomplete. Required keys: host, port, username, password, from.",
+            tenantId);
       }
-      Map<?, ?> settings = (Map<?, ?>) settingsObj;
+      return Optional.empty();
+    }
 
-      boolean systemEmailEnabled = asBoolean(settings.get(KEY_SYSTEM_EMAIL_TOGGLE));
-      Object smtpObj = settings.get(KEY_SMTP);
-      if (!(smtpObj instanceof Map<?, ?>)) {
-        return Optional.empty();
-      }
+    String host = asTrimmedString(smtpMap.get(KEY_SMTP_HOST));
+    Integer port = asInteger(smtpMap.get(KEY_SMTP_PORT));
+    boolean secure = asBoolean(smtpMap.get("secure"));
+    String username = asTrimmedString(smtpMap.get(KEY_SMTP_USERNAME));
+    String password = asTrimmedString(smtpMap.get(KEY_SMTP_PASSWORD));
+    String from = asTrimmedString(smtpMap.get(KEY_SMTP_FROM));
+    String emailThemeColor = asTrimmedString(smtpMap.get(KEY_SMTP_EMAIL_THEME_COLOR));
 
-      Map<?, ?> smtpMap = (Map<?, ?>) smtpObj;
-      boolean smtpEnabled = asBoolean(smtpMap.get(KEY_SMTP_ENABLED));
-      boolean smtpConfigValid = hasValidSmtpConfiguration(smtpMap);
-      if (!(systemEmailEnabled && smtpEnabled && smtpConfigValid)) {
-        if (systemEmailEnabled && smtpEnabled && !smtpConfigValid) {
-          log.warn(
-              "SMTP is enabled for tenant {} but configuration is incomplete. Required keys: host, port, username, password, from.",
-              tenantId);
-        }
-        return Optional.empty();
-      }
-
-      String host = asTrimmedString(smtpMap.get(KEY_SMTP_HOST));
-      Integer port = asInteger(smtpMap.get(KEY_SMTP_PORT));
-      boolean secure = asBoolean(smtpMap.get("secure"));
-      String username = asTrimmedString(smtpMap.get(KEY_SMTP_USERNAME));
-      String password = asTrimmedString(smtpMap.get(KEY_SMTP_PASSWORD));
-      String from = asTrimmedString(smtpMap.get(KEY_SMTP_FROM));
-      String emailThemeColor = asTrimmedString(smtpMap.get(KEY_SMTP_EMAIL_THEME_COLOR));
-
-      return Optional.of(
+    return Optional.of(
         new SupervisorAddedEmailSettings(
             host, port, secure, username, password, from, emailThemeColor));
   }
@@ -130,7 +130,9 @@ public class SystemNotificationEmailSettingsService {
       Object tenantDto = tenantAdminService.getTenantById(tenantId);
       Map<String, Object> tenantAsMap =
           objectMapper.convertValue(tenantDto, new TypeReference<Map<String, Object>>() {});
-      return tenantAsMap == null || tenantAsMap.isEmpty() ? Optional.empty() : Optional.of(tenantAsMap);
+      return tenantAsMap == null || tenantAsMap.isEmpty()
+          ? Optional.empty()
+          : Optional.of(tenantAsMap);
     } catch (Exception ex) {
       return Optional.empty();
     }

@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -77,7 +76,10 @@ public class SessionSupervisorFacade {
       throw new ForbiddenException(
           "Consultant does not have permission to add supervisors to this session");
     }
-    log.info("Permission granted for consultant {} to add supervisor to session {}", addedByConsultant.getId(), sessionId);
+    log.info(
+        "Permission granted for consultant {} to add supervisor to session {}",
+        addedByConsultant.getId(),
+        sessionId);
 
     // Get supervisor consultant
     Consultant supervisorConsultant =
@@ -99,8 +101,7 @@ public class SessionSupervisorFacade {
 
     // Verify supervisor is from same agency
     if (!areFromSameAgency(session, supervisorConsultant)) {
-      throw new BadRequestException(
-          "Supervisor must be from the same agency as the session");
+      throw new BadRequestException("Supervisor must be from the same agency as the session");
     }
 
     // Check if already supervising
@@ -229,8 +230,7 @@ public class SessionSupervisorFacade {
    * @param removedByConsultant the consultant removing the supervisor
    */
   @Transactional
-  public void removeSupervisor(
-      Long sessionId, Long supervisorId, Consultant removedByConsultant) {
+  public void removeSupervisor(Long sessionId, Long supervisorId, Consultant removedByConsultant) {
     // Get session
     Session session =
         sessionRepository
@@ -260,8 +260,7 @@ public class SessionSupervisorFacade {
     // Remove from Matrix room
     String matrixRoomId = supervisor.getMatrixRoomId();
     if (matrixRoomId != null && !matrixRoomId.isEmpty()) {
-      String supervisorMatrixUserId =
-          supervisor.getSupervisorConsultant().getMatrixUserId();
+      String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
       if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
         // Get removedByConsultant's Matrix credentials
         String removedByConsultantMatrixUsername = null;
@@ -329,7 +328,10 @@ public class SessionSupervisorFacade {
     // Must be the assigned consultant or from the same agency
     if (session.getConsultant() != null
         && session.getConsultant().getId().equals(consultant.getId())) {
-      log.info("Consultant {} is the assigned consultant for session {}", consultant.getId(), session.getId());
+      log.info(
+          "Consultant {} is the assigned consultant for session {}",
+          consultant.getId(),
+          session.getId());
       return true;
     }
     boolean sameAgency = areFromSameAgency(session, consultant);
@@ -363,8 +365,7 @@ public class SessionSupervisorFacade {
       // Fallback: Check via repository if relationship not loaded
       List<ConsultantAgency> agencies =
           consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
-      return agencies.stream()
-          .anyMatch(ca -> ca.getAgencyId().equals(session.getAgencyId()));
+      return agencies.stream().anyMatch(ca -> ca.getAgencyId().equals(session.getAgencyId()));
     }
     return consultantAgencies.stream()
         .anyMatch(ca -> ca.getAgencyId().equals(session.getAgencyId()));
@@ -381,4 +382,3 @@ public class SessionSupervisorFacade {
     return userAccountService.retrieveValidatedConsultant();
   }
 }
-

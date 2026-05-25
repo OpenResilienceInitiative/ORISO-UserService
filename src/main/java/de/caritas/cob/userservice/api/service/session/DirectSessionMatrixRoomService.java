@@ -13,9 +13,9 @@ import org.springframework.stereotype.Service;
 
 /**
  * Provisions a Matrix room for a session that was created via the direct-consultant registration
- * path (the {@code ?cid=<consultantId>} sharing link). Mirrors the room-creation logic that
- * {@code AssignEnquiryFacade} performs when a consultant accepts an enquiry, but runs at
- * registration time so both parties can start chatting immediately — no enquiry queue involved.
+ * path (the {@code ?cid=<consultantId>} sharing link). Mirrors the room-creation logic that {@code
+ * AssignEnquiryFacade} performs when a consultant accepts an enquiry, but runs at registration time
+ * so both parties can start chatting immediately — no enquiry queue involved.
  */
 @Service
 @RequiredArgsConstructor
@@ -28,10 +28,10 @@ public class DirectSessionMatrixRoomService {
   private final @NonNull UserHelper userHelper;
 
   /**
-   * Creates a Matrix room between {@code consultant} and the session's user, invites both
-   * parties, and saves the room id on the session. No-ops if the session already has a Matrix
-   * room. Swallows failures so that a Matrix outage does not break the registration flow — the
-   * caller still gets a session object back.
+   * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
+   * and saves the room id on the session. No-ops if the session already has a Matrix room. Swallows
+   * failures so that a Matrix outage does not break the registration flow — the caller still gets a
+   * session object back.
    */
   public void provisionRoomForDirectSession(Session session, Consultant consultant) {
     if (session == null || consultant == null) {
@@ -95,7 +95,8 @@ public class DirectSessionMatrixRoomService {
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
 
-      var consultantToken = matrixSynapseService.loginUser(consultantMatrixUsername, consultantPassword);
+      var consultantToken =
+          matrixSynapseService.loginUser(consultantMatrixUsername, consultantPassword);
       if (consultantToken == null) {
         log.error(
             "Could not login consultant {} to Matrix after creating room {} for session {}",
@@ -122,8 +123,7 @@ public class DirectSessionMatrixRoomService {
         if (userToken != null) {
           boolean joined = matrixSynapseService.joinRoom(roomId, userToken);
           if (joined) {
-            log.info(
-                "User {} auto-joined direct-session room {}", userMatrixUsername, roomId);
+            log.info("User {} auto-joined direct-session room {}", userMatrixUsername, roomId);
           } else {
             log.warn(
                 "User {} failed to auto-join direct-session room {}", userMatrixUsername, roomId);
@@ -171,7 +171,9 @@ public class DirectSessionMatrixRoomService {
               consultant.getUsername(),
               generatedMatrixPassword,
               consultant.getFirstName() + " " + consultant.getLastName());
-      if (response != null && response.getBody() != null && response.getBody().getUserId() != null) {
+      if (response != null
+          && response.getBody() != null
+          && response.getBody().getUserId() != null) {
         consultant.setMatrixUserId(response.getBody().getUserId());
         consultant.setMatrixPassword(generatedMatrixPassword);
         consultantRepository.save(consultant);

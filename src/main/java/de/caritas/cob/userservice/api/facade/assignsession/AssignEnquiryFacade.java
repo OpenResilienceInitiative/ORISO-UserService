@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROG
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
 import static java.util.concurrent.CompletableFuture.supplyAsync;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
@@ -23,7 +24,6 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
-import static org.apache.commons.lang3.StringUtils.isBlank;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole;
@@ -83,7 +83,8 @@ public class AssignEnquiryFacade {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
-    liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(session.getUser().getUserId());
+    liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
+        session.getUser().getUserId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
     supplyAsync(updateRocketChatRooms(session, consultant, TenantContext.getCurrentTenant()))
         .thenRun(
@@ -202,46 +203,55 @@ public class AssignEnquiryFacade {
                 session.getId());
 
             try {
-              // Get agency service account credentials (agency created the room, so we need their token)
-              var agencyCredentialsOpt = agencyMatrixCredentialClient.fetchMatrixCredentials(session.getAgencyId());
-              
+              // Get agency service account credentials (agency created the room, so we need their
+              // token)
+              var agencyCredentialsOpt =
+                  agencyMatrixCredentialClient.fetchMatrixCredentials(session.getAgencyId());
+
               if (agencyCredentialsOpt.isEmpty()) {
                 log.warn(
                     "No agency Matrix credentials found for agency {}, falling back to create new room",
                     session.getAgencyId());
-                createNewMatrixRoom(session, consultant, consultantMatrixUsername, consultantPassword);
+                createNewMatrixRoom(
+                    session, consultant, consultantMatrixUsername, consultantPassword);
                 return;
               }
 
               var agencyCredentials = agencyCredentialsOpt.get();
-              if (isBlank(agencyCredentials.getMatrixUserId()) || isBlank(agencyCredentials.getMatrixPassword())) {
+              if (isBlank(agencyCredentials.getMatrixUserId())
+                  || isBlank(agencyCredentials.getMatrixPassword())) {
                 log.warn(
                     "Agency Matrix credentials incomplete for agency {}, falling back to create new room",
                     session.getAgencyId());
-                createNewMatrixRoom(session, consultant, consultantMatrixUsername, consultantPassword);
+                createNewMatrixRoom(
+                    session, consultant, consultantMatrixUsername, consultantPassword);
                 return;
               }
 
               // Extract agency Matrix username
               String agencyMatrixUsername = null;
               if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-                agencyMatrixUsername = agencyCredentials.getMatrixUserId().substring(1).split(":")[0];
+                agencyMatrixUsername =
+                    agencyCredentials.getMatrixUserId().substring(1).split(":")[0];
               }
 
               if (isBlank(agencyMatrixUsername)) {
                 log.warn("Invalid agency Matrix user ID, falling back to create new room");
-                createNewMatrixRoom(session, consultant, consultantMatrixUsername, consultantPassword);
+                createNewMatrixRoom(
+                    session, consultant, consultantMatrixUsername, consultantPassword);
                 return;
               }
 
               // Login as agency service account (room creator)
-              String agencyToken = matrixSynapseService.loginUser(
-                  agencyMatrixUsername, agencyCredentials.getMatrixPassword());
+              String agencyToken =
+                  matrixSynapseService.loginUser(
+                      agencyMatrixUsername, agencyCredentials.getMatrixPassword());
 
               if (isBlank(agencyToken)) {
                 log.error(
                     "Failed to login agency service account for room reuse, falling back to create new room");
-                createNewMatrixRoom(session, consultant, consultantMatrixUsername, consultantPassword);
+                createNewMatrixRoom(
+                    session, consultant, consultantMatrixUsername, consultantPassword);
                 return;
               }
 
@@ -281,7 +291,8 @@ public class AssignEnquiryFacade {
 
               if (consultantToken != null) {
                 // Auto-join consultant to room
-                boolean consultantJoined = matrixSynapseService.joinRoom(existingRoomId, consultantToken);
+                boolean consultantJoined =
+                    matrixSynapseService.joinRoom(existingRoomId, consultantToken);
                 if (consultantJoined) {
                   log.info(
                       "Consultant {} successfully joined existing room {} (all messages preserved)",
@@ -323,7 +334,8 @@ public class AssignEnquiryFacade {
                   e.getMessage(),
                   e);
               // Fall back to creating new room
-              createNewMatrixRoom(session, consultant, consultantMatrixUsername, consultantPassword);
+              createNewMatrixRoom(
+                  session, consultant, consultantMatrixUsername, consultantPassword);
             }
           } else {
             // NO EXISTING ROOM - Create new room (backward compatibility)

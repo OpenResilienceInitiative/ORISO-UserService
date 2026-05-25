@@ -1,13 +1,13 @@
 package de.caritas.cob.userservice.api.service;
 
-import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import lombok.Builder;
@@ -203,5 +203,3 @@ public class SupervisorLogsService {
     private int perPage;
   }
 }
-
-

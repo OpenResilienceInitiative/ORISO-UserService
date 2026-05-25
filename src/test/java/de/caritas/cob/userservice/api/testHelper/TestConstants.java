@@ -422,7 +422,8 @@ public class TestConstants {
           .walkThroughEnabled(false)
           .languageCode(LanguageCode.de)
           .notificationsEnabled(true)
-          .notificationsSettings("{'initialEnquiryNotificationEnabled': 'true','newChatMessageNotificationEnabled': 'true', 'reassignmentNotificationEnabled': 'true','appointmentNotificationEnabled': 'true'}")
+          .notificationsSettings(
+              "{'initialEnquiryNotificationEnabled': 'true','newChatMessageNotificationEnabled': 'true', 'reassignmentNotificationEnabled': 'true','appointmentNotificationEnabled': 'true'}")
           .build();
 
   public static final SessionConsultantForUserDTO CONSULTANT_DTO =

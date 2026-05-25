@@ -58,7 +58,8 @@ public class DeletionLifecycleService {
     if (user == null || user.getDeleteDate() == null) {
       return user;
     }
-    if (user.getDeletionLifecycleState() == null || user.getDeletionLifecycleState() == DeletionLifecycleState.ACTIVE) {
+    if (user.getDeletionLifecycleState() == null
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.ACTIVE) {
       user.setDeletionLifecycleState(DeletionLifecycleState.PENDING_DELETION);
     }
     if (user.getDeletionLifecycleState() == DeletionLifecycleState.PENDING_DELETION) {
@@ -94,7 +95,8 @@ public class DeletionLifecycleService {
     if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
         && consultant.getDeletionReadOnlyUntil() == null) {
       consultant.setDeletionReadOnlyUntil(
-          LocalDateTime.now(ZoneOffset.UTC).plusHours(resolveReadOnlyHours(consultant.getTenantId())));
+          LocalDateTime.now(ZoneOffset.UTC)
+              .plusHours(resolveReadOnlyHours(consultant.getTenantId())));
       log.info(
           "Backfilled deletionReadOnlyUntil for consultantId={} tenantId={}",
           consultant.getId(),
@@ -118,7 +120,8 @@ public class DeletionLifecycleService {
         consultant != null ? consultant.getDeletionPausedUntil() : null);
   }
 
-  public void pauseUserDeletion(User user, String reason, Integer requestedMonths, String pausedBy) {
+  public void pauseUserDeletion(
+      User user, String reason, Integer requestedMonths, String pausedBy) {
     if (user == null) {
       return;
     }
@@ -129,7 +132,8 @@ public class DeletionLifecycleService {
     user.setDeletionPausedBy(pausedBy);
     user.setDeletionPauseCreatedAt(now);
     user.setDeletionPausedUntil(now.plusMonths(months));
-    if (user.getDeletionLifecycleState() == null || user.getDeletionLifecycleState() == DeletionLifecycleState.ACTIVE) {
+    if (user.getDeletionLifecycleState() == null
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.ACTIVE) {
       user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
     }
   }
@@ -164,7 +168,8 @@ public class DeletionLifecycleService {
   private void transitionToReadOnlySafeguard(Consultant consultant, String actorId) {
     LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
     if (consultant.getDeletionReadOnlyUntil() == null) {
-      consultant.setDeletionReadOnlyUntil(now.plusHours(resolveReadOnlyHours(consultant.getTenantId())));
+      consultant.setDeletionReadOnlyUntil(
+          now.plusHours(resolveReadOnlyHours(consultant.getTenantId())));
     }
     consultant.setDeletionPausedBy(actorId);
     consultant.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
