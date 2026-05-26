@@ -151,7 +151,11 @@ public class AgencyInviteLinkService {
             callerTenantId, linkKind, topicId, chatType, status, pageable);
 
     // Lazy-expire active links whose `expires_at` has passed, so the UI sees fresh status.
-    result.getContent().forEach(this::autoExpireIfNeeded);
+    // Only apply when no explicit status filter was requested, to avoid returning EXPIRED
+    // rows to a caller who asked for ACTIVE.
+    if (status == null) {
+      result.getContent().forEach(this::autoExpireIfNeeded);
+    }
     return result;
   }
 
