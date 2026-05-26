@@ -4,8 +4,11 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryRes
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgencyInviteLinkController {
 
   private final @NonNull AgencyInviteLinkService agencyInviteLinkService;
+  private final @NonNull TopicService topicService;
 
   // ---------------------------------------------------------------------------------------------
   // POST /useradmin/invitelinks — create a new topic-based invite link.
@@ -46,7 +50,8 @@ public class AgencyInviteLinkController {
       cmd.setExpiresInDays(request.getExpiresInDays());
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
-    return new ResponseEntity<>(AgencyInviteLinkResponseDTO.from(link), HttpStatus.CREATED);
+    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
+    return new ResponseEntity<>(AgencyInviteLinkResponseDTO.from(link, topicsMap), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -65,9 +70,10 @@ public class AgencyInviteLinkController {
       @RequestParam(value = "size", required = false, defaultValue = "20") int size) {
     Page<AgencyInviteLink> result =
         agencyInviteLinkService.list(linkKind, topicId, chatType, status, page, size);
+    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
     List<AgencyInviteLinkResponseDTO> content =
         result.getContent().stream()
-            .map(AgencyInviteLinkResponseDTO::from)
+            .map(link -> AgencyInviteLinkResponseDTO.from(link, topicsMap))
             .collect(Collectors.toList());
     PagedInviteLinksResponseDTO body = new PagedInviteLinksResponseDTO();
     body.content = content;
@@ -161,6 +167,7 @@ public class AgencyInviteLinkController {
     private String token;
     private Long tenantId;
     private Long topicId;
+    private String topicName;
     private String linkKind;
     private String chatType;
     private String anonymity;
@@ -174,12 +181,15 @@ public class AgencyInviteLinkController {
     private Long usedBySessionId;
     private String status;
 
-    public static AgencyInviteLinkResponseDTO from(AgencyInviteLink link) {
+    public static AgencyInviteLinkResponseDTO from(AgencyInviteLink link, Map<Long, TopicDTO> topicsMap) {
       AgencyInviteLinkResponseDTO dto = new AgencyInviteLinkResponseDTO();
       dto.id = link.getId();
       dto.token = link.getToken();
       dto.tenantId = link.getTenantId();
       dto.topicId = link.getTopicId();
+      dto.topicName = link.getTopicId() != null && topicsMap.containsKey(link.getTopicId())
+          ? topicsMap.get(link.getTopicId()).getName()
+          : null;
       dto.linkKind = link.getLinkKind();
       dto.chatType = link.getChatType();
       dto.anonymity = link.getAnonymity();
@@ -209,6 +219,10 @@ public class AgencyInviteLinkController {
 
     public Long getTopicId() {
       return topicId;
+    }
+
+    public String getTopicName() {
+      return topicName;
     }
 
     public String getLinkKind() {
