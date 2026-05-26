@@ -69,15 +69,14 @@ public class AgencyInviteLinkService {
   private final @NonNull ConsultingTypeService consultingTypeService;
   private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
-  /** Create a new topic-based invite link. */
+  /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
     if (cmd == null) {
       throw new BadRequestException("Request body is required");
     }
+    applyDefaults(cmd);
     validateEnums(cmd);
-    if (cmd.getTopicId() == null) {
-      throw new BadRequestException("topicId is required");
-    }
+
     if (LINK_KIND_COUNSELLOR.equals(cmd.getLinkKind()) && isBlank(cmd.getConsultantId())) {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
@@ -87,11 +86,11 @@ public class AgencyInviteLinkService {
       throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
     }
 
-    TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
-    if (topic == null) {
-      // Topic does not exist in the caller's tenant scope. Returning 404 also covers cross-tenant
-      // access attempts without leaking whether the topic exists in another tenant.
-      throw new NotFoundException("Topic %s not found", cmd.getTopicId());
+    if (cmd.getTopicId() != null) {
+      TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
+      if (topic == null) {
+        throw new NotFoundException("Topic %s not found", cmd.getTopicId());
+      }
     }
 
     if (LINK_KIND_COUNSELLOR.equals(cmd.getLinkKind())) {
@@ -103,6 +102,7 @@ public class AgencyInviteLinkService {
         AgencyInviteLink.builder()
             .token(generateToken())
             .tenantId(callerTenantId)
+            .agencyId(cmd.getAgencyId())
             .topicId(cmd.getTopicId())
             .linkKind(cmd.getLinkKind())
             .chatType(cmd.getChatType())
@@ -227,6 +227,12 @@ public class AgencyInviteLinkService {
 
   // ---------------------------------------------------------------------------------------------
 
+  private void applyDefaults(CreateInviteLinkCommand cmd) {
+    if (isBlank(cmd.getLinkKind())) cmd.setLinkKind(LINK_KIND_EXTERNAL_INBOUND);
+    if (isBlank(cmd.getChatType())) cmd.setChatType(CHAT_TYPE_LIVE_CHAT);
+    if (isBlank(cmd.getAnonymity())) cmd.setAnonymity(ANONYMITY_FULL);
+  }
+
   private void validateEnums(CreateInviteLinkCommand cmd) {
     if (!ALLOWED_LINK_KINDS.contains(cmd.getLinkKind())) {
       throw new BadRequestException("linkKind must be one of " + ALLOWED_LINK_KINDS);
@@ -322,6 +328,7 @@ public class AgencyInviteLinkService {
 
   /** Service-layer carrier for a create request. */
   public static class CreateInviteLinkCommand {
+    private Long agencyId;
     private Long topicId;
     private String linkKind;
     private String chatType;
@@ -329,6 +336,9 @@ public class AgencyInviteLinkService {
     private String consultantId;
     private String notes;
     private Long expiresInDays;
+
+    public Long getAgencyId() { return agencyId; }
+    public void setAgencyId(Long agencyId) { this.agencyId = agencyId; }
 
     public Long getTopicId() {
       return topicId;

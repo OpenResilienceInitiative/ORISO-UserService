@@ -41,6 +41,7 @@ public class AgencyInviteLinkController {
       @RequestBody CreateInviteLinkRequestDTO request) {
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
     if (request != null) {
+      cmd.setAgencyId(request.getAgencyId());
       cmd.setTopicId(request.getTopicId());
       cmd.setLinkKind(request.getLinkKind());
       cmd.setChatType(request.getChatType());
@@ -97,6 +98,7 @@ public class AgencyInviteLinkController {
   // ---------------------------------------------------------------------------------------------
 
   public static class CreateInviteLinkRequestDTO {
+    private Long agencyId;
     private Long topicId;
     private String linkKind;
     private String chatType;
@@ -104,6 +106,14 @@ public class AgencyInviteLinkController {
     private String consultantId;
     private String notes;
     private Long expiresInDays;
+
+    public Long getAgencyId() {
+      return agencyId;
+    }
+
+    public void setAgencyId(Long agencyId) {
+      this.agencyId = agencyId;
+    }
 
     public Long getTopicId() {
       return topicId;
