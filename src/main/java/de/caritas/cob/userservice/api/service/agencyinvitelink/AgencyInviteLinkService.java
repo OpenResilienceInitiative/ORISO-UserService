@@ -21,6 +21,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -28,6 +29,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * Manages one-time invite links. Each link is bound to a topic (not an agency); when redeemed it
@@ -276,11 +279,25 @@ public class AgencyInviteLinkService {
     try {
       Long tenantId = TenantContext.getCurrentTenant();
       if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-        // Super-admins / technical contexts must impersonate a real tenant (via X-Tenant-Id)
-        // before creating or listing invite links — otherwise we have nothing to scope to.
-        return null;
+        // Super-admins land here with tenantId=0. Fall back to X-Tenant-Id header so they
+        // can impersonate a real tenant without needing a separate scoped token.
+        return resolveTenantFromHeader();
       }
       return tenantId;
+    } catch (Exception ex) {
+      return null;
+    }
+  }
+
+  private Long resolveTenantFromHeader() {
+    try {
+      ServletRequestAttributes attrs =
+          (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+      if (attrs == null) return null;
+      HttpServletRequest request = attrs.getRequest();
+      String header = request.getHeader("X-Tenant-Id");
+      if (header == null || header.isBlank()) return null;
+      return Long.parseLong(header.trim());
     } catch (Exception ex) {
       return null;
     }

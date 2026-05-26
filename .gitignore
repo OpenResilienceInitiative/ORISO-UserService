@@ -42,3 +42,5 @@ consultants-import.txt*
 *.jar
 run-local-remote-db.sh
 .env.local
+application-local.properties
+src/main/resources/application-local.properties

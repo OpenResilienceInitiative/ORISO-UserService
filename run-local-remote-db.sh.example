@@ -12,7 +12,7 @@ export SPRING_DATASOURCE_URL="jdbc:mariadb://46.224.170.69:32491/userservice"
 export SPRING_DATASOURCE_USERNAME=root
 export SPRING_DATASOURCE_PASSWORD='CHANGE_ME'
 
-export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso-dev.site/service/consultingtypes"
+export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export AGENCY_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export TENANT_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso-dev.site"
