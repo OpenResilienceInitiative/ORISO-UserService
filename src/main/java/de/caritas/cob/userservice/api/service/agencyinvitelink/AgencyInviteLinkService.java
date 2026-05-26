@@ -185,24 +185,15 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("Invite link expired");
     }
 
-    if (link.getTopicId() == null) {
-      // Should not happen for links produced by the new flow; legacy rows without a topic cannot
-      // be redeemed because the anonymous-enquiry facade needs a topic to tag the session.
-      throw new BadRequestException("Invite link has no topic — cannot redeem");
-    }
-
-    // The redeem endpoint is public — no tenant header on the request. Set the tenant context
-    // from the link so downstream service clients (consulting-type, agency, etc.) see the right
-    // tenant for header propagation.
     Long previousTenant = TenantContext.getCurrentTenant();
     try {
       TenantContext.setCurrentTenant(link.getTenantId());
 
-      Integer consultingTypeId = pickTenantDefaultConsultingType(link.getTenantId());
+      Integer consultingTypeId = pickConsultingTypeId(link);
 
       CreateAnonymousEnquiryDTO dto = new CreateAnonymousEnquiryDTO();
       dto.setConsultingType(consultingTypeId);
-      dto.setMainTopicId(link.getTopicId());
+      dto.setMainTopicId(link.getTopicId()); // null for legacy links — accepted by facade
       if (LINK_KIND_COUNSELLOR.equals(link.getLinkKind())) {
         dto.setConsultantId(link.getConsultantId());
       }
@@ -262,11 +253,14 @@ public class AgencyInviteLinkService {
     }
   }
 
-  private Integer pickTenantDefaultConsultingType(Long tenantId) {
-    List<Integer> ids = consultingTypeService.getAllConsultingTypeIds(tenantId);
+  private Integer pickConsultingTypeId(AgencyInviteLink link) {
+    if (link.getConsultingTypeId() != null) {
+      return link.getConsultingTypeId();
+    }
+    List<Integer> ids = consultingTypeService.getAllConsultingTypeIds(link.getTenantId());
     if (ids == null || ids.isEmpty()) {
       throw new InternalServerErrorException(
-          "No consulting types configured for tenant " + tenantId);
+          "No consulting types configured for tenant " + link.getTenantId());
     }
     return ids.get(0);
   }
