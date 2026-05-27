@@ -1,0 +1,9 @@
+flowchart TD
+  Source[ORISO-UserService repo] --> Maven[./mvnw clean package]
+  Maven --> Jar[target/UserService.jar]
+  Jar --> Copy[copy to UserService.jar]
+  Copy --> Docker[Dockerfile builds image]
+  Docker --> K3s[k3s image import]
+  K3s --> Rollout[kubectl rollout restart userservice]
+  Config[application.properties + env vars] --> Pod[UserService container]
+  Rollout --> Pod

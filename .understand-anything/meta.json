@@ -1,0 +1,12 @@
+{
+  "lastAnalyzedAt": "2026-05-27T18:55:00.394Z",
+  "gitCommitHash": "65bd6a263f0a362d086121bdafb20992f00949a5",
+  "version": "1.0.0",
+  "analyzedFiles": 1130,
+  "graphStats": {
+    "nodes": 2295,
+    "edges": 3854,
+    "layers": 12,
+    "tourSteps": 6
+  }
+}
