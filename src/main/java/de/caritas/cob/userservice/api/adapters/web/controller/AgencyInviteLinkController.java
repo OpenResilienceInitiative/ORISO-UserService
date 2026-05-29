@@ -38,7 +38,7 @@ public class AgencyInviteLinkController {
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
   @PostMapping("/useradmin/invitelinks")
   public ResponseEntity<AgencyInviteLinkResponseDTO> create(
-      @RequestBody CreateInviteLinkRequestDTO request) {
+      @RequestBody(required = false) CreateInviteLinkRequestDTO request) {
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
     if (request != null) {
       cmd.setAgencyId(request.getAgencyId());
@@ -56,26 +56,41 @@ public class AgencyInviteLinkController {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // GET /useradmin/invitelinks — paged, filtered list for the caller's tenant.
+  // GET /useradmin/invitelinks — list for the caller's tenant.
+  //
+  // Dual-format response for backward compatibility:
+  //   No page/size params  → flat JSON array   (old frontend)
+  //   page or size present → paginated object  (new frontend)
   // ---------------------------------------------------------------------------------------------
   @PreAuthorize(
       "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
   @GetMapping("/useradmin/invitelinks")
-  public ResponseEntity<PagedInviteLinksResponseDTO> list(
+  public ResponseEntity<?> list(
       @RequestParam(value = "linkKind", required = false) String linkKind,
       @RequestParam(value = "topicId", required = false) Long topicId,
       @RequestParam(value = "chatType", required = false) String chatType,
       @RequestParam(value = "status", required = false) String status,
-      @RequestParam(value = "page", required = false, defaultValue = "0") int page,
-      @RequestParam(value = "size", required = false, defaultValue = "20") int size) {
+      @RequestParam(value = "page", required = false) Integer page,
+      @RequestParam(value = "size", required = false) Integer size) {
+
+    int pageNum = page != null ? page : 0;
+    int sizeNum = size != null ? size : 20;
+
     Page<AgencyInviteLink> result =
-        agencyInviteLinkService.list(linkKind, topicId, chatType, status, page, size);
+        agencyInviteLinkService.list(linkKind, topicId, chatType, status, pageNum, sizeNum);
     Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
     List<AgencyInviteLinkResponseDTO> content =
         result.getContent().stream()
             .map(link -> AgencyInviteLinkResponseDTO.from(link, topicsMap))
             .collect(Collectors.toList());
+
+    // Old frontend: no pagination params → return plain array (same as the original API)
+    if (page == null && size == null) {
+      return ResponseEntity.ok(content);
+    }
+
+    // New frontend: pagination params present → return paginated wrapper
     PagedInviteLinksResponseDTO body = new PagedInviteLinksResponseDTO();
     body.content = content;
     body.totalElements = result.getTotalElements();
@@ -87,10 +102,33 @@ public class AgencyInviteLinkController {
 
   // ---------------------------------------------------------------------------------------------
   // POST /users/invitelinks/{token}/redeem — public; creates an anonymous enquiry session.
+  //
+  // Response includes BOTH:
+  //   - New session credentials (new frontend uses these to open the chat directly)
+  //   - Legacy fields tenantId / agencyId / consultingTypeId (old frontend uses these)
   // ---------------------------------------------------------------------------------------------
   @PostMapping("/users/invitelinks/{token}/redeem")
-  public ResponseEntity<CreateAnonymousEnquiryResponseDTO> redeem(@PathVariable String token) {
-    return ResponseEntity.ok(agencyInviteLinkService.redeem(token));
+  public ResponseEntity<RedeemResponseDTO> redeem(@PathVariable String token) {
+    AgencyInviteLinkService.RedeemContext ctx = agencyInviteLinkService.redeemWithContext(token);
+    CreateAnonymousEnquiryResponseDTO session = ctx.getSession();
+
+    RedeemResponseDTO response = new RedeemResponseDTO();
+    // New session fields
+    response.userName = session.getUserName();
+    response.sessionId = session.getSessionId();
+    response.accessToken = session.getAccessToken();
+    response.expiresIn = session.getExpiresIn();
+    response.refreshToken = session.getRefreshToken();
+    response.refreshExpiresIn = session.getRefreshExpiresIn();
+    response.rcUserId = session.getRcUserId();
+    response.rcToken = session.getRcToken();
+    response.rcGroupId = session.getRcGroupId();
+    // Legacy fields — old frontend reads these three to do its own registration flow
+    response.tenantId = ctx.getTenantId();
+    response.agencyId = ctx.getAgencyId();
+    response.consultingTypeId = ctx.getConsultingTypeId();
+
+    return ResponseEntity.ok(response);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -176,6 +214,7 @@ public class AgencyInviteLinkController {
     private Long id;
     private String token;
     private Long tenantId;
+    private Long agencyId;
     private Long topicId;
     private String topicName;
     private String linkKind;
@@ -196,6 +235,7 @@ public class AgencyInviteLinkController {
       dto.id = link.getId();
       dto.token = link.getToken();
       dto.tenantId = link.getTenantId();
+      dto.agencyId = link.getAgencyId();
       dto.topicId = link.getTopicId();
       dto.topicName = link.getTopicId() != null && topicsMap.containsKey(link.getTopicId())
           ? topicsMap.get(link.getTopicId()).getName()
@@ -215,73 +255,24 @@ public class AgencyInviteLinkController {
       return dto;
     }
 
-    public Long getId() {
-      return id;
-    }
-
-    public String getToken() {
-      return token;
-    }
-
-    public Long getTenantId() {
-      return tenantId;
-    }
-
-    public Long getTopicId() {
-      return topicId;
-    }
-
-    public String getTopicName() {
-      return topicName;
-    }
-
-    public String getLinkKind() {
-      return linkKind;
-    }
-
-    public String getChatType() {
-      return chatType;
-    }
-
-    public String getAnonymity() {
-      return anonymity;
-    }
-
-    public String getConsultantId() {
-      return consultantId;
-    }
-
-    public String getNotes() {
-      return notes;
-    }
-
-    public String getCreatedByUserId() {
-      return createdByUserId;
-    }
-
-    public String getCreatedByUsername() {
-      return createdByUsername;
-    }
-
-    public LocalDateTime getCreateDate() {
-      return createDate;
-    }
-
-    public LocalDateTime getExpiresAt() {
-      return expiresAt;
-    }
-
-    public LocalDateTime getUsedAt() {
-      return usedAt;
-    }
-
-    public Long getUsedBySessionId() {
-      return usedBySessionId;
-    }
-
-    public String getStatus() {
-      return status;
-    }
+    public Long getId() { return id; }
+    public String getToken() { return token; }
+    public Long getTenantId() { return tenantId; }
+    public Long getAgencyId() { return agencyId; }
+    public Long getTopicId() { return topicId; }
+    public String getTopicName() { return topicName; }
+    public String getLinkKind() { return linkKind; }
+    public String getChatType() { return chatType; }
+    public String getAnonymity() { return anonymity; }
+    public String getConsultantId() { return consultantId; }
+    public String getNotes() { return notes; }
+    public String getCreatedByUserId() { return createdByUserId; }
+    public String getCreatedByUsername() { return createdByUsername; }
+    public LocalDateTime getCreateDate() { return createDate; }
+    public LocalDateTime getExpiresAt() { return expiresAt; }
+    public LocalDateTime getUsedAt() { return usedAt; }
+    public Long getUsedBySessionId() { return usedBySessionId; }
+    public String getStatus() { return status; }
   }
 
   public static class PagedInviteLinksResponseDTO {
@@ -291,24 +282,41 @@ public class AgencyInviteLinkController {
     public int page;
     public int size;
 
-    public List<AgencyInviteLinkResponseDTO> getContent() {
-      return content;
-    }
+    public List<AgencyInviteLinkResponseDTO> getContent() { return content; }
+    public long getTotalElements() { return totalElements; }
+    public int getTotalPages() { return totalPages; }
+    public int getPage() { return page; }
+    public int getSize() { return size; }
+  }
 
-    public long getTotalElements() {
-      return totalElements;
-    }
+  /** Unified redeem response — contains new session credentials AND legacy agency fields. */
+  public static class RedeemResponseDTO {
+    // New session credentials (new frontend uses these)
+    public String userName;
+    public Long sessionId;
+    public String accessToken;
+    public Integer expiresIn;
+    public String refreshToken;
+    public Integer refreshExpiresIn;
+    public String rcUserId;
+    public String rcToken;
+    public String rcGroupId;
+    // Legacy fields (old frontend uses these to run its own registration flow)
+    public Long tenantId;
+    public Long agencyId;
+    public Integer consultingTypeId;
 
-    public int getTotalPages() {
-      return totalPages;
-    }
-
-    public int getPage() {
-      return page;
-    }
-
-    public int getSize() {
-      return size;
-    }
+    public String getUserName() { return userName; }
+    public Long getSessionId() { return sessionId; }
+    public String getAccessToken() { return accessToken; }
+    public Integer getExpiresIn() { return expiresIn; }
+    public String getRefreshToken() { return refreshToken; }
+    public Integer getRefreshExpiresIn() { return refreshExpiresIn; }
+    public String getRcUserId() { return rcUserId; }
+    public String getRcToken() { return rcToken; }
+    public String getRcGroupId() { return rcGroupId; }
+    public Long getTenantId() { return tenantId; }
+    public Long getAgencyId() { return agencyId; }
+    public Integer getConsultingTypeId() { return consultingTypeId; }
   }
 }

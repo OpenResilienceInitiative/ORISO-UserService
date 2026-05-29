@@ -141,12 +141,16 @@ public class AgencyInviteLinkService {
   }
 
   /**
-   * Redeem the token. Validates and locks the row, creates an anonymous-enquiry session via the
-   * existing facade, then marks the link {@code USED}. Returns the rich session payload the
-   * frontend needs to drop the user straight into the chat.
+   * Redeem the token. Returns a {@link RedeemContext} that carries both the new session credentials
+   * and the legacy agency fields, so old and new frontends can both consume the response.
    */
   @Transactional
-  public CreateAnonymousEnquiryResponseDTO redeem(String token) {
+  public RedeemContext redeemWithContext(String token) {
+    return redeem(token);
+  }
+
+  @Transactional
+  RedeemContext redeem(String token) {
     AgencyInviteLink link =
         repository
             .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())
@@ -190,7 +194,7 @@ public class AgencyInviteLinkService {
       link.setUsedBySessionId(response.getSessionId());
       repository.save(link);
 
-      return response;
+      return new RedeemContext(response, link.getTenantId(), link.getAgencyId(), consultingTypeId);
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -383,5 +387,32 @@ public class AgencyInviteLinkService {
     public void setExpiresInDays(Long expiresInDays) {
       this.expiresInDays = expiresInDays;
     }
+  }
+
+  /**
+   * Carries both the new session response and the legacy agency fields so the controller can build
+   * a unified response that satisfies old and new frontends simultaneously.
+   */
+  public static class RedeemContext {
+    private final CreateAnonymousEnquiryResponseDTO session;
+    private final Long tenantId;
+    private final Long agencyId;
+    private final Integer consultingTypeId;
+
+    public RedeemContext(
+        CreateAnonymousEnquiryResponseDTO session,
+        Long tenantId,
+        Long agencyId,
+        Integer consultingTypeId) {
+      this.session = session;
+      this.tenantId = tenantId;
+      this.agencyId = agencyId;
+      this.consultingTypeId = consultingTypeId;
+    }
+
+    public CreateAnonymousEnquiryResponseDTO getSession() { return session; }
+    public Long getTenantId() { return tenantId; }
+    public Long getAgencyId() { return agencyId; }
+    public Integer getConsultingTypeId() { return consultingTypeId; }
   }
 }
