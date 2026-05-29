@@ -47,6 +47,21 @@ public class TopicService {
     return controllerApi.getAllActiveTopics();
   }
 
+  /**
+   * Look up a single topic by id. Resolution is done against the tenant-scoped active-topics map
+   * (the topic service already filters by the current tenant header), so a topic that does not
+   * belong to the caller's tenant is indistinguishable from one that does not exist — both result
+   * in {@code null}. Callers should translate that into a {@code 404} for security reasons.
+   *
+   * @return the topic, or {@code null} if no topic with that id exists in the caller's tenant
+   */
+  public TopicDTO getTopicById(Long topicId) {
+    if (topicId == null) {
+      return null;
+    }
+    return getAllActiveTopicsMap().get(topicId);
+  }
+
   private void addTenantHeaders(ApiClient apiClient) {
     var headers = new HttpHeaders();
     tenantHeaderSupplier.addTenantHeader(headers);
