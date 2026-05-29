@@ -17,10 +17,10 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -42,23 +42,6 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 @RequiredArgsConstructor
 public class AgencyInviteLinkService {
 
-  static final String LINK_KIND_TENANT = "TENANT";
-  static final String LINK_KIND_COUNSELLOR = "COUNSELLOR";
-  static final String LINK_KIND_EXTERNAL_INBOUND = "EXTERNAL_INBOUND";
-  private static final Set<String> ALLOWED_LINK_KINDS =
-      Set.of(LINK_KIND_TENANT, LINK_KIND_COUNSELLOR, LINK_KIND_EXTERNAL_INBOUND);
-
-  static final String CHAT_TYPE_LIVE_CHAT = "LIVE_CHAT";
-  private static final Set<String> ALLOWED_CHAT_TYPES = Set.of(CHAT_TYPE_LIVE_CHAT);
-
-  static final String ANONYMITY_FULL = "FULL";
-  private static final Set<String> ALLOWED_ANONYMITY = Set.of(ANONYMITY_FULL);
-
-  static final String STATUS_ACTIVE = "ACTIVE";
-  static final String STATUS_USED = "USED";
-  static final String STATUS_EXPIRED = "EXPIRED";
-  private static final Set<String> ALLOWED_STATUSES = Set.of(STATUS_ACTIVE, STATUS_USED, STATUS_EXPIRED);
-
   private static final int TOKEN_BYTES = 24;
   private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -77,7 +60,7 @@ public class AgencyInviteLinkService {
     applyDefaults(cmd);
     validateEnums(cmd);
 
-    if (LINK_KIND_COUNSELLOR.equals(cmd.getLinkKind()) && isBlank(cmd.getConsultantId())) {
+    if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind()) && isBlank(cmd.getConsultantId())) {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
 
@@ -93,7 +76,7 @@ public class AgencyInviteLinkService {
       }
     }
 
-    if (LINK_KIND_COUNSELLOR.equals(cmd.getLinkKind())) {
+    if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())) {
       validateConsultantInTenant(cmd.getConsultantId(), callerTenantId);
     }
 
@@ -108,14 +91,14 @@ public class AgencyInviteLinkService {
             .chatType(cmd.getChatType())
             .anonymity(cmd.getAnonymity())
             .notes(cmd.getNotes())
-            .consultantId(LINK_KIND_COUNSELLOR.equals(cmd.getLinkKind()) ? cmd.getConsultantId() : null)
+            .consultantId(InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind()) ? cmd.getConsultantId() : null)
             .createdByUserId(authenticatedUser.getUserId())
             .createdByUsername(authenticatedUser.getUsername())
             .createDate(now)
             .expiresAt(cmd.getExpiresInDays() != null && cmd.getExpiresInDays() > 0
                 ? now.plusDays(cmd.getExpiresInDays())
                 : null)
-            .status(STATUS_ACTIVE)
+            .status(InviteLinkStatus.ACTIVE.name())
             .build();
     return repository.save(link);
   }
@@ -129,20 +112,19 @@ public class AgencyInviteLinkService {
       int page,
       int size) {
 
-    if (linkKind != null && !ALLOWED_LINK_KINDS.contains(linkKind)) {
+    if (linkKind != null && !isValidEnumValue(linkKind, InviteLinkKind.class)) {
       throw new BadRequestException("Unknown linkKind: " + linkKind);
     }
-    if (chatType != null && !ALLOWED_CHAT_TYPES.contains(chatType)) {
+    if (chatType != null && !isValidEnumValue(chatType, InviteLinkChatType.class)) {
       throw new BadRequestException("Unknown chatType: " + chatType);
     }
-    if (status != null && !ALLOWED_STATUSES.contains(status)) {
+    if (status != null && !isValidEnumValue(status, InviteLinkStatus.class)) {
       throw new BadRequestException("Unknown status: " + status);
     }
 
     Pageable pageable = PageRequest.of(Math.max(page, 0), clampSize(size));
     Long callerTenantId = resolveCallerTenantId();
     if (callerTenantId == null) {
-      // No tenant context — return empty rather than crossing tenants.
       return Page.empty(pageable);
     }
 
@@ -150,9 +132,8 @@ public class AgencyInviteLinkService {
         repository.findAllByTenantIdAndFilters(
             callerTenantId, linkKind, topicId, chatType, status, pageable);
 
-    // Lazy-expire active links whose `expires_at` has passed, so the UI sees fresh status.
-    // Only apply when no explicit status filter was requested, to avoid returning EXPIRED
-    // rows to a caller who asked for ACTIVE.
+    // Only auto-expire when no status filter was requested, to avoid returning EXPIRED
+    // rows to a caller who explicitly asked for ACTIVE.
     if (status == null) {
       result.getContent().forEach(this::autoExpireIfNeeded);
     }
@@ -168,23 +149,22 @@ public class AgencyInviteLinkService {
   public CreateAnonymousEnquiryResponseDTO redeem(String token) {
     AgencyInviteLink link =
         repository
-            .findByTokenAndStatus(token, STATUS_ACTIVE)
+            .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())
             .orElseGet(() -> null);
 
     if (link == null) {
-      // Distinguish "expired/used" from "not found" for clearer client UX.
       AgencyInviteLink existing =
           repository
               .findByToken(token)
               .orElseThrow(() -> new NotFoundException("Invite link not found"));
-      if (STATUS_USED.equals(existing.getStatus())) {
+      if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
       throw new BadRequestException("Invite link is not active");
     }
 
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
-      link.setStatus(STATUS_EXPIRED);
+      link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);
       throw new BadRequestException("Invite link expired");
     }
@@ -197,15 +177,15 @@ public class AgencyInviteLinkService {
 
       CreateAnonymousEnquiryDTO dto = new CreateAnonymousEnquiryDTO();
       dto.setConsultingType(consultingTypeId);
-      dto.setMainTopicId(link.getTopicId()); // null for legacy links — accepted by facade
-      if (LINK_KIND_COUNSELLOR.equals(link.getLinkKind())) {
+      dto.setMainTopicId(link.getTopicId());
+      if (InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())) {
         dto.setConsultantId(link.getConsultantId());
       }
 
       CreateAnonymousEnquiryResponseDTO response =
           createAnonymousEnquiryFacade.createAnonymousEnquiry(dto);
 
-      link.setStatus(STATUS_USED);
+      link.setStatus(InviteLinkStatus.USED.name());
       link.setUsedAt(LocalDateTime.now());
       link.setUsedBySessionId(response.getSessionId());
       repository.save(link);
@@ -223,20 +203,23 @@ public class AgencyInviteLinkService {
   // ---------------------------------------------------------------------------------------------
 
   private void applyDefaults(CreateInviteLinkCommand cmd) {
-    if (isBlank(cmd.getLinkKind())) cmd.setLinkKind(LINK_KIND_EXTERNAL_INBOUND);
-    if (isBlank(cmd.getChatType())) cmd.setChatType(CHAT_TYPE_LIVE_CHAT);
-    if (isBlank(cmd.getAnonymity())) cmd.setAnonymity(ANONYMITY_FULL);
+    if (isBlank(cmd.getLinkKind())) cmd.setLinkKind(InviteLinkKind.EXTERNAL_INBOUND.name());
+    if (isBlank(cmd.getChatType())) cmd.setChatType(InviteLinkChatType.LIVE_CHAT.name());
+    if (isBlank(cmd.getAnonymity())) cmd.setAnonymity(InviteLinkAnonymity.FULL.name());
   }
 
   private void validateEnums(CreateInviteLinkCommand cmd) {
-    if (!ALLOWED_LINK_KINDS.contains(cmd.getLinkKind())) {
-      throw new BadRequestException("linkKind must be one of " + ALLOWED_LINK_KINDS);
+    if (!isValidEnumValue(cmd.getLinkKind(), InviteLinkKind.class)) {
+      throw new BadRequestException(
+          "linkKind must be one of " + Arrays.toString(InviteLinkKind.values()));
     }
-    if (!ALLOWED_CHAT_TYPES.contains(cmd.getChatType())) {
-      throw new BadRequestException("chatType must be one of " + ALLOWED_CHAT_TYPES);
+    if (!isValidEnumValue(cmd.getChatType(), InviteLinkChatType.class)) {
+      throw new BadRequestException(
+          "chatType must be one of " + Arrays.toString(InviteLinkChatType.values()));
     }
-    if (!ALLOWED_ANONYMITY.contains(cmd.getAnonymity())) {
-      throw new BadRequestException("anonymity must be one of " + ALLOWED_ANONYMITY);
+    if (!isValidEnumValue(cmd.getAnonymity(), InviteLinkAnonymity.class)) {
+      throw new BadRequestException(
+          "anonymity must be one of " + Arrays.toString(InviteLinkAnonymity.values()));
     }
     if (cmd.getNotes() != null && cmd.getNotes().length() > 500) {
       throw new BadRequestException("notes cannot exceed 500 characters");
@@ -270,10 +253,10 @@ public class AgencyInviteLinkService {
   }
 
   private AgencyInviteLink autoExpireIfNeeded(AgencyInviteLink link) {
-    if (STATUS_ACTIVE.equals(link.getStatus())
+    if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
         && link.getExpiresAt() != null
         && link.getExpiresAt().isBefore(LocalDateTime.now())) {
-      link.setStatus(STATUS_EXPIRED);
+      link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);
     }
     return link;
@@ -283,8 +266,6 @@ public class AgencyInviteLinkService {
     try {
       Long tenantId = TenantContext.getCurrentTenant();
       if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-        // Super-admins land here with tenantId=0. Fall back to X-Tenant-Id header so they
-        // can impersonate a real tenant without needing a separate scoped token.
         return resolveTenantFromHeader();
       }
       return tenantId;
@@ -311,6 +292,15 @@ public class AgencyInviteLinkService {
     byte[] buf = new byte[TOKEN_BYTES];
     RANDOM.nextBytes(buf);
     return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
+  }
+
+  private static <E extends Enum<E>> boolean isValidEnumValue(String value, Class<E> cls) {
+    try {
+      Enum.valueOf(cls, value);
+      return true;
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
   }
 
   private static boolean isBlank(String s) {
