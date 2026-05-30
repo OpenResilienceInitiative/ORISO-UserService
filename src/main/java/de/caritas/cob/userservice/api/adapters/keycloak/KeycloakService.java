@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.keycloak;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
 import static java.lang.Boolean.TRUE;
 import static java.util.Objects.isNull;
@@ -624,8 +625,50 @@ public class KeycloakService implements IdentityClient {
     var newCredentials = getCredentialRepresentation(password);
     var userResource = keycloakClient.getUsersResource().get(userId);
 
-    userResource.resetPassword(newCredentials);
-    log.debug("Updated user credentials for {}", userId);
+    try {
+      userResource.resetPassword(newCredentials);
+      log.debug("Updated user credentials for {}", userId);
+    } catch (Exception exception) {
+      if (isPasswordPolicyViolation(exception)) {
+        log.warn("Keycloak rejected password for user {} due to password policy", userId);
+        throw new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST);
+      }
+      throw exception;
+    }
+  }
+
+  private boolean isPasswordPolicyViolation(Exception exception) {
+    Throwable current = exception;
+    while (current != null) {
+      if (current instanceof BadRequestException) {
+        return true;
+      }
+      if (current instanceof RestClientResponseException) {
+        RestClientResponseException restClientResponseException =
+            (RestClientResponseException) current;
+        if (restClientResponseException.getRawStatusCode() == HttpStatus.BAD_REQUEST.value()
+            && isPasswordPolicyMessage(restClientResponseException.getResponseBodyAsString())) {
+          return true;
+        }
+      }
+      if (isPasswordPolicyMessage(current.getMessage())) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private boolean isPasswordPolicyMessage(String message) {
+    if (message == null || message.isBlank()) {
+      return false;
+    }
+    String lowerMessage = message.toLowerCase();
+    return lowerMessage.contains("password")
+        && (lowerMessage.contains("policy")
+            || lowerMessage.contains("invalid")
+            || lowerMessage.contains("not met")
+            || lowerMessage.contains("does not match"));
   }
 
   /**

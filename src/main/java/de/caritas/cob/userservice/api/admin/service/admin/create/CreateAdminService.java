@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -98,7 +99,12 @@ public class CreateAdminService {
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
-    identityClient.updatePassword(keycloakUserId, password);
+    try {
+      identityClient.updatePassword(keycloakUserId, password);
+    } catch (CustomValidationHttpStatusException e) {
+      identityClient.rollBackUser(keycloakUserId);
+      throw e;
+    }
     getDefaultRoles(adminType).stream()
         .forEach(role -> identityClient.updateRole(keycloakUserId, role));
     return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
