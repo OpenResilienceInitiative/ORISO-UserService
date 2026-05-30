@@ -665,6 +665,21 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void updatePassword_Should_throwCustomValidationHttpStatusException_When_passwordPolicyFails() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(new BadRequestException("Invalid password")).when(userResource).resetPassword(any());
+
+    CustomValidationHttpStatusException exception =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> this.keycloakService.updatePassword("userId", "weak"));
+
+    assertThat(exception.getCustomHttpHeaders().get("X-Reason").get(0), is("PASSWORD_NOT_VALID"));
+  }
+
+  @Test
   public void updateDummyMail_id_dto_Should_callServicesCorrectly() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);

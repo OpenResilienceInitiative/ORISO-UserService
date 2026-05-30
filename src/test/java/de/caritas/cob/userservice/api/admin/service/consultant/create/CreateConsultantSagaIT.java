@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_VALID;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -49,6 +50,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -179,7 +181,10 @@ public class CreateConsultantSagaIT {
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdatePasswordThrowsException() {
     when(keycloakService.createKeycloakUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
-    doThrow(BadRequestException.class).when(keycloakService).updatePassword(any(), any());
+    doThrow(
+            new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
+        .when(keycloakService)
+        .updatePassword(any(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -188,10 +193,8 @@ public class CreateConsultantSagaIT {
     try {
       this.createConsultantSaga.createNewConsultant(createConsultantDTO);
       fail("Exception should be thrown");
-    } catch (DistributedTransactionException ex) {
-      assertThat(
-          ex.getCustomHttpHeaders().get("X-Reason").get(0),
-          is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_UPDATE_USER_PASSWORD_IN_KEYCLOAK"));
+    } catch (CustomValidationHttpStatusException ex) {
+      assertThat(ex.getCustomHttpHeaders().get("X-Reason").get(0), is("PASSWORD_NOT_VALID"));
       verify(keycloakService, Mockito.never()).updateRole(anyString(), eq(CONSULTANT.getValue()));
       verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
     }
