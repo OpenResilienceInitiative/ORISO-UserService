@@ -1,0 +1,17 @@
+flowchart LR
+  Frontend[ORISO-Frontend] --> UserService[ORISO-UserService]
+  Admin[ORISO-Admin] --> UserService
+  UserService --> Keycloak
+  UserService --> RocketChat[Rocket.Chat]
+  UserService --> Matrix[Matrix Synapse]
+  UserService --> MariaDB
+  UserService --> RabbitMQ
+  UserService --> Redis
+  UserService --> Agency[Agency Service]
+  UserService --> Tenant[Tenant Service]
+  UserService --> Consulting[Consulting Type / Topic / Settings]
+  UserService --> Appointment[Appointment Service]
+  UserService --> Message[Message Service]
+  UserService --> Mail[Mail Service / SMTP]
+  UserService --> Live[Live Service]
+  UserService --> Statistics[Statistics Service]

@@ -1,0 +1,12 @@
+# Understand-Anything ignore rules for ORISO-UserService
+# Syntax: same as .gitignore.
+
+node_modules/
+target/
+.git/
+.idea/
+.vscode/
+.DS_Store
+*.class
+*.jar
+*.log
