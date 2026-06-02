@@ -1,8 +1,7 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
-import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -12,6 +11,7 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultingTypeService;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -33,10 +33,9 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
- * Manages one-time invite links. Each link is bound to a topic (not an agency); when redeemed it
- * creates an anonymous enquiry session via {@link CreateAnonymousEnquiryFacade}. Agency is no
- * longer carried on the link — it gets attached to the resulting session later, when a counsellor
- * accepts the enquiry.
+ * Manages one-time invite links. On redeem, the link is marked used and metadata is returned so the
+ * frontend can run the standard anonymous asker registration (same flow as before the topic-based
+ * redesign).
  */
 @Service
 @RequiredArgsConstructor
@@ -50,7 +49,7 @@ public class AgencyInviteLinkService {
   private final @NonNull TopicService topicService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultingTypeService consultingTypeService;
-  private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  private final @NonNull AgencyService agencyService;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -70,6 +69,18 @@ public class AgencyInviteLinkService {
       throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
     }
 
+    Integer consultingTypeId = null;
+    if (cmd.getAgencyId() != null) {
+      AgencyDTO agency = agencyService.getAgencyWithoutCaching(cmd.getAgencyId());
+      if (agency == null) {
+        throw new NotFoundException("Agency %s not found", cmd.getAgencyId());
+      }
+      if (!Objects.equals(agency.getTenantId(), callerTenantId)) {
+        throw new ForbiddenException("Agency is outside caller's tenant");
+      }
+      consultingTypeId = agency.getConsultingType();
+    }
+
     if (cmd.getTopicId() != null) {
       TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
       if (topic == null) {
@@ -87,6 +98,7 @@ public class AgencyInviteLinkService {
             .token(generateToken())
             .tenantId(callerTenantId)
             .agencyId(cmd.getAgencyId())
+            .consultingTypeId(consultingTypeId)
             .topicId(cmd.getTopicId())
             .linkKind(cmd.getLinkKind())
             .chatType(cmd.getChatType())
@@ -141,8 +153,8 @@ public class AgencyInviteLinkService {
   }
 
   /**
-   * Redeem the token. Returns a {@link RedeemContext} that carries both the new session credentials
-   * and the legacy agency fields, so old and new frontends can both consume the response.
+   * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
+   * the frontend registration flow. Does not create Keycloak or Rocket.Chat users on the server.
    */
   @Transactional
   public RedeemContext redeemWithContext(String token) {
@@ -178,23 +190,14 @@ public class AgencyInviteLinkService {
       TenantContext.setCurrentTenant(link.getTenantId());
 
       Integer consultingTypeId = pickConsultingTypeId(link);
-
-      CreateAnonymousEnquiryDTO dto = new CreateAnonymousEnquiryDTO();
-      dto.setConsultingType(consultingTypeId);
-      dto.setMainTopicId(link.getTopicId());
-      if (InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())) {
-        dto.setConsultantId(link.getConsultantId());
-      }
-
-      CreateAnonymousEnquiryResponseDTO response =
-          createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
+      Long agencyId = resolveAgencyIdForRegistration(link, consultingTypeId);
 
       link.setStatus(InviteLinkStatus.USED.name());
       link.setUsedAt(LocalDateTime.now());
-      link.setUsedBySessionId(response.getSessionId());
       repository.save(link);
 
-      return new RedeemContext(response, link.getTenantId(), link.getAgencyId(), consultingTypeId);
+      return new RedeemContext(
+          null, link.getTenantId(), agencyId, consultingTypeId, link.getTopicId());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -202,6 +205,18 @@ public class AgencyInviteLinkService {
         TenantContext.setCurrentTenant(previousTenant);
       }
     }
+  }
+
+  private Long resolveAgencyIdForRegistration(AgencyInviteLink link, Integer consultingTypeId) {
+    if (link.getAgencyId() != null) {
+      return link.getAgencyId();
+    }
+    List<AgencyDTO> agencies = agencyService.getAgenciesByConsultingType(consultingTypeId);
+    if (agencies == null || agencies.isEmpty()) {
+      throw new BadRequestException(
+          "No agency available for this invite link — set agencyId on the link or configure a topic fallback agency");
+    }
+    return agencies.get(0).getId();
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -394,25 +409,25 @@ public class AgencyInviteLinkService {
     }
   }
 
-  /**
-   * Carries both the new session response and the legacy agency fields so the controller can build
-   * a unified response that satisfies old and new frontends simultaneously.
-   */
+  /** Redeem metadata for the controller response (session is null for legacy redeem). */
   public static class RedeemContext {
     private final CreateAnonymousEnquiryResponseDTO session;
     private final Long tenantId;
     private final Long agencyId;
     private final Integer consultingTypeId;
+    private final Long topicId;
 
     public RedeemContext(
         CreateAnonymousEnquiryResponseDTO session,
         Long tenantId,
         Long agencyId,
-        Integer consultingTypeId) {
+        Integer consultingTypeId,
+        Long topicId) {
       this.session = session;
       this.tenantId = tenantId;
       this.agencyId = agencyId;
       this.consultingTypeId = consultingTypeId;
+      this.topicId = topicId;
     }
 
     public CreateAnonymousEnquiryResponseDTO getSession() {
@@ -429,6 +444,10 @@ public class AgencyInviteLinkService {
 
     public Integer getConsultingTypeId() {
       return consultingTypeId;
+    }
+
+    public Long getTopicId() {
+      return topicId;
     }
   }
 }

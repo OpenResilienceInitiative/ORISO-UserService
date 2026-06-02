@@ -102,11 +102,8 @@ public class AgencyInviteLinkController {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // POST /users/invitelinks/{token}/redeem — public; creates an anonymous enquiry session.
-  //
-  // Response includes BOTH:
-  //   - New session credentials (new frontend uses these to open the chat directly)
-  //   - Legacy fields tenantId / agencyId / consultingTypeId (old frontend uses these)
+  // POST /users/invitelinks/{token}/redeem — public; marks link used and returns registration
+  // metadata.
   // ---------------------------------------------------------------------------------------------
   @PostMapping("/users/invitelinks/{token}/redeem")
   public ResponseEntity<RedeemResponseDTO> redeem(@PathVariable String token) {
@@ -114,20 +111,21 @@ public class AgencyInviteLinkController {
     CreateAnonymousEnquiryResponseDTO session = ctx.getSession();
 
     RedeemResponseDTO response = new RedeemResponseDTO();
-    // New session fields
-    response.userName = session.getUserName();
-    response.sessionId = session.getSessionId();
-    response.accessToken = session.getAccessToken();
-    response.expiresIn = session.getExpiresIn();
-    response.refreshToken = session.getRefreshToken();
-    response.refreshExpiresIn = session.getRefreshExpiresIn();
-    response.rcUserId = session.getRcUserId();
-    response.rcToken = session.getRcToken();
-    response.rcGroupId = session.getRcGroupId();
-    // Legacy fields — old frontend reads these three to do its own registration flow
+    if (session != null) {
+      response.userName = session.getUserName();
+      response.sessionId = session.getSessionId();
+      response.accessToken = session.getAccessToken();
+      response.expiresIn = session.getExpiresIn();
+      response.refreshToken = session.getRefreshToken();
+      response.refreshExpiresIn = session.getRefreshExpiresIn();
+      response.rcUserId = session.getRcUserId();
+      response.rcToken = session.getRcToken();
+      response.rcGroupId = session.getRcGroupId();
+    }
     response.tenantId = ctx.getTenantId();
     response.agencyId = ctx.getAgencyId();
     response.consultingTypeId = ctx.getConsultingTypeId();
+    response.topicId = ctx.getTopicId();
 
     return ResponseEntity.ok(response);
   }
@@ -359,7 +357,10 @@ public class AgencyInviteLinkController {
     }
   }
 
-  /** Unified redeem response — contains new session credentials AND legacy agency fields. */
+  /**
+   * Redeem response — registration metadata; optional session credentials when server creates
+   * session.
+   */
   public static class RedeemResponseDTO {
     // New session credentials (new frontend uses these)
     public String userName;
@@ -371,10 +372,10 @@ public class AgencyInviteLinkController {
     public String rcUserId;
     public String rcToken;
     public String rcGroupId;
-    // Legacy fields (old frontend uses these to run its own registration flow)
     public Long tenantId;
     public Long agencyId;
     public Integer consultingTypeId;
+    public Long topicId;
 
     public String getUserName() {
       return userName;
@@ -422,6 +423,10 @@ public class AgencyInviteLinkController {
 
     public Integer getConsultingTypeId() {
       return consultingTypeId;
+    }
+
+    public Long getTopicId() {
+      return topicId;
     }
   }
 }
