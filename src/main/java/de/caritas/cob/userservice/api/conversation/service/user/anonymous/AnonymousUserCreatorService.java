@@ -59,8 +59,7 @@ public class AnonymousUserCreatorService {
     try {
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
       ensureRocketChatUserExists(userDto, response.getUserId());
-      rcLoginResponseDto =
-          rocketChatService.loginUserFirstTime(userDto.getUsername(), userDto.getPassword());
+      rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
     } catch (RocketChatLoginException | BadRequestException e) {
       rollBackAnonymousUserAccount(response.getUserId());
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
@@ -89,13 +88,53 @@ public class AnonymousUserCreatorService {
             ? userDto.getEmail()
             : userHelper.getDummyEmail(keycloakUserId);
     try {
-      rocketChatService.createUser(encodedUsername, userDto.getPassword(), email);
+      var createResponse =
+          rocketChatService.createUser(encodedUsername, userDto.getPassword(), email);
+      if (createResponse.getBody() != null && !createResponse.getBody().isSuccess()) {
+        String error = createResponse.getBody().getError();
+        if (!isRocketChatUserAlreadyExists(error)) {
+          throw new RocketChatLoginException(
+              String.format(
+                  "Could not create user (%s) in Rocket.Chat: %s", encodedUsername, error));
+        }
+        log.warn("Rocket.Chat user {} already exists: {}", encodedUsername, error);
+      }
     } catch (RocketChatLoginException e) {
+      if (!isRocketChatUserAlreadyExists(e.getMessage())) {
+        throw e;
+      }
       log.warn(
           "Rocket.Chat user {} might already exist, continuing with login: {}",
           encodedUsername,
           e.getMessage());
     }
+  }
+
+  /**
+   * Users created via {@link RocketChatService#createUser} must log in with the native login API.
+   * LDAP first-login only applies to accounts provisioned from Keycloak/LDAP.
+   */
+  private ResponseEntity<LoginResponseDTO> loginRocketChatUser(String username, String password)
+      throws RocketChatLoginException {
+    try {
+      return rocketChatService.loginWithPassword(username, password);
+    } catch (RocketChatLoginException nativeLoginEx) {
+      log.warn(
+          "Native Rocket.Chat login failed for {}, trying LDAP first-login: {}",
+          username,
+          nativeLoginEx.getMessage());
+      return rocketChatService.loginUserFirstTime(username, password);
+    }
+  }
+
+  private static boolean isRocketChatUserAlreadyExists(String errorMessage) {
+    if (errorMessage == null) {
+      return false;
+    }
+    String lower = errorMessage.toLowerCase();
+    return lower.contains("already exists")
+        || lower.contains("in use")
+        || lower.contains("duplicate");
   }
 
   private void rollBackAnonymousUserAccount(String userId) {

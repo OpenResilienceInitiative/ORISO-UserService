@@ -502,6 +502,20 @@ public class RocketChatService implements MessageClient {
   }
 
   /**
+   * Standard Rocket.Chat login (form POST, no LDAP). Use after {@link #createUser} created the
+   * account via the admin API.
+   *
+   * @param username the username
+   * @param password the password
+   * @return the login result
+   * @throws RocketChatLoginException on failure
+   */
+  public ResponseEntity<LoginResponseDTO> loginWithPassword(String username, String password)
+      throws RocketChatLoginException {
+    return rcCredentialHelper.loginUser(username, password);
+  }
+
+  /**
    * Initial login to synchronize ldap and Rocket.Chat user.
    *
    * @param username the username
