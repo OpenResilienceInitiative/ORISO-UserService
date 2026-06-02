@@ -187,7 +187,7 @@ public class AgencyInviteLinkService {
       }
 
       CreateAnonymousEnquiryResponseDTO response =
-          createAnonymousEnquiryFacade.createAnonymousEnquiry(dto);
+          createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
 
       link.setStatus(InviteLinkStatus.USED.name());
       link.setUsedAt(LocalDateTime.now());
