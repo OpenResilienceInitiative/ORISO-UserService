@@ -14,17 +14,21 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginExcept
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user accounts. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AnonymousUserCreatorService {
 
   private final @NonNull CreateUserFacade createUserFacade;
@@ -32,6 +36,7 @@ public class AnonymousUserCreatorService {
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull UserService userService;
+  private final @NonNull UserHelper userHelper;
 
   /**
    * Creates an anonymous user account in Keycloak, MariaDB and Rocket.Chat.
@@ -53,6 +58,7 @@ public class AnonymousUserCreatorService {
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto;
     try {
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+      ensureRocketChatUserExists(userDto, response.getUserId());
       rcLoginResponseDto =
           rocketChatService.loginUserFirstTime(userDto.getUsername(), userDto.getPassword());
     } catch (RocketChatLoginException | BadRequestException e) {
@@ -73,6 +79,23 @@ public class AnonymousUserCreatorService {
     updateRocketChatUserIdInDatabase(anonymousUserCredentials);
 
     return anonymousUserCredentials;
+  }
+
+  private void ensureRocketChatUserExists(UserDTO userDto, String keycloakUserId)
+      throws RocketChatLoginException {
+    String encodedUsername = userDto.getUsername();
+    String email =
+        StringUtils.isNotBlank(userDto.getEmail())
+            ? userDto.getEmail()
+            : userHelper.getDummyEmail(keycloakUserId);
+    try {
+      rocketChatService.createUser(encodedUsername, userDto.getPassword(), email);
+    } catch (RocketChatLoginException e) {
+      log.warn(
+          "Rocket.Chat user {} might already exist, continuing with login: {}",
+          encodedUsername,
+          e.getMessage());
+    }
   }
 
   private void rollBackAnonymousUserAccount(String userId) {
