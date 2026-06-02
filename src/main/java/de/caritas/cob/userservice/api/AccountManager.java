@@ -242,7 +242,8 @@ public class AccountManager implements AccountManaging {
       if (tokenParts.length < 2) {
         return null;
       }
-      String payload = new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
+      String payload =
+          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
       JsonNode payloadNode = objectMapper.readTree(payload);
       JsonNode tenantIdNode = payloadNode.get("tenantId");
       if (tenantIdNode == null || tenantIdNode.isNull()) {

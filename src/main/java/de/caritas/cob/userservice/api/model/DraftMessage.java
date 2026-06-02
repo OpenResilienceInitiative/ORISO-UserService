@@ -89,5 +89,3 @@ public class DraftMessage implements TenantAware {
     return Objects.hash(id);
   }
 }
-
-

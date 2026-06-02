@@ -60,7 +60,8 @@ public class AgencyInviteLinkService {
     applyDefaults(cmd);
     validateEnums(cmd);
 
-    if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind()) && isBlank(cmd.getConsultantId())) {
+    if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())
+        && isBlank(cmd.getConsultantId())) {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
 
@@ -91,13 +92,17 @@ public class AgencyInviteLinkService {
             .chatType(cmd.getChatType())
             .anonymity(cmd.getAnonymity())
             .notes(cmd.getNotes())
-            .consultantId(InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind()) ? cmd.getConsultantId() : null)
+            .consultantId(
+                InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())
+                    ? cmd.getConsultantId()
+                    : null)
             .createdByUserId(authenticatedUser.getUserId())
             .createdByUsername(authenticatedUser.getUsername())
             .createDate(now)
-            .expiresAt(cmd.getExpiresInDays() != null && cmd.getExpiresInDays() > 0
-                ? now.plusDays(cmd.getExpiresInDays())
-                : null)
+            .expiresAt(
+                cmd.getExpiresInDays() != null && cmd.getExpiresInDays() > 0
+                    ? now.plusDays(cmd.getExpiresInDays())
+                    : null)
             .status(InviteLinkStatus.ACTIVE.name())
             .build();
     return repository.save(link);
@@ -105,12 +110,7 @@ public class AgencyInviteLinkService {
 
   /** List invite links for the caller's tenant, optionally filtered and paged. */
   public Page<AgencyInviteLink> list(
-      String linkKind,
-      Long topicId,
-      String chatType,
-      String status,
-      int page,
-      int size) {
+      String linkKind, Long topicId, String chatType, String status, int page, int size) {
 
     if (linkKind != null && !isValidEnumValue(linkKind, InviteLinkKind.class)) {
       throw new BadRequestException("Unknown linkKind: " + linkKind);
@@ -329,8 +329,13 @@ public class AgencyInviteLinkService {
     private String notes;
     private Long expiresInDays;
 
-    public Long getAgencyId() { return agencyId; }
-    public void setAgencyId(Long agencyId) { this.agencyId = agencyId; }
+    public Long getAgencyId() {
+      return agencyId;
+    }
+
+    public void setAgencyId(Long agencyId) {
+      this.agencyId = agencyId;
+    }
 
     public Long getTopicId() {
       return topicId;
@@ -410,9 +415,20 @@ public class AgencyInviteLinkService {
       this.consultingTypeId = consultingTypeId;
     }
 
-    public CreateAnonymousEnquiryResponseDTO getSession() { return session; }
-    public Long getTenantId() { return tenantId; }
-    public Long getAgencyId() { return agencyId; }
-    public Integer getConsultingTypeId() { return consultingTypeId; }
+    public CreateAnonymousEnquiryResponseDTO getSession() {
+      return session;
+    }
+
+    public Long getTenantId() {
+      return tenantId;
+    }
+
+    public Long getAgencyId() {
+      return agencyId;
+    }
+
+    public Integer getConsultingTypeId() {
+      return consultingTypeId;
+    }
   }
 }

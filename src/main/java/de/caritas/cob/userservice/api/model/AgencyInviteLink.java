@@ -63,8 +63,8 @@ public class AgencyInviteLink {
   private String consultantId;
 
   /**
-   * @deprecated Agency is no longer carried on invite links. Kept nullable for legacy rows; will
-   *     be dropped in a phase-2 cleanup.
+   * @deprecated Agency is no longer carried on invite links. Kept nullable for legacy rows; will be
+   *     dropped in a phase-2 cleanup.
    */
   @Deprecated
   @Column(name = "agency_id")

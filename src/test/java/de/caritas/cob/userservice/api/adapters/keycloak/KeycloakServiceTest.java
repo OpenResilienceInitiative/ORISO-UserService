@@ -665,7 +665,8 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updatePassword_Should_throwCustomValidationHttpStatusException_When_passwordPolicyFails() {
+  public void
+      updatePassword_Should_throwCustomValidationHttpStatusException_When_passwordPolicyFails() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);

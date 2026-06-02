@@ -8,4 +8,3 @@ public class MagicLinkConsumeDTO {
 
   @NotBlank private String token;
 }
-

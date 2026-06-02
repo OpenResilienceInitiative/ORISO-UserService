@@ -52,7 +52,8 @@ public class AgencyInviteLinkController {
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
     Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
-    return new ResponseEntity<>(AgencyInviteLinkResponseDTO.from(link, topicsMap), HttpStatus.CREATED);
+    return new ResponseEntity<>(
+        AgencyInviteLinkResponseDTO.from(link, topicsMap), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -230,16 +231,18 @@ public class AgencyInviteLinkController {
     private Long usedBySessionId;
     private String status;
 
-    public static AgencyInviteLinkResponseDTO from(AgencyInviteLink link, Map<Long, TopicDTO> topicsMap) {
+    public static AgencyInviteLinkResponseDTO from(
+        AgencyInviteLink link, Map<Long, TopicDTO> topicsMap) {
       AgencyInviteLinkResponseDTO dto = new AgencyInviteLinkResponseDTO();
       dto.id = link.getId();
       dto.token = link.getToken();
       dto.tenantId = link.getTenantId();
       dto.agencyId = link.getAgencyId();
       dto.topicId = link.getTopicId();
-      dto.topicName = link.getTopicId() != null && topicsMap.containsKey(link.getTopicId())
-          ? topicsMap.get(link.getTopicId()).getName()
-          : null;
+      dto.topicName =
+          link.getTopicId() != null && topicsMap.containsKey(link.getTopicId())
+              ? topicsMap.get(link.getTopicId()).getName()
+              : null;
       dto.linkKind = link.getLinkKind();
       dto.chatType = link.getChatType();
       dto.anonymity = link.getAnonymity();
@@ -255,24 +258,77 @@ public class AgencyInviteLinkController {
       return dto;
     }
 
-    public Long getId() { return id; }
-    public String getToken() { return token; }
-    public Long getTenantId() { return tenantId; }
-    public Long getAgencyId() { return agencyId; }
-    public Long getTopicId() { return topicId; }
-    public String getTopicName() { return topicName; }
-    public String getLinkKind() { return linkKind; }
-    public String getChatType() { return chatType; }
-    public String getAnonymity() { return anonymity; }
-    public String getConsultantId() { return consultantId; }
-    public String getNotes() { return notes; }
-    public String getCreatedByUserId() { return createdByUserId; }
-    public String getCreatedByUsername() { return createdByUsername; }
-    public LocalDateTime getCreateDate() { return createDate; }
-    public LocalDateTime getExpiresAt() { return expiresAt; }
-    public LocalDateTime getUsedAt() { return usedAt; }
-    public Long getUsedBySessionId() { return usedBySessionId; }
-    public String getStatus() { return status; }
+    public Long getId() {
+      return id;
+    }
+
+    public String getToken() {
+      return token;
+    }
+
+    public Long getTenantId() {
+      return tenantId;
+    }
+
+    public Long getAgencyId() {
+      return agencyId;
+    }
+
+    public Long getTopicId() {
+      return topicId;
+    }
+
+    public String getTopicName() {
+      return topicName;
+    }
+
+    public String getLinkKind() {
+      return linkKind;
+    }
+
+    public String getChatType() {
+      return chatType;
+    }
+
+    public String getAnonymity() {
+      return anonymity;
+    }
+
+    public String getConsultantId() {
+      return consultantId;
+    }
+
+    public String getNotes() {
+      return notes;
+    }
+
+    public String getCreatedByUserId() {
+      return createdByUserId;
+    }
+
+    public String getCreatedByUsername() {
+      return createdByUsername;
+    }
+
+    public LocalDateTime getCreateDate() {
+      return createDate;
+    }
+
+    public LocalDateTime getExpiresAt() {
+      return expiresAt;
+    }
+
+    public LocalDateTime getUsedAt() {
+      return usedAt;
+    }
+
+    public Long getUsedBySessionId() {
+      return usedBySessionId;
+    }
+
+    public String getStatus() {
+      return status;
+    }
   }
 
   public static class PagedInviteLinksResponseDTO {
@@ -282,11 +338,25 @@ public class AgencyInviteLinkController {
     public int page;
     public int size;
 
-    public List<AgencyInviteLinkResponseDTO> getContent() { return content; }
-    public long getTotalElements() { return totalElements; }
-    public int getTotalPages() { return totalPages; }
-    public int getPage() { return page; }
-    public int getSize() { return size; }
+    public List<AgencyInviteLinkResponseDTO> getContent() {
+      return content;
+    }
+
+    public long getTotalElements() {
+      return totalElements;
+    }
+
+    public int getTotalPages() {
+      return totalPages;
+    }
+
+    public int getPage() {
+      return page;
+    }
+
+    public int getSize() {
+      return size;
+    }
   }
 
   /** Unified redeem response — contains new session credentials AND legacy agency fields. */
@@ -306,17 +376,52 @@ public class AgencyInviteLinkController {
     public Long agencyId;
     public Integer consultingTypeId;
 
-    public String getUserName() { return userName; }
-    public Long getSessionId() { return sessionId; }
-    public String getAccessToken() { return accessToken; }
-    public Integer getExpiresIn() { return expiresIn; }
-    public String getRefreshToken() { return refreshToken; }
-    public Integer getRefreshExpiresIn() { return refreshExpiresIn; }
-    public String getRcUserId() { return rcUserId; }
-    public String getRcToken() { return rcToken; }
-    public String getRcGroupId() { return rcGroupId; }
-    public Long getTenantId() { return tenantId; }
-    public Long getAgencyId() { return agencyId; }
-    public Integer getConsultingTypeId() { return consultingTypeId; }
+    public String getUserName() {
+      return userName;
+    }
+
+    public Long getSessionId() {
+      return sessionId;
+    }
+
+    public String getAccessToken() {
+      return accessToken;
+    }
+
+    public Integer getExpiresIn() {
+      return expiresIn;
+    }
+
+    public String getRefreshToken() {
+      return refreshToken;
+    }
+
+    public Integer getRefreshExpiresIn() {
+      return refreshExpiresIn;
+    }
+
+    public String getRcUserId() {
+      return rcUserId;
+    }
+
+    public String getRcToken() {
+      return rcToken;
+    }
+
+    public String getRcGroupId() {
+      return rcGroupId;
+    }
+
+    public Long getTenantId() {
+      return tenantId;
+    }
+
+    public Long getAgencyId() {
+      return agencyId;
+    }
+
+    public Integer getConsultingTypeId() {
+      return consultingTypeId;
+    }
   }
 }

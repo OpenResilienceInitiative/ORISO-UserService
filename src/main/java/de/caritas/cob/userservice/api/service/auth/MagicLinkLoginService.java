@@ -4,8 +4,8 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -14,10 +14,9 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -48,7 +47,8 @@ public class MagicLinkLoginService {
 
   private static final String TOKEN_ENDPOINT_PATH = "/token";
   private static final String TOKEN_GRANT_PASSWORD = "password";
-  private static final String TOKEN_GRANT_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
+  private static final String TOKEN_GRANT_EXCHANGE =
+      "urn:ietf:params:oauth:grant-type:token-exchange";
   private static final Duration MAGIC_LINK_TOKEN_TTL = Duration.ofMinutes(15);
 
   private final @NonNull UserService userService;
@@ -135,7 +135,10 @@ public class MagicLinkLoginService {
       User user = userOptional.get();
       return Optional.of(
           new AccountLoginTarget(
-              user.getUserId(), user.getUsername(), user.getEmail(), user.getMagicLinkLoginEnabled()));
+              user.getUserId(),
+              user.getUsername(),
+              user.getEmail(),
+              user.getMagicLinkLoginEnabled()));
     }
 
     Optional<Consultant> consultantOptional =
@@ -196,10 +199,14 @@ public class MagicLinkLoginService {
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
       message.setSubject("Your ORISO magic login link");
-      message.setContent(buildHtml(magicUrl, smtpSettings.getEmailThemeColor()), "text/html; charset=UTF-8");
+      message.setContent(
+          buildHtml(magicUrl, smtpSettings.getEmailThemeColor()), "text/html; charset=UTF-8");
       Transport.send(message);
     } catch (Exception ex) {
-      log.warn("Magic link email dispatch failed for account {}, reason: {}", target.getUsername(), ex.getMessage());
+      log.warn(
+          "Magic link email dispatch failed for account {}, reason: {}",
+          target.getUsername(),
+          ex.getMessage());
     }
   }
 
@@ -231,8 +238,11 @@ public class MagicLinkLoginService {
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
-    String token = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
-    magicLoginTokens.put(token, new MagicLoginTokenEntry(keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL)));
+    String token =
+        UUID.randomUUID().toString().replace("-", "")
+            + UUID.randomUUID().toString().replace("-", "");
+    magicLoginTokens.put(
+        token, new MagicLoginTokenEntry(keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL)));
     return token;
   }
 
@@ -264,7 +274,10 @@ public class MagicLinkLoginService {
       String tokenUrl = identityClientConfig.getOpenIdConnectUrl(TOKEN_ENDPOINT_PATH);
       return restTemplate.postForEntity(tokenUrl, entity, KeycloakLoginResponseDTO.class).getBody();
     } catch (Exception ex) {
-      log.warn("Magic link token exchange failed for user {}, reason: {}", keycloakUserId, ex.getMessage());
+      log.warn(
+          "Magic link token exchange failed for user {}, reason: {}",
+          keycloakUserId,
+          ex.getMessage());
       return null;
     }
   }
@@ -305,7 +318,8 @@ public class MagicLinkLoginService {
       }
 
       boolean systemEmailsEnabled =
-          asBooleanSettingValue(settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
+          asBooleanSettingValue(
+              settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
       boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
       String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
@@ -313,7 +327,8 @@ public class MagicLinkLoginService {
       String username = asStringSettingValue(settingsResponse.get("globalSmtpUsername"));
       String password = asStringSettingValue(settingsResponse.get("globalSmtpPassword"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-      String emailThemeColor = asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
+      String emailThemeColor =
+          asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
       if (!systemEmailsEnabled
           || !smtpEnabled
@@ -409,4 +424,3 @@ public class MagicLinkLoginService {
     String emailThemeColor;
   }
 }
-

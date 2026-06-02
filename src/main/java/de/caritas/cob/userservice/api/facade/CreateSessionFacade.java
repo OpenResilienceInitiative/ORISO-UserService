@@ -19,13 +19,13 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.List;
@@ -197,8 +197,8 @@ public class CreateSessionFacade {
     List<Session> sessions = sessionService.getSessionsForUserByMainTopicId(user, topicId);
 
     /* Only ACTIVE sessions (NEW / IN_PROGRESS) block a new enquiry. A user
-       whose previous topic+agency session is DONE or IN_ARCHIVE must be able
-       to re-open a fresh enquiry from their profile. */
+    whose previous topic+agency session is DONE or IN_ARCHIVE must be able
+    to re-open a fresh enquiry from their profile. */
     var sessionsWithSameAgencyAndTopic =
         sessions.stream()
             .filter(

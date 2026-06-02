@@ -5,8 +5,8 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
-import java.util.List;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
@@ -54,8 +54,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param sessionStatus {@link SessionStatus} to search for
    * @param registrationType {@link RegistrationType} to search for
    * @return A list of {@link Session}s for the specific agency ids and status ordered by creation
-   *     date descending (newest first — matches how the consultant list UI presents them and
-   *     avoids an extra client-side sort pass that was reordering items during streaming loads).
+   *     date descending (newest first — matches how the consultant list UI presents them and avoids
+   *     an extra client-side sort pass that was reordering items during streaming loads).
    */
   List<Session>
       findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
@@ -210,9 +210,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   /**
    * Count enquiries for the given agency that are still waiting for a consultant (status NEW) and
-   * were created before the reference date — i.e. the number of people queued ahead of the asker
-   * in the same agency. Registration type is intentionally ignored: on this deployment all
-   * asker sessions land as REGISTERED regardless of whether they went through the anonymous or
+   * were created before the reference date — i.e. the number of people queued ahead of the asker in
+   * the same agency. Registration type is intentionally ignored: on this deployment all asker
+   * sessions land as REGISTERED regardless of whether they went through the anonymous or
    * full-registration flow, so filtering on it would always return zero.
    */
   @Query(

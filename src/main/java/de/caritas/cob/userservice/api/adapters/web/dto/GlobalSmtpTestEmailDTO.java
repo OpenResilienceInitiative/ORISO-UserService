@@ -23,15 +23,9 @@ public class GlobalSmtpTestEmailDTO {
 
   @NotBlank private String password;
 
-  @NotBlank
-  @Email
-  private String from;
+  @NotBlank @Email private String from;
 
-  @NotBlank
-  @Email
-  private String recipientEmail;
+  @NotBlank @Email private String recipientEmail;
 
   private String emailThemeColor;
 }
-
-

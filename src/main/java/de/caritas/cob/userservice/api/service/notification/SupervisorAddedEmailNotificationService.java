@@ -154,11 +154,7 @@ public class SupervisorAddedEmailNotificationService {
 
   @Async
   public void notifyEmailAddressChanged(
-      String username,
-      String newEmail,
-      Long tenantId,
-      TenantData tenantData,
-      String accessToken) {
+      String username, String newEmail, Long tenantId, TenantData tenantData, String accessToken) {
     if (!isNotBlank(newEmail) || !isNotBlank(username) || tenantId == null) {
       return;
     }
@@ -265,7 +261,9 @@ public class SupervisorAddedEmailNotificationService {
     if (tenantId == null) {
       return null;
     }
-    return emailSettingsService.resolveSupervisorAddedEmailSettings(tenantId, accessToken).orElse(null);
+    return emailSettingsService
+        .resolveSupervisorAddedEmailSettings(tenantId, accessToken)
+        .orElse(null);
   }
 
   private String resolveAppFrontendUrl(TenantData tenantData) {
@@ -279,7 +277,9 @@ public class SupervisorAddedEmailNotificationService {
       String resolved =
           attributes.stream()
               .filter(entry -> "url".equals(entry.getKey()))
-              .map(de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO::getValue)
+              .map(
+                  de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO
+                      ::getValue)
               .filter(value -> isNotBlank(value))
               .findFirst()
               .orElse(applicationBaseUrl);
@@ -374,7 +374,9 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private LanguageCode languageCodeOf(User user) {
-    return user != null && user.getLanguageCode() != null ? user.getLanguageCode() : LanguageCode.de;
+    return user != null && user.getLanguageCode() != null
+        ? user.getLanguageCode()
+        : LanguageCode.de;
   }
 
   private LanguageCode languageCodeOf(Consultant consultant) {
@@ -396,14 +398,17 @@ public class SupervisorAddedEmailNotificationService {
       return new LocalizedEmailContent(
           "Supervisor added to your chat",
           "New system notification",
-          String.format("%s was added as supervisor consultant to your chat #%s.", displayName, session),
+          String.format(
+              "%s was added as supervisor consultant to your chat #%s.", displayName, session),
           "Open chat",
           "This message was sent automatically.");
     }
     return new LocalizedEmailContent(
         "Supervisor zu Ihrem Chat hinzugefuegt",
         "Neue Systembenachrichtigung",
-        String.format("%s wurde als Supervisor-Berater:in zu Ihrem Chat #%s hinzugefuegt.", displayName, session),
+        String.format(
+            "%s wurde als Supervisor-Berater:in zu Ihrem Chat #%s hinzugefuegt.",
+            displayName, session),
         "Zum Chat",
         "Diese Nachricht wurde automatisch versendet.");
   }
@@ -436,14 +441,17 @@ public class SupervisorAddedEmailNotificationService {
       return new LocalizedEmailContent(
           "Supervisor removed from your chat",
           "New system notification",
-          String.format("%s was removed as supervisor consultant from your chat #%s.", displayName, session),
+          String.format(
+              "%s was removed as supervisor consultant from your chat #%s.", displayName, session),
           "Open chat",
           "This message was sent automatically.");
     }
     return new LocalizedEmailContent(
         "Supervisor aus Ihrem Chat entfernt",
         "Neue Systembenachrichtigung",
-        String.format("%s wurde als Supervisor-Berater:in aus Ihrem Chat #%s entfernt.", displayName, session),
+        String.format(
+            "%s wurde als Supervisor-Berater:in aus Ihrem Chat #%s entfernt.",
+            displayName, session),
         "Zum Chat",
         "Diese Nachricht wurde automatisch versendet.");
   }
@@ -497,4 +505,3 @@ public class SupervisorAddedEmailNotificationService {
         .replace("'", "&#39;");
   }
 }
-

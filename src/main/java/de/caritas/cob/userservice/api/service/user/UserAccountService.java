@@ -46,7 +46,8 @@ public class UserAccountService {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   private final @NonNull StatisticsService statisticsService;
-  private final @NonNull SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
+  private final @NonNull SupervisorAddedEmailNotificationService
+      supervisorAddedEmailNotificationService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
   public Optional<User> findUserByEmail(String email) {
@@ -138,13 +139,13 @@ public class UserAccountService {
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt =
-    consultantService
-        .getConsultant(userId)
-        .map(
-            consultant -> {
-              updateConsultantEmail(consultant, email);
-              return consultant;
-            });
+        consultantService
+            .getConsultant(userId)
+            .map(
+                consultant -> {
+                  updateConsultantEmail(consultant, email);
+                  return consultant;
+                });
     Optional<User> userOpt =
         userService
             .getUser(userId)
@@ -157,9 +158,13 @@ public class UserAccountService {
     optionalEmail.ifPresent(
         updatedEmail -> {
           Long tenantId =
-              userOpt.map(User::getTenantId).orElse(consultantOpt.map(Consultant::getTenantId).orElse(null));
+              userOpt
+                  .map(User::getTenantId)
+                  .orElse(consultantOpt.map(Consultant::getTenantId).orElse(null));
           String username =
-              userOpt.map(User::getUsername).orElse(consultantOpt.map(Consultant::getUsername).orElse(userId));
+              userOpt
+                  .map(User::getUsername)
+                  .orElse(consultantOpt.map(Consultant::getUsername).orElse(userId));
           supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
               username,
               updatedEmail,
@@ -174,7 +179,7 @@ public class UserAccountService {
     UserUpdateRequestDTO requestDTO =
         new UserUpdateRequestDTO(consultant.getRocketChatId(), userUpdateDataDTO);
     try {
-    this.rocketChatService.updateUser(requestDTO);
+      this.rocketChatService.updateUser(requestDTO);
     } catch (Exception ex) {
       log.warn(
           "Skipping Rocket.Chat consultant email update for consultant {} due to error: {}",
@@ -192,7 +197,7 @@ public class UserAccountService {
         new UserUpdateRequestDTO(user.getRcUserId(), userUpdateDataDTO);
     if (user.getRcUserId() != null) {
       try {
-      this.rocketChatService.updateUser(requestDTO);
+        this.rocketChatService.updateUser(requestDTO);
       } catch (Exception ex) {
         log.warn(
             "Skipping Rocket.Chat user email update for user {} due to error: {}",
@@ -286,9 +291,7 @@ public class UserAccountService {
   }
 
   private void ensureCurrentAccountIsWritable() {
-    this.userService
-        .getUser(this.authenticatedUser.getUserId())
-        .ifPresent(this::assertWritable);
+    this.userService.getUser(this.authenticatedUser.getUserId()).ifPresent(this::assertWritable);
     this.consultantService
         .getConsultant(this.authenticatedUser.getUserId())
         .ifPresent(this::assertWritable);

@@ -39,8 +39,8 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
       Pageable pageable);
 
   /**
-   * Cross-tenant variant used by super-admins (tenant-super). {@code tenantId} is optional —
-   * pass {@code null} to span every tenant.
+   * Cross-tenant variant used by super-admins (tenant-super). {@code tenantId} is optional — pass
+   * {@code null} to span every tenant.
    */
   @Query(
       "SELECT l FROM AgencyInviteLink l"

@@ -41,6 +41,7 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
+
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
 
@@ -56,8 +57,7 @@ public class EventNotificationService {
         "inquiry.accepted",
         CATEGORY_SYSTEM,
         "Inquiry accepted",
-        String.format(
-            "Your request was accepted by %s. Chat is now active.", consultantName),
+        String.format("Your request was accepted by %s. Chat is now active.", consultantName),
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
@@ -127,7 +127,8 @@ public class EventNotificationService {
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, boolean matrixRoom, PrivacyEnvelope envelope) {
-    createMessageNotificationFromRoom(roomId, senderUserId, null, matrixRoom, false, null, envelope);
+    createMessageNotificationFromRoom(
+        roomId, senderUserId, null, matrixRoom, false, null, envelope);
   }
 
   @Transactional
@@ -139,7 +140,13 @@ public class EventNotificationService {
       boolean supervisorMessage,
       String senderDisplayName) {
     createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, matrixRoom, supervisorMessage, senderDisplayName, null);
+        roomId,
+        senderUserId,
+        messagePreview,
+        matrixRoom,
+        supervisorMessage,
+        senderDisplayName,
+        null);
   }
 
   @Transactional
@@ -156,7 +163,9 @@ public class EventNotificationService {
     }
 
     Optional<Session> sessionOpt =
-        matrixRoom ? sessionRepository.findByMatrixRoomId(roomId) : sessionRepository.findByGroupId(roomId);
+        matrixRoom
+            ? sessionRepository.findByMatrixRoomId(roomId)
+            : sessionRepository.findByGroupId(roomId);
     if (sessionOpt.isEmpty()) {
       return;
     }
@@ -260,7 +269,9 @@ public class EventNotificationService {
     }
 
     Optional<Session> sessionOpt =
-        matrixRoom ? sessionRepository.findByMatrixRoomId(roomId) : sessionRepository.findByGroupId(roomId);
+        matrixRoom
+            ? sessionRepository.findByMatrixRoomId(roomId)
+            : sessionRepository.findByGroupId(roomId);
     if (sessionOpt.isEmpty()) {
       return;
     }
@@ -285,8 +296,7 @@ public class EventNotificationService {
           CATEGORY_MESSAGE,
           "New thread reply",
           text,
-          buildSessionActionPathForRecipient(
-              session, session.getUser().getUserId(), threadRootId),
+          buildSessionActionPathForRecipient(session, session.getUser().getUserId(), threadRootId),
           session.getId(),
           session.getTenantId());
     }
@@ -315,11 +325,14 @@ public class EventNotificationService {
 
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
-        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(recipientUserId, pageable).stream()
+        eventNotificationRepository
+            .findByRecipientUserIdOrderByCreateDateDesc(recipientUserId, pageable)
+            .stream()
             .map(this::toItem)
             .collect(Collectors.toList());
 
-    long unreadCount = eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
+    long unreadCount =
+        eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
     return NotificationFeedResponse.builder()
         .items(items)
         .unreadCount(unreadCount)
@@ -343,7 +356,8 @@ public class EventNotificationService {
 
   @Transactional
   public void markAllAsRead(String recipientUserId) {
-    var unread = eventNotificationRepository.findByRecipientUserIdAndReadDateIsNull(recipientUserId);
+    var unread =
+        eventNotificationRepository.findByRecipientUserIdAndReadDateIsNull(recipientUserId);
     if (unread.isEmpty()) {
       return;
     }
@@ -357,8 +371,7 @@ public class EventNotificationService {
     eventNotificationRepository.deleteByRecipientUserId(recipientUserId);
   }
 
-  public void updateActiveView(
-      String userId, String roomId, String threadRootId, boolean active) {
+  public void updateActiveView(String userId, String roomId, String threadRootId, boolean active) {
     if (userId == null || userId.isBlank()) {
       return;
     }
@@ -450,8 +463,7 @@ public class EventNotificationService {
                           }
                           return safeValue(candidate, "User");
                         }))
-        .or(
-            () -> identityTombstoneService.resolveDisplayLabel(senderUserId))
+        .or(() -> identityTombstoneService.resolveDisplayLabel(senderUserId))
         .orElse("Someone");
   }
 
@@ -501,11 +513,16 @@ public class EventNotificationService {
     }
     return String.format(
         "%s sent a new %s (messageId: %s).",
-        senderLabel, contentLabel, envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
+        senderLabel,
+        contentLabel,
+        envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
   }
 
   private String buildThreadReplyNotificationText(
-      String senderLabel, String messagePreview, String threadParentPreview, PrivacyEnvelope envelope) {
+      String senderLabel,
+      String messagePreview,
+      String threadParentPreview,
+      PrivacyEnvelope envelope) {
     NotificationPreviewMode mode = currentPreviewMode();
     if (mode == NotificationPreviewMode.NONE) {
       return String.format("%s replied in a thread.", senderLabel);
@@ -549,7 +566,8 @@ public class EventNotificationService {
 
   private NotificationPreviewMode currentPreviewMode() {
     try {
-      return NotificationPreviewMode.valueOf(safeValue(notificationPreviewMode, "NONE").toUpperCase());
+      return NotificationPreviewMode.valueOf(
+          safeValue(notificationPreviewMode, "NONE").toUpperCase());
     } catch (IllegalArgumentException ex) {
       return NotificationPreviewMode.NONE;
     }
@@ -634,7 +652,9 @@ public class EventNotificationService {
         consultantPath ? "/sessions/consultant/sessionView/" : "/sessions/user/view/";
     String path = pathPrefix + roomRef + "/" + session.getId();
     if (threadRootId != null && !threadRootId.isBlank()) {
-      return path + "?threadRootId=" + java.net.URLEncoder.encode(threadRootId, java.nio.charset.StandardCharsets.UTF_8);
+      return path
+          + "?threadRootId="
+          + java.net.URLEncoder.encode(threadRootId, java.nio.charset.StandardCharsets.UTF_8);
     }
     return path;
   }
@@ -682,4 +702,3 @@ public class EventNotificationService {
     FULL
   }
 }
-

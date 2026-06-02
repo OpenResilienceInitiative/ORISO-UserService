@@ -87,4 +87,3 @@ public class EventNotification implements TenantAware {
     return Objects.hash(id);
   }
 }
-

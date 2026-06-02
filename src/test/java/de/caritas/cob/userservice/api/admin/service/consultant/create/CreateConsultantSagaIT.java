@@ -181,8 +181,7 @@ public class CreateConsultantSagaIT {
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdatePasswordThrowsException() {
     when(keycloakService.createKeycloakUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
-    doThrow(
-            new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
+    doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
         .updatePassword(any(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
