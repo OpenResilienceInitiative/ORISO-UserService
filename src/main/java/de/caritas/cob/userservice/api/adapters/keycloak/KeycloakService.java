@@ -147,7 +147,8 @@ public class KeycloakService implements IdentityClient {
    * @return {@link KeycloakLoginResponseDTO}
    */
   public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    var entity = loginRequest(userName, password);
+    // Keycloak stores decoded usernames; callers often pass the encoded form from MariaDB.
+    var entity = loginRequest(usernameTranscoder.decodeUsername(userName), password);
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
 
     try {
