@@ -42,8 +42,13 @@ public class AnonymousUserCreatorService {
   public AnonymousUserCredentials createAnonymousUser(UserDTO userDto) {
 
     KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDto);
+    // Use the existing "user" realm role instead of "anonymous": the Keycloak realm does not
+    // define an "anonymous" role, so assigning it 404s, the password step is skipped, and the
+    // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
+    // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
+    // anonymous chat users (see CreateUserFacade).
     createUserFacade.updateIdentityAndCreateAccount(
-        response.getUserId(), userDto, UserRole.ANONYMOUS);
+        response.getUserId(), userDto, UserRole.USER);
 
     KeycloakLoginResponseDTO kcLoginResponseDTO;
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto;
