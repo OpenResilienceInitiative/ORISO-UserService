@@ -1,0 +1,20 @@
+name: Reusable Maven Build steps
+
+inputs:
+  java_version:
+    required: true
+    type: string
+
+runs:
+  using: 'composite'
+  steps:
+  - name: Set up JDK and Maven
+    uses: actions/setup-java@v5
+    with:
+      java-version: ${{ inputs.java_version }}
+      distribution: 'temurin'
+      cache: maven
+
+  - name: Build with Maven Wrapper
+    shell: bash
+    run: ./mvnw -B package
