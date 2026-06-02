@@ -217,8 +217,8 @@ public class CreateUserFacade {
             "Keycloak operations failed for anonymous user {}, aborting account creation",
             userDTO.getUsername(),
             ex);
-        if (ex instanceof RuntimeException runtimeException) {
-          throw runtimeException;
+        if (ex instanceof RuntimeException) {
+          throw (RuntimeException) ex;
         }
         throw new InternalServerErrorException(
             "Keycloak operations failed for anonymous user", ex);
