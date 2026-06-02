@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant C as Client
+  participant S as SecurityConfig
+  participant K as Keycloak Adapter
+  participant T as HttpTenantFilter
+  participant R as TenantResolverService
+  participant Ctrl as Controller
+  C->>S: HTTP request + bearer token + CSRF when required
+  S->>K: Validate bearer token and map roles
+  S->>S: Match endpoint authority rules
+  S->>T: Continue when multitenancy enabled
+  T->>R: Resolve tenant from token/header/subdomain
+  R-->>T: tenantId
+  T->>Ctrl: Request with TenantContext

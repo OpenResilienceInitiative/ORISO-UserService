@@ -35,9 +35,46 @@ public class AgencyInviteLink {
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 
-  @Column(name = "agency_id", nullable = false)
+  /**
+   * The topic this invite link is bound to. Always required for links created by the new flow.
+   * Column is nullable in the schema only so legacy rows produced before changeset 0052 can keep
+   * existing without being backfilled — the application layer rejects creates with a null topic.
+   */
+  @Column(name = "topic_id")
+  private Long topicId;
+
+  /** {@code TENANT} / {@code COUNSELLOR} / {@code EXTERNAL_INBOUND}. */
+  @Column(name = "link_kind", nullable = false, length = 32)
+  private String linkKind;
+
+  /** {@code LIVE_CHAT} for now; reserved for future chat types. */
+  @Column(name = "chat_type", nullable = false, length = 32)
+  private String chatType;
+
+  /** {@code FULL} for now; reserved for future anonymity modes. */
+  @Column(name = "anonymity", nullable = false, length = 16)
+  private String anonymity;
+
+  @Column(name = "notes", length = 500)
+  private String notes;
+
+  /** Required only when {@link #linkKind} = {@code COUNSELLOR}. */
+  @Column(name = "consultant_id", length = 36)
+  private String consultantId;
+
+  /**
+   * @deprecated Agency is no longer carried on invite links. Kept nullable for legacy rows; will
+   *     be dropped in a phase-2 cleanup.
+   */
+  @Deprecated
+  @Column(name = "agency_id")
   private Long agencyId;
 
+  /**
+   * @deprecated Agency-derived consulting type is no longer stored on the link. Kept nullable for
+   *     legacy rows; will be dropped in a phase-2 cleanup.
+   */
+  @Deprecated
   @Column(name = "consulting_type_id")
   private Integer consultingTypeId;
 

@@ -292,6 +292,10 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
       identityClient.updatePassword(keycloakUserId, password);
+    } catch (CustomValidationHttpStatusException e) {
+      rollbackCreateNewConsultant(
+          buildConsultantDataWithUnknownRocketChatId(consultantCreationInput, keycloakUserId));
+      throw e;
     } catch (Exception e) {
       log.error(
           "Unable to update password or roles for user with encoded username {}",

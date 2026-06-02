@@ -1,0 +1,13 @@
+flowchart LR
+  Register[registerUser] --> CreateUser[CreateUserFacade]
+  CreateUser --> KC[Keycloak user + role + password]
+  CreateUser --> DBUser[UserService saves User]
+  CreateUser --> Matrix[Matrix user provisioning]
+  CreateUser --> CreateSession[CreateNewSessionFacade / CreateSessionFacade]
+  CreateSession --> SessionDB[Session + SessionData]
+  CreateSession --> Room[Matrix holding/direct room]
+  Assign[assignSession] --> AssignFacade[AssignSessionFacade]
+  AssignFacade --> SessionUpdate[Session status + consultant]
+  AssignFacade --> Rocket[Update Rocket.Chat group members]
+  AssignFacade --> Mail[Email notification]
+  AssignFacade --> Stats[Statistics event]

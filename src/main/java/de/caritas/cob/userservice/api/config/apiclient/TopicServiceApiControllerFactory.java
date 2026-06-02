@@ -9,7 +9,7 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class TopicServiceApiControllerFactory {
 
-  @Value("${consulting.type.service.api.url}")
+  @Value("${topic.service.api.url:${consulting.type.service.api.url}}")
   private String topicServiceApiUrl;
 
   @Autowired private RestTemplate restTemplate;

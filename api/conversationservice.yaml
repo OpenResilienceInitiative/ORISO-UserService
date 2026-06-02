@@ -313,6 +313,15 @@ components:
           type: integer
           example: 3
           description: Consulting type ID
+        mainTopicId:
+          type: integer
+          format: int64
+          example: 17
+          description: Optional. Topic the resulting session should be tagged with.
+        consultantId:
+          type: string
+          example: "550e8400-e29b-41d4-a716-446655440000"
+          description: Optional. Pre-assign this consultant to the resulting session.
 
     CreateAnonymousEnquiryResponseDTO:
       type: object

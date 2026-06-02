@@ -1,0 +1,12 @@
+flowchart TD
+  Client[Frontend/Admin/API Clients] --> Security[SecurityConfig + CSRF + Keycloak]
+  Security --> Tenant[HttpTenantFilter + TenantResolverService]
+  Tenant --> Controllers[Web Controllers]
+  Controllers --> Facades[Use-case Facades]
+  Facades --> Services[Domain Services]
+  Services --> Repositories[JPA Repositories]
+  Repositories --> MariaDB[(MariaDB)]
+  Facades --> Keycloak[KeycloakService]
+  Facades --> RocketChat[RocketChatService]
+  Facades --> Matrix[MatrixSynapseService]
+  Services --> PeerApis[Generated ORISO Service Clients]
