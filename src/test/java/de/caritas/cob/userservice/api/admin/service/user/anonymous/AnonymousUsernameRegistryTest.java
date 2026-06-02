@@ -15,6 +15,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.LinkedList;
@@ -36,12 +37,15 @@ class AnonymousUsernameRegistryTest {
   @InjectMocks private AnonymousUsernameRegistry anonymousUsernameRegistry;
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
+  @Mock private IdentityClient identityClient;
   @Mock private UsernameTranscoder usernameTranscoder;
 
   @BeforeEach
   void setUp() {
     setField(anonymousUsernameRegistry, "usernameTranscoder", usernameTranscoder);
     setField(anonymousUsernameRegistry, "usernamePrefix", "Ratsuchende_r ");
+    // By default every candidate username is free in Keycloak; individual tests override this.
+    when(identityClient.isUsernameAvailable(anyString())).thenReturn(true);
   }
 
   @Test
@@ -131,6 +135,24 @@ class AnonymousUsernameRegistryTest {
     when(consultantService.getConsultantByUsername("Ratsuchende_r 5"))
         .thenReturn(Optional.of(CONSULTANT));
     when(consultantService.getConsultantByUsername("Ratsuchende_r 7")).thenReturn(Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
+    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 7"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_SkipUsernamesStillPresentInKeycloak_When_NotInLocalDb() {
+    LinkedList<Integer> idRegistry = new LinkedList<>(List.of(1, 2, 4, 6));
+    setIdRegistryField(idRegistry);
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
+    // 3 and 5 are gone from the local DB but still exist in Keycloak -> must be skipped.
+    when(identityClient.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
+    when(identityClient.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
+    when(identityClient.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
 
     anonymousUsernameRegistry.generateUniqueUsername();
 
