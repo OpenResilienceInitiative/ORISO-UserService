@@ -220,8 +220,7 @@ public class CreateUserFacade {
         if (ex instanceof RuntimeException) {
           throw (RuntimeException) ex;
         }
-        throw new InternalServerErrorException(
-            "Keycloak operations failed for anonymous user", ex);
+        throw new InternalServerErrorException("Keycloak operations failed for anonymous user", ex);
       }
       log.error(
           "Keycloak operations failed for user {}, but continuing with user creation",
