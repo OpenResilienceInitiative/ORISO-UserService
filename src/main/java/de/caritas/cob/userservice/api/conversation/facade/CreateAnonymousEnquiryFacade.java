@@ -38,8 +38,21 @@ public class CreateAnonymousEnquiryFacade {
    */
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
+    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
+  }
 
-    checkIfConsultingTypeHasAnonymousConsulting(createAnonymousEnquiryDTO.getConsultingType());
+  /**
+   * @param skipConsultingTypeAnonymousCheck when {@code true} the consulting-type-level "anonymous
+   *     conversation allowed" gate is skipped. Used by invite-link redeem, where the link itself is
+   *     explicitly anonymous and the consulting type may not enable anonymous chats globally.
+   */
+  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
+      boolean skipConsultingTypeAnonymousCheck) {
+
+    if (!skipConsultingTypeAnonymousCheck) {
+      checkIfConsultingTypeHasAnonymousConsulting(createAnonymousEnquiryDTO.getConsultingType());
+    }
 
     var userDto = buildUserDto(createAnonymousEnquiryDTO);
     AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
