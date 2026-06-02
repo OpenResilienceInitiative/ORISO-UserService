@@ -96,8 +96,7 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
   }
 
   private Optional<Long> resolveMainTenantIdFromApplicationSettings() {
-    ApplicationSettingsDTO applicationSettings =
-        applicationSettingsService.getApplicationSettings();
+    ApplicationSettingsDTO applicationSettings = applicationSettingsService.getApplicationSettings();
     SettingDTO mainTenantSubdomainForSingleDomainMultitenancy =
         applicationSettings.getMainTenantSubdomainForSingleDomainMultitenancy();
     if (mainTenantSubdomainForSingleDomainMultitenancy == null

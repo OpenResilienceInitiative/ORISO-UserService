@@ -52,8 +52,7 @@ public class AskerUserAdminFacade {
             .or(() -> userService.findDeletedById(userId))
             .orElseThrow(() -> new NotFoundException("Asker with id %s does not exist", userId));
     if (user.getDeleteDate() == null) {
-      throw new ConflictException(
-          String.format("Asker with id %s is not marked for deletion", userId));
+      throw new ConflictException(String.format("Asker with id %s is not marked for deletion", userId));
     }
     deletionLifecycleService.pauseUserDeletion(user, reason, months, pausedBy);
     userService.saveUser(user);

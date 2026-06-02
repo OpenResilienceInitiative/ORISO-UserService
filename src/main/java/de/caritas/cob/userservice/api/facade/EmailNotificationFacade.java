@@ -339,8 +339,7 @@ public class EmailNotificationFacade {
               .templateData(templateAttributes);
       mailService.sendEmailNotification(new MailsDTO().mails(List.of(mailDTO)));
     } catch (Exception exception) {
-      log.error(
-          "EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
+      log.error("EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
     }
     TenantContext.clear();
   }

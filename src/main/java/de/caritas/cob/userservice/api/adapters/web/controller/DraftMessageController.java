@@ -30,8 +30,7 @@ public class DraftMessageController {
   public ResponseEntity<DraftMessageService.DraftFeedResponse> getDrafts(
       @RequestParam(defaultValue = "0") @Min(0) int page,
       @RequestParam(defaultValue = "200") @Min(1) int perPage) {
-    return ResponseEntity.ok(
-        draftMessageService.getDrafts(authenticatedUser.getUserId(), page, perPage));
+    return ResponseEntity.ok(draftMessageService.getDrafts(authenticatedUser.getUserId(), page, perPage));
   }
 
   @GetMapping("/single")
@@ -58,3 +57,5 @@ public class DraftMessageController {
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 }
+
+

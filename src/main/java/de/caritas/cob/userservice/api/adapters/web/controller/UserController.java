@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
+import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
@@ -9,7 +10,6 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
@@ -30,9 +30,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
@@ -97,12 +97,13 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
-import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
-import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
@@ -201,9 +202,7 @@ public class UserController implements UsersApi {
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
   public ResponseEntity<Void> requestMagicLink(@Valid @RequestBody MagicLinkRequestDTO requestDTO) {
     var result = magicLinkLoginService.requestMagicLink(requestDTO.getUsername());
-    if (result
-        == de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult
-            .NOT_ENABLED) {
+    if (result == de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult.NOT_ENABLED) {
       return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
     return ResponseEntity.noContent().build();
@@ -292,16 +291,19 @@ public class UserController implements UsersApi {
         RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
     /* Additional enquiries from the profile page go through the normal
-    enquiry pipeline — the consultant is NOT pre-assigned here. The asker
-    lands on the "write first message" screen, the enquiry sits in the
-    agency queue, and a consultant picks it up. Direct-chat with a
-    specific consultant is a separate flow (QR code / ?cid=… link).
-    The empty constraint list keeps this endpoint permissive so existing
-    askers can raise new enquiries even when they already had a past
-    session for the same topic+agency. */
+       enquiry pipeline — the consultant is NOT pre-assigned here. The asker
+       lands on the "write first message" screen, the enquiry sits in the
+       agency queue, and a consultant picks it up. Direct-chat with a
+       specific consultant is a separate flow (QR code / ?cid=… link).
+       The empty constraint list keeps this endpoint permissive so existing
+       askers can raise new enquiries even when they already had a past
+       session for the same topic+agency. */
     var response =
         createNewSessionFacade.initializeNewSession(
-            newRegistrationDto, user, rocketChatCredentials, Lists.newArrayList());
+            newRegistrationDto,
+            user,
+            rocketChatCredentials,
+            Lists.newArrayList());
 
     return new ResponseEntity<>(response, response.getStatus());
   }

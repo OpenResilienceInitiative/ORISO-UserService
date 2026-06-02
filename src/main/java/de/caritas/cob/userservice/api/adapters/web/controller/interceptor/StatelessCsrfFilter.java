@@ -94,8 +94,7 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
     }
 
     private boolean isWhiteListUrl(HttpServletRequest request) {
-      // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
-      // token.
+      // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF token.
       if (request.getRequestURI() != null
           && request.getRequestURI().toLowerCase().contains("/users/magic-link/")) {
         return true;

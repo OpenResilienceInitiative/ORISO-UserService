@@ -23,11 +23,11 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Exte
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.stereotype.Component;
 
 /** Provider for consultant information. */
 @Component
@@ -109,10 +109,7 @@ public class ConsultantDataProvider {
     } catch (HttpClientErrorException.Forbidden e) {
       // Do not block login when agency-service scope denies this token;
       // return a minimal consultant profile instead of surfacing a 500.
-      log.warn(
-          "Forbidden while loading agencies for consultant {}: {}",
-          consultant.getId(),
-          e.getMessage());
+      log.warn("Forbidden while loading agencies for consultant {}: {}", consultant.getId(), e.getMessage());
       return List.of();
     }
   }

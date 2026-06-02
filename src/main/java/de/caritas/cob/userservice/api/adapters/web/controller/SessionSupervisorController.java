@@ -1,13 +1,13 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import io.swagger.annotations.Api;
 import java.util.List;
@@ -43,8 +43,7 @@ public class SessionSupervisorController {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
-  private final @NonNull SupervisorAddedEmailNotificationService
-      supervisorAddedEmailNotificationService;
+  private final @NonNull SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
   private final @NonNull SessionService sessionService;
 
   /**
@@ -56,7 +55,8 @@ public class SessionSupervisorController {
    */
   @PostMapping("/{sessionId}/supervisors")
   public ResponseEntity<SessionSupervisorResponseDTO> addSupervisor(
-      @PathVariable @NotNull Long sessionId, @Valid @RequestBody AddSupervisorRequestDTO request) {
+      @PathVariable @NotNull Long sessionId,
+      @Valid @RequestBody AddSupervisorRequestDTO request) {
     log.info(
         "Add supervisor request: sessionId={}, supervisorConsultantId={}",
         sessionId,
@@ -87,10 +87,10 @@ public class SessionSupervisorController {
     supervisorAddedEmailNotificationService.notifySupervisorAdded(
         supervisor.getSession() != null ? supervisor.getSession().getUser() : null,
         supervisor.getSupervisorConsultant(),
-        supervisorDisplayName,
+          supervisorDisplayName,
         supervisor.getSession() != null ? supervisor.getSession().getId() : null,
-        TenantContext.getCurrentTenantData(),
-        accessToken);
+          TenantContext.getCurrentTenantData(),
+          accessToken);
 
     if (supervisor.getSession() != null
         && supervisor.getSupervisorConsultant() != null
@@ -106,12 +106,10 @@ public class SessionSupervisorController {
           EventNotificationService.CATEGORY_SYSTEM,
           "Supervisor assignment",
           String.format(
-              "You were added as supervisor to chat #%s.", supervisor.getSession().getId()),
+              "You were added as supervisor to chat #%s.",
+              supervisor.getSession().getId()),
           roomRef != null
-              ? "/sessions/consultant/sessionView/"
-                  + roomRef
-                  + "/"
-                  + supervisor.getSession().getId()
+              ? "/sessions/consultant/sessionView/" + roomRef + "/" + supervisor.getSession().getId()
               : null,
           supervisor.getSession().getId(),
           supervisor.getSession().getTenantId());
@@ -149,13 +147,13 @@ public class SessionSupervisorController {
             session -> {
               String supervisorDisplayName =
                   supervisorToRemove
-                      .map(SessionSupervisor::getSupervisorConsultant)
-                      .map(
-                          consultant ->
-                              consultant.getDisplayName() != null
-                                  ? consultant.getDisplayName()
-                                  : consultant.getFullName())
-                      .orElse("A supervisor");
+                          .map(SessionSupervisor::getSupervisorConsultant)
+                          .map(
+                              consultant ->
+                                  consultant.getDisplayName() != null
+                                      ? consultant.getDisplayName()
+                                      : consultant.getFullName())
+                          .orElse("A supervisor");
               if (session.getUser() != null && session.getUser().getUserId() != null) {
                 eventNotificationService.createSupervisorRemovedNotification(
                     session, session.getUser().getUserId(), supervisorDisplayName);
@@ -193,7 +191,8 @@ public class SessionSupervisorController {
     SessionSupervisorResponseDTO dto = new SessionSupervisorResponseDTO();
     dto.setId(supervisor.getId());
     dto.setSessionId(supervisor.getSession().getId());
-    dto.setSupervisorConsultantId(supervisor.getSupervisorConsultant().getId());
+    dto.setSupervisorConsultantId(
+        supervisor.getSupervisorConsultant().getId());
     dto.setSupervisorUsername(supervisor.getSupervisorConsultant().getUsername());
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
@@ -300,3 +299,4 @@ public class SessionSupervisorController {
     }
   }
 }
+

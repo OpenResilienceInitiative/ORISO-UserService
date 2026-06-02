@@ -193,10 +193,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "encourage_2fa", nullable = false, columnDefinition = "bit default true")
   private Boolean encourage2fa;
 
-  @Column(
-      name = "magic_link_login_enabled",
-      nullable = false,
-      columnDefinition = "bit default false")
+  @Column(name = "magic_link_login_enabled", nullable = false, columnDefinition = "bit default false")
   private Boolean magicLinkLoginEnabled;
 
   @Column(

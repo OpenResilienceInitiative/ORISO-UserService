@@ -21,8 +21,7 @@ public class DraftMessageService {
   private final @NonNull DraftMessageRepository draftMessageRepository;
 
   @Transactional
-  public void upsertDraft(
-      String userId, String scopeKey, UpsertDraftRequest request, Long tenantId) {
+  public void upsertDraft(String userId, String scopeKey, UpsertDraftRequest request, Long tenantId) {
     if (userId == null || userId.isBlank() || scopeKey == null || scopeKey.isBlank()) {
       return;
     }
@@ -42,8 +41,7 @@ public class DraftMessageService {
                   existing.setText(text);
                   existing.setActionPath(request != null ? request.getActionPath() : null);
                   existing.setTitle(request != null ? request.getTitle() : null);
-                  existing.setSourceSessionId(
-                      request != null ? request.getSourceSessionId() : null);
+                  existing.setSourceSessionId(request != null ? request.getSourceSessionId() : null);
                   existing.setRoomRef(request != null ? request.getRoomRef() : null);
                   existing.setThreadRootId(request != null ? request.getThreadRootId() : null);
                   existing.setUpdateDate(now);
@@ -171,3 +169,4 @@ public class DraftMessageService {
     }
   }
 }
+

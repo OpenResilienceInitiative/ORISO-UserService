@@ -55,7 +55,8 @@ public enum Authority {
   RESTRICTED_AGENCY_ADMIN(
       UserRole.RESTRICTED_AGENCY_ADMIN, singletonList(AuthorityValue.RESTRICTED_AGENCY_ADMIN)),
   SUPERVISOR_CONSULTANT(
-      UserRole.SUPERVISOR_CONSULTANT, List.of(CONSULTANT_DEFAULT, VIEW_AGENCY_CONSULTANTS));
+      UserRole.SUPERVISOR_CONSULTANT,
+      List.of(CONSULTANT_DEFAULT, VIEW_AGENCY_CONSULTANTS));
 
   private final UserRole userRole;
   private final List<String> grantedAuthorities;

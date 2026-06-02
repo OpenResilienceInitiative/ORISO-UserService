@@ -61,17 +61,11 @@ public class RedisMessageMirrorService {
       return;
     }
 
-    String safeBody =
-        messageBody.length() > maxBodyLength
-            ? messageBody.substring(0, maxBodyLength)
-            : messageBody;
+    String safeBody = messageBody.length() > maxBodyLength ? messageBody.substring(0, maxBodyLength) : messageBody;
     String key =
         String.format(
             "%s:room:%s:%d:%s",
-            keyPrefix,
-            roomId,
-            System.currentTimeMillis(),
-            UUID.randomUUID().toString().substring(0, 8));
+            keyPrefix, roomId, System.currentTimeMillis(), UUID.randomUUID().toString().substring(0, 8));
 
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("ts", Instant.now().toString());
@@ -84,9 +78,7 @@ public class RedisMessageMirrorService {
 
     try {
       String serializedPayload = objectMapper.writeValueAsString(payload);
-      redisTemplate
-          .opsForValue()
-          .set(key, serializedPayload, Duration.ofSeconds(Math.max(ttlSeconds, 30)));
+      redisTemplate.opsForValue().set(key, serializedPayload, Duration.ofSeconds(Math.max(ttlSeconds, 30)));
     } catch (JsonProcessingException e) {
       log.warn("Failed to serialize Redis message mirror payload: {}", e.getMessage());
     } catch (Exception e) {
@@ -94,3 +86,4 @@ public class RedisMessageMirrorService {
     }
   }
 }
+

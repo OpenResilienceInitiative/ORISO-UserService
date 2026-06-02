@@ -364,8 +364,7 @@ public class CreateChatFacade {
 
   private User resolveOrCreateGroupChatSystemUser(Consultant consultant) {
     Long tenantId = consultant.getTenantId();
-    String tenantScopedSystemUserId =
-        "group-chat-system-" + (tenantId == null ? "default" : tenantId);
+    String tenantScopedSystemUserId = "group-chat-system-" + (tenantId == null ? "default" : tenantId);
 
     return userRepository
         .findByUserIdAndDeleteDateIsNull(tenantScopedSystemUserId)

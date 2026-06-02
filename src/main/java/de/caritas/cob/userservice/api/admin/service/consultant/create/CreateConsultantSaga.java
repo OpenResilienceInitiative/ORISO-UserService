@@ -8,9 +8,9 @@ import static java.util.Objects.*;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 
+import com.neovisionaries.i18n.LanguageCode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
@@ -42,10 +42,10 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
 import java.util.Set;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -556,8 +556,7 @@ public class CreateConsultantSaga {
       if (tokenParts.length < 2) {
         return null;
       }
-      String payload =
-          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
+      String payload = new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
       JsonNode payloadNode = objectMapper.readTree(payload);
       JsonNode tenantIdNode = payloadNode.get("tenantId");
       if (tenantIdNode == null || tenantIdNode.isNull()) {

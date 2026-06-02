@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
-import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import java.util.Map;
 import javax.mail.AuthenticationFailedException;
+import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import javax.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +24,7 @@ public class GlobalSmtpTestEmailController {
   private final @NonNull GlobalSmtpTestEmailService globalSmtpTestEmailService;
 
   @PostMapping("/test")
-  public ResponseEntity<Object> sendGlobalSmtpTestEmail(
-      @Valid @RequestBody GlobalSmtpTestEmailDTO dto) {
+  public ResponseEntity<Object> sendGlobalSmtpTestEmail(@Valid @RequestBody GlobalSmtpTestEmailDTO dto) {
     try {
       globalSmtpTestEmailService.sendTestEmail(dto);
       return new ResponseEntity<>(HttpStatus.OK);
@@ -33,10 +32,11 @@ public class GlobalSmtpTestEmailController {
       log.warn("Global SMTP test email failed", ex);
       String reason = "SMTP test mail could not be sent. Please verify your SMTP settings.";
       if (ex instanceof AuthenticationFailedException) {
-        reason =
-            "SMTP authentication failed. Please verify username/password and provider auth policy.";
+        reason = "SMTP authentication failed. Please verify username/password and provider auth policy.";
       }
       return ResponseEntity.badRequest().body(Map.of("message", reason));
     }
   }
 }
+
+

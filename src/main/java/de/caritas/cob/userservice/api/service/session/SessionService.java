@@ -404,7 +404,7 @@ public class SessionService {
     // Get sessions where consultant is assigned
     List<Session> assignedSessions =
         sessionRepository.findByConsultantAndStatus(consultant, sessionStatus);
-
+    
     // Get sessions where consultant is a supervisor
     List<SessionSupervisor> supervisions =
         sessionSupervisorRepository.findActiveSupervisionsByConsultantId(consultant.getId());
@@ -413,7 +413,7 @@ public class SessionService {
             .map(ss -> ss.getSession())
             .filter(s -> s.getStatus() == sessionStatus)
             .collect(Collectors.toList());
-
+    
     // Combine and deduplicate
     List<Session> allSessions = new ArrayList<>(assignedSessions);
     for (Session supervised : supervisedSessions) {
@@ -421,7 +421,7 @@ public class SessionService {
         allSessions.add(supervised);
       }
     }
-
+    
     return allSessions;
   }
 

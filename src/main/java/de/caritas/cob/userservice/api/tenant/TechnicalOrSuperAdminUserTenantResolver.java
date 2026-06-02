@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.tenant;
 
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TECHNICAL;
 
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.Set;
 import javax.servlet.http.HttpServletRequest;

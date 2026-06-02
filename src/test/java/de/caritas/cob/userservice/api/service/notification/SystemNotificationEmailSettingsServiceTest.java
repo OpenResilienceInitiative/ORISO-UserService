@@ -104,3 +104,4 @@ class SystemNotificationEmailSettingsServiceTest {
                 "secure", true)));
   }
 }
+

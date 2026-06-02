@@ -52,8 +52,7 @@ public class GlobalSmtpTestEmailService {
 
   private String buildHtml(GlobalSmtpTestEmailDTO dto) {
     String color =
-        isNotBlank(dto.getEmailThemeColor())
-                && dto.getEmailThemeColor().matches("^#([A-Fa-f0-9]{6})$")
+        isNotBlank(dto.getEmailThemeColor()) && dto.getEmailThemeColor().matches("^#([A-Fa-f0-9]{6})$")
             ? dto.getEmailThemeColor()
             : "#0f3b8f";
     String now = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
@@ -73,3 +72,5 @@ public class GlobalSmtpTestEmailService {
         + "</table></td></tr></table></body></html>";
   }
 }
+
+

@@ -8,3 +8,4 @@ public class MagicLinkRequestDTO {
 
   @NotBlank private String username;
 }
+

@@ -14,3 +14,5 @@ public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long
 
   void deleteByUserIdAndScopeKey(String userId, String scopeKey);
 }
+
+

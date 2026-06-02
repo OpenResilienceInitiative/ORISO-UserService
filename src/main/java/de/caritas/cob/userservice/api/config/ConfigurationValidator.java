@@ -4,11 +4,12 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Validates that all required configuration values are provided via ConfigMaps/Secrets. Throws an
- * exception on startup if any required configuration is missing.
+ * Validates that all required configuration values are provided via ConfigMaps/Secrets.
+ * Throws an exception on startup if any required configuration is missing.
  */
 @Component
 public class ConfigurationValidator {
@@ -103,16 +104,14 @@ public class ConfigurationValidator {
     }
 
     if (!missingConfigs.isEmpty()) {
-      String errorMessage =
-          String.format(
-              "CRITICAL: Missing required configuration values. Please provide the following via ConfigMap/Secrets:\n%s\n\n"
-                  + "IMPORTANT: Use Kubernetes DNS names (e.g., mariadb.caritas.svc.cluster.local:3306) NOT hardcoded IPs.\n"
-                  + "DNS names ensure services can find resources even when pods are rescheduled or scaled.",
-              String.join(
-                  "\n",
-                  missingConfigs.stream()
-                      .map(config -> "  - config '" + config + "' is missing")
-                      .toArray(String[]::new)));
+      String errorMessage = String.format(
+          "CRITICAL: Missing required configuration values. Please provide the following via ConfigMap/Secrets:\n%s\n\n" +
+          "IMPORTANT: Use Kubernetes DNS names (e.g., mariadb.caritas.svc.cluster.local:3306) NOT hardcoded IPs.\n" +
+          "DNS names ensure services can find resources even when pods are rescheduled or scaled.",
+          String.join("\n", missingConfigs.stream()
+              .map(config -> "  - config '" + config + "' is missing")
+              .toArray(String[]::new))
+      );
       throw new IllegalStateException(errorMessage);
     }
   }
@@ -121,3 +120,4 @@ public class ConfigurationValidator {
     return value == null || value.trim().isEmpty();
   }
 }
+

@@ -48,3 +48,4 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
    */
   long countBySessionIdAndIsActiveTrue(Long sessionId);
 }
+

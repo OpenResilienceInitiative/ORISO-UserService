@@ -100,7 +100,8 @@ public class Messenger implements Messaging {
     if (agencyId == null || beforeDate == null) {
       return 0L;
     }
-    return sessionRepository.countPendingEnquiriesAheadOf(agencyId, SessionStatus.NEW, beforeDate);
+    return sessionRepository.countPendingEnquiriesAheadOf(
+        agencyId, SessionStatus.NEW, beforeDate);
   }
 
   @Override
