@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
 import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
@@ -88,6 +89,11 @@ class AnonymousUserCreatorServiceTest {
           when(keycloakService.loginUser(anyString(), anyString()))
               .thenReturn(easyRandom.nextObject(KeycloakLoginResponseDTO.class));
           when(userHelper.getDummyEmail(anyString())).thenReturn("user-id@beratungcaritas.de");
+          when(rocketChatService.createUser(anyString(), anyString(), anyString()))
+              .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
+          when(rocketChatService.loginWithPassword(
+                  USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
+              .thenThrow(new RocketChatLoginException("Rocket.Chat login failed"));
           when(rocketChatService.loginUserFirstTime(
                   USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
               .thenThrow(new RocketChatLoginException("Rocket.Chat login failed"));
@@ -110,7 +116,9 @@ class AnonymousUserCreatorServiceTest {
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
-    when(rocketChatService.loginUserFirstTime(
+    when(rocketChatService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
+    when(rocketChatService.loginWithPassword(
             USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenReturn(responseEntity);
     when(userService.getUser(any())).thenReturn(Optional.of(mock(User.class)));
@@ -143,7 +151,9 @@ class AnonymousUserCreatorServiceTest {
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
-    when(rocketChatService.loginUserFirstTime(
+    when(rocketChatService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
+    when(rocketChatService.loginWithPassword(
             USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenReturn(responseEntity);
 
