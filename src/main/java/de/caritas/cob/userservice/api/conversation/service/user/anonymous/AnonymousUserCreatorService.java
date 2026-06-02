@@ -47,8 +47,7 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    createUserFacade.updateIdentityAndCreateAccount(
-        response.getUserId(), userDto, UserRole.USER);
+    createUserFacade.updateIdentityAndCreateAccount(response.getUserId(), userDto, UserRole.USER);
 
     KeycloakLoginResponseDTO kcLoginResponseDTO;
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto;
