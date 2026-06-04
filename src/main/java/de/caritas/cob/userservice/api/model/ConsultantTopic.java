@@ -61,13 +61,11 @@ public class ConsultantTopic {
       return false;
     }
     ConsultantTopic that = (ConsultantTopic) o;
-    return Objects.equals(consultant, that.consultant)
-        && Objects.equals(topicId, that.topicId);
+    return Objects.equals(consultant, that.consultant) && Objects.equals(topicId, that.topicId);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(
-        consultant == null ? null : consultant.getId(), topicId);
+    return Objects.hash(consultant == null ? null : consultant.getId(), topicId);
   }
 }
