@@ -8,6 +8,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -161,6 +162,9 @@ public class Consultant implements TenantAware, NotificationsAware {
   @OneToMany(mappedBy = "consultant")
   private Set<ConsultantMobileToken> consultantMobileTokens;
 
+  @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL, orphanRemoval = true)
+  private Set<ConsultantTopic> consultantTopics;
+
   @Column(name = "create_date")
   private LocalDateTime createDate;
 
@@ -274,6 +278,35 @@ public class Consultant implements TenantAware, NotificationsAware {
 
       return languages;
     }
+  }
+
+  /**
+   * Replaces the full set of topics assigned to this consultant. Existing topics are cleared
+   * (orphan-removed) and the given topic ids are re-added. A {@code null} argument leaves the
+   * current set untouched (used by flows that do not manage topics).
+   */
+  @JsonIgnore
+  public void replaceTopics(Collection<Long> topicIds) {
+    if (isNull(topicIds)) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    this.consultantTopics.clear();
+    var now = LocalDateTime.now();
+    topicIds.stream()
+        .filter(Objects::nonNull)
+        .distinct()
+        .forEach(
+            topicId ->
+                this.consultantTopics.add(
+                    ConsultantTopic.builder()
+                        .consultant(this)
+                        .topicId(topicId)
+                        .createDate(now)
+                        .updateDate(now)
+                        .build()));
   }
 
   @JsonIgnore

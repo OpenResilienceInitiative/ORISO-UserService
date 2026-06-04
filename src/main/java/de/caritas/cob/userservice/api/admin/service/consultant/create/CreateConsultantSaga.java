@@ -455,34 +455,39 @@ public class CreateConsultantSaga {
       String matrixUserId,
       String matrixPassword) {
 
-    return Consultant.builder()
-        .id(keycloakUserId)
-        .idOld(consultantCreationInput.getIdOld())
-        .username(consultantCreationInput.getEncodedUsername())
-        .firstName(consultantCreationInput.getFirstName())
-        .lastName(consultantCreationInput.getLastName())
-        .email(consultantCreationInput.getEmail())
-        .absent(isTrue(consultantCreationInput.isAbsent()))
-        .absenceMessage(consultantCreationInput.getAbsenceMessage())
-        .teamConsultant(consultantCreationInput.isTeamConsultant())
-        .rocketChatId(rocketChatUserId)
-        .matrixUserId(matrixUserId)
-        .matrixPassword(matrixPassword)
-        .encourage2fa(true)
-        .magicLinkLoginEnabled(false)
-        .notifyEnquiriesRepeating(true)
-        .notifyNewChatMessageFromAdviceSeeker(true)
-        .languageFormal(consultantCreationInput.isLanguageFormal())
-        .languages(Set.of())
-        .createDate(consultantCreationInput.getCreateDate())
-        .updateDate(consultantCreationInput.getUpdateDate())
-        .tenantId(consultantCreationInput.getTenantId())
-        .status(ConsultantStatus.CREATED) // MATRIX MIGRATION: Set to CREATED (RocketChat optional)
-        .walkThroughEnabled(true)
-        .languageCode(LanguageCode.de)
-        .notificationsEnabled(true)
-        .notificationsSettings(serializeToJsonString(allActiveNotifications()))
-        .build();
+    var consultant =
+        Consultant.builder()
+            .id(keycloakUserId)
+            .idOld(consultantCreationInput.getIdOld())
+            .username(consultantCreationInput.getEncodedUsername())
+            .firstName(consultantCreationInput.getFirstName())
+            .lastName(consultantCreationInput.getLastName())
+            .email(consultantCreationInput.getEmail())
+            .absent(isTrue(consultantCreationInput.isAbsent()))
+            .absenceMessage(consultantCreationInput.getAbsenceMessage())
+            .teamConsultant(consultantCreationInput.isTeamConsultant())
+            .rocketChatId(rocketChatUserId)
+            .matrixUserId(matrixUserId)
+            .matrixPassword(matrixPassword)
+            .encourage2fa(true)
+            .magicLinkLoginEnabled(false)
+            .notifyEnquiriesRepeating(true)
+            .notifyNewChatMessageFromAdviceSeeker(true)
+            .languageFormal(consultantCreationInput.isLanguageFormal())
+            .languages(Set.of())
+            .createDate(consultantCreationInput.getCreateDate())
+            .updateDate(consultantCreationInput.getUpdateDate())
+            .tenantId(consultantCreationInput.getTenantId())
+            .status(
+                ConsultantStatus.CREATED) // MATRIX MIGRATION: Set to CREATED (RocketChat optional)
+            .walkThroughEnabled(true)
+            .languageCode(LanguageCode.de)
+            .notificationsEnabled(true)
+            .notificationsSettings(serializeToJsonString(allActiveNotifications()))
+            .build();
+
+    consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    return consultant;
   }
 
   private NotificationsSettingsDTO allActiveNotifications() {

@@ -5,6 +5,10 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.neovisionaries.i18n.LanguageCode;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -83,5 +87,41 @@ public class ConsultantTest {
     boolean equals = consultant.equals(otherConsultant);
 
     assertThat(equals, is(true));
+  }
+
+  @Test
+  public void replaceTopics_Should_buildConsultantTopics_WithBackReferenceAndDedup() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    consultant.replaceTopics(Arrays.asList(3L, 7L, 7L, null));
+
+    Set<Long> topicIds =
+        consultant.getConsultantTopics().stream()
+            .map(ConsultantTopic::getTopicId)
+            .collect(Collectors.toSet());
+    assertThat(topicIds, is(Set.of(3L, 7L)));
+    consultant
+        .getConsultantTopics()
+        .forEach(topic -> assertThat(topic.getConsultant(), is(consultant)));
+  }
+
+  @Test
+  public void replaceTopics_Should_clearExistingTopics_When_givenEmptyList() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.replaceTopics(List.of(1L, 2L));
+
+    consultant.replaceTopics(List.of());
+
+    assertEquals(0, consultant.getConsultantTopics().size());
+  }
+
+  @Test
+  public void replaceTopics_Should_leaveTopicsUntouched_When_givenNull() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.replaceTopics(List.of(1L, 2L));
+
+    consultant.replaceTopics(null);
+
+    assertEquals(2, consultant.getConsultantTopics().size());
   }
 }
