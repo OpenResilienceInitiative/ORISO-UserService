@@ -1238,13 +1238,6 @@ components:
           example: "1"
         isGroupchatConsultant:
           $ref: '#/components/schemas/IsGroupchatConsultant'
-        topicIds:
-          type: array
-          description: ids of topics directly assigned to the consultant
-          items:
-            type: integer
-            format: int64
-          example: [3, 7, 12]
 
     IsGroupchatConsultant:
       type: boolean
@@ -1308,13 +1301,6 @@ components:
           $ref: '#/components/schemas/IsGroupchatConsultant'
         isSupervisor:
           $ref: '#/components/schemas/IsSupervisor'
-        topicIds:
-          type: array
-          description: replaces the full set of topics assigned to the consultant
-          items:
-            type: integer
-            format: int64
-          example: [3, 7, 12]
 
     ConsultantDTO:
       type: object
@@ -1368,22 +1354,6 @@ components:
           type: string
         displayName:
           type: string
-        topics:
-          type: array
-          description: topics directly assigned to the consultant, enriched with names
-          items:
-            $ref: '#/components/schemas/ConsultantTopicDTO'
-
-    ConsultantTopicDTO:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          example: 3
-        name:
-          type: string
-          example: "Addiction"
 
     CreateAdminDTO:
       type: object

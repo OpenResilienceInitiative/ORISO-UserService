@@ -139,7 +139,6 @@ public class ConsultantUpdateService {
     consultant.setLanguages(languagesOf(updateConsultantDTO, consultant));
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
-    consultant.replaceTopics(updateConsultantDTO.getTopicIds());
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());

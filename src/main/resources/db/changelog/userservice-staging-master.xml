@@ -55,5 +55,4 @@
   <include file="db/changelog/changeset/0050_security05_deletion_lifecycle/0050_changeSet.xml"/>
   <include file="db/changelog/changeset/0051_backfill_deletion_read_only_until/0051_changeSet.xml"/>
   <include file="db/changelog/changeset/0052_invite_links_topic/0052_changeSet.xml"/>
-  <include file="db/changelog/changeset/0053_consultant_topic/0053_changeSet.xml"/>
 </databaseChangeLog>
