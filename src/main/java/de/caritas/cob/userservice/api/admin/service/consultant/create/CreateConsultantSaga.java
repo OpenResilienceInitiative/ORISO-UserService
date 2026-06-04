@@ -455,7 +455,8 @@ public class CreateConsultantSaga {
       String matrixUserId,
       String matrixPassword) {
 
-    return Consultant.builder()
+    var consultant =
+        Consultant.builder()
         .id(keycloakUserId)
         .idOld(consultantCreationInput.getIdOld())
         .username(consultantCreationInput.getEncodedUsername())
@@ -483,6 +484,9 @@ public class CreateConsultantSaga {
         .notificationsEnabled(true)
         .notificationsSettings(serializeToJsonString(allActiveNotifications()))
         .build();
+
+    consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    return consultant;
   }
 
   private NotificationsSettingsDTO allActiveNotifications() {
