@@ -192,9 +192,7 @@ public class AgencyInviteLinkService {
       Integer consultingTypeId = pickConsultingTypeId(link);
       Long agencyId = resolveAgencyIdForRegistration(link, consultingTypeId);
 
-      link.setStatus(InviteLinkStatus.USED.name());
-      link.setUsedAt(LocalDateTime.now());
-      repository.save(link);
+      // Link is reusable until expiry date — stay ACTIVE, do not mark USED.
 
       return new RedeemContext(
           null, link.getTenantId(), agencyId, consultingTypeId, link.getTopicId());
