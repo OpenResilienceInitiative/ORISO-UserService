@@ -14,18 +14,23 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
+import java.util.AbstractMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TenantAdminUserService {
 
   private final @NonNull RetrieveAdminService retrieveAdminService;
@@ -93,17 +98,35 @@ public class TenantAdminUserService {
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
-    var tenantIdsToNameMap =
-        fullAdmins.stream()
-            .filter(consultant -> consultant.getTenantId() != null)
-            .collect(
-                Collectors.toMap(
-                    Admin::getTenantId,
-                    admin -> tenantService.getRestrictedTenantData(admin.getTenantId()).getName(),
-                    (existing, replacement) -> existing));
+    var tenantIdsToNameMap = tenantIdsToNameMap(fullAdmins);
 
     return userServiceMapper.mapOfAdmin(
         adminsPage, fullAdmins, Lists.newArrayList(), Lists.newArrayList(), tenantIdsToNameMap);
+  }
+
+  private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
+    return fullAdmins.stream()
+        .filter(admin -> admin.getTenantId() != null)
+        .map(admin -> new AbstractMap.SimpleEntry<>(admin.getTenantId(), tenantName(admin)))
+        .filter(entry -> entry.getValue() != null)
+        .collect(
+            Collectors.toMap(
+                Map.Entry::getKey, Map.Entry::getValue, (existing, replacement) -> existing));
+  }
+
+  private String tenantName(Admin admin) {
+    try {
+      return tenantService.getRestrictedTenantData(admin.getTenantId()).getName();
+    } catch (HttpClientErrorException exception) {
+      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
+        log.warn(
+            "Tenant data not found for tenant admin {} and tenantId {}",
+            admin.getId(),
+            admin.getTenantId());
+        return null;
+      }
+      throw exception;
+    }
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Long tenantId) {
