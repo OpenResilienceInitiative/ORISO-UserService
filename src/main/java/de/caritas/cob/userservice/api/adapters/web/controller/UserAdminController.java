@@ -238,7 +238,6 @@ public class UserAdminController implements UseradminApi {
     return ResponseEntity.ok(performUpdate(consultantId, updateConsultantDTO));
   }
 
-
   private ConsultantAdminResponseDTO performUpdate(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     if (updateConsultantDTO.getEmail() != null) {
