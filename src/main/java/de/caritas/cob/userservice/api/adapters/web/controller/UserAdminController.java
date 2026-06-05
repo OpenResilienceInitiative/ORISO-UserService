@@ -50,6 +50,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -216,10 +217,21 @@ public class UserAdminController implements UseradminApi {
    * an optional {@code topicIds} list that fully replaces the consultant's current topics (add new
    * ids, drop removed ids).
    *
+   * <p>Mapped to both {@code /useradmin/consultants/{consultantId}} (direct) and {@code
+   * /service/useradmin/consultants/{consultantId}} (via API gateway) so Postman and internal
+   * service calls work without relying on the gateway to strip the {@code /service} prefix.
+   *
    * @param consultantId consultant id (required)
    * @param updateConsultantDTO update payload (required)
    * @return {@link ConsultantAdminResponseDTO}
    */
+  @PutMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}",
+        "/service/useradmin/consultants/{consultantId}"
+      },
+      produces = "application/hal+json",
+      consumes = "application/json")
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
       @PathVariable String consultantId, @Valid UpdateAdminConsultantDTO updateConsultantDTO) {
