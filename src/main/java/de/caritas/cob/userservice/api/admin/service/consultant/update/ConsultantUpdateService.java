@@ -30,6 +30,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class to provide update functionality for consultants. */
 @Slf4j
@@ -53,6 +54,7 @@ public class ConsultantUpdateService {
    * @param updateConsultantDTO the update input data
    * @return the updated persisted {@link Consultant}
    */
+  @Transactional
   public Consultant updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     this.userAccountInputValidator.validateAbsence(
