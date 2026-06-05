@@ -219,9 +219,34 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
       @PathVariable String consultantId, @Valid UpdateAdminConsultantDTO updateConsultantDTO) {
-    updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
-    var consultant = consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
+    return doUpdateConsultant(consultantId, updateConsultantDTO);
+  }
 
+  /**
+   * POST alias of {@link #updateConsultant} for easier testing by clients that cannot send PUT.
+   * Returns the full updated consultant (including topics).
+   *
+   * @param consultantId consultant id (required)
+   * @param updateConsultantDTO update payload (required)
+   * @return {@link ConsultantAdminResponseDTO}
+   */
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/update",
+        "/service/useradmin/consultants/{consultantId}/update"
+      })
+  public ResponseEntity<ConsultantAdminResponseDTO> updateConsultantViaPost(
+      @PathVariable String consultantId,
+      @Valid @RequestBody UpdateAdminConsultantDTO updateConsultantDTO) {
+    return doUpdateConsultant(consultantId, updateConsultantDTO);
+  }
+
+  private ResponseEntity<ConsultantAdminResponseDTO> doUpdateConsultant(
+      String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    if (updateConsultantDTO.getEmail() != null) {
+      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
+    }
+    var consultant = consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
     return ResponseEntity.ok(consultant);
   }
 
