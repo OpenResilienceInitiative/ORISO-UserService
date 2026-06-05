@@ -26,7 +26,22 @@ public class AuthenticatedUser {
 
   @NonNull private String accessToken;
 
+  private Long tenantId;
+
   private Set<String> grantedAuthorities;
+
+  public AuthenticatedUser(
+      String userId,
+      String username,
+      Set<String> roles,
+      String accessToken,
+      Set<String> grantedAuthorities) {
+    this.userId = userId;
+    this.username = username;
+    this.roles = roles;
+    this.accessToken = accessToken;
+    this.grantedAuthorities = grantedAuthorities;
+  }
 
   @JsonIgnore
   public boolean isRestrictedAgencyAdmin() {
@@ -61,6 +76,11 @@ public class AuthenticatedUser {
   @JsonIgnore
   public boolean isTenantSuperAdmin() {
     return nonNull(roles) && roles.contains(UserRole.TENANT_ADMIN.getValue());
+  }
+
+  @JsonIgnore
+  public boolean isPlatformAdmin() {
+    return Long.valueOf(0L).equals(tenantId) && isAgencySuperAdmin() && isTenantSuperAdmin();
   }
 
   @JsonIgnore

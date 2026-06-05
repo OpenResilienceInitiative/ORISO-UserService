@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import java.util.List;
@@ -34,6 +36,7 @@ public class TenantAdminUserService {
   private final @NonNull DeleteAdminService deleteAdminService;
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull TenantService tenantService;
+  private final @NonNull AuthenticatedUser authenticatedUser;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -56,8 +59,8 @@ public class TenantAdminUserService {
     if (inputTenantId == null) {
       throw new BadRequestException("Tenant id must be provided");
     }
-    if (inputTenantId.equals(0)) {
-      throw new BadRequestException("Tenant id cannot be equal to 0");
+    if (inputTenantId.equals(0) && !authenticatedUser.isPlatformAdmin()) {
+      throw new ForbiddenException("Only platform admins can create platform admin accounts");
     }
   }
 
