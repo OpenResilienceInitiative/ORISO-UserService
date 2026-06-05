@@ -47,8 +47,7 @@ class ConsultantAdminFilterTenantAwareServiceTest {
             new ConsultantFilter().agencyId(59L));
     specification.toPredicate(root, criteriaQuery, criteriaBuilder);
 
-    verify(root, never())
-        .get(ConsultantAdminFilterTenantAwareService.TENANT_ID_SEARCH_FIELD);
+    verify(root, never()).get(ConsultantAdminFilterTenantAwareService.TENANT_ID_SEARCH_FIELD);
   }
 
   @Test
