@@ -246,7 +246,6 @@ public class UserAdminController implements UseradminApi {
     return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
   }
 
-
   /**
    * Entry point to get a specific consultant.
    *
