@@ -281,9 +281,11 @@ public class Consultant implements TenantAware, NotificationsAware {
   }
 
   /**
-   * Replaces the full set of topics assigned to this consultant. Existing topics are cleared
-   * (orphan-removed) and the given topic ids are re-added. A {@code null} argument leaves the
-   * current set untouched (used by flows that do not manage topics).
+   * Replaces the full set of topics assigned to this consultant. Topics no longer present are
+   * removed (orphan-removed) and only genuinely new topic ids are added; ids that stay are left
+   * untouched so the same (consultant_id, topic_id) row is never deleted and re-inserted in one
+   * flush (which would violate the uk_consultant_topic unique key). A {@code null} argument leaves
+   * the current set untouched (used by flows that do not manage topics).
    */
   @JsonIgnore
   public void replaceTopics(Collection<Long> topicIds) {
@@ -293,11 +295,19 @@ public class Consultant implements TenantAware, NotificationsAware {
     if (isNull(this.consultantTopics)) {
       this.consultantTopics = new HashSet<>();
     }
-    this.consultantTopics.clear();
+    var target = topicIds.stream().filter(Objects::nonNull).distinct().collect(Collectors.toSet());
+
+    // Remove only the topics being dropped (orphanRemoval deletes them). Topics that remain in the
+    // target set are left untouched so we never DELETE+INSERT the same (consultant_id, topic_id)
+    // row in one flush, which would violate the uk_consultant_topic unique key (Hibernate orders
+    // INSERTs before orphan DELETEs).
+    this.consultantTopics.removeIf(ct -> !target.contains(ct.getTopicId()));
+
+    var existing =
+        this.consultantTopics.stream().map(ConsultantTopic::getTopicId).collect(Collectors.toSet());
     var now = LocalDateTime.now();
-    topicIds.stream()
-        .filter(Objects::nonNull)
-        .distinct()
+    target.stream()
+        .filter(topicId -> !existing.contains(topicId))
         .forEach(
             topicId ->
                 this.consultantTopics.add(
