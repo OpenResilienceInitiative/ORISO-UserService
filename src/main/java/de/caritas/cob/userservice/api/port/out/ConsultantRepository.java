@@ -8,10 +8,12 @@ import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.CrudRepository;
 
-public interface ConsultantRepository extends CrudRepository<Consultant, String> {
+public interface ConsultantRepository
+    extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
 
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
