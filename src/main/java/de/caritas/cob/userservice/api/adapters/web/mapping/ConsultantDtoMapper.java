@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLinks;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
@@ -18,9 +19,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -33,6 +39,8 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class ConsultantDtoMapper implements DtoMapperUtils {
   @Autowired private IdentityClient identityClient;
+  @Autowired private ConsultantTopicRepository consultantTopicRepository;
+  @Autowired private TopicService topicService;
 
   public UpdateAdminConsultantDTO updateAdminConsultantOf(
       UpdateConsultantDTO updateConsultantDTO, Consultant consultant) {
@@ -79,10 +87,21 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     var consultants = new ArrayList<ConsultantAdminResponseDTO>();
 
     var consultantMaps = (List<Map<String, Object>>) resultMap.get("consultants");
+    var consultantIds =
+        consultantMaps.stream()
+            .map(consultantMap -> (String) consultantMap.get("id"))
+            .collect(Collectors.toList());
+    var topicIdsByConsultantId = topicIdsByConsultantId(consultantIds);
+    var topicsById =
+        topicIdsByConsultantId.isEmpty() ? Collections.<Long, TopicDTO>emptyMap()
+            : topicService.getAllTopicsMap();
     consultantMaps.forEach(
         consultantMap -> {
           var response = new ConsultantAdminResponseDTO();
-          response.setEmbedded(consultantDtoOf(consultantMap));
+          var consultantDto = consultantDtoOf(consultantMap);
+          consultantDto.setTopics(
+              topicsOf(topicIdsByConsultantId.get(consultantDto.getId()), topicsById));
+          response.setEmbedded(consultantDto);
           response.setLinks(consultantLinksOf(consultantMap));
           consultants.add(response);
         });
@@ -101,6 +120,33 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     result.setLinks(pagination);
 
     return result;
+  }
+
+  private Map<String, List<Long>> topicIdsByConsultantId(Collection<String> consultantIds) {
+    if (consultantIds.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return consultantTopicRepository.findTopicIdsByConsultantIdIn(consultantIds).stream()
+        .collect(
+            Collectors.groupingBy(
+                row -> (String) row[0],
+                Collectors.mapping(row -> (Long) row[1], Collectors.toList())));
+  }
+
+  private List<ConsultantTopicDTO> topicsOf(
+      List<Long> topicIds, Map<Long, TopicDTO> topicsById) {
+    if (topicIds == null || topicIds.isEmpty()) {
+      return Collections.emptyList();
+    }
+    return topicIds.stream()
+        .map(
+            topicId -> {
+              var topic = topicsById.get(topicId);
+              return new ConsultantTopicDTO()
+                  .id(topicId)
+                  .name(topic != null ? topic.getName() : null);
+            })
+        .collect(Collectors.toList());
   }
 
   @SuppressWarnings("unchecked")
