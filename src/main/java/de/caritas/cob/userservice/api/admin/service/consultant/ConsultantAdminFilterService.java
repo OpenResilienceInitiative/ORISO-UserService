@@ -6,32 +6,31 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
-import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterQueryBuilder;
+import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterSpecification;
 import de.caritas.cob.userservice.api.model.Consultant;
-import javax.persistence.EntityManagerFactory;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.lucene.search.SortField;
-import org.hibernate.search.jpa.FullTextEntityManager;
-import org.hibernate.search.jpa.FullTextQuery;
-import org.hibernate.search.jpa.Search;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort.Direction;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
-/** Service class to provide filtered search for all {@link Consultant} entities. */
+/** Service class to provide filtered search for all consultant entities. */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ConsultantAdminFilterService {
 
-  private final @NonNull EntityManagerFactory entityManagerFactory;
+  private final @NonNull ConsultantRepository consultantRepository;
 
   /**
    * Searches for consultants by given {@link ConsultantFilter}, limits the result by perPage and
    * generates a {@link ConsultantSearchResultDTO} containing hal links.
    *
    * @param consultantFilter the filter object containing filter values
-   * @param page the current requested page
+   * @param page the current requested page (1 = first page)
    * @param perPage the amount of items in one page
    * @return the result list
    */
@@ -40,62 +39,34 @@ public class ConsultantAdminFilterService {
       final Integer perPage,
       final ConsultantFilter consultantFilter,
       final Sort sort) {
-    var fullTextEntityManager =
-        Search.getFullTextEntityManager(entityManagerFactory.createEntityManager());
-    triggerLuceneToBuildIndex(fullTextEntityManager);
-    var fullTextQuery = buildFilteredQuery(consultantFilter, fullTextEntityManager);
-    fullTextQuery.setMaxResults(Math.max(perPage, 1));
-    fullTextQuery.setFirstResult(Math.max((page - 1) * perPage, 0));
-    fullTextQuery.setSort(buildSort(sort));
+    var pageRequest = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1), buildSort(sort));
+    var resultPage = consultantRepository.findAll(buildSpecification(consultantFilter), pageRequest);
 
-    var searchResultDTO =
-        ConsultantSearchResultBuilder.getInstance(fullTextQuery)
-            .withFilter(consultantFilter)
-            .withSort(sort)
-            .withPage(page)
-            .withPerPage(perPage)
-            .buildSearchResult();
-
-    fullTextEntityManager.close();
-    return searchResultDTO;
+    return ConsultantSearchResultBuilder.getInstance(
+            resultPage.getContent(), resultPage.getTotalElements())
+        .withFilter(consultantFilter)
+        .withSort(sort)
+        .withPage(page)
+        .withPerPage(perPage)
+        .buildSearchResult();
   }
 
-  private static void triggerLuceneToBuildIndex(FullTextEntityManager fullTextEntityManager) {
-    try {
-      fullTextEntityManager.createIndexer(Consultant.class).startAndWait();
-    } catch (InterruptedException e) {
-      log.info("Lucene index building was interrupted.");
-      Thread.currentThread().interrupt();
-    }
+  /**
+   * Builds the {@link Specification} used to filter consultants. Subclasses may override to add
+   * further restrictions (e.g. tenant scoping).
+   *
+   * @param consultantFilter the requested filter values
+   * @return the consultant {@link Specification}
+   */
+  protected Specification<Consultant> buildSpecification(ConsultantFilter consultantFilter) {
+    return ConsultantFilterSpecification.of(consultantFilter);
   }
 
-  protected FullTextQuery buildFilteredQuery(
-      ConsultantFilter consultantFilter, FullTextEntityManager fullTextEntityManager) {
-
-    var queryBuilder =
-        fullTextEntityManager
-            .getSearchFactory()
-            .buildQueryBuilder()
-            .forEntity(Consultant.class)
-            .get();
-
-    var query =
-        ConsultantFilterQueryBuilder.getInstance(queryBuilder)
-            .onConsultantFilter(consultantFilter)
-            .buildQuery();
-
-    return fullTextEntityManager.createFullTextQuery(query, Consultant.class);
-  }
-
-  private org.apache.lucene.search.Sort buildSort(Sort sort) {
-    var luceneSort = new org.apache.lucene.search.Sort();
+  private org.springframework.data.domain.Sort buildSort(Sort sort) {
     if (nonNull(sort) && nonNull(sort.getField())) {
-      var reverse = OrderEnum.DESC.equals(sort.getOrder());
-      luceneSort.setSort(
-          SortField.FIELD_SCORE,
-          new SortField(sort.getField().getValue(), SortField.Type.STRING, reverse));
+      var direction = OrderEnum.DESC.equals(sort.getOrder()) ? Direction.DESC : Direction.ASC;
+      return org.springframework.data.domain.Sort.by(direction, sort.getField().getValue());
     }
-
-    return luceneSort;
+    return org.springframework.data.domain.Sort.unsorted();
   }
 }
