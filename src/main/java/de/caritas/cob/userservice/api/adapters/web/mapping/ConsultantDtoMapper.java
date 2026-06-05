@@ -93,7 +93,8 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
             .collect(Collectors.toList());
     var topicIdsByConsultantId = topicIdsByConsultantId(consultantIds);
     var topicsById =
-        topicIdsByConsultantId.isEmpty() ? Collections.<Long, TopicDTO>emptyMap()
+        topicIdsByConsultantId.isEmpty()
+            ? Collections.<Long, TopicDTO>emptyMap()
             : topicService.getAllTopicsMap();
     consultantMaps.forEach(
         consultantMap -> {
@@ -133,8 +134,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
                 Collectors.mapping(row -> (Long) row[1], Collectors.toList())));
   }
 
-  private List<ConsultantTopicDTO> topicsOf(
-      List<Long> topicIds, Map<Long, TopicDTO> topicsById) {
+  private List<ConsultantTopicDTO> topicsOf(List<Long> topicIds, Map<Long, TopicDTO> topicsById) {
     if (topicIds == null || topicIds.isEmpty()) {
       return Collections.emptyList();
     }
