@@ -36,7 +36,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
     registry
         .addMapping(path)
         .allowCredentials(true)
-        .allowedMethods("OPTIONS", "POST")
+        .allowedMethods("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE")
         .allowedOrigins(allowedOrigins)
         .allowedHeaders("*");
   }
