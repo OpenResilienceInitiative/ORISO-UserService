@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
@@ -40,9 +39,7 @@ import de.caritas.cob.userservice.generated.api.adapters.web.controller.Useradmi
 import io.swagger.annotations.Api;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 import lombok.NonNull;
@@ -53,6 +50,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -72,7 +70,6 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull ObjectMapper objectMapper;
 
   /**
    * Creates the root hal based navigation entity.
@@ -216,45 +213,29 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
-   * Entry point to update a consultant.
+   * Entry point to update a consultant. Accepts the full {@link UpdateAdminConsultantDTO} including
+   * an optional {@code topicIds} list that fully replaces the consultant's current topics (add new
+   * ids, drop removed ids).
+   *
+   * <p>Mapped to both {@code /useradmin/consultants/{consultantId}} (direct) and {@code
+   * /service/useradmin/consultants/{consultantId}} (via API gateway) so Postman and internal
+   * service calls work without relying on the gateway to strip the {@code /service} prefix.
    *
    * @param consultantId consultant id (required)
-   * @param updateConsultantDTO (required)
+   * @param updateConsultantDTO update payload (required)
    * @return {@link ConsultantAdminResponseDTO}
    */
+  @PutMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}",
+        "/service/useradmin/consultants/{consultantId}"
+      },
+      produces = "application/hal+json",
+      consumes = "application/json")
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
       @PathVariable String consultantId, @Valid UpdateAdminConsultantDTO updateConsultantDTO) {
     return ResponseEntity.ok(performUpdate(consultantId, updateConsultantDTO));
-  }
-
-  /**
-   * POST update for easier testing. The consultant id is passed in the request body (field {@code
-   * id} or {@code consultantId}), together with the update fields. Returns the full updated
-   * consultant (including topics); on failure the response body contains the actual error class and
-   * message instead of an empty body.
-   *
-   * @param body update payload including the consultant id
-   * @return the updated {@link ConsultantAdminResponseDTO}, or an error object on failure
-   */
-  @PostMapping(value = {"/useradmin/consultants/update", "/service/useradmin/consultants/update"})
-  public ResponseEntity<Object> updateConsultantViaPost(@RequestBody Map<String, Object> body) {
-    try {
-      var idValue = body.containsKey("id") ? body.get("id") : body.get("consultantId");
-      if (idValue == null) {
-        return ResponseEntity.badRequest()
-            .body(errorBody("BadRequest", "Missing 'id' (or 'consultantId') in request body"));
-      }
-      var payload = new HashMap<>(body);
-      payload.remove("id");
-      payload.remove("consultantId");
-      var updateConsultantDTO = objectMapper.convertValue(payload, UpdateAdminConsultantDTO.class);
-      return ResponseEntity.ok(performUpdate(idValue.toString(), updateConsultantDTO));
-    } catch (Exception e) {
-      log.error("Consultant update via POST failed", e);
-      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-          .body(errorBody(e.getClass().getSimpleName(), e.getMessage()));
-    }
   }
 
   private ConsultantAdminResponseDTO performUpdate(
@@ -263,13 +244,6 @@ public class UserAdminController implements UseradminApi {
       updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
     }
     return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
-  }
-
-  private Map<String, Object> errorBody(String error, String message) {
-    var map = new HashMap<String, Object>();
-    map.put("error", error);
-    map.put("message", message);
-    return map;
   }
 
   /**
