@@ -105,6 +105,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/magic-link/consume",
             "/service/users/magic-link/consume")
         .permitAll()
+        .antMatchers(HttpMethod.OPTIONS, "/**")
+        .permitAll()
         .regexMatchers(HttpMethod.POST, ".*/users/magic-link/(request|consume)$")
         .permitAll()
         .antMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
