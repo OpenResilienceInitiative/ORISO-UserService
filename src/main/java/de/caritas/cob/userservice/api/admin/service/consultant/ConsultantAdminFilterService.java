@@ -40,7 +40,8 @@ public class ConsultantAdminFilterService {
       final ConsultantFilter consultantFilter,
       final Sort sort) {
     var pageRequest = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1), buildSort(sort));
-    var resultPage = consultantRepository.findAll(buildSpecification(consultantFilter), pageRequest);
+    var resultPage =
+        consultantRepository.findAll(buildSpecification(consultantFilter), pageRequest);
 
     return ConsultantSearchResultBuilder.getInstance(
             resultPage.getContent(), resultPage.getTotalElements())

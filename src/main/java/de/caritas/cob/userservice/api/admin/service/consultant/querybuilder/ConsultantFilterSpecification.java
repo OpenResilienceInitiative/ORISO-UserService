@@ -28,8 +28,7 @@ public class ConsultantFilterSpecification {
               cb.like(cb.lower(root.<String>get("lastName")), contains(filter.getLastname())));
         }
         if (isNotBlank(filter.getEmail())) {
-          predicates.add(
-              cb.like(cb.lower(root.<String>get("email")), contains(filter.getEmail())));
+          predicates.add(cb.like(cb.lower(root.<String>get("email")), contains(filter.getEmail())));
         }
         if (nonNull(filter.getAbsent())) {
           predicates.add(cb.equal(root.get("absent"), filter.getAbsent()));

@@ -41,7 +41,8 @@ public class ConsultantSearchResultBuilder
   }
 
   /**
-   * Generates the {@link ConsultantSearchResultDTO} containing all results and navigation hal links.
+   * Generates the {@link ConsultantSearchResultDTO} containing all results and navigation hal
+   * links.
    *
    * @return the generated {@link ConsultantSearchResultDTO}
    */
