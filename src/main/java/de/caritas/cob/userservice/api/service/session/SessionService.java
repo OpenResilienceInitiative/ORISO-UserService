@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
@@ -39,6 +40,8 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Exte
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -63,6 +66,7 @@ import org.springframework.web.client.HttpClientErrorException;
 public class SessionService {
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantService consultantService;
@@ -334,19 +338,45 @@ public class SessionService {
    */
   public List<ConsultantSessionResponseDTO> getRegisteredEnquiriesForConsultant(
       Consultant consultant) {
+    List<Session> mergedSessions = new ArrayList<>();
+
     Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
     if (isNotEmpty(consultantAgencies)) {
-      return retrieveRegisteredEnquiriesForConsultantAgencies(consultantAgencies);
+      List<Long> consultantAgencyIds =
+          consultantAgencies.stream()
+              .map(ConsultantAgency::getAgencyId)
+              .collect(Collectors.toList());
+      mergedSessions.addAll(retrieveRegisteredSessions(consultantAgencyIds));
     }
-    return emptyList();
-  }
 
-  private List<ConsultantSessionResponseDTO> retrieveRegisteredEnquiriesForConsultantAgencies(
-      Set<ConsultantAgency> consultantAgencies) {
-    List<Long> consultantAgencyIds =
-        consultantAgencies.stream().map(ConsultantAgency::getAgencyId).collect(Collectors.toList());
-    final List<Session> sessions = retrieveRegisteredSessions(consultantAgencyIds);
-    return mapSessionsToConsultantSessionDto(sessions);
+    List<Long> consultantTopicIds =
+        consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (isNotEmpty(consultantTopicIds)) {
+      mergedSessions.addAll(retrieveRegisteredSessionsByMainTopicIds(consultantTopicIds));
+    }
+
+    if (mergedSessions.isEmpty()) {
+      return emptyList();
+    }
+
+    List<Session> dedupedSessions =
+        mergedSessions.stream()
+            .filter(Objects::nonNull)
+            .collect(
+                Collectors.collectingAndThen(
+                    Collectors.toMap(
+                        Session::getId,
+                        session -> session,
+                        (left, right) -> left,
+                        LinkedHashMap::new),
+                    map -> new ArrayList<>(map.values())));
+
+    dedupedSessions.sort(
+        Comparator.comparing(
+                Session::getCreateDate, Comparator.nullsLast(Comparator.naturalOrder()))
+            .reversed());
+
+    return mapSessionsToConsultantSessionDto(dedupedSessions);
   }
 
   private List<Session> retrieveRegisteredSessions(List<Long> consultantAgencyIds) {
@@ -360,6 +390,15 @@ public class SessionService {
         .collect(Collectors.toList());
   }
 
+  private List<Session> retrieveRegisteredSessionsByMainTopicIds(List<Long> topicIds) {
+    return this.sessionRepository
+        .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+            topicIds, SessionStatus.NEW, RegistrationType.REGISTERED)
+        .stream()
+        .filter(this::isVisibleRegisteredEnquiryForConsultant)
+        .collect(Collectors.toList());
+  }
+
   private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
     if (!isAnonymousStyleRegistration(session)) {
       return true;
@@ -367,7 +406,8 @@ public class SessionService {
     return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
   }
 
-  private boolean isAnonymousStyleRegistration(Session session) {
+  /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
+  public boolean isAnonymousStyleRegistration(Session session) {
     if (isNull(session)) {
       return false;
     }
