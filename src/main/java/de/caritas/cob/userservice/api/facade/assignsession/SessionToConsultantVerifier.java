@@ -45,7 +45,7 @@ public class SessionToConsultantVerifier {
     // MATRIX MIGRATION: Commented out RocketChat ID verification
     // verifyUserAndConsultantHaveRocketChatId(consultantSessionDTO);
     if (REGISTERED.equals(consultantSessionDTO.getSession().getRegistrationType())) {
-      verifyIfConsultantIsAssignedToAgency(consultantSessionDTO);
+      verifyIfConsultantIsAssignedToAgencyOrTopic(consultantSessionDTO);
     }
     if (ANONYMOUS.equals(consultantSessionDTO.getSession().getRegistrationType())) {
       verifyIfConsultantHasConsultingTypeOfSession(consultantSessionDTO);
@@ -107,18 +107,30 @@ public class SessionToConsultantVerifier {
     }
   }
 
-  private void verifyIfConsultantIsAssignedToAgency(ConsultantSessionDTO consultantSessionDTO) {
-    if (this.conditionProvider.isSessionsAgencyNotAvailableInConsultantAgencies(
-        consultantSessionDTO.getConsultant(), consultantSessionDTO.getSession())) {
-      var message =
-          String.format(
-              "Agency %s of session %s is not assigned to consultant %s.",
-              consultantSessionDTO.getSession().getAgencyId().toString(),
-              consultantSessionDTO.getSession().getId().toString(),
-              consultantSessionDTO.getConsultant().getId());
+  private void verifyIfConsultantIsAssignedToAgencyOrTopic(
+      ConsultantSessionDTO consultantSessionDTO) {
+    var consultant = consultantSessionDTO.getConsultant();
+    var session = consultantSessionDTO.getSession();
 
-      throw new ForbiddenException(message, LogService::logAssignSessionFacadeWarning);
+    if (!this.conditionProvider.isSessionsAgencyNotAvailableInConsultantAgencies(
+        consultant, session)) {
+      return;
     }
+
+    // Topic-based external-inbound enquiries are routed by topic, not agency. An eligible
+    // consultant may have the session's topic without sharing its (deprecated/fallback) agency.
+    if (this.conditionProvider.isConsultantAssignedToSessionTopic(consultant, session)) {
+      return;
+    }
+
+    var message =
+        String.format(
+            "Neither agency %s nor the main topic of session %s is assigned to consultant %s.",
+            String.valueOf(session.getAgencyId()),
+            String.valueOf(session.getId()),
+            consultant.getId());
+
+    throw new ForbiddenException(message, LogService::logAssignSessionFacadeWarning);
   }
 
   private void verifyIfConsultantHasConsultingTypeOfSession(
