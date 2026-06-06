@@ -55,7 +55,30 @@ public class CreateAnonymousEnquiryFacade {
     }
 
     var userDto = buildUserDto(createAnonymousEnquiryDTO);
-    AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
+    return createAnonymousEnquiry(
+        userDto, credentials -> anonymousUserCreatorService.createAnonymousUser(userDto));
+  }
+
+  /**
+   * Creates an anonymous session for a topic-based invite link redeem, including agency binding on
+   * the session.
+   */
+  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiryForInviteLink(
+      int consultingTypeId, Long mainTopicId, Long agencyId, String consultantId) {
+    var createAnonymousEnquiryDTO =
+        new CreateAnonymousEnquiryDTO()
+            .consultingType(consultingTypeId)
+            .mainTopicId(mainTopicId)
+            .consultantId(consultantId);
+    var userDto = buildUserDto(createAnonymousEnquiryDTO);
+    userDto.setAgencyId(agencyId);
+    return createAnonymousEnquiry(
+        userDto, credentials -> anonymousUserCreatorService.createAnonymousUser(userDto));
+  }
+
+  private CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
+      UserDTO userDto, java.util.function.Function<UserDTO, AnonymousUserCredentials> userCreator) {
+    AnonymousUserCredentials credentials = userCreator.apply(userDto);
     var session =
         anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
 

@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -35,6 +36,7 @@ public class AnonymousConversationCreatorService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
   /**
    * Creates a new anonymous conversation session with the corresponding Rocket.Chat room.
@@ -54,7 +56,7 @@ public class AnonymousConversationCreatorService {
       session =
           sessionService.initializeSession(
               user, userDTO, false, RegistrationType.ANONYMOUS, SessionStatus.NEW);
-      consultantAgencies = obtainConsultants(session.getConsultingTypeId());
+      consultantAgencies = obtainConsultants(session);
       String rcGroupId =
           createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
               session, consultantAgencies, credentials.getRocketChatCredentials());
@@ -68,7 +70,7 @@ public class AnonymousConversationCreatorService {
               "Could not create session for user %s. %s", user.getUsername(), ex.getMessage()));
     }
 
-    sendNewAnonymousEnquiryLiveEvent(consultantAgencies, session);
+    sendNewAnonymousEnquiryLiveEvent(session, consultantAgencies);
 
     return session;
   }
@@ -84,7 +86,20 @@ public class AnonymousConversationCreatorService {
                         credentials.getUserId())));
   }
 
-  private List<ConsultantAgency> obtainConsultants(int consultingTypeId) {
+  private List<ConsultantAgency> obtainConsultants(Session session) {
+    if (session.getMainTopicId() != null) {
+      List<String> topicConsultantIds =
+          topicConsultantRoutingService.findEligibleConsultantIds(
+              session.getMainTopicId(), session.getConsultingTypeId());
+      if (!topicConsultantIds.isEmpty()) {
+        return consultantAgencyService.getConsultantAgenciesByConsultantIds(topicConsultantIds);
+      }
+    }
+
+    return obtainConsultantsByConsultingType(session.getConsultingTypeId());
+  }
+
+  private List<ConsultantAgency> obtainConsultantsByConsultingType(int consultingTypeId) {
     List<Long> agencyList =
         agencyService.getAgenciesByConsultingType(consultingTypeId).stream()
             .map(AgencyDTO::getId)
@@ -103,11 +118,23 @@ public class AnonymousConversationCreatorService {
   }
 
   private void sendNewAnonymousEnquiryLiveEvent(
-      List<ConsultantAgency> consultantAgencies, Session session) {
+      Session session, List<ConsultantAgency> consultantAgencies) {
+    List<String> consultantIds =
+        session.getMainTopicId() != null
+            ? topicConsultantRoutingService.findEligibleConsultantIds(
+                session.getMainTopicId(), session.getConsultingTypeId())
+            : consultantAgencies.stream()
+                .map(agency -> agency.getConsultant().getId())
+                .collect(Collectors.toList());
+
+    if (consultantIds.isEmpty() && !consultantAgencies.isEmpty()) {
+      consultantIds =
+          consultantAgencies.stream()
+              .map(agency -> agency.getConsultant().getId())
+              .collect(Collectors.toList());
+    }
+
     liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
-        consultantAgencies.stream()
-            .map(agency -> agency.getConsultant().getId())
-            .collect(Collectors.toList()),
-        session.getId());
+        consultantIds, session.getId());
   }
 }

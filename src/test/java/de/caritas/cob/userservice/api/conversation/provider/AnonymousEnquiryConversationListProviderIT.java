@@ -67,6 +67,7 @@ class AnonymousEnquiryConversationListProviderIT {
   void setup() {
     Consultant consultant = mock(Consultant.class);
     ConsultantAgency consultantAgency = mock(ConsultantAgency.class);
+    when(consultant.getId()).thenReturn("consultant-id");
     when(consultant.getConsultantAgencies()).thenReturn(asSet(consultantAgency));
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
     AgencyDTO agencyDTO = new AgencyDTO().consultingType(CONSULTING_TYPE_ID_OFFENDER);
@@ -147,6 +148,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
           session.setStatus(SessionStatus.NEW);
+          session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);

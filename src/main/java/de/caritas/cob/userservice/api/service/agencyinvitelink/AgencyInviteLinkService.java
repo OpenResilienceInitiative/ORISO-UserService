@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -50,6 +51,7 @@ public class AgencyInviteLinkService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultingTypeService consultingTypeService;
   private final @NonNull AgencyService agencyService;
+  private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -192,10 +194,22 @@ public class AgencyInviteLinkService {
       Integer consultingTypeId = pickConsultingTypeId(link);
       Long agencyId = resolveAgencyIdForRegistration(link, consultingTypeId);
 
+      CreateAnonymousEnquiryResponseDTO sessionResponse = null;
+      if (shouldCreateSessionOnRedeem(link)) {
+        sessionResponse =
+            createAnonymousEnquiryFacade.createAnonymousEnquiryForInviteLink(
+                consultingTypeId,
+                link.getTopicId(),
+                agencyId,
+                InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())
+                    ? link.getConsultantId()
+                    : null);
+      }
+
       // Link is reusable until expiry date — stay ACTIVE, do not mark USED.
 
       return new RedeemContext(
-          null, link.getTenantId(), agencyId, consultingTypeId, link.getTopicId());
+          sessionResponse, link.getTenantId(), agencyId, consultingTypeId, link.getTopicId());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -215,6 +229,11 @@ public class AgencyInviteLinkService {
           "No agency available for this invite link — set agencyId on the link or configure a topic fallback agency");
     }
     return agencies.get(0).getId();
+  }
+
+  private boolean shouldCreateSessionOnRedeem(AgencyInviteLink link) {
+    return link.getTopicId() != null
+        && InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType());
   }
 
   // ---------------------------------------------------------------------------------------------
