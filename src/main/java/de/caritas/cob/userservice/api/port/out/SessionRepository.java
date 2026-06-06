@@ -208,6 +208,37 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       @Param("sessionStatus") SessionStatus sessionStatus,
       Pageable pageable);
 
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.consultingTypeId IN :consultingTypeIds "
+          + "AND s.registrationType = :registrationType "
+          + "AND s.status = :sessionStatus "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.mainTopicId IS NULL "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
+      @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("registrationType") RegistrationType registrationType,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      Pageable pageable);
+
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.consultingTypeId IN :consultingTypeIds "
+          + "AND s.registrationType = :registrationType "
+          + "AND s.status = :sessionStatus "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
+      @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("registrationType") RegistrationType registrationType,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      Pageable pageable);
+
   /**
    * Count enquiries for the given agency that are still waiting for a consultant (status NEW) and
    * were created before the reference date — i.e. the number of people queued ahead of the asker in

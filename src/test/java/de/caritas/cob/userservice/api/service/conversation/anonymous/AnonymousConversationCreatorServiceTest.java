@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -50,6 +51,7 @@ class AnonymousConversationCreatorServiceTest {
   @Mock AgencyService agencyService;
   @Mock ConsultantAgencyService consultantAgencyService;
   @Mock LiveEventNotificationService liveEventNotificationService;
+  @Mock TopicConsultantRoutingService topicConsultantRoutingService;
 
   EasyRandom easyRandom = new EasyRandom();
 
