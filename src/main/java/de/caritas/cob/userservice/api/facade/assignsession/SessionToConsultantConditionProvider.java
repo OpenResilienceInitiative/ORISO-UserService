@@ -104,8 +104,8 @@ public class SessionToConsultantConditionProvider {
 
   /**
    * Checks if the {@link Consultant} is assigned to the {@link Session}'s main topic. Topic-based
-   * external-inbound enquiries are routed to consultants by topic rather than agency, so an eligible
-   * consultant may not share the session's (often deprecated/fallback) agency.
+   * external-inbound enquiries are routed to consultants by topic rather than agency, so an
+   * eligible consultant may not share the session's (often deprecated/fallback) agency.
    *
    * @return true if the session has a main topic that is assigned to the consultant
    */
