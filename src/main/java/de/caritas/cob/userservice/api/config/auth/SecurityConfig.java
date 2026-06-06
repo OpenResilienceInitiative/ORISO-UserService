@@ -172,9 +172,12 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/mobiletoken",
             "/users/sessions/{sessionId:[0-9]+}/data")
         .hasAuthority(USER_DEFAULT)
-        .regexMatchers(HttpMethod.GET, "/users/sessions/room\\?rcGroupIds=.+")
+        .regexMatchers(HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers(HttpMethod.GET, "/users/sessions/room/{sessionId:[0-9]+}")
+        .antMatchers(
+            HttpMethod.GET,
+            "/users/sessions/room/{sessionId:[0-9]+}",
+            "/service/users/sessions/room/{sessionId:[0-9]+}")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
