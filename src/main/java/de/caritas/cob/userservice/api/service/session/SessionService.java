@@ -596,8 +596,8 @@ public class SessionService {
     checkForUserOrConsultantRole(roles);
     var sessions =
         StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
+            .filter(session -> isConsultantPermittedToSession(consultant, session))
             .collect(Collectors.toList());
-    sessions.forEach(session -> checkConsultantAssignment(consultant, session));
     return mapSessionsToConsultantSessionDto(sessions);
   }
 
