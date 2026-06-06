@@ -42,7 +42,17 @@ jobs:
 
       - name: Resolve immutable image digest
         run: |
-          DIGEST="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          DIGEST=""
+          for attempt in {1..30}; do
+            DIGEST="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')" || true
+
+            if [ -n "$DIGEST" ] && [ "$DIGEST" != "null" ]; then
+              break
+            fi
+
+            echo "Image ${IMAGE_REF} is not available yet. Waiting 20s before retry ${attempt}/30..."
+            sleep 20
+          done
 
           if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
             echo "Could not resolve digest for $IMAGE_REF"
