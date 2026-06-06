@@ -62,6 +62,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
 
   /**
+   * Find registered enquiries scoped by main topic (external inbound / topic-based invite links).
+   */
+  List<Session>
+      findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+          List<Long> topicIds, SessionStatus sessionStatus, RegistrationType registrationType);
+
+  /**
    * Find a {@link Session} by agency ids with status and team session where consultant is not the
    * given consultant ordered by update date descending.
    *
