@@ -435,8 +435,9 @@ public class UserController implements UsersApi {
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
+  // Mapped to both direct path and /service/ prefix (API gateway) so both routes resolve
   @GetMapping(
-      value = "/users/sessions/room/{sessionId}",
+      value = {"/users/sessions/room/{sessionId}", "/service/users/sessions/room/{sessionId}"},
       produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
       @PathVariable Long sessionId,
