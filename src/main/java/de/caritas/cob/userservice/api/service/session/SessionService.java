@@ -688,6 +688,7 @@ public class SessionService {
     if (session.isAdvisedBy(consultant)
         || isSupervisor(consultant, session)
         || isAllowedToAdvise(consultant, session)
+        || isAllowedToAdviseByTopic(consultant, session)
         || isAnonymousEnquiryAndAllowedToAdviseConsultingType(consultant, session)) {
       return;
     }
@@ -707,6 +708,18 @@ public class SessionService {
     return isTeamSessionOrNew(session)
         && session.getAgencyId() != null
         && consultant.isInAgency(session.getAgencyId());
+  }
+
+  /**
+   * Topic-based external-inbound enquiries are routed by topic rather than agency, so a consultant
+   * with the session's main topic may advise it even without sharing the (fallback) agency.
+   */
+  private boolean isAllowedToAdviseByTopic(Consultant consultant, Session session) {
+    return isTeamSessionOrNew(session)
+        && nonNull(session.getMainTopicId())
+        && consultantTopicRepository
+            .findTopicIdsByConsultantId(consultant.getId())
+            .contains(session.getMainTopicId());
   }
 
   private boolean isAnonymousEnquiryAndAllowedToAdviseConsultingType(
@@ -796,7 +809,8 @@ public class SessionService {
   private void checkPermissionForConsultantSession(Session session, Consultant consultant) {
     if (!session.isAdvisedBy(consultant)
         && !isSupervisor(consultant, session)
-        && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))) {
+        && !(session.isTeamSession() && consultant.isInAgency(session.getAgencyId()))
+        && !isAllowedToAdviseByTopic(consultant, session)) {
       throw new ForbiddenException(
           String.format(
               "No permission for session %s by consultant %s",
