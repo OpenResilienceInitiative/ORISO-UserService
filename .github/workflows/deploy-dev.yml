@@ -1,0 +1,128 @@
+name: Deploy Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Published GHCR image tag to deploy, for example sha-abc1234 or dev. Leave empty to use this workflow ref SHA."
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  ORG: openresilienceinitiative
+  IMAGE: oriso-userservice
+  NAMESPACE: caritas
+  DEPLOYMENT: oriso-userservice
+  CONTAINER: userservice
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Deploy digest image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Select image tag
+        env:
+          REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [ -n "$REQUESTED_IMAGE_TAG" ]; then
+            IMAGE_TAG="$REQUESTED_IMAGE_TAG"
+          else
+            IMAGE_TAG="sha-${GITHUB_SHA::7}"
+          fi
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "IMAGE_REF=${REGISTRY}/${ORG}/${IMAGE}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve immutable image digest
+        run: |
+          DIGEST="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+
+          if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
+            echo "Could not resolve digest for $IMAGE_REF"
+            exit 1
+          fi
+
+          IMMUTABLE_IMAGE="${REGISTRY}/${ORG}/${IMAGE}@${DIGEST}"
+
+          echo "DIGEST=${DIGEST}" >> "$GITHUB_ENV"
+          echo "IMMUTABLE_IMAGE=${IMMUTABLE_IMAGE}" >> "$GITHUB_ENV"
+          echo "Resolved ${IMAGE_REF} to ${IMMUTABLE_IMAGE}"
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.DEV_KUBECONFIG_B64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy immutable image digest
+        run: |
+          kubectl set image "deployment/${DEPLOYMENT}" \
+            "${CONTAINER}=${IMMUTABLE_IMAGE}" \
+            -n "${NAMESPACE}"
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status "deployment/${DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            --timeout=5m
+
+      - name: Verify deployed image
+        run: |
+          CURRENT_IMAGE="$(kubectl get deployment "${DEPLOYMENT}" -n "${NAMESPACE}" \
+            -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].image}")"
+
+          echo "Expected image: ${IMMUTABLE_IMAGE}"
+          echo "Current image:  ${CURRENT_IMAGE}"
+
+          if [ "$CURRENT_IMAGE" != "$IMMUTABLE_IMAGE" ]; then
+            echo "Deployment image mismatch"
+            exit 1
+          fi
+
+      - name: Verify rolled out pods use digest image
+        run: |
+          SELECTOR="$(kubectl get deployment "${DEPLOYMENT}" -n "${NAMESPACE}" -o json \
+            | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')"
+
+          if [ -z "$SELECTOR" ]; then
+            echo "Could not resolve deployment selector"
+            exit 1
+          fi
+
+          POD_IMAGES="$(kubectl get pods -n "${NAMESPACE}" -l "$SELECTOR" -o json \
+            | jq -r --arg container "$CONTAINER" '
+                .items[]
+                | select(.metadata.deletionTimestamp == null)
+                | "\(.metadata.name): \((.spec.containers[] | select(.name == $container) | .image))"
+              ')"
+
+          if [ -z "$POD_IMAGES" ]; then
+            echo "No active pods found for selector ${SELECTOR}"
+            exit 1
+          fi
+
+          echo "$POD_IMAGES"
+
+          if echo "$POD_IMAGES" | grep -vF "$IMMUTABLE_IMAGE"; then
+            echo "One or more rolled out pods are not using ${IMMUTABLE_IMAGE}"
+            exit 1
+          fi
