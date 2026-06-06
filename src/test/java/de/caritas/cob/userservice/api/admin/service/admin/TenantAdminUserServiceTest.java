@@ -74,7 +74,8 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
-  void createNewTenantAdmin_Should_RejectPlatformTenantId_WhenAuthenticatedUserIsNotPlatformAdmin() {
+  void
+      createNewTenantAdmin_Should_RejectPlatformTenantId_WhenAuthenticatedUserIsNotPlatformAdmin() {
     // given
     CreateAdminDTO createAdminDTO = new CreateAdminDTO();
     createAdminDTO.setTenantId(0);
