@@ -12,9 +12,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/**
- * Resolves consultants eligible to receive topic-scoped anonymous live-chat enquiries.
- */
+/** Resolves consultants eligible to receive topic-scoped anonymous live-chat enquiries. */
 @Service
 @RequiredArgsConstructor
 public class TopicConsultantRoutingService {

@@ -55,7 +55,8 @@ public class CreateAnonymousEnquiryFacade {
     }
 
     var userDto = buildUserDto(createAnonymousEnquiryDTO);
-    return createAnonymousEnquiry(userDto, credentials -> anonymousUserCreatorService.createAnonymousUser(userDto));
+    return createAnonymousEnquiry(
+        userDto, credentials -> anonymousUserCreatorService.createAnonymousUser(userDto));
   }
 
   /**
@@ -63,10 +64,7 @@ public class CreateAnonymousEnquiryFacade {
    * the session.
    */
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiryForInviteLink(
-      int consultingTypeId,
-      Long mainTopicId,
-      Long agencyId,
-      String consultantId) {
+      int consultingTypeId, Long mainTopicId, Long agencyId, String consultantId) {
     var createAnonymousEnquiryDTO =
         new CreateAnonymousEnquiryDTO()
             .consultingType(consultingTypeId)

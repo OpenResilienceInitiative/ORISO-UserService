@@ -49,8 +49,7 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
         consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
 
     Page<Session> anonymousSessionsOfConsultant =
-        queryForRelevantSessions(
-            pageableListRequest, relatedConsultingTypes, consultantTopicIds);
+        queryForRelevantSessions(pageableListRequest, relatedConsultingTypes, consultantTopicIds);
 
     List<ConsultantSessionResponseDTO> sessions =
         anonymousSessionsOfConsultant.stream()
