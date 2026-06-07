@@ -8,6 +8,7 @@ import javax.validation.constraints.Min;
 import javax.validation.constraints.NotBlank;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/users/drafts")
 @RequiredArgsConstructor
+@Slf4j
 public class DraftMessageController {
 
   private final @NonNull DraftMessageService draftMessageService;
@@ -47,8 +49,15 @@ public class DraftMessageController {
   @PatchMapping
   public ResponseEntity<Void> upsertDraft(
       @RequestParam @NotBlank String scopeKey, @RequestBody UpsertDraftRequest request) {
-    draftMessageService.upsertDraft(
-        authenticatedUser.getUserId(), scopeKey, request, TenantContext.getCurrentTenant());
+    try {
+      draftMessageService.upsertDraft(
+          authenticatedUser.getUserId(), scopeKey, request, TenantContext.getCurrentTenant());
+    } catch (org.springframework.dao.DataAccessException e) {
+      // Concurrent autosaves race on the unique (user_id, scope_key) constraint. A lost race
+      // means another request already persisted this draft, so treat it as success rather than
+      // surfacing a 409 that breaks the chat. Non-critical: the next keystroke re-saves.
+      log.warn("Draft upsert conflict for scopeKey {}: {}", scopeKey, e.getMessage());
+    }
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
