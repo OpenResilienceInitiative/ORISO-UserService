@@ -10,11 +10,13 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class DraftMessageService {
 
@@ -69,10 +71,20 @@ public class DraftMessageService {
 
   @Transactional(readOnly = true)
   public DraftMessageItem getDraft(String userId, String scopeKey) {
-    return draftMessageRepository
-        .findByUserIdAndScopeKey(userId, scopeKey)
-        .map(this::toItem)
-        .orElse(null);
+    if (userId == null || userId.isBlank() || scopeKey == null || scopeKey.isBlank()) {
+      return null;
+    }
+    try {
+      return draftMessageRepository
+          .findByUserIdAndScopeKey(userId, scopeKey)
+          .map(this::toItem)
+          .orElse(null);
+    } catch (Exception e) {
+      // Never let a non-critical draft lookup break the chat (e.g. duplicate rows when no
+      // unique constraint exists on user_id + scope_key -> NonUniqueResultException).
+      log.warn("Could not load draft for scopeKey {}: {}", scopeKey, e.getMessage());
+      return null;
+    }
   }
 
   @Transactional(readOnly = true)
