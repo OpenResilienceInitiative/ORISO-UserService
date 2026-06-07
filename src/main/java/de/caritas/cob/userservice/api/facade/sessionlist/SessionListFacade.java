@@ -66,7 +66,8 @@ public class SessionListFacade {
 
     List<UserSessionResponseDTO> userSessions =
         userSessionListService.retrieveSessionsForAuthenticatedUser(userId, rocketChatCredentials);
-    userSessions.sort(comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    userSessions.sort(
+        comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     return new UserSessionListResponseDTO().sessions(userSessions);
   }
@@ -89,7 +90,8 @@ public class SessionListFacade {
     List<UserSessionResponseDTO> userSessions =
         userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
             userId, rcGroupIds, rocketChatCredentials, roles);
-    userSessions.sort(comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    userSessions.sort(
+        comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -118,7 +120,8 @@ public class SessionListFacade {
     List<UserSessionResponseDTO> userSessions =
         userSessionListService.retrieveSessionsForAuthenticatedUserAndSessionIds(
             userId, sessionIds, rocketChatCredentials, roles);
-    userSessions.sort(comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    userSessions.sort(
+        comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -133,7 +136,8 @@ public class SessionListFacade {
       List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     var userChatSessions =
         userSessionListService.retrieveChatsForUserAndChatIds(chatIds, rocketChatCredentials);
-    userChatSessions.sort(comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    userChatSessions.sort(
+        comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -155,7 +159,8 @@ public class SessionListFacade {
     List<ConsultantSessionResponseDTO> consultantSessions =
         consultantSessionListService.retrieveSessionsForConsultantAndGroupIds(
             consultant, rcGroupIds, roles);
-    consultantSessions.sort(comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    consultantSessions.sort(
+        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -177,7 +182,8 @@ public class SessionListFacade {
     List<ConsultantSessionResponseDTO> consultantSessions =
         consultantSessionListService.retrieveSessionsForConsultantAndSessionIds(
             consultant, sessionIds, roles);
-    consultantSessions.sort(comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    consultantSessions.sort(
+        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =
@@ -317,7 +323,8 @@ public class SessionListFacade {
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {
-    sessions.sort(comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    sessions.sort(
+        comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
   }
 
   private boolean areMoreConsultantSessionsAvailable(
