@@ -1240,10 +1240,10 @@ public class MatrixSynapseService {
    * Returns the subset of the given Matrix user IDs whose presence indicates an active client
    * (online, or idle-but-connected "unavailable").
    *
-   * <p>Returns {@link java.util.Optional#empty()} when Matrix presence cannot be determined at all —
-   * presence disabled via {@code matrix.presenceEnabled}, no admin token, or every lookup failed —
-   * so callers can fall back to another availability signal instead of wrongly assuming everyone is
-   * offline. A present (possibly empty) set is an authoritative answer.
+   * <p>Returns {@link java.util.Optional#empty()} when Matrix presence cannot be determined at all
+   * — presence disabled via {@code matrix.presenceEnabled}, no admin token, or every lookup failed
+   * — so callers can fall back to another availability signal instead of wrongly assuming everyone
+   * is offline. A present (possibly empty) set is an authoritative answer.
    *
    * @param matrixUserIds the candidate Matrix user IDs to check
    * @return online subset, or empty when presence is unavailable
