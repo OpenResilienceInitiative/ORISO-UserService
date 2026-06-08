@@ -30,6 +30,8 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -38,6 +40,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResponseDTO;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -60,6 +63,8 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserService userService;
+  private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
+  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final RocketChatRoomNameGenerator rocketChatRoomNameGenerator =
       new RocketChatRoomNameGenerator();
 
@@ -84,8 +89,7 @@ public class CreateEnquiryMessageFacade {
 
       var extendedConsultingTypeResponseDTO =
           consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId());
-      List<ConsultantAgency> agencyList =
-          consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
+      List<ConsultantAgency> agencyList = resolveConsultantAgenciesForEnquiry(session);
       String rcGroupId =
           createRocketChatRoomAndAddUsers(
               session, agencyList, enquiryData.getRocketChatCredentials());
@@ -137,6 +141,8 @@ public class CreateEnquiryMessageFacade {
             session, TenantContext.getCurrentTenantData());
       }
 
+      notifyEligibleConsultantsAboutLiveChatEnquiry(session);
+
       return new CreateEnquiryMessageResponseDTO()
           .rcGroupId(rcGroupId)
           .sessionId(enquiryData.getSessionId())
@@ -151,6 +157,48 @@ public class CreateEnquiryMessageFacade {
 
   private boolean isAppointmentEnquiryMessage(EnquiryData enquiryData) {
     return enquiryData.getConsultantEmail() != null;
+  }
+
+  private List<ConsultantAgency> resolveConsultantAgenciesForEnquiry(Session session) {
+    if (session.getMainTopicId() != null) {
+      List<String> topicConsultantIds =
+          topicConsultantRoutingService.findEligibleConsultantIds(
+              session.getMainTopicId(), session.getConsultingTypeId());
+      if (!topicConsultantIds.isEmpty()) {
+        List<ConsultantAgency> topicConsultantAgencies =
+            consultantAgencyService.getConsultantAgenciesByConsultantIds(topicConsultantIds);
+        if (!topicConsultantAgencies.isEmpty()) {
+          return topicConsultantAgencies;
+        }
+      }
+    }
+
+    return consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
+  }
+
+  private void notifyEligibleConsultantsAboutLiveChatEnquiry(Session session) {
+    if (!sessionService.isAnonymousStyleRegistration(session)) {
+      return;
+    }
+
+    List<String> consultantIds;
+    if (session.getMainTopicId() != null) {
+      consultantIds =
+          topicConsultantRoutingService.findEligibleConsultantIds(
+              session.getMainTopicId(), session.getConsultingTypeId());
+    } else {
+      consultantIds =
+          consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId()).stream()
+              .map(agency -> agency.getConsultant().getId())
+              .collect(Collectors.toList());
+    }
+
+    if (consultantIds.isEmpty()) {
+      return;
+    }
+
+    liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
+        consultantIds, session.getId());
   }
 
   private void checkIfKeycloakAndRocketChatUsernamesMatch(String rcUserId, User user) {

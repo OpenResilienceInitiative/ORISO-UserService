@@ -74,6 +74,8 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -183,6 +185,10 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private RocketChatRoomNameGenerator rocketChatRoomNameGenerator;
 
   @Mock private UserService userService;
+
+  @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
+
+  @Mock private LiveEventNotificationService liveEventNotificationService;
 
   private Session session;
   private User user;

@@ -210,7 +210,10 @@ public class ConsultantSessionListService {
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {
-    sessions.sort(Comparator.comparing(ConsultantSessionResponseDTO::getLatestMessage).reversed());
+    sessions.sort(
+        Comparator.comparing(
+            ConsultantSessionResponseDTO::getLatestMessage,
+            Comparator.nullsLast(Comparator.reverseOrder())));
   }
 
   private List<ConsultantSessionResponseDTO> updateConsultantSessionValues(

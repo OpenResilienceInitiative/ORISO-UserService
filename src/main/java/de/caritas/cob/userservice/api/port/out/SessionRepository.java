@@ -62,6 +62,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           List<Long> agencyIds, SessionStatus sessionStatus, RegistrationType registrationType);
 
   /**
+   * Find registered enquiries scoped by main topic (external inbound / topic-based invite links).
+   */
+  List<Session>
+      findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+          List<Long> topicIds, SessionStatus sessionStatus, RegistrationType registrationType);
+
+  /**
    * Find a {@link Session} by agency ids with status and team session where consultant is not the
    * given consultant ordered by update date descending.
    *
@@ -204,6 +211,37 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultants(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("registrationType") RegistrationType registrationType,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      Pageable pageable);
+
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.consultingTypeId IN :consultingTypeIds "
+          + "AND s.registrationType = :registrationType "
+          + "AND s.status = :sessionStatus "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.mainTopicId IS NULL "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
+      @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("registrationType") RegistrationType registrationType,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      Pageable pageable);
+
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.consultingTypeId IN :consultingTypeIds "
+          + "AND s.registrationType = :registrationType "
+          + "AND s.status = :sessionStatus "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
+      @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
+      @Param("topicIds") Set<Long> topicIds,
       @Param("registrationType") RegistrationType registrationType,
       @Param("sessionStatus") SessionStatus sessionStatus,
       Pageable pageable);

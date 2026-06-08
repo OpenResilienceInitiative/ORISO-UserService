@@ -66,6 +66,8 @@ public interface DtoMapperUtils {
         return "email";
       case "TENANT_ID":
         return "tenantId";
+      case "UPDATE_DATE":
+        return "updateDate";
       default:
     }
 

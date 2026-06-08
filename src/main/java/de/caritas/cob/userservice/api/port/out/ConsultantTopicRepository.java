@@ -13,4 +13,7 @@ public interface ConsultantTopicRepository extends CrudRepository<ConsultantTopi
 
   @Query("SELECT ct.consultant.id, ct.topicId FROM ConsultantTopic ct WHERE ct.consultant.id IN ?1")
   List<Object[]> findTopicIdsByConsultantIdIn(Collection<String> consultantIds);
+
+  @Query("SELECT ct.consultant.id FROM ConsultantTopic ct WHERE ct.topicId = ?1")
+  List<String> findConsultantIdsByTopicId(Long topicId);
 }

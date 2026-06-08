@@ -47,33 +47,49 @@ public class ConsultantDataFacade {
   }
 
   public void addConsultantDisplayNameToSessionList(GroupSessionListResponseDTO groupSessionList) {
+    if (groupSessionList == null || groupSessionList.getSessions() == null) {
+      return;
+    }
     groupSessionList
         .getSessions()
         .forEach(
             session -> {
               var consultant = session.getConsultant();
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
-                accountManager
-                    .findConsultantByUsername(consultant.getUsername())
-                    .ifPresent(
-                        consultantMap ->
-                            consultant.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
+                try {
+                  accountManager
+                      .findConsultantByUsername(consultant.getUsername())
+                      .ifPresent(
+                          consultantMap ->
+                              consultant.setDisplayName(
+                                  userDtoMapper.displayNameOf(consultantMap)));
+                } catch (Exception e) {
+                  log.error("Could not enrich consultant display name: {}", e.getMessage());
+                }
               }
             });
   }
 
   public void addConsultantDisplayNameToSessionList(UserSessionListResponseDTO userSessionsDTO) {
+    if (userSessionsDTO == null || userSessionsDTO.getSessions() == null) {
+      return;
+    }
     userSessionsDTO
         .getSessions()
         .forEach(
             session -> {
               var consultant = session.getConsultant();
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
-                accountManager
-                    .findConsultantByUsername(consultant.getUsername())
-                    .ifPresent(
-                        consultantMap ->
-                            consultant.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
+                try {
+                  accountManager
+                      .findConsultantByUsername(consultant.getUsername())
+                      .ifPresent(
+                          consultantMap ->
+                              consultant.setDisplayName(
+                                  userDtoMapper.displayNameOf(consultantMap)));
+                } catch (Exception e) {
+                  log.error("Could not enrich consultant display name: {}", e.getMessage());
+                }
               }
             });
   }
