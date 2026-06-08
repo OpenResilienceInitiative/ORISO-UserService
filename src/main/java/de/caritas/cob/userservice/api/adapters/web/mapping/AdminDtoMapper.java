@@ -123,9 +123,7 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setCreateDate((String) adminUserMap.get("createdAt"));
     adminDTO.setUpdateDate((String) adminUserMap.get("updatedAt"));
 
-    if (multiTenancyEnabled) {
-      enrichResponseWithTenantInformation(adminUserMap, adminDTO);
-    }
+    enrichResponseWithTenantInformation(adminUserMap, adminDTO);
 
     var agencies = new ArrayList<AgencyAdminResponseDTO>();
     var agencyMaps = (ArrayList<Map<String, Object>>) adminUserMap.get("agencies");
@@ -151,7 +149,7 @@ public class AdminDtoMapper implements DtoMapperUtils {
       Map<String, Object> adminUserMap, AdminDTO adminDTO) {
     Long tenantId = (Long) adminUserMap.get("tenantId");
     adminDTO.setTenantId(String.valueOf(tenantId));
-    if (tenantId != null) {
+    if (tenantId != null && !tenantId.equals(0L) && multiTenancyEnabled) {
       enrichWithTenantSubdomainAndName(adminDTO, tenantId);
     }
   }

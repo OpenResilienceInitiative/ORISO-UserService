@@ -1,16 +1,20 @@
 package de.caritas.cob.userservice.api.admin.service.admin;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -60,6 +64,40 @@ class TenantAdminUserServiceTest {
   @Mock private UserServiceMapper userServiceMapper;
 
   @Mock private AgencyService agencyService;
+
+  @Mock private AuthenticatedUser authenticatedUser;
+
+  @Test
+  void createNewTenantAdmin_Should_AllowPlatformTenantId_WhenAuthenticatedUserIsPlatformAdmin() {
+    // given
+    CreateAdminDTO createAdminDTO = new CreateAdminDTO();
+    createAdminDTO.setTenantId(0);
+    Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(createAdminService.createNewTenantAdmin(createAdminDTO)).thenReturn(platformAdmin);
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.createNewTenantAdmin(createAdminDTO);
+
+    // then
+    Mockito.verify(createAdminService).createNewTenantAdmin(createAdminDTO);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("0");
+  }
+
+  @Test
+  void
+      createNewTenantAdmin_Should_RejectPlatformTenantId_WhenAuthenticatedUserIsNotPlatformAdmin() {
+    // given
+    CreateAdminDTO createAdminDTO = new CreateAdminDTO();
+    createAdminDTO.setTenantId(0);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+
+    // when, then
+    assertThatThrownBy(() -> tenantAdminUserService.createNewTenantAdmin(createAdminDTO))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessage("Only platform admins can create platform admin accounts");
+    Mockito.verifyNoInteractions(createAdminService);
+  }
 
   @Test
   void updateTenantAdmin_Should_UpdateTenantAndEnrichResponseWithTenantSubdomain() {
