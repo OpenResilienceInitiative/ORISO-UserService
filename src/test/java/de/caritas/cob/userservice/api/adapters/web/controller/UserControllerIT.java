@@ -52,6 +52,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -328,6 +330,10 @@ class UserControllerIT {
   @MockBean private AdminUserFacade adminUserFacade;
 
   @MockBean private SessionDeleteService sessionDeleteService;
+
+  @MockBean private MagicLinkLoginService magicLinkLoginService;
+
+  @MockBean private EventNotificationService eventNotificationService;
 
   @Mock private Logger logger;
 

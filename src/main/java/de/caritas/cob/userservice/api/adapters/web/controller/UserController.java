@@ -80,6 +80,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EnquiryData;
+import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
@@ -625,10 +626,7 @@ public class UserController implements UsersApi {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
     }
-    var otpInfoDTO =
-        identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())
-            ? identityManager.getOtpCredential(authenticatedUser.getUsername())
-            : null;
+    var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 
     var fullUserData =
         userDtoMapper.userDataOf(
@@ -638,6 +636,21 @@ public class UserController implements UsersApi {
             identityClientConfig.getDisplayNameAllowedForConsultants());
 
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
+  }
+
+  private OtpInfoDTO retrieveOtpCredentialIfAllowed() {
+    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+      return null;
+    }
+    try {
+      return identityManager.getOtpCredential(authenticatedUser.getUsername());
+    } catch (Exception ex) {
+      log.warn(
+          "Could not retrieve OTP credential for authenticated user {}; returning user data without OTP state",
+          authenticatedUser.getUserId(),
+          ex);
+      return null;
+    }
   }
 
   private boolean isAgencyAdmin() {

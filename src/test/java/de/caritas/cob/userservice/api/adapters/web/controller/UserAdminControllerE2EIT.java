@@ -656,6 +656,46 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchTenantAdmin_Should_returnOk_When_attemptedToSearchTenantsWithUserAdminAuthority()
+      throws Exception {
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    "/useradmin/tenantadmins/search?query=*&page=1&perPage=10&order=ASC&field=FIRSTNAME"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+            .andReturn();
+
+    String contentAsString = mvcResult.getResponse().getContentAsString();
+    JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
+
+    assertAllElementsAreOfAdminType(embedded, AdminType.TENANT);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_returnOkAndEmptyTenantName_When_tenantServiceThrows()
+      throws Exception {
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenThrow(new RuntimeException("Tenant service unavailable"));
+
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=10&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+        .andExpect(jsonPath("_embedded[0]._embedded.tenantName", is("")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void searchAgencyAdmins_Should_returnOk_When_attemptedToSearchTenantsWithUserAdminAuthority()
       throws Exception {
     // when
