@@ -92,6 +92,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers(
             "/users/askers/new",
             "/conversations/askers/anonymous/new",
+            "/conversations/anonymous/availability",
             "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages",
             "/users/magic-link/request",
