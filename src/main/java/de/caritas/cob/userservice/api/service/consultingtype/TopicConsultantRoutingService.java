@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.service.consultingtype;
 
 import de.caritas.cob.userservice.api.Messenger;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -20,6 +22,7 @@ public class TopicConsultantRoutingService {
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull Messenger messenger;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
 
   /**
    * Returns consultant IDs assigned to the topic who are not absent. When the platform reports
@@ -46,6 +49,34 @@ public class TopicConsultantRoutingService {
       return Collections.emptyList();
     }
 
+    // Primary signal: real-time Matrix presence of the topic's (non-absent) consultants.
+    List<String> candidateMatrixUserIds =
+        consultants.stream()
+            .filter(consultant -> !consultant.isAbsent())
+            .map(Consultant::getMatrixUserId)
+            .filter(matrixUserId -> matrixUserId != null && !matrixUserId.isBlank())
+            .collect(Collectors.toList());
+
+    Optional<Set<String>> onlineMatrixUserIds =
+        candidateMatrixUserIds.isEmpty()
+            ? Optional.empty()
+            : matrixSynapseService.findOnlineMatrixUserIds(candidateMatrixUserIds);
+
+    if (onlineMatrixUserIds.isPresent()) {
+      // Authoritative answer from Matrix — trust it even when empty (genuinely nobody online).
+      Set<String> online = onlineMatrixUserIds.get();
+      return consultants.stream()
+          .filter(consultant -> !consultant.isAbsent())
+          .filter(
+              consultant ->
+                  consultant.getMatrixUserId() != null
+                      && online.contains(consultant.getMatrixUserId()))
+          .map(Consultant::getId)
+          .collect(Collectors.toList());
+    }
+
+    // Matrix presence unavailable (disabled / no admin token / all lookups failed) — fall back to
+    // the legacy RocketChat presence signal, best-effort, as before.
     if (consultingTypeId == null) {
       return activeConsultantIds;
     }
@@ -65,7 +96,7 @@ public class TopicConsultantRoutingService {
             .map(Consultant::getId)
             .collect(Collectors.toList());
 
-    // LiveService presence is best-effort during Matrix migration — do not drop all
+    // RocketChat presence is best-effort during Matrix migration — do not drop all
     // topic consultants when the online set is populated but none match.
     if (onlineTopicConsultantIds.isEmpty()) {
       return activeConsultantIds;
