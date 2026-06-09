@@ -146,6 +146,8 @@ public class Admin implements TenantAware {
 
     Long getTenantId();
 
+    AdminType getType();
+
     LocalDateTime getUpdateDate();
   }
 }

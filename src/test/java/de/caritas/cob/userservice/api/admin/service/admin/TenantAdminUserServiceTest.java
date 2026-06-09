@@ -224,6 +224,11 @@ class TenantAdminUserServiceTest {
       }
 
       @Override
+      public Admin.AdminType getType() {
+        return Admin.AdminType.TENANT;
+      }
+
+      @Override
       public LocalDateTime getUpdateDate() {
         return LocalDateTime.now();
       }

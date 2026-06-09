@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.Admin;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -37,6 +38,10 @@ class AdminDtoMapperTest {
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantId()).isEqualTo("2");
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantName()).isNull();
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantSubdomain()).isNull();
+    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isNull();
+    assertThat(result.getEmbedded().get(0).getEmbedded().getRoleInOrg()).isEqualTo("Tenant Admin");
+    assertThat(result.getEmbedded().get(0).getEmbedded().getVacated()).isFalse();
+    assertThat(result.getEmbedded().get(0).getEmbedded().getAdminRights()).isTrue();
   }
 
   private Map<String, Object> resultMap() {
@@ -49,6 +54,7 @@ class AdminDtoMapperTest {
     adminMap.put("createdAt", "2026-06-08T10:00:00");
     adminMap.put("updatedAt", "2026-06-08T10:00:00");
     adminMap.put("tenantId", 2L);
+    adminMap.put("type", Admin.AdminType.TENANT);
     adminMap.put("agencies", new ArrayList<Map<String, Object>>());
 
     Map<String, Object> resultMap = new HashMap<>();

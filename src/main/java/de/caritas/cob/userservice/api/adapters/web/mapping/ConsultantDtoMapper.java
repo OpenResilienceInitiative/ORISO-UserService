@@ -165,6 +165,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     consultant.setCreateDate((String) consultantMap.get("createdAt"));
     consultant.setUpdateDate((String) consultantMap.get("updatedAt"));
     consultant.setDeleteDate((String) consultantMap.get("deletedAt"));
+    consultant.setDisplayName((String) consultantMap.get("displayName"));
+    consultant.setPublicName((String) consultantMap.get("displayName"));
+    consultant.setVacated(consultantMap.get("deletedAt") != null);
     Long tenantId = (Long) consultantMap.get("tenantId");
     if (tenantId != null) {
       consultant.setTenantId(tenantId.intValue());
@@ -185,6 +188,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     // Get supervisor permission from database field (from map, not DTO)
     Boolean isSupervisor = (Boolean) consultantMap.get("isSupervisor");
     consultant.setIsSupervisor(isSupervisor != null && isSupervisor);
+    consultant.setAdminRights(isSupervisor != null && isSupervisor);
+    consultant.setRoleInOrg(
+        isSupervisor != null && isSupervisor ? "Counsellor Admin" : "Counsellor");
 
     var agencies = new ArrayList<AgencyAdminResponseDTO>();
     var agencyMaps = (ArrayList<Map<String, Object>>) consultantMap.get("agencies");

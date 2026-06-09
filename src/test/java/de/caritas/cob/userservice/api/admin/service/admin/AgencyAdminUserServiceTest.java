@@ -128,6 +128,11 @@ class AgencyAdminUserServiceTest {
       }
 
       @Override
+      public Admin.AdminType getType() {
+        return Admin.AdminType.AGENCY;
+      }
+
+      @Override
       public LocalDateTime getUpdateDate() {
         return LocalDateTime.now();
       }
