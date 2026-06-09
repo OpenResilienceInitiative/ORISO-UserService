@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -129,6 +130,11 @@ class AgencyAdminUserServiceTest {
       @Override
       public Admin.AdminType getType() {
         return Admin.AdminType.AGENCY;
+      }
+
+      @Override
+      public LocalDateTime getUpdateDate() {
+        return LocalDateTime.now();
       }
     };
   }
