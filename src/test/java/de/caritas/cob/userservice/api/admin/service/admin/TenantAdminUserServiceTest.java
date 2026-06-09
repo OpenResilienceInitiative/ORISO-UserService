@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -220,6 +221,11 @@ class TenantAdminUserServiceTest {
       @Override
       public Long getTenantId() {
         return tenantId;
+      }
+
+      @Override
+      public LocalDateTime getUpdateDate() {
+        return LocalDateTime.now();
       }
     };
   }

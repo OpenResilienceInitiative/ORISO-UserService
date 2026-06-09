@@ -374,5 +374,7 @@ public class Consultant implements TenantAware, NotificationsAware {
     String getLastName();
 
     String getEmail();
+
+    LocalDateTime getUpdateDate();
   }
 }

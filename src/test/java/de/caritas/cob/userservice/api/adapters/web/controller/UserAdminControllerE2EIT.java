@@ -700,6 +700,28 @@ class UserAdminControllerE2EIT {
     assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_returnOk_When_sortingByUpdateDate() throws Exception {
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    "/useradmin/agencyadmins/search?query=*&page=1&perPage=10&order=DESC&field=UPDATE_DATE"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+            .andExpect(jsonPath("_embedded[0]._embedded.updateDate").exists())
+            .andReturn();
+
+    String contentAsString = mvcResult.getResponse().getContentAsString();
+    JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
+
+    assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
   private void assertAllElementsAreOfAdminType(JSONArray embedded, AdminType adminType) {
     for (int i = 0; i < PAGE_SIZE; i++) {
       assertAllElementsAreOfAdminType(embedded, PAGE_SIZE, adminType);
