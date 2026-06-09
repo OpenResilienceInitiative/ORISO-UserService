@@ -10,8 +10,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Stamps consultant liveness on every authenticated consultant request, feeding {@link
- * ConsultantActivityRegistry}. This is the real-time signal behind live-chat availability.
+ * Heartbeat keep-alive for consultant live-chat availability. On every authenticated consultant
+ * request it refreshes the consultant's availability TTL — but only if they are already marked
+ * available (via the Live Chat toggle). It never marks a consultant available, so a consultant who
+ * disabled Live Chat is not kept counted just because their app keeps polling.
  *
  * <p>Dependencies are resolved via {@link ObjectProvider} so the bean still constructs in web-layer
  * test slices ({@code @WebMvcTest}) that do not load the service beans; there it simply no-ops.
@@ -30,7 +32,7 @@ public class ConsultantActivityInterceptor implements HandlerInterceptor {
       AuthenticatedUser user = authenticatedUser.getIfAvailable();
       ConsultantActivityRegistry registry = consultantActivityRegistry.getIfAvailable();
       if (user != null && registry != null && user.isConsultant() && user.getUserId() != null) {
-        registry.recordActivity(user.getUserId());
+        registry.refreshIfAvailable(user.getUserId());
       }
     } catch (Exception ex) {
       // Never block a request because of best-effort activity tracking.
