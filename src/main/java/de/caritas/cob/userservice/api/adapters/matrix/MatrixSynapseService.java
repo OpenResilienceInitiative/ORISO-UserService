@@ -1284,7 +1284,8 @@ public class MatrixSynapseService {
   public java.util.Optional<java.util.Set<String>> findOnlineMatrixUserIds(
       java.util.Collection<String> matrixUserIds) {
     if (!matrixConfig.isPresenceEnabled()) {
-      log.debug("Matrix presence disabled (matrix.presenceEnabled=false); availability unavailable");
+      log.debug(
+          "Matrix presence disabled (matrix.presenceEnabled=false); availability unavailable");
       return java.util.Optional.empty();
     }
     String adminToken = getAdminAccessToken();
