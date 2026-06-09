@@ -7,12 +7,13 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
- * Tracks which consultants are currently available for live chat. Availability is driven by explicit
- * events from the consultant app (Live Chat toggle on/off, logout) and kept alive by a heartbeat
- * while the app stays open, so a crashed/closed browser auto-expires after the configured window.
+ * Tracks which consultants are currently available for live chat. Availability is driven by
+ * explicit events from the consultant app (Live Chat toggle on/off, logout) and kept alive by a
+ * heartbeat while the app stays open, so a crashed/closed browser auto-expires after the configured
+ * window.
  *
- * <p>Matrix presence is unreliable for this: a consultant waiting for a new anonymous enquiry has no
- * open chat and therefore generates no Matrix activity.
+ * <p>Matrix presence is unreliable for this: a consultant waiting for a new anonymous enquiry has
+ * no open chat and therefore generates no Matrix activity.
  */
 @Component
 public class ConsultantActivityRegistry {

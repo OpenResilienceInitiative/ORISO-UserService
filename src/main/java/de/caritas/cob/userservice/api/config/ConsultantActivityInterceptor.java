@@ -15,8 +15,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * available (via the Live Chat toggle). It never marks a consultant available, so a consultant who
  * disabled Live Chat is not kept counted just because their app keeps polling.
  *
- * <p>Dependencies are resolved via {@link ObjectProvider} so the bean still constructs in web-layer
- * test slices ({@code @WebMvcTest}) that do not load the service beans; there it simply no-ops.
+ * <p>Dependencies are resolved via {@link ObjectProvider} so the bean constructs in web-layer test
+ * slices ({@code @WebMvcTest}) that do not load the service beans; there it simply no-ops.
  */
 @Component
 @RequiredArgsConstructor
