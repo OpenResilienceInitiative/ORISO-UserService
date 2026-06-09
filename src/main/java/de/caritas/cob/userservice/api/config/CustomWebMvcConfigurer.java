@@ -56,6 +56,7 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
         .allowCredentials(true)
         .allowedMethods("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE")
         .allowedOrigins(allowedOrigins)
-        .allowedHeaders("*");
+        .allowedHeaders("*")
+        .exposedHeaders("X-Reason");
   }
 }
