@@ -187,15 +187,18 @@ public class ConversationController implements ConversationsApi {
    * availability endpoint. Legacy sessions without a topic fall back to RocketChat presence.
    */
   private int resolveNumAvailableConsultants(Long mainTopicId, Integer consultingTypeId) {
-    if (mainTopicId != null) {
-      return topicConsultantRoutingService
-          .findEligibleConsultantIds(mainTopicId, consultingTypeId)
-          .size();
-    }
-
     try {
+      if (mainTopicId != null) {
+        return topicConsultantRoutingService
+            .findEligibleConsultantIds(mainTopicId, consultingTypeId)
+            .size();
+      }
+      if (consultingTypeId == null) {
+        return 0;
+      }
       return messenger.findAvailableConsultants(consultingTypeId).size();
     } catch (Exception ex) {
+      // Availability is best-effort for this poll — never fail the whole response.
       return 0;
     }
   }

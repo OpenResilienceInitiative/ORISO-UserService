@@ -81,7 +81,12 @@ public class TopicConsultantRoutingService {
       return activeConsultantIds;
     }
 
-    Set<String> onlineConsultantIds = messenger.findAvailableConsultants(consultingTypeId);
+    Set<String> onlineConsultantIds;
+    try {
+      onlineConsultantIds = messenger.findAvailableConsultants(consultingTypeId);
+    } catch (Exception ex) {
+      return activeConsultantIds;
+    }
     if (onlineConsultantIds.isEmpty()) {
       return activeConsultantIds;
     }
