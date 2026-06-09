@@ -29,16 +29,15 @@ public class TopicConsultantAvailabilityController {
   public ResponseEntity<ConsultantAvailabilityDTO> getTopicConsultantAvailability(
       @RequestParam Long topicId, @RequestParam(required = false) Integer consultingTypeId) {
 
-    List<String> eligibleConsultantIds;
+    List<String> availableConsultantIds;
     try {
-      eligibleConsultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(topicId, consultingTypeId);
+      availableConsultantIds = topicConsultantRoutingService.findAvailableConsultantIds(topicId);
     } catch (Exception ex) {
-      eligibleConsultantIds = List.of();
+      availableConsultantIds = List.of();
     }
 
     return ResponseEntity.ok(
         new ConsultantAvailabilityDTO(
-            !eligibleConsultantIds.isEmpty(), eligibleConsultantIds.size()));
+            !availableConsultantIds.isEmpty(), availableConsultantIds.size()));
   }
 }
