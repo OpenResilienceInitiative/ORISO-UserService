@@ -26,6 +26,14 @@ public class MatrixConfig {
   private boolean presenceEnabled = true;
 
   /**
+   * Maximum time since a consultant's last Matrix activity for them to still count as "available"
+   * for live chat. Matrix presence is sticky (a closed client lingers as {@code online}/{@code
+   * unavailable} for a long time), so availability is based on {@code last_active_ago} rather than
+   * the presence string alone. Defaults to 5 minutes.
+   */
+  private long presenceActiveThresholdMs = 300_000L;
+
+  /**
    * Gets the full API URL for a given endpoint.
    *
    * @param endpoint the endpoint path
