@@ -160,8 +160,7 @@ public class ConversationController implements ConversationsApi {
 
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
     var mainTopicId = mapper.mainTopicIdOf(sessionMap);
-    int numAvailableConsultants =
-        resolveNumAvailableConsultants(mainTopicId, consultingTypeId);
+    int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId, consultingTypeId);
     var peopleAhead =
         messenger.countPendingEnquiriesAheadOf(
             mapper.agencyIdOf(sessionMap), mapper.createDateOf(sessionMap));
