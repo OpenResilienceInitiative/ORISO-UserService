@@ -125,6 +125,11 @@ class AgencyAdminUserServiceTest {
       public Long getTenantId() {
         return tenantId;
       }
+
+      @Override
+      public Admin.AdminType getType() {
+        return Admin.AdminType.AGENCY;
+      }
     };
   }
 }

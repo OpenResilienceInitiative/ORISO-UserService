@@ -1368,6 +1368,14 @@ components:
           type: string
         displayName:
           type: string
+        publicName:
+          type: string
+        roleInOrg:
+          type: string
+        vacated:
+          type: boolean
+        adminRights:
+          type: boolean
         topics:
           type: array
           description: topics directly assigned to the consultant, enriched with names
@@ -1491,6 +1499,14 @@ components:
           type: array
           items:
             $ref: './../services/agencyadminservice.yaml#/components/schemas/AgencyAdminResponseDTO'
+        publicName:
+          type: string
+        roleInOrg:
+          type: string
+        vacated:
+          type: boolean
+        adminRights:
+          type: boolean
 
     AskerResponseDTO:
       type: object

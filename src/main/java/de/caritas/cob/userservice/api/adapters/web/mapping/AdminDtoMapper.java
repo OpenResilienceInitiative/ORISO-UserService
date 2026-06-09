@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.ArrayList;
@@ -126,6 +127,10 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setUsername((String) adminUserMap.get("username"));
     adminDTO.setCreateDate((String) adminUserMap.get("createdAt"));
     adminDTO.setUpdateDate((String) adminUserMap.get("updatedAt"));
+    adminDTO.setPublicName(null);
+    adminDTO.setRoleInOrg(roleInOrgOf((Admin.AdminType) adminUserMap.get("type")));
+    adminDTO.setVacated(false);
+    adminDTO.setAdminRights(true);
 
     enrichResponseWithTenantInformation(adminUserMap, adminDTO);
 
@@ -169,6 +174,22 @@ public class AdminDtoMapper implements DtoMapperUtils {
         return;
       }
       throw exception;
+    }
+  }
+
+  private String roleInOrgOf(Admin.AdminType adminType) {
+    if (adminType == null) {
+      return null;
+    }
+    switch (adminType) {
+      case SUPER:
+        return "Platform Admin";
+      case TENANT:
+        return "Tenant Admin";
+      case AGENCY:
+        return "Agency Admin";
+      default:
+        return null;
     }
   }
 }

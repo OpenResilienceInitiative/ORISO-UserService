@@ -259,6 +259,7 @@ public class UserServiceMapper {
     map.put("isLanguageFormal", nonNull(fullConsultant) && fullConsultant.isLanguageFormal());
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
+    map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
     map.put(
         "createdAt",
         nonNull(fullConsultant) && nonNull(fullConsultant.getCreateDate())
@@ -297,6 +298,7 @@ public class UserServiceMapper {
     map.put("firstName", adminBase.getFirstName());
     map.put("lastName", adminBase.getLastName());
     map.put("username", fullAdmin.getUsername());
+    map.put("type", fullAdmin.getType());
     map.put("tenantId", fullAdmin.getTenantId());
     map.put("tenantName", getTenantName(fullAdmin, tenantIdsToNameMap));
     map.put(
