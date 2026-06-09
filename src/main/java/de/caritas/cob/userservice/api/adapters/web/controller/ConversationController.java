@@ -189,9 +189,7 @@ public class ConversationController implements ConversationsApi {
   private int resolveNumAvailableConsultants(Long mainTopicId, Integer consultingTypeId) {
     try {
       if (mainTopicId != null) {
-        return topicConsultantRoutingService
-            .findEligibleConsultantIds(mainTopicId, consultingTypeId)
-            .size();
+        return topicConsultantRoutingService.findAvailableConsultantIds(mainTopicId).size();
       }
       if (consultingTypeId == null) {
         return 0;
