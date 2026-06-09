@@ -7,32 +7,50 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
- * Tracks the last time each consultant made an authenticated request, used as a real-time "the
- * consultant has the app open" signal for live-chat availability.
+ * Tracks which consultants are currently available for live chat. Availability is driven by
+ * explicit events from the consultant app (Live Chat toggle on/off, logout) and kept alive by a
+ * heartbeat while the app stays open, so a crashed/closed browser auto-expires after the configured
+ * window.
  *
- * <p>Matrix presence is unreliable here: a consultant waiting for a new anonymous enquiry has no
- * open chat and therefore generates no Matrix activity. While the consultant app is open it polls
- * UserService at least every ~20s, so recent authenticated activity is an accurate liveness signal.
+ * <p>Matrix presence is unreliable for this: a consultant waiting for a new anonymous enquiry has
+ * no open chat and therefore generates no Matrix activity.
  */
 @Component
 public class ConsultantActivityRegistry {
 
-  private final ConcurrentHashMap<String, Long> lastSeenByConsultantId = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, Long> availableSince = new ConcurrentHashMap<>();
 
-  /** Records that the given consultant is active right now. */
-  public void recordActivity(String consultantId) {
+  /** Marks the consultant available now (Live Chat enabled). Adds them if not present. */
+  public void markAvailable(String consultantId) {
     if (consultantId != null && !consultantId.isBlank()) {
-      lastSeenByConsultantId.put(consultantId, System.currentTimeMillis());
+      availableSince.put(consultantId, System.currentTimeMillis());
     }
   }
 
-  /** Returns the subset of the given consultant IDs seen active within the window (in ms). */
+  /** Marks the consultant unavailable immediately (Live Chat disabled or logout). */
+  public void markUnavailable(String consultantId) {
+    if (consultantId != null) {
+      availableSince.remove(consultantId);
+    }
+  }
+
+  /**
+   * Heartbeat keep-alive: refreshes the timestamp only for consultants already marked available.
+   * Never adds a consultant, so generic requests can't keep a disabled consultant counted.
+   */
+  public void refreshIfAvailable(String consultantId) {
+    if (consultantId != null) {
+      availableSince.computeIfPresent(consultantId, (id, ts) -> System.currentTimeMillis());
+    }
+  }
+
+  /** Returns the subset of the given consultant IDs marked available within the window (in ms). */
   public Set<String> filterActive(Collection<String> consultantIds, long windowMs) {
     long cutoff = System.currentTimeMillis() - windowMs;
     return consultantIds.stream()
         .filter(
             consultantId -> {
-              Long lastSeen = lastSeenByConsultantId.get(consultantId);
+              Long lastSeen = availableSince.get(consultantId);
               return lastSeen != null && lastSeen >= cutoff;
             })
         .collect(Collectors.toSet());
