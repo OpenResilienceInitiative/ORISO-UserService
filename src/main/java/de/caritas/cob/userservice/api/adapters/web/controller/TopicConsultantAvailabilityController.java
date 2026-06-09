@@ -29,8 +29,13 @@ public class TopicConsultantAvailabilityController {
   public ResponseEntity<ConsultantAvailabilityDTO> getTopicConsultantAvailability(
       @RequestParam Long topicId, @RequestParam(required = false) Integer consultingTypeId) {
 
-    List<String> eligibleConsultantIds =
-        topicConsultantRoutingService.findEligibleConsultantIds(topicId, consultingTypeId);
+    List<String> eligibleConsultantIds;
+    try {
+      eligibleConsultantIds =
+          topicConsultantRoutingService.findEligibleConsultantIds(topicId, consultingTypeId);
+    } catch (Exception ex) {
+      eligibleConsultantIds = List.of();
+    }
 
     return ResponseEntity.ok(
         new ConsultantAvailabilityDTO(
