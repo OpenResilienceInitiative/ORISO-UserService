@@ -39,9 +39,9 @@ public class TopicConsultantRoutingService {
    * Consultants currently <em>available</em> to take a new topic-scoped anonymous live chat:
    * assigned to the topic, not absent, and seen active (app open) within the configured window.
    *
-   * <p>This is the signal the live-chat UI should display. Unlike {@link #findEligibleConsultantIds}
-   * it does not fall back to "everyone assigned" — an empty result means genuinely nobody is
-   * reachable right now, which is exactly what the asker needs to know.
+   * <p>This is the signal the live-chat UI should display. Unlike {@link
+   * #findEligibleConsultantIds} it does not fall back to "everyone assigned" — an empty result
+   * means genuinely nobody is reachable right now, which is exactly what the asker needs to know.
    */
   public List<String> findAvailableConsultantIds(Long topicId) {
     if (topicId == null) {
