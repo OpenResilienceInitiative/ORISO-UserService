@@ -145,5 +145,7 @@ public class Admin implements TenantAware {
     String getEmail();
 
     Long getTenantId();
+
+    LocalDateTime getUpdateDate();
   }
 }

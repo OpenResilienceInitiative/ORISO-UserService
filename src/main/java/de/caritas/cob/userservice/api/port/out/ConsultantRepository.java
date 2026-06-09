@@ -37,7 +37,8 @@ public interface ConsultantRepository
 
   @Query(
       value =
-          "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
+          "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
+              + "c.updateDate as updateDate "
               + "FROM Consultant c "
               + "WHERE "
               + "  (?2 IS NULL OR ?2 = 0 OR c.tenantId = ?2) "
@@ -55,7 +56,8 @@ public interface ConsultantRepository
 
   @Query(
       value =
-          "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
+          "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
+              + "c.email as email, c.updateDate as updateDate "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "
