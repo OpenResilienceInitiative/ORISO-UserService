@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConvers
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
@@ -66,6 +67,10 @@ class ConversationControllerIT {
   @SuppressWarnings("unused")
   @MockBean
   private Messaging messaging;
+
+  @SuppressWarnings("unused")
+  @MockBean
+  private TopicConsultantRoutingService topicConsultantRoutingService;
 
   @SuppressWarnings("unused")
   @MockBean

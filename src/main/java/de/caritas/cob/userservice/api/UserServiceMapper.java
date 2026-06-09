@@ -332,6 +332,9 @@ public class UserServiceMapper {
     if (nonNull(session.getAgencyId())) {
       map.put("agencyId", session.getAgencyId());
     }
+    if (nonNull(session.getMainTopicId())) {
+      map.put("mainTopicId", session.getMainTopicId());
+    }
     if (nonNull(session.getCreateDate())) {
       map.put("createDate", session.getCreateDate());
     }
