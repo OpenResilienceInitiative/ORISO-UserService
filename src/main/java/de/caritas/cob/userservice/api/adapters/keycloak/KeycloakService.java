@@ -594,7 +594,6 @@ public class KeycloakService implements IdentityClient {
     var realmResource = keycloakClient.getRealmResource();
     UsersResource userRessource = realmResource.users();
     UserResource user = userRessource.get(userId);
-    var isRoleUpdated = false;
 
     // Assign role
     var roleRepresentation = realmResource.roles().get(roleName).toRepresentation();
@@ -603,18 +602,36 @@ public class KeycloakService implements IdentityClient {
     }
     user.roles().realmLevel().add(Collections.singletonList(roleRepresentation));
 
-    // Check if role has been assigned successfully
-    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
-    for (RoleRepresentation role : userRoles) {
-      if (role.getName() != null && role.getName().equalsIgnoreCase(roleName)) {
-        log.debug("Added role \"user\" to {}", userId);
-        isRoleUpdated = true;
+    if (isRoleAssigned(user, roleName)) {
+      log.debug("Added role \"{}\" to {}", roleName, userId);
+      return;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        Thread.sleep(100L);
+      } catch (InterruptedException interruptedException) {
+        Thread.currentThread().interrupt();
+        throw new KeycloakException(
+            "Interrupted while verifying role assignment for user " + userId);
+      }
+      if (isRoleAssigned(user, roleName)) {
+        log.debug("Added role \"{}\" to {} after retry {}", roleName, userId, attempt + 1);
+        return;
       }
     }
 
-    if (!isRoleUpdated) {
-      throw new KeycloakException("Could not update user role");
+    throw new KeycloakException("Could not update user role");
+  }
+
+  private boolean isRoleAssigned(UserResource user, String roleName) {
+    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
+    for (RoleRepresentation role : userRoles) {
+      if (role.getName() != null && role.getName().equalsIgnoreCase(roleName)) {
+        return true;
+      }
     }
+    return false;
   }
 
   /**
