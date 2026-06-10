@@ -123,7 +123,8 @@ public class AccountManager implements AccountManaging {
         consultantPage.stream().map(ConsultantBase::getId).collect(Collectors.toList());
     var fullConsultants = consultantRepository.findAllByIdIn(consultantIds);
 
-    var consultingAgencies = consultantAgencyRepository.findByConsultantIdIn(consultantIds);
+    var consultingAgencies =
+        consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(consultantIds);
     var agencyIds = userServiceMapper.agencyIdsOf(consultingAgencies);
     var agencies = fetchAgenciesTolerantly(agencyIds);
 
