@@ -435,8 +435,9 @@ public class UserController implements UsersApi {
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
+  // Mapped to both direct path and /service/ prefix (API gateway) so both routes resolve
   @GetMapping(
-      value = "/users/sessions/room/{sessionId}",
+      value = {"/users/sessions/room/{sessionId}", "/service/users/sessions/room/{sessionId}"},
       produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
       @PathVariable Long sessionId,
@@ -447,78 +448,86 @@ public class UserController implements UsersApi {
         sessionId,
         rcToken != null ? "present" : "null");
 
-    GroupSessionListResponseDTO groupSessionList;
-    if (authenticatedUser.isConsultant()) {
-      var consultant = userAccountProvider.retrieveValidatedConsultant();
-      log.info("🔍 User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
+    try {
+      GroupSessionListResponseDTO groupSessionList;
+      if (authenticatedUser.isConsultant()) {
+        var consultant = userAccountProvider.retrieveValidatedConsultant();
+        log.info("🔍 User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
 
-      // MATRIX MIGRATION: Try to find as session first, then as chat
-      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
-      groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
-              consultant, singletonList(sessionId), authenticatedUser.getRoles());
+        // MATRIX MIGRATION: Try to find as session first, then as chat
+        log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
+        groupSessionList =
+            sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+                consultant, singletonList(sessionId), authenticatedUser.getRoles());
 
-      log.info(
-          "🔍 Step 1 result: {} sessions found",
-          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        log.info(
+            "🔍 Step 1 result: {} sessions found",
+            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
 
-      // If no session found, try to find as a chat (group chat)
-      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
-        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+        // If no session found, try to find as a chat (group chat)
+        if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+          log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+          String token = rcToken != null ? rcToken : "dummy-rc-token";
+          var rocketChatCredentials =
+              RocketChatCredentials.builder()
+                  .rocketChatUserId(consultant.getRocketChatId())
+                  .rocketChatToken(token)
+                  .build();
+          groupSessionList =
+              sessionListFacade.retrieveChatsForConsultantByChatIds(
+                  consultant, singletonList(sessionId), rocketChatCredentials);
+
+          log.info(
+              "🔍 Step 2 result: {} chats found",
+              groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        }
+      } else {
+        var user = userAccountProvider.retrieveValidatedUser();
+        log.info("🔍 User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
+
+        // MATRIX MIGRATION: Use dummy RocketChat credentials if no token provided
         String token = rcToken != null ? rcToken : "dummy-rc-token";
+        String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
         var rocketChatCredentials =
             RocketChatCredentials.builder()
-                .rocketChatUserId(consultant.getRocketChatId())
+                .rocketChatUserId(rcUserId)
                 .rocketChatToken(token)
                 .build();
+
+        log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
         groupSessionList =
-            sessionListFacade.retrieveChatsForConsultantByChatIds(
-                consultant, singletonList(sessionId), rocketChatCredentials);
+            sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
+                user.getUserId(),
+                singletonList(sessionId),
+                rocketChatCredentials,
+                authenticatedUser.getRoles());
 
         log.info(
-            "🔍 Step 2 result: {} chats found",
+            "🔍 Step 1 result: {} sessions found",
             groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+
+        // If no session found, try to find as a chat (group chat)
+        if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+          log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+          groupSessionList =
+              sessionListFacade.retrieveChatsForUserByChatIds(
+                  singletonList(sessionId), rocketChatCredentials);
+
+          log.info(
+              "🔍 Step 2 result: {} chats found",
+              groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        }
       }
-    } else {
-      var user = userAccountProvider.retrieveValidatedUser();
-      log.info("🔍 User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
 
-      // MATRIX MIGRATION: Use dummy RocketChat credentials if no token provided
-      String token = rcToken != null ? rcToken : "dummy-rc-token";
-      String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
-      var rocketChatCredentials =
-          RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
+      consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
 
-      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
-      groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
-              user.getUserId(),
-              singletonList(sessionId),
-              rocketChatCredentials,
-              authenticatedUser.getRoles());
-
-      log.info(
-          "🔍 Step 1 result: {} sessions found",
-          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
-
-      // If no session found, try to find as a chat (group chat)
-      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
-        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
-        groupSessionList =
-            sessionListFacade.retrieveChatsForUserByChatIds(
-                singletonList(sessionId), rocketChatCredentials);
-
-        log.info(
-            "🔍 Step 2 result: {} chats found",
-            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
-      }
+      return isNotEmpty(groupSessionList.getSessions())
+          ? new ResponseEntity<>(groupSessionList, HttpStatus.OK)
+          : new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    } catch (Exception e) {
+      log.error("Failed to load session room {}: {}", sessionId, e.getMessage(), e);
+      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
-
-    consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
-
-    return isNotEmpty(groupSessionList.getSessions())
-        ? new ResponseEntity<>(groupSessionList, HttpStatus.OK)
-        : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
   @Override

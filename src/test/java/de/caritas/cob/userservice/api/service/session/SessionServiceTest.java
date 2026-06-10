@@ -65,6 +65,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -185,6 +186,7 @@ class SessionServiceTest {
 
   @InjectMocks private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private AgencyService agencyService;
   @Mock private Logger logger;
   @Mock private ConsultantService consultantService;

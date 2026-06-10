@@ -1044,9 +1044,9 @@ paths:
           description: field to sort by
           schema:
             type: string
-            enum: [ FIRSTNAME, LASTNAME, EMAIL ]
+            enum: [ FIRSTNAME, LASTNAME, EMAIL, UPDATE_DATE ]
             default: FIRSTNAME
-            pattern: '^(FIRSTNAME|LASTNAME|EMAIL)$'
+            pattern: '^(FIRSTNAME|LASTNAME|EMAIL|UPDATE_DATE)$'
         - name: order
           in: query
           description: sort order

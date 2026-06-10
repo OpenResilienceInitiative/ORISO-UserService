@@ -63,6 +63,22 @@ public class ConsultantAgencyService {
   }
 
   /**
+   * Returns active {@link ConsultantAgency} rows for the given consultant IDs.
+   *
+   * @param consultantIds consultant IDs
+   * @return {@link List} of {@link ConsultantAgency}
+   */
+  public List<ConsultantAgency> getConsultantAgenciesByConsultantIds(List<String> consultantIds) {
+    if (consultantIds == null || consultantIds.isEmpty()) {
+      return emptyList();
+    }
+
+    return consultantAgencyRepository.findByConsultantIdIn(Set.copyOf(consultantIds)).stream()
+        .filter(consultantAgency -> consultantAgency.getDeleteDate() == null)
+        .collect(Collectors.toList());
+  }
+
+  /**
    * Returns an alphabetically sorted list of {@link ConsultantResponseDTO} depending on the
    * provided agencyId.
    *

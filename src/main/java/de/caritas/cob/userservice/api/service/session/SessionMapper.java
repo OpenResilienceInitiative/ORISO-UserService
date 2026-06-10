@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.toIsoTime;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.toUnixTime;
+import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -74,16 +75,19 @@ public class SessionMapper {
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {
-    if (nonNull(session.getUser()) && nonNull(session.getSessionData())) {
-      var sessionUserDto = new SessionUserDTO();
-      sessionUserDto.setId(session.getUser().getUserId());
-      sessionUserDto.setUsername(
-          new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
-      sessionUserDto.setSessionData(buildSessionDataMapFromSession(session));
-      sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
-      return sessionUserDto;
+    if (isNull(session.getUser())) {
+      return null;
     }
-    return null;
+
+    var sessionUserDto = new SessionUserDTO();
+    sessionUserDto.setId(session.getUser().getUserId());
+    sessionUserDto.setUsername(
+        new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
+    sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
+    if (nonNull(session.getSessionData())) {
+      sessionUserDto.setSessionData(buildSessionDataMapFromSession(session));
+    }
+    return sessionUserDto;
   }
 
   private SessionConsultantForConsultantDTO convertToSessionConsultantForConsultantDTO(

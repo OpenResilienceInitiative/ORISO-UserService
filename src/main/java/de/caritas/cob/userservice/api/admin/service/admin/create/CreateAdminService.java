@@ -78,18 +78,10 @@ public class CreateAdminService {
 
   private ArrayList<UserRole> getUserRolesForTenantAdmin() {
     if (multitenancyWithSingleDomain) {
-      return Lists.newArrayList(
-          UserRole.USER_ADMIN,
-          UserRole.AGENCY_ADMIN,
-          UserRole.SINGLE_TENANT_ADMIN,
-          UserRole.TENANT_ADMIN);
+      return Lists.newArrayList(UserRole.USER_ADMIN, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN);
     } else {
       return Lists.newArrayList(
-          UserRole.USER_ADMIN,
-          UserRole.AGENCY_ADMIN,
-          UserRole.SINGLE_TENANT_ADMIN,
-          UserRole.TENANT_ADMIN,
-          UserRole.TOPIC_ADMIN);
+          UserRole.USER_ADMIN, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN, UserRole.TOPIC_ADMIN);
     }
   }
 

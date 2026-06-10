@@ -48,6 +48,8 @@ public class MatrixSynapseService {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
+  private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -59,6 +61,23 @@ public class MatrixSynapseService {
   // Cache for Matrix sync tokens (username -> next_batch token)
   private final java.util.Map<String, String> syncTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
+
+  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the polled
+  // availability endpoint does not hit Synapse once per consultant on every request.
+  private final java.util.Map<String, CachedPresence> presenceCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final class CachedPresence {
+    private final String state;
+    private final boolean available;
+    private final long expiresAt;
+
+    private CachedPresence(String state, boolean available, long expiresAt) {
+      this.state = state;
+      this.available = available;
+      this.expiresAt = expiresAt;
+    }
+  }
 
   // Cached admin access token for admin operations
   private String cachedAdminToken = null;
@@ -1168,5 +1187,139 @@ public class MatrixSynapseService {
       log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
       return false;
     }
+  }
+
+  /**
+   * Reads a single user's Matrix presence state ("online", "unavailable", "offline").
+   *
+   * @param matrixUserId the full Matrix user ID (e.g. {@code @user:domain})
+   * @return the presence state, or empty when the lookup could not be performed (no admin token,
+   *     presence disabled on the homeserver, or the request failed)
+   */
+  public java.util.Optional<String> getUserPresence(String matrixUserId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return java.util.Optional.empty();
+    }
+    return readPresence(matrixUserId, adminToken).map(presence -> presence.state);
+  }
+
+  /**
+   * Reads a user's presence and computes whether they are currently available, based on activity
+   * recency rather than the (sticky) presence string alone.
+   */
+  private java.util.Optional<CachedPresence> readPresence(String matrixUserId, String adminToken) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return java.util.Optional.empty();
+    }
+
+    long now = System.currentTimeMillis();
+    CachedPresence cached = presenceCache.get(matrixUserId);
+    if (cached != null && now < cached.expiresAt) {
+      return java.util.Optional.of(cached);
+    }
+
+    try {
+      String url = matrixConfig.getApiUrl(ENDPOINT_PRESENCE.replace("{userId}", matrixUserId));
+      HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));
+
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      var body = response.getBody();
+      if (body != null && body.get("presence") != null) {
+        String state = String.valueOf(body.get("presence"));
+        Long lastActiveAgo = asLong(body.get("last_active_ago"));
+        boolean currentlyActive = Boolean.TRUE.equals(body.get("currently_active"));
+        boolean available = computeAvailable(state, currentlyActive, lastActiveAgo);
+        var presence = new CachedPresence(state, available, now + PRESENCE_CACHE_TTL_MS);
+        // Cache only successful lookups; failures stay uncached so they retry next poll
+        // (preserving the "every lookup failed -> fall back" semantics in callers).
+        presenceCache.put(matrixUserId, presence);
+        return java.util.Optional.of(presence);
+      }
+      return java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn("Matrix presence lookup failed for {}: {}", matrixUserId, ex.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
+   * A consultant is treated as available when actively connected, or when their last Matrix
+   * activity is recent enough. {@code offline} is never available, and a lingering {@code
+   * online}/{@code unavailable} with stale {@code last_active_ago} is correctly excluded.
+   */
+  private boolean computeAvailable(String state, boolean currentlyActive, Long lastActiveAgo) {
+    if ("offline".equals(state)) {
+      return false;
+    }
+    if (currentlyActive) {
+      return true;
+    }
+    if (lastActiveAgo != null) {
+      return lastActiveAgo <= matrixConfig.getPresenceActiveThresholdMs();
+    }
+    // No activity timestamp from Synapse — only trust an explicit "online".
+    return "online".equals(state);
+  }
+
+  private Long asLong(Object value) {
+    return value instanceof Number ? ((Number) value).longValue() : null;
+  }
+
+  /**
+   * Returns the subset of the given Matrix user IDs whose presence indicates an active client
+   * (online, or idle-but-connected "unavailable").
+   *
+   * <p>Returns {@link java.util.Optional#empty()} when Matrix presence cannot be determined at all
+   * — presence disabled via {@code matrix.presenceEnabled}, no admin token, or every lookup failed
+   * — so callers can fall back to another availability signal instead of wrongly assuming everyone
+   * is offline. A present (possibly empty) set is an authoritative answer.
+   *
+   * @param matrixUserIds the candidate Matrix user IDs to check
+   * @return online subset, or empty when presence is unavailable
+   */
+  public java.util.Optional<java.util.Set<String>> findOnlineMatrixUserIds(
+      java.util.Collection<String> matrixUserIds) {
+    if (!matrixConfig.isPresenceEnabled()) {
+      log.debug(
+          "Matrix presence disabled (matrix.presenceEnabled=false); availability unavailable");
+      return java.util.Optional.empty();
+    }
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Matrix admin token unavailable; cannot determine consultant presence");
+      return java.util.Optional.empty();
+    }
+    if (matrixUserIds == null || matrixUserIds.isEmpty()) {
+      return java.util.Optional.of(java.util.Set.of());
+    }
+
+    java.util.Set<String> online = new java.util.HashSet<>();
+    int resolved = 0;
+    for (String matrixUserId : matrixUserIds) {
+      if (matrixUserId == null || matrixUserId.isBlank()) {
+        continue;
+      }
+      var presence = readPresence(matrixUserId, adminToken);
+      if (presence.isEmpty()) {
+        continue;
+      }
+      resolved++;
+      if (presence.get().available) {
+        online.add(matrixUserId);
+      }
+    }
+
+    log.info(
+        "Matrix presence: candidates={}, resolved={}, available={}",
+        matrixUserIds.size(),
+        resolved,
+        online.size());
+
+    // No lookup succeeded -> presence genuinely unavailable; let callers fall back.
+    return resolved > 0 ? java.util.Optional.of(online) : java.util.Optional.empty();
   }
 }

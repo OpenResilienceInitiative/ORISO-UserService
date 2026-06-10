@@ -8,10 +8,12 @@ import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.CrudRepository;
 
-public interface ConsultantRepository extends CrudRepository<Consultant, String> {
+public interface ConsultantRepository
+    extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
 
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
@@ -35,7 +37,8 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
 
   @Query(
       value =
-          "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
+          "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
+              + "c.updateDate as updateDate "
               + "FROM Consultant c "
               + "WHERE "
               + "  (?2 IS NULL OR ?2 = 0 OR c.tenantId = ?2) "
@@ -53,7 +56,8 @@ public interface ConsultantRepository extends CrudRepository<Consultant, String>
 
   @Query(
       value =
-          "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email "
+          "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
+              + "c.email as email, c.updateDate as updateDate "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "

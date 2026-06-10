@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -134,5 +135,15 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   @Override
   public Long getTenantId() {
     return this.createConsultantDTO.getTenantId();
+  }
+
+  /**
+   * Provides the directly assigned topic ids.
+   *
+   * @return the topic ids
+   */
+  @Override
+  public List<Long> getTopicIds() {
+    return this.createConsultantDTO.getTopicIds();
   }
 }

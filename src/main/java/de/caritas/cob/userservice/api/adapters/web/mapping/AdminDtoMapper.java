@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.ArrayList;
@@ -19,12 +20,16 @@ import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AdminDtoMapper implements DtoMapperUtils {
 
   private final @NonNull TenantService tenantService;
@@ -122,10 +127,12 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setUsername((String) adminUserMap.get("username"));
     adminDTO.setCreateDate((String) adminUserMap.get("createdAt"));
     adminDTO.setUpdateDate((String) adminUserMap.get("updatedAt"));
+    adminDTO.setPublicName(null);
+    adminDTO.setRoleInOrg(roleInOrgOf((Admin.AdminType) adminUserMap.get("type")));
+    adminDTO.setVacated(false);
+    adminDTO.setAdminRights(true);
 
-    if (multiTenancyEnabled) {
-      enrichResponseWithTenantInformation(adminUserMap, adminDTO);
-    }
+    enrichResponseWithTenantInformation(adminUserMap, adminDTO);
 
     var agencies = new ArrayList<AgencyAdminResponseDTO>();
     var agencyMaps = (ArrayList<Map<String, Object>>) adminUserMap.get("agencies");
@@ -151,14 +158,38 @@ public class AdminDtoMapper implements DtoMapperUtils {
       Map<String, Object> adminUserMap, AdminDTO adminDTO) {
     Long tenantId = (Long) adminUserMap.get("tenantId");
     adminDTO.setTenantId(String.valueOf(tenantId));
-    if (tenantId != null) {
+    if (tenantId != null && !tenantId.equals(0L) && multiTenancyEnabled) {
       enrichWithTenantSubdomainAndName(adminDTO, tenantId);
     }
   }
 
   private void enrichWithTenantSubdomainAndName(AdminDTO adminDTO, Long tenantId) {
-    RestrictedTenantDTO restrictedTenantData = tenantService.getRestrictedTenantData(tenantId);
-    adminDTO.setTenantSubdomain(restrictedTenantData.getSubdomain());
-    adminDTO.setTenantName(restrictedTenantData.getName());
+    try {
+      RestrictedTenantDTO restrictedTenantData = tenantService.getRestrictedTenantData(tenantId);
+      adminDTO.setTenantSubdomain(restrictedTenantData.getSubdomain());
+      adminDTO.setTenantName(restrictedTenantData.getName());
+    } catch (HttpClientErrorException exception) {
+      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
+        log.warn("Tenant data not found while mapping admin response for tenantId {}", tenantId);
+        return;
+      }
+      throw exception;
+    }
+  }
+
+  private String roleInOrgOf(Admin.AdminType adminType) {
+    if (adminType == null) {
+      return null;
+    }
+    switch (adminType) {
+      case SUPER:
+        return "Platform Admin";
+      case TENANT:
+        return "Tenant Admin";
+      case AGENCY:
+        return "Agency Admin";
+      default:
+        return null;
+    }
   }
 }
