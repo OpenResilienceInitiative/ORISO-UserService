@@ -73,9 +73,8 @@ public class ConsultantAgencyService {
       return emptyList();
     }
 
-    return consultantAgencyRepository.findByConsultantIdIn(Set.copyOf(consultantIds)).stream()
-        .filter(consultantAgency -> consultantAgency.getDeleteDate() == null)
-        .collect(Collectors.toList());
+    return consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(
+        Set.copyOf(consultantIds));
   }
 
   /**
