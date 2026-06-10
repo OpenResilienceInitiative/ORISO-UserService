@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -93,13 +92,14 @@ public class CreateAdminService {
             : userHelper.getRandomPassword();
     try {
       identityClient.updatePassword(keycloakUserId, password);
-    } catch (CustomValidationHttpStatusException e) {
+      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
+    } catch (Exception e) {
+      // ohne Rollback bleibt ein verwaister Keycloak-User zurück und jeder
+      // weitere Versuch mit gleichem Benutzernamen/E-Mail endet im 409 Conflict
       identityClient.rollBackUser(keycloakUserId);
       throw e;
     }
-    getDefaultRoles(adminType).stream()
-        .forEach(role -> identityClient.updateRole(keycloakUserId, role));
-    return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
   }
 
   private String createKeycloakUser(final CreateAdminDTO createAgencyAdminDTO) {
