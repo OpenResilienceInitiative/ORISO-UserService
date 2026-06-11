@@ -1,87 +1,21 @@
-# ORISO UserService Developer Onboarding
+# Onboarding Guide: ORISO-UserService
 
-## Navigation
+1. Read `README.md` in the repository root if present.
+2. Open `.understand-anything/README.md` and launch the dashboard using the command shown there.
+3. Start with these tour files:
 
-- [First Read](#first-read)
-- [Run And Build](#run-and-build)
-- [How To Trace A Request](#how-to-trace-a-request)
-- [Where To Change Things](#where-to-change-things)
-- [Testing Map](#testing-map)
-- [Common Pitfalls](#common-pitfalls)
+- `README.md` - README.md is a docs file under repository root; starts with "# Online-Beratung UserService".
+- `package.json` - package.json is a config file under repository root; starts with ""name": "online-beratung-userservice",".
+- `pom.xml` - pom.xml is a config file under repository root; starts with "?xml version="1.0" encoding="UTF-8"?".
+- `src/main/java/de/caritas/cob/userservice/api/AccountManager.java` - src/main/java/de/caritas/cob/userservice/api/AccountManager.java is a code file under src in this repository.
+- `src/main/java/de/caritas/cob/userservice/api/actions/ActionCommand.java` - src/main/java/de/caritas/cob/userservice/api/actions/ActionCommand.java is a code file under src; starts with "public interface ActionCommandT".
+- `src/main/java/de/caritas/cob/userservice/api/actions/chat/ChatReCreator.java` - src/main/java/de/caritas/cob/userservice/api/actions/chat/ChatReCreator.java is a code file under src in this repository.
+- `.github/actions/docker-build-push/action.yml` - .github/actions/docker-build-push/action.yml is a config file under .github; starts with "name: Reusable Docker Build and Publish steps".
+- `.github/actions/maven-build/action.yml` - .github/actions/maven-build/action.yml is a config file under .github; starts with "name: Reusable Maven Build steps".
+- `.mvn/wrapper/maven-wrapper.properties` - .mvn/wrapper/maven-wrapper.properties is a config file under .mvn; starts with "wrapperVersion=3.3.4".
+- `api/appointmentservice.yaml` - api/appointmentservice.yaml is a config file under api; starts with "openapi: 3.0.1".
+- `api/conversationservice.yaml` - api/conversationservice.yaml is a config file under api; starts with "openapi: 3.0.1".
+- `api/useradminservice.yaml` - api/useradminservice.yaml is a config file under api; starts with "openapi: 3.0.1".
 
-## First Read
-
-Start with these files in order:
-
-1. `README.md` and `readme.md` to understand the existing project-level documentation split.
-2. `pom.xml` to understand generated sources, service clients, Java version, profiles, and test separation.
-3. `src/main/resources/application.properties` to understand runtime dependencies and feature flags.
-4. `src/main/java/de/caritas/cob/userservice/api/UserServiceApplication.java` for the Spring Boot entry point.
-5. `src/main/java/de/caritas/cob/userservice/api/config/auth/SecurityConfig.java` before changing any endpoint.
-
-## Run And Build
-
-Common local commands:
-
-```bash
-./mvnw clean test
-./mvnw spring-boot:run -Dspring-boot.run.profiles=local -DskipTests
-./mvnw clean package -DskipTests
-```
-
-The service listens on `server.port=8082` by default. Health is exposed at:
-
-```bash
-curl http://localhost:8082/actuator/health
-```
-
-This repository depends on external services. A productive local run needs MariaDB, Keycloak, Rocket.Chat, Matrix, RabbitMQ, and several ORISO service URLs depending on the flow being tested.
-
-## How To Trace A Request
-
-For generated API endpoints, start at the OpenAPI file under `api/`, find the `operationId`, then find the matching method in a controller under `adapters/web/controller`.
-
-For registration:
-
-`api/userservice.yaml` -> `UserController.registerUser` -> `CreateUserFacade` -> `KeycloakService` / `UserService` / `MatrixSynapseService` -> `CreateNewSessionFacade` -> `CreateSessionFacade` -> repositories and statistics.
-
-For assignment:
-
-`api/userservice.yaml` -> `UserController.assignSession` -> `AssignSessionFacade` -> `SessionService` -> `RocketChatFacade` / `RocketChatService` -> notification and statistics services.
-
-For anonymous enquiry:
-
-`api/conversationservice.yaml` -> `ConversationController.createAnonymousEnquiry` -> `CreateAnonymousEnquiryFacade` -> `AnonymousUserCreatorService` -> `AnonymousConversationCreatorService`.
-
-## Where To Change Things
-
-- Add or change public API shape in `api/*.yaml`, then regenerate generated sources through Maven.
-- Add admin API behavior in `UserAdminController.java` plus the matching admin facade/service.
-- Add user/session/chat behavior in `UserController.java` only as routing glue; keep orchestration in facades and business rules in services.
-- Add persistence in `model/*`, `port/out/*Repository.java`, and Liquibase changelogs.
-- Add outbound service integration by updating `services/*.yaml`, `pom.xml` generator config, and a factory/client wrapper under `config/apiclient`.
-- Add authorization in `SecurityConfig.java` at the same time as adding an endpoint.
-- Add tenant-aware behavior with explicit `TenantContext` assumptions and tests.
-
-## Testing Map
-
-The test suite is large and split across unit/integration-style tests under `src/test/java`.
-
-- Controller behavior: `src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/*`
-- Facades: `src/test/java/de/caritas/cob/userservice/api/facade/*`
-- Admin services: `src/test/java/de/caritas/cob/userservice/api/admin/service/*`
-- Workflows: `src/test/java/de/caritas/cob/userservice/api/workflow/*`
-- Repositories: `src/test/java/de/caritas/cob/userservice/api/port/out/*`
-- External adapters: `KeycloakServiceTest.java`, `RocketChatServiceTest.java`, Matrix tests where present.
-
-Before changing security, run the authorization tests around `UserControllerAuthorizationIT.java` and `ConversationControllerAuthorizationIT.java` if the local environment supports them.
-
-## Common Pitfalls
-
-- `SecurityConfig.java` uses explicit path matchers and ends with `denyAll()`; new endpoints will be blocked until mapped.
-- The repository has both `README.md` and `readme.md` tracked in git, but on a case-insensitive filesystem they collapse to one working-tree file.
-- `UserController.java.backup` is tracked but not compiled; do not use it as implementation source.
-- Registration currently has Matrix and Rocket.Chat fallback paths that log errors and continue in some cases. Check business expectations before tightening failures.
-- Tenant behavior changes need both authenticated and anonymous request tests.
-- Some runtime defaults are empty and must be injected from Kubernetes or local environment variables.
-
+4. Review architecture layers in `.understand-anything/ARCHITECTURE.md`.
+5. For changes, inspect files connected by `imports`, `configures`, `routes`, `deploys`, and `tested_by` edges in the graph.
