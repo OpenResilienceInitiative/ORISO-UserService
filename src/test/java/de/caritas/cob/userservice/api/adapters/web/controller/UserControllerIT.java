@@ -368,6 +368,30 @@ class UserControllerIT {
         .andExpect(status().isOk());
   }
 
+  @Test
+  void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
+    /* given */
+    val username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
+    /* given */
+    val username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isConflict());
+  }
+
   /** Method: registerUser */
   @Test
   void registerUser_Should_ReturnBadRequest_WhenProvidedWithInvalidRequestBody() throws Exception {
