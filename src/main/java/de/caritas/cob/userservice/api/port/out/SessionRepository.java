@@ -247,21 +247,46 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       Pageable pageable);
 
   /**
-   * Count enquiries for the given agency that are still waiting for a consultant (status NEW) and
-   * were created before the reference date — i.e. the number of people queued ahead of the asker in
-   * the same agency. Registration type is intentionally ignored: on this deployment all asker
-   * sessions land as REGISTERED regardless of whether they went through the anonymous or
-   * full-registration flow, so filtering on it would always return zero.
+   * Count live-chat enquiries that are visible in the consultant queue and were created before the
+   * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
+   * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
+   * privacy confirmed, unassigned, same consulting type and topic.
    */
   @Query(
       "SELECT COUNT(s) FROM Session s "
-          + "WHERE s.agencyId = :agencyId "
-          + "AND s.status = :sessionStatus "
-          + "AND s.createDate < :beforeDate")
+          + "JOIN s.user u "
+          + "WHERE s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND s.createDate < :beforeDate "
+          + "AND s.consultingTypeId = :consultingTypeId "
+          + "AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL) OR s.mainTopicId = :mainTopicId) "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND (:agencyId IS NULL OR s.agencyId = :agencyId)")
   long countPendingEnquiriesAheadOf(
-      @Param("agencyId") Long agencyId,
       @Param("sessionStatus") SessionStatus sessionStatus,
-      @Param("beforeDate") LocalDateTime beforeDate);
+      @Param("beforeDate") LocalDateTime beforeDate,
+      @Param("consultingTypeId") Integer consultingTypeId,
+      @Param("mainTopicId") Long mainTopicId,
+      @Param("agencyId") Long agencyId,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
+
+  /**
+   * Returns anonymous and live-chat-style sessions (REGISTERED with postcode {@code 00000} or
+   * {@code Anonymous-} username) for deactivation workflows.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.status IN :statuses "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%')")
+  List<Session> findLiveChatSessionsByStatusIn(
+      @Param("statuses") Set<SessionStatus> statuses,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
 
   /** Find all sessions by a given {@link SessionStatus}. */
   List<Session> findByStatus(SessionStatus status);
