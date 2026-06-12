@@ -1,51 +1,127 @@
-# ORISO UserService Dependency Notes
+# Dependency Audit: ORISO-UserService
 
-## Navigation
+## Detected Manifests
 
-- [Build Systems](#build-systems)
-- [Runtime Dependency Families](#runtime-dependency-families)
-- [Generated Clients](#generated-clients)
-- [Static Risk Notes](#static-risk-notes)
-- [Suggested Verification](#suggested-verification)
+- `package.json`
+- `pom.xml`
 
-## Build Systems
+## Detected Dependencies
 
-- Maven is the production build system through `pom.xml`.
-- Node/npm is present for release tooling only through `package.json` and `package-lock.json`.
+- - npm: `@commitlint/cli`
+- - npm: `@commitlint/config-conventional`
+- - npm: `cz-conventional-changelog`
+- - npm: `husky`
+- - npm: `standard-version`
+- - Maven: `userservice`
+- - Maven: `spring-boot-starter-parent`
+- - Maven: `spring-cloud-dependencies`
+- - Maven: `spring-boot-starter-web`
+- - Maven: `spring-boot-starter-security`
+- - Maven: `spring-web`
+- - Maven: `spring-boot-starter-validation`
+- - Maven: `spring-boot-starter-data-jpa`
+- - Maven: `spring-boot-starter-cache`
+- - Maven: `spring-boot-starter-data-redis`
+- - Maven: `spring-boot-starter-aop`
+- - Maven: `spring-boot-starter-hateoas`
+- - Maven: `spring-boot-starter-amqp`
+- - Maven: `spring-boot-configuration-processor`
+- - Maven: `spring-security-core`
+- - Maven: `spring-beans`
+- - Maven: `spring-webmvc`
+- - Maven: `spring-core`
+- - Maven: `spring-cloud-starter-sleuth`
+- - Maven: `spring-cloud-starter-zipkin`
+- - Maven: `spring-boot-starter-actuator`
+- - Maven: `hibernate-validator`
+- - Maven: `json-smart`
+- - Maven: `hibernate-search-orm`
+- - Maven: `openapi-generator-maven-plugin`
+- - Maven: `jackson-databind-nullable`
+- - Maven: `jackson-datatype-jsr310`
+- - Maven: `plexus-utils`
+- - Maven: `springfox-swagger2`
+- - Maven: `validation-api`
+- - Maven: `keycloak-spring-security-adapter`
+- - Maven: `keycloak-spring-boot-starter`
+- - Maven: `keycloak-admin-client`
+- - Maven: `javax.ws.rs-api`
+- - Maven: `lombok`
+- - Maven: `handlebars`
+- - Maven: `commons-lang3`
+- - Maven: `commons-text`
+- - Maven: `commons-validator`
+- - Maven: `commons-codec`
+- - Maven: `liquibase-maven-plugin`
+- - Maven: `liquibase-core`
+- - Maven: `mariadb-java-client`
+- - Maven: `log4j-core`
+- - Maven: `log4j-api`
+- - Maven: `log4j-to-slf4j`
+- - Maven: `logstash-logback-encoder`
+- - Maven: `jsoup`
+- - Maven: `commons-csv`
+- - Maven: `passay`
+- - Maven: `nv-i18n`
+- - Maven: `ehcache`
+- - Maven: `jackson-databind`
+- - Maven: `spring-context-support`
+- - Maven: `firebase-admin`
+- - Maven: `h2`
+- - Maven: `easy-random-core`
+- - Maven: `spring-boot-starter-test`
+- - Maven: `spring-security-test`
+- - Maven: `spring-security-core`
+- - Maven: `powermock-module-junit4`
+- - Maven: `junit`
+- - Maven: `mockito-core`
+- - Maven: `mockito-junit-jupiter`
+- - Maven: `byte-buddy`
+- - Maven: `powermock-api-mockito2`
+- - Maven: `reflections`
+- - Maven: `commons-collections4`
+- - Maven: `awaitility`
+- - Maven: `junit-jupiter`
+- - Maven: `mariadb`
+- - Maven: `jna`
+- - Maven: `rabbitmq-mock`
+- - Maven: `json-unit`
+- - Maven: `plantuml`
+- - Maven: `spring-boot-starter-data-mongodb`
+- - Maven: `snakeyaml`
+- - Maven: `spring-boot-maven-plugin`
+- - Maven: `rewrite-maven-plugin`
+- - Maven: `rewrite-spring`
 
-## Runtime Dependency Families
+## Operational Dependency Files
 
-- Spring Boot web/security/JPA/cache/Redis/AOP/HATEOAS/AMQP/actuator.
-- Keycloak Spring adapter, Spring Boot starter, and admin client.
-- OpenAPI Generator and generated Spring/Java clients.
-- MariaDB JDBC, Liquibase, Hibernate Search.
-- Rocket.Chat REST and MongoDB access.
-- Matrix Synapse REST access.
-- RabbitMQ, Redis, Firebase Admin, mail/SMTP, statistics publishing.
-- Logging through SLF4J/Logback plus Log4j bridges and logstash encoder.
-
-## Generated Clients
-
-`pom.xml` generates inbound API interfaces from `api/*.yaml` and outbound Java clients from `services/*.yaml`. Generated sources are written under `target/generated-sources` and should not be edited directly.
-
-## Static Risk Notes
-
-This file does not replace SCA output. It flags dependency areas to verify:
-
-- Spring Boot 2.7.x / Spring Security 5.x upgrade path.
-- Legacy Keycloak adapters.
-- Springfox 2.x.
-- PowerMock and mixed JUnit-era test support.
-- Old test/runtime utility versions: H2 1.4.200, jsoup 1.14.3, firebase-admin 8.1.0, commons-csv 1.8, json-unit 2.28.0.
-- Forced Log4j 2.17.1 pin should be checked against the current approved baseline.
-
-## Suggested Verification
-
-```bash
-./mvnw -DskipTests dependency:tree
-./mvnw test
-npm audit
-```
-
-For production release, run the organization-approved Maven dependency vulnerability scanner and store the report next to the deployment evidence.
-
+- `.github/actions/docker-build-push/action.yml` (config)
+- `.github/actions/maven-build/action.yml` (config)
+- `.mvn/wrapper/maven-wrapper.properties` (config)
+- `api/appointmentservice.yaml` (config)
+- `api/conversationservice.yaml` (config)
+- `api/useradminservice.yaml` (config)
+- `api/userservice.yaml` (config)
+- `api/userstatisticsservice.yaml` (config)
+- `package-lock.json` (config)
+- `package.json` (config)
+- `pom.xml` (config)
+- `services/agencyadminservice.yaml` (config)
+- `services/agencyservice.yaml` (config)
+- `services/applicationsettingsservice.yaml` (config)
+- `services/appointmentService.yaml` (config)
+- `services/consultingtypeservice.yaml` (config)
+- `services/keycloakextension.yaml` (config)
+- `services/liveservice.yaml` (config)
+- `services/mailservice.yaml` (config)
+- `services/messageservice.yaml` (config)
+- `services/statisticsservice.yaml` (config)
+- `services/tenantadminservice.yaml` (config)
+- `services/tenantservice.yaml` (config)
+- `services/topicservice.yaml` (config)
+- `src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/interceptor/http-client.env.json` (config)
+- `src/main/resources/application-dev.properties` (config)
+- `src/main/resources/application-prod.properties` (config)
+- `src/main/resources/application-staging.properties` (config)
+- `src/main/resources/application-testing.properties` (config)
+- `src/main/resources/application.properties` (config)
