@@ -27,7 +27,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientResponseException;
 
 /** Provider for consultant information. */
 @Component
@@ -62,6 +62,7 @@ public class ConsultantDataProvider {
   }
 
   private UserDataResponseDTO userDataResponseDtoOf(Consultant consultant) {
+    var agencies = agencyDTOsOf(consultant);
 
     return UserDataResponseDTO.builder()
         .userId(consultant.getId())
@@ -77,13 +78,12 @@ public class ConsultantDataProvider {
         .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
         .absenceMessage(consultant.getAbsenceMessage())
         .isInTeamAgency(consultant.isTeamConsultant())
-        .agencies(agencyDTOsOf(consultant))
+        .agencies(agencies)
         .userRoles(authenticatedUser.getRoles())
         .grantedAuthorities(authenticatedUser.getGrantedAuthorities())
         .isWalkThroughEnabled(consultant.getWalkThroughEnabled())
         .emailToggles(emailTogglesOf(consultant))
-        .hasAnonymousConversations(
-            hasAtLeastOneTypeWithAllowedAnonymousConversations(agencyDTOsOf(consultant)))
+        .hasAnonymousConversations(hasAtLeastOneTypeWithAllowedAnonymousConversations(agencies))
         .hasArchive(hasArchive(consultant))
         .dataPrivacyConfirmation(consultant.getDataPrivacyConfirmation())
         .termsAndConditionsConfirmation(consultant.getTermsAndConditionsConfirmation())
@@ -106,13 +106,14 @@ public class ConsultantDataProvider {
   private List<AgencyDTO> agencyDTOsOf(Consultant consultant) {
     try {
       return agencyService.getAgencies(agencyIdsOf(consultant.getConsultantAgencies()));
-    } catch (HttpClientErrorException.Forbidden e) {
-      // Do not block login when agency-service scope denies this token;
-      // return a minimal consultant profile instead of surfacing a 500.
+    } catch (RestClientResponseException e) {
+      // Do not block login when agency-service cannot provide metadata for this token/agency.
+      // Return a minimal consultant profile instead of surfacing agency errors as login failures.
       log.warn(
-          "Forbidden while loading agencies for consultant {}: {}",
+          "Could not load agencies for consultant {}: status={}, body={}",
           consultant.getId(),
-          e.getMessage());
+          e.getRawStatusCode(),
+          e.getResponseBodyAsString());
       return List.of();
     }
   }
