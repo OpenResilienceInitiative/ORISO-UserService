@@ -40,7 +40,8 @@ public class DeactivateAnonymousUserService {
   public void deactivateStaleAnonymousUsers() {
     LocalDateTime deactivationTime = LocalDateTime.now().minusMinutes(deactivatePeriodMinutes);
     List<Session> anonymousSessions =
-        this.sessionRepository.findLiveChatSessionsByStatusIn(Set.of(NEW, IN_PROGRESS), ANONYMOUS);
+        this.sessionRepository.findByStatusInAndRegistrationType(
+            Set.of(NEW, IN_PROGRESS), ANONYMOUS);
 
     Set<Session> staleAnonymousSessions =
         anonymousSessions.stream()

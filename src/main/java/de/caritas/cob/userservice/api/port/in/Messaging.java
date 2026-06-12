@@ -34,6 +34,5 @@ public interface Messaging {
 
   Set<String> findAvailableConsultants(int consultingTypeId);
 
-  long countPendingEnquiriesAheadOf(
-      Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate);
+  long countPendingEnquiriesAheadOf(Long agencyId, LocalDateTime beforeDate);
 }

@@ -80,7 +80,7 @@ class DeactivateAnonymousUserServiceTest {
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
     verify(this.sessionRepository, times(1))
-        .findLiveChatSessionsByStatusIn(
+        .findByStatusInAndRegistrationType(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
@@ -102,7 +102,7 @@ class DeactivateAnonymousUserServiceTest {
             .collect(Collectors.toSet());
     user.setSessions(userSessions);
 
-    when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
+    when(this.sessionRepository.findByStatusInAndRegistrationType(any(), any()))
         .thenReturn(new ArrayList<>(userSessions));
   }
 
@@ -132,7 +132,7 @@ class DeactivateAnonymousUserServiceTest {
       deactivateStaleAnonymousUsers_Should_notPerformAnyDeactivation_When_sessionsAreInProgressWithinDeactivatePeriod(
           LocalDateTime updateDate) {
     var user = createUserWithSingleSession(updateDate);
-    when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
+    when(this.sessionRepository.findByStatusInAndRegistrationType(any(), any()))
         .thenReturn(new ArrayList<>(user.getSessions()));
     var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
     when(this.actionsRegistry.buildContainerForType(User.class))
@@ -144,7 +144,7 @@ class DeactivateAnonymousUserServiceTest {
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
     verify(this.sessionRepository, times(1))
-        .findLiveChatSessionsByStatusIn(
+        .findByStatusInAndRegistrationType(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
@@ -175,7 +175,7 @@ class DeactivateAnonymousUserServiceTest {
           LocalDateTime overdueUpdateDate) {
     var user = createUserWithSingleSession(overdueUpdateDate);
 
-    when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
+    when(this.sessionRepository.findByStatusInAndRegistrationType(any(), any()))
         .thenReturn(new ArrayList<>(user.getSessions()));
 
     var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
@@ -187,7 +187,7 @@ class DeactivateAnonymousUserServiceTest {
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
     verify(this.sessionRepository, times(1))
-        .findLiveChatSessionsByStatusIn(
+        .findByStatusInAndRegistrationType(
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
