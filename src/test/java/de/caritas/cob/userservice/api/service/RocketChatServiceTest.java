@@ -34,13 +34,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -52,6 +49,7 @@ import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatUserService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -105,7 +103,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -178,8 +175,8 @@ class RocketChatServiceTest {
   private final RocketChatConfig rocketChatConfig =
       new RocketChatConfig(new MockHttpServletRequest());
   private final ObjectMapper objectMapper = new ObjectMapper();
-  @Mock Logger logger;
   @Mock RocketChatCredentialsProvider rcCredentialsHelper;
+  @InjectMocks private RocketChatUserService rocketChatUserService;
   @InjectMocks private RocketChatService rocketChatService;
   @Mock private RestTemplate restTemplate;
   @Mock private MongoClient mockedMongoClient;
@@ -196,8 +193,8 @@ class RocketChatServiceTest {
   void setup() {
     rocketChatConfig.setBaseUrl("http://localhost/api/v1");
     setField(rocketChatService, "rocketChatConfig", rocketChatConfig);
-
-    setInternalState(RocketChatService.class, "log", logger);
+    setField(rocketChatService, "rocketChatUserService", rocketChatUserService);
+    setField(rocketChatUserService, "rocketChatConfig", rocketChatConfig);
   }
 
   /** Method: createPrivateGroup */
@@ -253,7 +250,7 @@ class RocketChatServiceTest {
   }
 
   @Test
-  void deleteGroup_Should_ReturnFalseAndLog_WhenApiCallIsNotSuccessful() throws SecurityException {
+  void deleteGroup_Should_ReturnFalse_WhenApiCallIsNotSuccessful() throws SecurityException {
 
     GroupDeleteResponseDTO response = new GroupDeleteResponseDTO(false);
 
@@ -266,12 +263,10 @@ class RocketChatServiceTest {
     boolean result = rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
 
     assertFalse(result);
-
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
   }
 
   @Test
-  void rollbackGroup_Should_Log_WhenApiCallFailsWithAnException() throws SecurityException {
+  void rollbackGroup_Should_ReturnFalse_WhenApiCallFailsWithAnException() throws SecurityException {
 
     HttpServerErrorException httpServerErrorException =
         new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR, "HttpServerErrorException");
@@ -279,9 +274,9 @@ class RocketChatServiceTest {
             ArgumentMatchers.anyString(), any(), ArgumentMatchers.<Class<GroupResponseDTO>>any()))
         .thenThrow(httpServerErrorException);
 
-    rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
+    boolean result = rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), any(Exception.class));
+    assertFalse(result);
   }
 
   /** Method: addUserToGroup */
@@ -431,8 +426,6 @@ class RocketChatServiceTest {
           when(rcCredentialsHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
           rocketChatService.removeSystemMessages(GROUP_ID, DATETIME_OLDEST, DATETIME_LATEST);
-
-          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
         });
   }
 
@@ -988,7 +981,7 @@ class RocketChatServiceTest {
   }
 
   @Test
-  void setRoomReadOnly_Should_logError_When_responseIsNotSuccess() throws Exception {
+  void setRoomReadOnly_Should_NotThrow_When_responseIsNotSuccess() throws Exception {
     when(rcCredentialsHelper.getSystemUser()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
     GroupResponseDTO groupResponseDTO = new GroupResponseDTO();
     groupResponseDTO.setSuccess(false);
@@ -999,9 +992,7 @@ class RocketChatServiceTest {
             eq(GroupResponseDTO.class)))
         .thenReturn(new ResponseEntity<>(groupResponseDTO, HttpStatus.OK));
 
-    this.rocketChatService.setRoomReadOnly("");
-
-    verify(logger).error(anyString(), anyString(), nullable(String.class));
+    assertDoesNotThrow(() -> this.rocketChatService.setRoomReadOnly(""));
   }
 
   @Test
@@ -1032,7 +1023,7 @@ class RocketChatServiceTest {
   }
 
   @Test
-  void setRoomWriteable_Should_logError_When_responseIsNotSuccess() throws Exception {
+  void setRoomWriteable_Should_NotThrow_When_responseIsNotSuccess() throws Exception {
     when(rcCredentialsHelper.getSystemUser()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
     GroupResponseDTO groupResponseDTO = new GroupResponseDTO();
     groupResponseDTO.setSuccess(false);
@@ -1043,9 +1034,7 @@ class RocketChatServiceTest {
             eq(GroupResponseDTO.class)))
         .thenReturn(new ResponseEntity<>(groupResponseDTO, HttpStatus.OK));
 
-    this.rocketChatService.setRoomWriteable("");
-
-    verify(logger).error(anyString(), anyString(), nullable(String.class));
+    assertDoesNotThrow(() -> this.rocketChatService.setRoomWriteable(""));
   }
 
   @Test

@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatMapper;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatUserService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
@@ -46,7 +47,13 @@ public class RocketChatTestConfig {
         mongoClient,
         rocketChatConfig,
         rocketChatMapper,
-        rocketChatCredentials) {
+        rocketChatCredentials,
+        new RocketChatUserService(
+            restTemplate,
+            rocketChatCredentialsProvider,
+            rocketChatClient,
+            rocketChatConfig,
+            rocketChatMapper)) {
       @Override
       public ResponseEntity<LoginResponseDTO> loginUserFirstTime(String username, String password) {
         var loginResponseDTO = new LoginResponseDTO();
