@@ -381,7 +381,7 @@ components:
         peopleAhead:
           type: integer
           minimum: 0
-          description: Number of anonymous enquiries created before this one in the same consulting type and still waiting (status NEW).
+          description: Number of visible live-chat enquiries created before this one in the same consulting type and topic, still waiting (status NEW, privacy confirmed, no consultant assigned).
         status:
           type: string
           enum:
