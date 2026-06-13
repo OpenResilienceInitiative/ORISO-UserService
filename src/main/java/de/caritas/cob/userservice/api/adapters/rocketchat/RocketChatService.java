@@ -1,17 +1,15 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat;
 
-import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Arrays.asList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatGroupClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatMessageClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupCleanHistoryDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
@@ -41,7 +39,6 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInit
 import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -70,11 +67,6 @@ import org.springframework.web.client.RestTemplate;
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
 
-  private static final String RC_DATE_TIME_PATTERN = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
-
-  private final LocalDateTime localDateTime1900 = LocalDateTime.of(1900, 1, 1, 0, 0);
-
-  private final LocalDateTime localDateTimeFuture = nowInUtc().plusYears(1L);
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull RocketChatCredentialsProvider rcCredentialHelper;
   private final @NonNull RocketChatHttpHeaders headersHelper;
@@ -86,6 +78,8 @@ public class RocketChatService implements MessageClient {
   private final RocketChatGroupClient rocketChatGroupClient;
 
   private final RocketChatRoomClient rocketChatRoomClient;
+
+  private final RocketChatMessageClient rocketChatMessageClient;
 
   private final RocketChatConfig rocketChatConfig;
 
@@ -451,9 +445,7 @@ public class RocketChatService implements MessageClient {
    */
   public void removeSystemMessages(String rcGroupId, LocalDateTime oldest, LocalDateTime latest)
       throws RocketChatRemoveSystemMessagesException, RocketChatUserNotInitializedException {
-    RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
-    this.removeMessages(
-        rcGroupId, new String[] {technicalUser.getRocketChatUsername()}, oldest, latest);
+    rocketChatMessageClient.removeSystemMessages(rcGroupId, oldest, latest);
   }
 
   /**
@@ -462,38 +454,7 @@ public class RocketChatService implements MessageClient {
    * @param rcGroupId the rocket chat group id
    */
   public void removeAllMessages(String rcGroupId) throws RocketChatRemoveSystemMessagesException {
-    removeMessages(rcGroupId, null, localDateTime1900, localDateTimeFuture);
-  }
-
-  private void removeMessages(
-      String rcGroupId, String[] users, LocalDateTime oldest, LocalDateTime latest)
-      throws RocketChatRemoveSystemMessagesException {
-
-    StandardResponseDTO response;
-    try {
-      RocketChatCredentials technicalUser = rcCredentialHelper.getTechnicalUser();
-      var header = headersHelper.getStandardHttpHeaders(technicalUser);
-      var body =
-          new GroupCleanHistoryDTO(
-              rcGroupId,
-              oldest.format(DateTimeFormatter.ofPattern(RC_DATE_TIME_PATTERN)),
-              latest.format(DateTimeFormatter.ofPattern(RC_DATE_TIME_PATTERN)),
-              (isNotEmpty(users)) ? users : new String[] {});
-      HttpEntity<GroupCleanHistoryDTO> request = new HttpEntity<>(body, header);
-
-      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_CLEAN_HISTORY);
-      response = restTemplate.postForObject(url, request, StandardResponseDTO.class);
-
-    } catch (Exception ex) {
-      log.error("Could not clean history of Rocket.Chat group id {}. Reason: ", rcGroupId, ex);
-      throw new RocketChatRemoveSystemMessagesException(
-          String.format("Could not clean history of Rocket.Chat group id %s", rcGroupId));
-    }
-
-    if (nonNull(response) && !response.isSuccess()) {
-      throw new RocketChatRemoveSystemMessagesException(
-          String.format("Could not clean history of Rocket.Chat group id %s", rcGroupId));
-    }
+    rocketChatMessageClient.removeAllMessages(rcGroupId);
   }
 
   /**
