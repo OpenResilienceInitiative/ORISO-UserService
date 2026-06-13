@@ -1,11 +1,19 @@
 package de.caritas.cob.userservice.api.testConfig;
 
+import static org.mockito.Mockito.mock;
+
 import com.mongodb.client.MongoClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatMapper;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatGroupClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatMessageClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatPresenceClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatSubscriptionClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
@@ -19,7 +27,6 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestTemplate;
 
 @Slf4j
 @TestConfiguration
@@ -32,21 +39,33 @@ public class RocketChatTestConfig {
 
   @Bean
   public RocketChatService rocketChatService(
-      RestTemplate restTemplate,
       RocketChatCredentialsProvider rocketChatCredentialsProvider,
       RocketChatConfig rocketChatConfig,
       RocketChatClient rocketChatClient,
-      MongoClient mongoClient,
       RocketChatMapper rocketChatMapper,
       RocketChatCredentials rocketChatCredentials) {
+
+    // Create mocks for all delegated client beans (now required by the new constructor)
+    var userClient = mock(RocketChatUserClient.class);
+    var groupClient = mock(RocketChatGroupClient.class);
+    var roomClient = mock(RocketChatRoomClient.class);
+    var messageClient = mock(RocketChatMessageClient.class);
+    var presenceClient = mock(RocketChatPresenceClient.class);
+    var subscriptionClient = mock(RocketChatSubscriptionClient.class);
+
     return new RocketChatService(
-        restTemplate,
         rocketChatCredentialsProvider,
         rocketChatClient,
-        mongoClient,
+        userClient,
+        groupClient,
+        roomClient,
+        messageClient,
+        presenceClient,
+        subscriptionClient,
         rocketChatConfig,
         rocketChatMapper,
         rocketChatCredentials) {
+
       @Override
       public ResponseEntity<LoginResponseDTO> loginUserFirstTime(String username, String password) {
         var loginResponseDTO = new LoginResponseDTO();
@@ -56,7 +75,6 @@ public class RocketChatTestConfig {
         dataDTO.setAuthToken(AUTH_TOKEN);
         var meDTO = new MeDTO();
         dataDTO.setMe(meDTO);
-
         loginResponseDTO.setData(dataDTO);
         return ResponseEntity.ok(loginResponseDTO);
       }
