@@ -260,7 +260,10 @@ class RocketChatServiceTest {
 
     when(rocketChatGroupClient.rollbackGroup(eq(GROUP_ID), eq(RC_CREDENTIALS))).thenReturn(false);
 
-    rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
+    var result = rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
+
+    assertFalse(result);
+    verify(rocketChatGroupClient, times(1)).rollbackGroup(eq(GROUP_ID), eq(RC_CREDENTIALS));
   }
 
   /** Method: addUserToGroup */
@@ -605,9 +608,9 @@ class RocketChatServiceTest {
   @Test
   void removeAllMessages_Should_NotThrowException_WhenRemoveMessagesSucceeded() throws Exception {
 
-    when(rcCredentialsHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
+    rocketChatService.removeAllMessages(GROUP_ID);
 
-    assertDoesNotThrow(() -> rocketChatService.removeAllMessages(GROUP_ID));
+    verify(rocketChatMessageClient, times(1)).removeAllMessages(eq(GROUP_ID));
   }
 
   @Test

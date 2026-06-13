@@ -339,7 +339,7 @@ public class RocketChatGroupClient {
     try {
       response = tryRemoveUserFromGroup(rcUserId, rcGroupId);
     } catch (Exception ex) {
-      if (ex.getMessage().contains(ERROR_ROOM_NOT_FOUND)) {
+      if (ex.getMessage() != null && ex.getMessage().contains(ERROR_ROOM_NOT_FOUND)) {
         return;
       }
       log.error(

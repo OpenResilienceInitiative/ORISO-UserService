@@ -89,6 +89,8 @@ public class RocketChatPresenceClient {
   private boolean isSuccessful(ResponseEntity<MessageResponse> response) {
     var body = response.getBody();
 
-    return nonNull(body) && body.getSuccess() && !body.getMessage().contains("\"error\"");
+    return nonNull(body)
+        && Boolean.TRUE.equals(body.getSuccess())
+        && !body.getMessage().contains("\"error\"");
   }
 }
