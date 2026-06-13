@@ -94,33 +94,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
 
-  private static final String ENDPOINT_GROUP_CREATE = "/groups.create";
-  private static final String ENDPOINT_GROUP_DELETE = "/groups.delete";
-  private static final String ENDPOINT_GROUP_INVITE = "/groups.invite";
-  private static final String ENDPOINT_GROUP_KICK = "/groups.kick";
-  private static final String ENDPOINT_ROOM_LEAVE = "/rooms.leave";
-  private static final String ENDPOINT_GROUP_MEMBERS = "/groups.members";
-  private static final String ENDPOINT_GROUP_READ_ONLY = "/groups.setReadOnly";
-  private static final String ENDPOINT_GROUP_KEY_UPDATE = "/e2e.updateGroupKey";
-  private static final String ENDPOINT_GROUP_LIST = "/groups.listAll";
-  private static final String ENDPOINT_ROOM_CLEAN_HISTORY = "/rooms.cleanHistory";
-  private static final String ENDPOINT_ROOM_GET = "/rooms.get";
-  private static final String ENDPOINT_ROOM_INFO = "/rooms.info?roomId=";
-  private static final String ENDPOINT_SUBSCRIPTION_GET = "/subscriptions.get";
-  private static final String ENDPOINT_USER_MUTE = "/method.call/muteUserInRoom";
-  private static final String ENDPOINT_USER_UNMUTE = "/method.call/unmuteUserInRoom";
-  private static final String ENDPOINT_SAVE_ROOM_SETTINGS = "/rooms.saveRoomSettings";
-  private static final String ENDPOINT_USER_INFO = "/users.info?userId=";
-  private static final String ENDPOINT_USER_UPDATE = "/users.update";
-  private static final String ENDPOINT_USER_DELETE = "/users.delete";
-  private static final String ENDPOINT_USER_LIST = "/users.list";
-  private static final String ENDPOINT_USER_CREATE = "/users.create";
-  private static final String ENDPOINT_USER_LOGIN = "/login";
-  private static final String ENDPOINT_USER_LOGOUT = "/logout";
-  private static final String ENDPOINT_USER_PRESENCE_GET = "/users.getPresence?userId=";
-  private static final String ENDPOINT_USER_PRESENCE_SET = "/method.call/UserPresence";
-  private static final String ENDPOINT_USER_PRESENCE_LIST = "/users.presence";
-
   private static final String MONGO_DATABASE_NAME = "rocketchat";
   private static final String MONGO_COLLECTION_SUBSCRIPTION = "rocketchat_subscription";
 
@@ -174,7 +147,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public boolean muteUserInChat(String username, String roomId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_MUTE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_MUTE);
     var muteUser = mapper.muteUserOf(username, roomId);
 
     try {
@@ -188,7 +161,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public boolean unmuteUserInChat(String username, String roomId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_UNMUTE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_UNMUTE);
     var unmuteUser = mapper.unmuteUserOf(username, roomId);
 
     try {
@@ -219,7 +192,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public boolean updateUser(String chatUserId, String displayName) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_UPDATE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_UPDATE);
     var updateUser = mapper.updateUserOf(chatUserId, displayName);
 
     try {
@@ -233,7 +206,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Set<String> findAllAvailableUserIds() {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_PRESENCE_LIST);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_LIST);
 
     try {
       var presentList = rocketChatClient.getForEntity(url, PresenceListDTO.class).getBody();
@@ -261,7 +234,7 @@ public class RocketChatService implements MessageClient {
   }
 
   private Optional<PresenceDTO> getUserPresence(String chatUserId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_PRESENCE_GET + chatUserId);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_GET + chatUserId);
 
     try {
       var body = rocketChatClient.getForEntity(url, PresenceDTO.class).getBody();
@@ -279,7 +252,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public boolean setUserPresence(String username, String status) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_PRESENCE_SET);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_SET);
     var userPresence = mapper.setUserPresenceOf(status);
 
     try {
@@ -300,7 +273,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Optional<Map<String, Object>> findUser(String chatUserId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_INFO + chatUserId);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_INFO + chatUserId);
 
     try {
       var response = rocketChatClient.getForEntity(url, UserInfoResponseDTO.class);
@@ -319,7 +292,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Optional<Map<String, Object>> getChatInfo(String roomId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_ROOM_INFO + roomId);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_INFO + roomId);
 
     try {
       var response = rocketChatClient.getForEntity(url, RoomResponse.class);
@@ -347,7 +320,7 @@ public class RocketChatService implements MessageClient {
       var headers = getStandardHttpHeaders(rocketChatCredentials);
       var groupCreateBodyDto = new GroupCreateBodyDTO(name, false);
       HttpEntity<GroupCreateBodyDTO> request = new HttpEntity<>(groupCreateBodyDto, headers);
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_CREATE);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_CREATE);
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (RestClientResponseException ex) {
@@ -431,7 +404,7 @@ public class RocketChatService implements MessageClient {
       var headers = getStandardHttpHeaders(rocketChatCredentials);
       var groupDeleteBodyDto = new GroupDeleteBodyDTO(groupId);
       HttpEntity<GroupDeleteBodyDTO> request = new HttpEntity<>(groupDeleteBodyDto, headers);
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_DELETE);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_DELETE);
       response = restTemplate.postForObject(url, request, GroupDeleteResponseDTO.class);
 
     } catch (Exception ex) {
@@ -523,7 +496,7 @@ public class RocketChatService implements MessageClient {
 
       HttpEntity<LdapLoginDTO> request = new HttpEntity<>(ldapLoginDTO, headers);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_LOGIN);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_LOGIN);
       return restTemplate.postForEntity(url, request, LoginResponseDTO.class);
     } catch (Exception ex) {
       log.error(
@@ -548,7 +521,7 @@ public class RocketChatService implements MessageClient {
 
       HttpEntity<Void> request = new HttpEntity<>(headers);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_LOGOUT);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_LOGOUT);
       var response = restTemplate.postForEntity(url, request, LogoutResponseDTO.class);
 
       return response.getStatusCode() == HttpStatus.OK;
@@ -579,7 +552,7 @@ public class RocketChatService implements MessageClient {
       var body = new GroupAddUserBodyDTO(rcUserId, rcGroupId);
       HttpEntity<GroupAddUserBodyDTO> request = new HttpEntity<>(body, header);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_INVITE);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_INVITE);
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (Exception ex) {
@@ -625,7 +598,7 @@ public class RocketChatService implements MessageClient {
       var body = new GroupLeaveBodyDTO(rcGroupId);
       HttpEntity<GroupLeaveBodyDTO> request = new HttpEntity<>(body, header);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_ROOM_LEAVE);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_LEAVE);
       response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
 
     } catch (Exception ex) {
@@ -683,7 +656,7 @@ public class RocketChatService implements MessageClient {
     var body = new GroupRemoveUserBodyDTO(rcUserId, rcGroupId);
     HttpEntity<GroupRemoveUserBodyDTO> request = new HttpEntity<>(body, header);
 
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_KICK);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_KICK);
     response = restTemplate.postForObject(url, request, GroupResponseDTO.class);
     return response;
   }
@@ -837,7 +810,7 @@ public class RocketChatService implements MessageClient {
   }
 
   private String buildGetGroupMembersPath(String rcGroupId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_MEMBERS);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_MEMBERS);
 
     return UriComponentsBuilder.fromUriString(url)
         .queryParam("roomId", rcGroupId)
@@ -887,7 +860,7 @@ public class RocketChatService implements MessageClient {
               (isNotEmpty(users)) ? users : new String[] {});
       HttpEntity<GroupCleanHistoryDTO> request = new HttpEntity<>(body, header);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_ROOM_CLEAN_HISTORY);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_CLEAN_HISTORY);
       response = restTemplate.postForObject(url, request, StandardResponseDTO.class);
 
     } catch (Exception ex) {
@@ -917,7 +890,7 @@ public class RocketChatService implements MessageClient {
       var header = getStandardHttpHeaders(rocketChatCredentials);
       HttpEntity<Void> request = new HttpEntity<>(header);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_SUBSCRIPTION_GET);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.SUBSCRIPTION_GET);
       response = restTemplate.exchange(url, HttpMethod.GET, request, SubscriptionsGetDTO.class);
 
     } catch (HttpStatusCodeException ex) {
@@ -937,7 +910,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Optional<List<Map<String, String>>> findAllChats(String chatUserId) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_SUBSCRIPTION_GET);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.SUBSCRIPTION_GET);
 
     try {
       var response = rocketChatClient.getForEntity(url, chatUserId, SubscriptionsGetDTO.class);
@@ -950,7 +923,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public boolean updateChatE2eKey(String chatUserId, String roomId, String key) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_KEY_UPDATE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_KEY_UPDATE);
     var updateUser = mapper.updateGroupKeyOf(chatUserId, roomId, key);
 
     try {
@@ -976,7 +949,7 @@ public class RocketChatService implements MessageClient {
     try {
       var header = getStandardHttpHeaders(rocketChatCredentials);
       HttpEntity<Void> request = new HttpEntity<>(header);
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_ROOM_GET);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_GET);
       response = restTemplate.exchange(url, HttpMethod.GET, request, RoomsGetDTO.class);
 
     } catch (Exception ex) {
@@ -1010,7 +983,8 @@ public class RocketChatService implements MessageClient {
       HttpEntity<Void> request = new HttpEntity<>(header);
 
       var fields = "{\"userRooms\":1}";
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_INFO + rcUserId) + "&fields={fields}";
+      var url =
+          rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_INFO + rcUserId) + "&fields={fields}";
       response =
           restTemplate.exchange(url, HttpMethod.GET, request, UserInfoResponseDTO.class, fields);
 
@@ -1046,7 +1020,7 @@ public class RocketChatService implements MessageClient {
       throws RocketChatUserNotInitializedException {
     HttpEntity<UserUpdateRequestDTO> request = buildRocketChatUserUpdateRequestEntity(requestDTO);
 
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_UPDATE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_UPDATE);
 
     ResponseEntity<UserInfoResponseDTO> response;
     try {
@@ -1103,7 +1077,7 @@ public class RocketChatService implements MessageClient {
     var header = getStandardHttpHeaders(technicalUser);
     HttpEntity<UserDeleteBodyDTO> request = new HttpEntity<>(requestDTO, header);
 
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_DELETE);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_DELETE);
     var response = restTemplate.exchange(url, HttpMethod.POST, request, UserInfoResponseDTO.class);
 
     if (isResponseNotSuccess(response) && !isUserAlreadyDeleted(response)) {
@@ -1155,7 +1129,7 @@ public class RocketChatService implements MessageClient {
     var header = getStandardHttpHeaders(systemUser);
     HttpEntity<SetRoomReadOnlyBodyDTO> request = new HttpEntity<>(requestDTO, header);
 
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_GROUP_READ_ONLY);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_READ_ONLY);
     var response = restTemplate.exchange(url, HttpMethod.POST, request, GroupResponseDTO.class);
 
     GroupResponseDTO responseBody = response.getBody();
@@ -1255,7 +1229,7 @@ public class RocketChatService implements MessageClient {
   }
 
   private String getGroupAllPaginatedUrl(int currentOffset) {
-    return rocketChatConfig.getApiUrl(ENDPOINT_GROUP_LIST)
+    return rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_LIST)
         + "?query={query}&offset="
         + currentOffset
         + "&count="
@@ -1317,7 +1291,7 @@ public class RocketChatService implements MessageClient {
   }
 
   private String buildUsersListGetUrl() {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_LIST);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_LIST);
     return url + "?query={query}&fields={fields}";
   }
 
@@ -1326,7 +1300,7 @@ public class RocketChatService implements MessageClient {
   }
 
   public boolean saveRoomSettings(String chatId, boolean encrypted) {
-    var url = rocketChatConfig.getApiUrl(ENDPOINT_SAVE_ROOM_SETTINGS);
+    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_SAVE_SETTINGS);
     var mapOfRoomSettings = mapper.mapOfRoomSettings(chatId, encrypted);
 
     try {
@@ -1390,7 +1364,7 @@ public class RocketChatService implements MessageClient {
 
       HttpEntity<UserCreateDTO> request = new HttpEntity<>(userCreateDTO, headers);
 
-      var url = rocketChatConfig.getApiUrl(ENDPOINT_USER_CREATE);
+      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_CREATE);
       return restTemplate.postForEntity(url, request, StandardResponseDTO.class);
     } catch (Exception ex) {
       log.error(
