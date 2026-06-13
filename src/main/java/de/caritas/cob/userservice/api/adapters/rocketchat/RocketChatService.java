@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat;
 
-import static com.mongodb.client.model.Filters.eq;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Arrays.asList;
 import static java.util.Objects.isNull;
@@ -8,7 +7,7 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 
 import com.google.common.collect.Lists;
-import com.mongodb.client.MongoClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
@@ -28,12 +27,9 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginRespons
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceListDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MessageResponse;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomResponse;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsGetDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.SetRoomReadOnlyBodyDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -54,7 +50,6 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -65,7 +60,6 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bson.Document;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
@@ -86,9 +80,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Service
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
-
-  private static final String MONGO_DATABASE_NAME = "rocketchat";
-  private static final String MONGO_COLLECTION_SUBSCRIPTION = "rocketchat_subscription";
 
   private static final String ERROR_MESSAGE =
       "Error during rollback: Rocket.Chat group with id " + "%s could not be deleted";
@@ -113,7 +104,7 @@ public class RocketChatService implements MessageClient {
 
   private final RocketChatUserClient rocketChatUserClient;
 
-  private final MongoClient mongoClient;
+  private final RocketChatRoomClient rocketChatRoomClient;
 
   private final RocketChatConfig rocketChatConfig;
 
@@ -273,15 +264,7 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Optional<Map<String, Object>> getChatInfo(String roomId) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_INFO + roomId);
-
-    try {
-      var response = rocketChatClient.getForEntity(url, RoomResponse.class);
-      return mapper.mapOfRoomResponse(response);
-    } catch (HttpClientErrorException exception) {
-      log.error("Chat Info failed.", exception);
-      return Optional.empty();
-    }
+    return rocketChatRoomClient.getChatInfo(roomId);
   }
 
   /**
@@ -574,6 +557,7 @@ public class RocketChatService implements MessageClient {
     return response;
   }
 
+  @Override
   public boolean removeUserFromSession(String chatUserId, String chatId) {
     try {
       addTechnicalUserToGroup(chatId);
@@ -662,26 +646,7 @@ public class RocketChatService implements MessageClient {
    * @return all members of the group
    */
   public List<GroupMemberDTO> getChatUsers(String chatId) {
-    var subscriptions =
-        mongoClient
-            .getDatabase(MONGO_DATABASE_NAME)
-            .getCollection(MONGO_COLLECTION_SUBSCRIPTION)
-            .find(eq("rid", chatId));
-
-    var members = new ArrayList<GroupMemberDTO>();
-    try (var cursor = subscriptions.iterator()) {
-      while (cursor.hasNext()) {
-        var subscription = cursor.next();
-        var member = new GroupMemberDTO();
-        var user = (Document) subscription.get("u");
-        member.set_id(user.getString("_id"));
-        member.setName(user.getString("name"));
-        member.setUsername(user.getString("username"));
-        members.add(member);
-      }
-    }
-
-    return members;
+    return rocketChatRoomClient.getChatUsers(chatId);
   }
 
   /**
@@ -691,6 +656,7 @@ public class RocketChatService implements MessageClient {
    * @return al members of the group
    * @deprecated use getChatUsers
    */
+  @Deprecated
   public List<GroupMemberDTO> getMembersOfGroup(String rcGroupId)
       throws RocketChatGetGroupMembersException {
 
@@ -856,29 +822,7 @@ public class RocketChatService implements MessageClient {
    * @return the rooms for the user
    */
   public List<RoomsUpdateDTO> getRoomsOfUser(RocketChatCredentials rocketChatCredentials) {
-
-    ResponseEntity<RoomsGetDTO> response;
-
-    try {
-      var header = headersHelper.getStandardHttpHeaders(rocketChatCredentials);
-      HttpEntity<Void> request = new HttpEntity<>(header);
-      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_GET);
-      response = restTemplate.exchange(url, HttpMethod.GET, request, RoomsGetDTO.class);
-
-    } catch (Exception ex) {
-      throw new InternalServerErrorException(
-          String.format(CHAT_ROOM_ERROR_MESSAGE, rocketChatCredentials.getRocketChatUserId()),
-          ex,
-          LogService::logRocketChatError);
-    }
-
-    if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return asList(response.getBody().getUpdate());
-    } else {
-      var error =
-          String.format(CHAT_ROOM_ERROR_MESSAGE, rocketChatCredentials.getRocketChatUserId());
-      throw new InternalServerErrorException(error, LogService::logRocketChatError);
-    }
+    return rocketChatRoomClient.getRoomsOfUser(rocketChatCredentials);
   }
 
   /**
@@ -908,7 +852,7 @@ public class RocketChatService implements MessageClient {
    * @throws RocketChatUserNotInitializedException if technical user isn´t initialized
    */
   public void setRoomReadOnly(String rcRoomId) throws RocketChatUserNotInitializedException {
-    setRoomState(rcRoomId, true);
+    rocketChatRoomClient.setRoomReadOnly(rcRoomId);
   }
 
   /**
@@ -918,26 +862,7 @@ public class RocketChatService implements MessageClient {
    * @throws RocketChatUserNotInitializedException if technical user isn´t initialized
    */
   public void setRoomWriteable(String rcRoomId) throws RocketChatUserNotInitializedException {
-    setRoomState(rcRoomId, false);
-  }
-
-  private void setRoomState(String rcRoomId, boolean readOnly)
-      throws RocketChatUserNotInitializedException {
-    var requestDTO = new SetRoomReadOnlyBodyDTO(rcRoomId, readOnly);
-    RocketChatCredentials systemUser = rcCredentialHelper.getSystemUser();
-    var header = headersHelper.getStandardHttpHeaders(systemUser);
-    HttpEntity<SetRoomReadOnlyBodyDTO> request = new HttpEntity<>(requestDTO, header);
-
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_READ_ONLY);
-    var response = restTemplate.exchange(url, HttpMethod.POST, request, GroupResponseDTO.class);
-
-    GroupResponseDTO responseBody = response.getBody();
-    if (nonNull(responseBody) && !responseBody.isSuccess()) {
-      log.error(
-          "Rocket.Chat Error: Mark group with id {} as read only failed with reason {}",
-          rcRoomId,
-          responseBody.getError());
-    }
+    rocketChatRoomClient.setRoomWriteable(rcRoomId);
   }
 
   /**
@@ -1057,16 +982,7 @@ public class RocketChatService implements MessageClient {
   }
 
   public boolean saveRoomSettings(String chatId, boolean encrypted) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.ROOM_SAVE_SETTINGS);
-    var mapOfRoomSettings = mapper.mapOfRoomSettings(chatId, encrypted);
-
-    try {
-      var response = rocketChatClient.postForEntity(url, mapOfRoomSettings, MessageResponse.class);
-      return response.getStatusCode().is2xxSuccessful();
-    } catch (HttpClientErrorException exception) {
-      log.error("Saving room settings failed.", exception);
-      return false;
-    }
+    return rocketChatRoomClient.saveRoomSettings(chatId, encrypted);
   }
 
   public void removeUserFromGroupIgnoreGroupNotFound(String rcUserId, String rcGroupId)
