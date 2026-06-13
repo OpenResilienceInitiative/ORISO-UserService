@@ -27,7 +27,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.multipart.MultipartFile;
 
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
@@ -42,7 +41,6 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
-  private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_POWER_LEVELS =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
@@ -53,6 +51,7 @@ public class MatrixSynapseService {
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final MatrixMediaClient matrixMediaClient;
 
   // Cache for Matrix access tokens (username -> access token)
   private final java.util.Map<String, String> accessTokenCache =
@@ -814,52 +813,8 @@ public class MatrixSynapseService {
    * @return Map with content_uri and upload success
    */
   public java.util.Map<String, Object> uploadFile(
-      MultipartFile file, String roomId, String accessToken) {
-    try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_MEDIA_UPLOAD);
-
-      log.info(
-          "📤 Uploading file to Matrix: {} ({}bytes)", file.getOriginalFilename(), file.getSize());
-
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-      headers.setContentType(MediaType.parseMediaType(file.getContentType()));
-
-      HttpEntity<byte[]> requestEntity = new HttpEntity<>(file.getBytes(), headers);
-
-      ResponseEntity<java.util.Map> response =
-          restTemplate.postForEntity(url, requestEntity, java.util.Map.class);
-
-      if (response.getBody() != null && response.getBody().containsKey("content_uri")) {
-        String contentUri = (String) response.getBody().get("content_uri");
-        log.info("✅ File uploaded successfully: {}", contentUri);
-
-        // Automatically send file message to room
-        sendFileMessage(
-            roomId,
-            file.getOriginalFilename(),
-            contentUri,
-            file.getContentType(),
-            file.getSize(),
-            accessToken);
-
-        return java.util.Map.of(
-            "success",
-            true,
-            "content_uri",
-            contentUri,
-            "file_name",
-            file.getOriginalFilename(),
-            "file_size",
-            file.getSize());
-      }
-
-      throw new RuntimeException("No content_uri in Matrix upload response");
-
-    } catch (Exception e) {
-      log.error("❌ Failed to upload file to Matrix", e);
-      throw new RuntimeException("Failed to upload file: " + e.getMessage(), e);
-    }
+      org.springframework.web.multipart.MultipartFile file, String roomId, String accessToken) {
+    return matrixMediaClient.uploadFile(file, roomId, accessToken);
   }
 
   /**
@@ -871,102 +826,7 @@ public class MatrixSynapseService {
    * @return the file bytes
    */
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    try {
-      String url =
-          matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
-
-      log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
-
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-
-      HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-      ResponseEntity<byte[]> response =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, requestEntity, byte[].class);
-
-      if (response.getBody() != null) {
-        log.info("✅ File downloaded successfully: {} bytes", response.getBody().length);
-        return response.getBody();
-      }
-
-      throw new RuntimeException("No file data in Matrix download response");
-
-    } catch (Exception e) {
-      log.error("❌ Failed to download file from Matrix", e);
-      throw new RuntimeException("Failed to download file: " + e.getMessage(), e);
-    }
-  }
-
-  /**
-   * Send a file message to a Matrix room.
-   *
-   * @param roomId the room ID
-   * @param fileName the file name
-   * @param contentUri the Matrix content URI (mxc://...)
-   * @param mimeType the file MIME type
-   * @param fileSize the file size in bytes
-   * @param accessToken the access token
-   * @return the send response with event_id
-   */
-  private java.util.Map<String, Object> sendFileMessage(
-      String roomId,
-      String fileName,
-      String contentUri,
-      String mimeType,
-      long fileSize,
-      String accessToken) {
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      // Determine message type based on MIME type
-      String msgtype = "m.file";
-      if (mimeType != null) {
-        if (mimeType.startsWith("image/")) {
-          msgtype = "m.image";
-        } else if (mimeType.startsWith("video/")) {
-          msgtype = "m.video";
-        } else if (mimeType.startsWith("audio/")) {
-          msgtype = "m.audio";
-        }
-      }
-
-      var messageBody = new java.util.HashMap<String, Object>();
-      messageBody.put("msgtype", msgtype);
-      messageBody.put("body", fileName);
-      messageBody.put("url", contentUri);
-
-      var info = new java.util.HashMap<String, Object>();
-      info.put("size", fileSize);
-      if (mimeType != null) {
-        info.put("mimetype", mimeType);
-      }
-      messageBody.put("info", info);
-
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(messageBody, headers);
-
-      String txnId = java.util.UUID.randomUUID().toString();
-      var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
-
-      log.info("📨 Sending file message to Matrix room: {} (type: {})", roomId, msgtype);
-
-      var response =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.PUT, request, java.util.Map.class);
-
-      log.info("✅ File message sent successfully");
-      return response.getBody();
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not send file message to room ({}). Reason: {}",
-          roomId,
-          ex.getMessage());
-      return java.util.Map.of("error", ex.getMessage());
-    }
+    return matrixMediaClient.downloadFile(serverName, mediaId, accessToken);
   }
 
   /**
