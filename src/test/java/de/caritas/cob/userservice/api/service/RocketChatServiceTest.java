@@ -50,8 +50,16 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatMapper;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatGroupClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatMessageClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatPresenceClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatSubscriptionClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -178,6 +186,18 @@ class RocketChatServiceTest {
   private final RocketChatConfig rocketChatConfig =
       new RocketChatConfig(new MockHttpServletRequest());
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  // New client mocks required by refactored facade constructor
+  @Mock private RocketChatClient rocketChatClient;
+  @Mock private RocketChatMapper rocketChatMapper;
+  @Mock private RocketChatConfig rocketChatConfigMock;
+  @Mock private RocketChatUserClient rocketChatUserClient;
+  @Mock private RocketChatGroupClient rocketChatGroupClient;
+  @Mock private RocketChatRoomClient rocketChatRoomClient;
+  @Mock private RocketChatMessageClient rocketChatMessageClient;
+  @Mock private RocketChatPresenceClient rocketChatPresenceClient;
+  @Mock private RocketChatSubscriptionClient rocketChatSubscriptionClient;
+
   @Mock Logger logger;
   @Mock RocketChatCredentialsProvider rcCredentialsHelper;
   @InjectMocks private RocketChatService rocketChatService;
