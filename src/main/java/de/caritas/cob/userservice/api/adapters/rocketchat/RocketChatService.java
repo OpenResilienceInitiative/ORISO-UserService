@@ -49,7 +49,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
 
 /** Service for Rocket.Chat functionalities. */
 @Slf4j
@@ -58,9 +57,7 @@ import org.springframework.web.client.RestTemplate;
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
 
-  private final @NonNull RestTemplate restTemplate;
   private final @NonNull RocketChatCredentialsProvider rcCredentialHelper;
-  private final @NonNull RocketChatHttpHeaders headersHelper;
 
   private final RocketChatClient rocketChatClient;
 
