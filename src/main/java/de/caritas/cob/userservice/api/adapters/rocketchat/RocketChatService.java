@@ -6,6 +6,7 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatGroupClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatMessageClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatPresenceClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
@@ -14,8 +15,6 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceListDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MessageResponse;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
@@ -80,6 +79,8 @@ public class RocketChatService implements MessageClient {
   private final RocketChatRoomClient rocketChatRoomClient;
 
   private final RocketChatMessageClient rocketChatMessageClient;
+
+  private final RocketChatPresenceClient rocketChatPresenceClient;
 
   private final RocketChatConfig rocketChatConfig;
 
@@ -161,69 +162,22 @@ public class RocketChatService implements MessageClient {
 
   @Override
   public Set<String> findAllAvailableUserIds() {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_LIST);
-
-    try {
-      var presentList = rocketChatClient.getForEntity(url, PresenceListDTO.class).getBody();
-      if (isNull(presentList)) {
-        log.warn("Present user search inconclusive");
-      } else {
-        return mapper.mapAvailableOf(presentList);
-      }
-    } catch (HttpClientErrorException exception) {
-      log.error("Present user search failed.", exception);
-    }
-
-    return Set.of();
+    return rocketChatPresenceClient.findAllAvailableUserIds();
   }
 
   @Override
   public Optional<Boolean> isLoggedIn(String chatUserId) {
-    return getUserPresence(chatUserId).flatMap(presenceDTO -> Optional.of(presenceDTO.isPresent()));
+    return rocketChatPresenceClient.isLoggedIn(chatUserId);
   }
 
   @Override
   public Optional<Boolean> isAvailable(String chatUserId) {
-    return getUserPresence(chatUserId)
-        .flatMap(presenceDTO -> Optional.of(presenceDTO.isAvailable()));
-  }
-
-  private Optional<PresenceDTO> getUserPresence(String chatUserId) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_GET + chatUserId);
-
-    try {
-      var body = rocketChatClient.getForEntity(url, PresenceDTO.class).getBody();
-      if (isNull(body)) {
-        log.warn("Presence check inconclusive (user \"{}\".)", chatUserId);
-      } else {
-        return Optional.of(body);
-      }
-    } catch (HttpClientErrorException exception) {
-      log.error("Presence check failed.", exception);
-    }
-
-    return Optional.empty();
+    return rocketChatPresenceClient.isAvailable(chatUserId);
   }
 
   @Override
   public boolean setUserPresence(String username, String status) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.USER_PRESENCE_SET);
-    var userPresence = mapper.setUserPresenceOf(status);
-
-    try {
-      var response =
-          rocketChatClient.postForEntity(url, username, userPresence, MessageResponse.class);
-      return isSuccessful(response);
-    } catch (HttpClientErrorException exception) {
-      log.error("Setting user presence failed.", exception);
-      return false;
-    }
-  }
-
-  private boolean isSuccessful(ResponseEntity<MessageResponse> response) {
-    var body = response.getBody();
-
-    return nonNull(body) && body.getSuccess() && !body.getMessage().contains("\"error\"");
+    return rocketChatPresenceClient.setUserPresence(username, status);
   }
 
   @Override
