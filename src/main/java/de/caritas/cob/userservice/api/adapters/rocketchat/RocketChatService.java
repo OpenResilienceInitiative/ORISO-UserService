@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat;
 
-import static java.util.Arrays.asList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
@@ -8,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatGroup
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatMessageClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatPresenceClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatRoomClient;
+import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatSubscriptionClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.client.RocketChatUserClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
@@ -17,12 +17,9 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupRespons
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MessageResponse;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatCreateGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
@@ -36,7 +33,6 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveSyste
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserFromGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
-import de.caritas.cob.userservice.api.service.LogService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -49,14 +45,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 /** Service for Rocket.Chat functionalities. */
@@ -81,6 +73,8 @@ public class RocketChatService implements MessageClient {
   private final RocketChatMessageClient rocketChatMessageClient;
 
   private final RocketChatPresenceClient rocketChatPresenceClient;
+
+  private final RocketChatSubscriptionClient rocketChatSubscriptionClient;
 
   private final RocketChatConfig rocketChatConfig;
 
@@ -420,56 +414,17 @@ public class RocketChatService implements MessageClient {
   public List<SubscriptionsUpdateDTO> getSubscriptionsOfUser(
       RocketChatCredentials rocketChatCredentials) {
 
-    ResponseEntity<SubscriptionsGetDTO> response;
-
-    try {
-      var header = headersHelper.getStandardHttpHeaders(rocketChatCredentials);
-      HttpEntity<Void> request = new HttpEntity<>(header);
-
-      var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.SUBSCRIPTION_GET);
-      response = restTemplate.exchange(url, HttpMethod.GET, request, SubscriptionsGetDTO.class);
-
-    } catch (HttpStatusCodeException ex) {
-      if (ex.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
-        throw new RocketChatUnauthorizedException(rocketChatCredentials.getRocketChatUserId(), ex);
-      }
-      throw new InternalServerErrorException(ex.getMessage(), LogService::logRocketChatError);
-    }
-
-    if (response.getStatusCode() == HttpStatus.OK && nonNull(response.getBody())) {
-      return asList(response.getBody().getUpdate());
-    } else {
-      var error = "Could not get Rocket.Chat subscriptions for user id %s";
-      throw new InternalServerErrorException(error, LogService::logRocketChatError);
-    }
+    return rocketChatSubscriptionClient.getSubscriptionsOfUser(rocketChatCredentials);
   }
 
   @Override
   public Optional<List<Map<String, String>>> findAllChats(String chatUserId) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.SUBSCRIPTION_GET);
-
-    try {
-      var response = rocketChatClient.getForEntity(url, chatUserId, SubscriptionsGetDTO.class);
-      return mapper.mapOfSubscriptionsResponse(response);
-    } catch (HttpClientErrorException exception) {
-      log.error("Subscriptions Get failed.", exception);
-      return Optional.empty();
-    }
+    return rocketChatSubscriptionClient.findAllChats(chatUserId);
   }
 
   @Override
   public boolean updateChatE2eKey(String chatUserId, String roomId, String key) {
-    var url = rocketChatConfig.getApiUrl(RocketChatEndpoints.GROUP_KEY_UPDATE);
-    var updateUser = mapper.updateGroupKeyOf(chatUserId, roomId, key);
-
-    try {
-      var response =
-          rocketChatClient.postForEntity(url, chatUserId, updateUser, StandardResponseDTO.class);
-      return response.getStatusCode().is2xxSuccessful();
-    } catch (HttpClientErrorException exception) {
-      log.error("Updating E2E group key failed.", exception);
-      return false;
-    }
+    return rocketChatSubscriptionClient.updateChatE2eKey(chatUserId, roomId, key);
   }
 
   /**
