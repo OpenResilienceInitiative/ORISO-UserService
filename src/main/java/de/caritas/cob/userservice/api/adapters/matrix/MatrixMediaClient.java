@@ -26,44 +26,41 @@ public class MatrixMediaClient {
   private final RestTemplate restTemplate;
 
   public Map<String, Object> uploadFile(MultipartFile file, String roomId, String accessToken) {
+    String fileName =
+        file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
+    String contentType = file.getContentType();
+
     try {
       String url = matrixConfig.getApiUrl(ENDPOINT_MEDIA_UPLOAD);
 
-      log.info(
-          "📤 Uploading file to Matrix: {} ({}bytes)", file.getOriginalFilename(), file.getSize());
+      log.info("📤 Uploading file to Matrix: {} ({}bytes)", fileName, file.getSize());
 
       HttpHeaders headers = new HttpHeaders();
       headers.set("Authorization", "Bearer " + accessToken);
-      headers.setContentType(MediaType.parseMediaType(file.getContentType()));
+      headers.setContentType(
+          contentType != null
+              ? MediaType.parseMediaType(contentType)
+              : MediaType.APPLICATION_OCTET_STREAM);
 
       HttpEntity<byte[]> requestEntity = new HttpEntity<>(file.getBytes(), headers);
 
+      @SuppressWarnings("rawtypes")
       ResponseEntity<Map> response = restTemplate.postForEntity(url, requestEntity, Map.class);
 
-      if (response.getBody() != null && response.getBody().containsKey("content_uri")) {
-        String contentUri = (String) response.getBody().get("content_uri");
-        log.info("✅ File uploaded successfully: {}", contentUri);
-
-        sendFileMessage(
-            roomId,
-            file.getOriginalFilename(),
-            contentUri,
-            file.getContentType(),
-            file.getSize(),
-            accessToken);
-
-        return Map.of(
-            "success",
-            true,
-            "content_uri",
-            contentUri,
-            "file_name",
-            file.getOriginalFilename(),
-            "file_size",
-            file.getSize());
+      if (response.getBody() == null || !response.getBody().containsKey("content_uri")) {
+        throw new RuntimeException("No content_uri in Matrix upload response");
       }
 
-      throw new RuntimeException("No content_uri in Matrix upload response");
+      String contentUri = (String) response.getBody().get("content_uri");
+      log.info("✅ File uploaded successfully: {}", contentUri);
+
+      sendFileMessage(roomId, fileName, contentUri, contentType, file.getSize(), accessToken);
+
+      return Map.of(
+          "success", true,
+          "content_uri", contentUri,
+          "file_name", fileName,
+          "file_size", file.getSize());
 
     } catch (Exception e) {
       log.error("❌ Failed to upload file to Matrix", e);
@@ -72,34 +69,31 @@ public class MatrixMediaClient {
   }
 
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
+    String url =
+        matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
+    log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("Authorization", "Bearer " + accessToken);
+    HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+    ResponseEntity<byte[]> response;
     try {
-      String url =
-          matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
-
-      log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
-
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-
-      HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-      ResponseEntity<byte[]> response =
-          restTemplate.exchange(url, HttpMethod.GET, requestEntity, byte[].class);
-
-      if (response.getBody() != null) {
-        log.info("✅ File downloaded successfully: {} bytes", response.getBody().length);
-        return response.getBody();
-      }
-
-      throw new RuntimeException("No file data in Matrix download response");
-
-    } catch (Exception e) {
+      response = restTemplate.exchange(url, HttpMethod.GET, requestEntity, byte[].class);
+    } catch (RuntimeException e) {
       log.error("❌ Failed to download file from Matrix", e);
       throw new RuntimeException("Failed to download file: " + e.getMessage(), e);
     }
+
+    if (response.getBody() == null) {
+      throw new RuntimeException("Failed to download file: No file data in Matrix download response");
+    }
+
+    log.info("✅ File downloaded successfully: {} bytes", response.getBody().length);
+    return response.getBody();
   }
 
-  private Map<String, Object> sendFileMessage(
+  private void sendFileMessage(
       String roomId,
       String fileName,
       String contentUri,
@@ -142,16 +136,15 @@ public class MatrixMediaClient {
 
       log.info("📨 Sending file message to Matrix room: {} (type: {})", roomId, msgtype);
 
+      @SuppressWarnings("rawtypes")
       var response = restTemplate.exchange(url, HttpMethod.PUT, request, Map.class);
 
       log.info("✅ File message sent successfully");
-      return response.getBody();
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not send file message to room ({}). Reason: {}",
           roomId,
           ex.getMessage());
-      return Map.of("error", ex.getMessage());
     }
   }
 
