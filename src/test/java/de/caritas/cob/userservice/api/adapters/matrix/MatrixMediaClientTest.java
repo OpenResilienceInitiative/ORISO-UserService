@@ -142,7 +142,8 @@ class MatrixMediaClientTest {
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
-            new ResponseEntity<>(Map.of("content_uri", "mxc://matrix.local/img-id"), HttpStatus.OK));
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/img-id"), HttpStatus.OK));
     when(restTemplate.exchange(
             contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
@@ -172,7 +173,8 @@ class MatrixMediaClientTest {
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
-            new ResponseEntity<>(Map.of("content_uri", "mxc://matrix.local/vid-id"), HttpStatus.OK));
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/vid-id"), HttpStatus.OK));
     when(restTemplate.exchange(
             contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
@@ -202,7 +204,8 @@ class MatrixMediaClientTest {
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
-            new ResponseEntity<>(Map.of("content_uri", "mxc://matrix.local/aud-id"), HttpStatus.OK));
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/aud-id"), HttpStatus.OK));
     when(restTemplate.exchange(
             contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
@@ -232,7 +235,8 @@ class MatrixMediaClientTest {
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
-            new ResponseEntity<>(Map.of("content_uri", "mxc://matrix.local/doc-id"), HttpStatus.OK));
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/doc-id"), HttpStatus.OK));
     when(restTemplate.exchange(
             contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),

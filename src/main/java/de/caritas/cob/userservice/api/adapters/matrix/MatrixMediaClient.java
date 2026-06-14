@@ -26,8 +26,7 @@ public class MatrixMediaClient {
   private final RestTemplate restTemplate;
 
   public Map<String, Object> uploadFile(MultipartFile file, String roomId, String accessToken) {
-    String fileName =
-        file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
+    String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
     String contentType = file.getContentType();
 
     try {
@@ -86,7 +85,8 @@ public class MatrixMediaClient {
     }
 
     if (response.getBody() == null) {
-      throw new RuntimeException("Failed to download file: No file data in Matrix download response");
+      throw new RuntimeException(
+          "Failed to download file: No file data in Matrix download response");
     }
 
     log.info("✅ File downloaded successfully: {} bytes", response.getBody().length);
