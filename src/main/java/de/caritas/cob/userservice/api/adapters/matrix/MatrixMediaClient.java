@@ -56,10 +56,14 @@ public class MatrixMediaClient {
       sendFileMessage(roomId, fileName, contentUri, contentType, file.getSize(), accessToken);
 
       return Map.of(
-          "success", true,
-          "content_uri", contentUri,
-          "file_name", fileName,
-          "file_size", file.getSize());
+          "success",
+          true,
+          "content_uri",
+          contentUri,
+          "file_name",
+          fileName,
+          "file_size",
+          file.getSize());
 
     } catch (Exception e) {
       log.error("❌ Failed to upload file to Matrix", e);
@@ -68,8 +72,7 @@ public class MatrixMediaClient {
   }
 
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    String url =
-        matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
+    String url = matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
     log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
 
     HttpHeaders headers = new HttpHeaders();
