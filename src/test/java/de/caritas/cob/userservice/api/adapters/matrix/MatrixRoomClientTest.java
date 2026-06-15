@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,6 +76,26 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void createRoom_ShouldThrowMatrixCreateRoomException_WhenMatrixRejectsRequest() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"error\":\"bad room\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
+        .hasMessageContaining("Could not create room (Room name) in Matrix");
+  }
+
+  @Test
   void inviteUserToRoom_ShouldSendInviteRequest() throws Exception {
     var responseBody = new MatrixInviteUserResponseDTO();
     when(restTemplate.postForEntity(
@@ -91,6 +113,37 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void inviteUserToRoom_ShouldThrowMatrixInviteUserException_WhenMatrixRejectsRequest() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/invite"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"not allowed\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
+        .hasMessageContaining("Could not invite user");
+  }
+
+  @Test
+  void joinRoom_ShouldReturnTrue_WhenMatrixJoinSucceeds() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/join"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
   void joinRoom_ShouldReturnTrue_WhenMatrixReportsUserAlreadyJoined() {
     when(restTemplate.postForEntity(
             eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/join"),
@@ -105,6 +158,23 @@ class MatrixRoomClientTest {
                 StandardCharsets.UTF_8));
 
     assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
+  void joinRoom_ShouldReturnFalse_WhenMatrixRejectsJoinForOtherReason() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/join"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"not invited\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
   }
 
   @Test
@@ -134,6 +204,55 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void setUserPowerLevel_ShouldCreateUsersMap_WhenPowerLevelsDoNotContainUsers() {
+    var currentPowerLevels = new HashMap<String, Object>();
+    when(restTemplate.exchange(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.power_levels"),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(currentPowerLevels));
+
+    var result = matrixRoomClient.setUserPowerLevel(ROOM_ID, USER_ID, 50, ACCESS_TOKEN);
+
+    assertThat(result).isTrue();
+    verify(restTemplate)
+        .put(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.power_levels"),
+            mapRequestCaptor.capture());
+    assertThat(mapRequestCaptor.getValue().getBody().get("users")).isEqualTo(Map.of(USER_ID, 50));
+  }
+
+  @Test
+  void setUserPowerLevel_ShouldReturnFalse_WhenCurrentPowerLevelsBodyIsNull() {
+    when(restTemplate.exchange(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.power_levels"),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(null));
+
+    assertThat(matrixRoomClient.setUserPowerLevel(ROOM_ID, USER_ID, 50, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void setUserPowerLevel_ShouldReturnFalse_WhenMatrixRejectsPowerLevelUpdate() {
+    when(restTemplate.exchange(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.power_levels"),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("users", Map.of())));
+    doThrow(new RuntimeException("update failed"))
+        .when(restTemplate)
+        .put(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.power_levels"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class));
+
+    assertThat(matrixRoomClient.setUserPowerLevel(ROOM_ID, USER_ID, 50, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
   void removeUserFromRoom_ShouldSendLeaveMembershipEvent() {
     var result = matrixRoomClient.removeUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN);
 
@@ -145,5 +264,16 @@ class MatrixRoomClientTest {
     assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
         .isEqualTo("Bearer " + ACCESS_TOKEN);
     assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("membership", "leave"));
+  }
+
+  @Test
+  void removeUserFromRoom_ShouldReturnFalse_WhenMatrixRejectsMembershipUpdate() {
+    doThrow(new RuntimeException("remove failed"))
+        .when(restTemplate)
+        .put(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/state/m.room.member/" + USER_ID),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class));
+
+    assertThat(matrixRoomClient.removeUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
   }
 }
