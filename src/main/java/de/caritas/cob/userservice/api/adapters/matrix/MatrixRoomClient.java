@@ -9,6 +9,9 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -97,7 +100,7 @@ public class MatrixRoomClient {
 
       HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
 
-      var url = matrixConfig.getApiUrl(ENDPOINT_INVITE_USER.replace("{roomId}", roomId));
+      var url = matrixConfig.getApiUrl(ENDPOINT_INVITE_USER.replace("{roomId}", encode(roomId)));
       log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
@@ -134,7 +137,7 @@ public class MatrixRoomClient {
 
       HttpEntity<String> request = new HttpEntity<>("{}", headers);
 
-      var url = matrixConfig.getApiUrl(ENDPOINT_JOIN_ROOM.replace("{roomId}", roomId));
+      var url = matrixConfig.getApiUrl(ENDPOINT_JOIN_ROOM.replace("{roomId}", encode(roomId)));
       log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
@@ -167,7 +170,8 @@ public class MatrixRoomClient {
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", roomId));
+      String url =
+          matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", encode(roomId)));
 
       HttpHeaders headers = getClientHttpHeaders(accessToken);
       HttpEntity<Void> getRequest = new HttpEntity<>(headers);
@@ -183,11 +187,9 @@ public class MatrixRoomClient {
       @SuppressWarnings("unchecked")
       Map<String, Object> powerLevels = new HashMap<>(currentResponse.getBody());
 
-      @SuppressWarnings("unchecked")
-      Map<String, Integer> users =
-          (Map<String, Integer>) powerLevels.getOrDefault("users", new HashMap<>());
+      Map<String, Object> users = extractUsers(powerLevels);
 
-      Map<String, Integer> updatedUsers = new HashMap<>(users);
+      Map<String, Object> updatedUsers = new HashMap<>(users);
       updatedUsers.put(userId, powerLevel);
       powerLevels.put("users", updatedUsers);
 
@@ -215,7 +217,9 @@ public class MatrixRoomClient {
     try {
       String url =
           matrixConfig.getApiUrl(
-              ENDPOINT_MEMBERSHIP.replace("{roomId}", roomId).replace("{userId}", userId));
+              ENDPOINT_MEMBERSHIP
+                  .replace("{roomId}", encode(roomId))
+                  .replace("{userId}", encode(userId)));
 
       Map<String, Object> membershipEvent = new HashMap<>();
       membershipEvent.put("membership", "leave");
@@ -245,5 +249,24 @@ public class MatrixRoomClient {
     var headers = new HttpHeaders();
     headers.set("Authorization", "Bearer " + accessToken);
     return headers;
+  }
+
+  private Map<String, Object> extractUsers(Map<String, Object> powerLevels) {
+    Object users = powerLevels.get("users");
+    if (users instanceof Map) {
+      Map<?, ?> usersMap = (Map<?, ?>) users;
+      Map<String, Object> result = new HashMap<>();
+      usersMap.forEach((key, value) -> result.put(String.valueOf(key), value));
+      return result;
+    }
+    return new HashMap<>();
+  }
+
+  private String encode(String pathSegment) {
+    try {
+      return URLEncoder.encode(pathSegment, StandardCharsets.UTF_8.name()).replace("+", "%20");
+    } catch (UnsupportedEncodingException ex) {
+      throw new IllegalStateException("UTF-8 encoding is not available", ex);
+    }
   }
 }
