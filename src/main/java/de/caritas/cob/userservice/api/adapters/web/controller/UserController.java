@@ -182,6 +182,14 @@ public class UserController implements UsersApi {
     return ResponseEntity.notFound().build();
   }
 
+  @GetMapping("/users/availability/{username}")
+  public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
+    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    return usernameAvailable
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(HttpStatus.CONFLICT).build();
+  }
+
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
   public ResponseEntity<Void> requestMagicLink(@Valid @RequestBody MagicLinkRequestDTO requestDTO) {
     var result = magicLinkLoginService.requestMagicLink(requestDTO.getUsername());
