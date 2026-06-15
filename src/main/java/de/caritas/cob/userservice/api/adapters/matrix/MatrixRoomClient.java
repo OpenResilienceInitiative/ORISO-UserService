@@ -9,9 +9,6 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +21,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Slf4j
 @Service
@@ -59,7 +57,7 @@ public class MatrixRoomClient {
 
       HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
 
-      var url = matrixConfig.getApiUrl(ENDPOINT_CREATE_ROOM);
+      var url = buildUrl(ENDPOINT_CREATE_ROOM);
       log.info("Creating Matrix room: {} at URL: {}", roomName, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
@@ -100,7 +98,7 @@ public class MatrixRoomClient {
 
       HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
 
-      var url = matrixConfig.getApiUrl(ENDPOINT_INVITE_USER.replace("{roomId}", encode(roomId)));
+      var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
       log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
@@ -137,7 +135,7 @@ public class MatrixRoomClient {
 
       HttpEntity<String> request = new HttpEntity<>("{}", headers);
 
-      var url = matrixConfig.getApiUrl(ENDPOINT_JOIN_ROOM.replace("{roomId}", encode(roomId)));
+      var url = buildUrl(ENDPOINT_JOIN_ROOM, Map.of("roomId", roomId));
       log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
 
       var response = restTemplate.postForEntity(url, request, Map.class);
@@ -170,8 +168,7 @@ public class MatrixRoomClient {
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     try {
-      String url =
-          matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", encode(roomId)));
+      String url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
 
       HttpHeaders headers = getClientHttpHeaders(accessToken);
       HttpEntity<Void> getRequest = new HttpEntity<>(headers);
@@ -215,11 +212,7 @@ public class MatrixRoomClient {
 
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
-      String url =
-          matrixConfig.getApiUrl(
-              ENDPOINT_MEMBERSHIP
-                  .replace("{roomId}", encode(roomId))
-                  .replace("{userId}", encode(userId)));
+      String url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
 
       Map<String, Object> membershipEvent = new HashMap<>();
       membershipEvent.put("membership", "leave");
@@ -262,11 +255,17 @@ public class MatrixRoomClient {
     return new HashMap<>();
   }
 
-  private String encode(String pathSegment) {
-    try {
-      return URLEncoder.encode(pathSegment, StandardCharsets.UTF_8.name()).replace("+", "%20");
-    } catch (UnsupportedEncodingException ex) {
-      throw new IllegalStateException("UTF-8 encoding is not available", ex);
-    }
+  private String buildUrl(String endpoint) {
+    return UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
+        .build()
+        .encode()
+        .toUriString();
+  }
+
+  private String buildUrl(String endpoint, Map<String, ?> uriVariables) {
+    return UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
+        .buildAndExpand(uriVariables)
+        .encode()
+        .toUriString();
   }
 }
