@@ -3,11 +3,9 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -36,21 +34,15 @@ public class MatrixSynapseService {
 
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
   private static final String ENDPOINT_LOGIN = "/_matrix/client/r0/login";
-  private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
-  private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
-  private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
-  private static final String ENDPOINT_POWER_LEVELS =
-      "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
-  private static final String ENDPOINT_MEMBERSHIP =
-      "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
 
   // Cache for Matrix access tokens (username -> access token)
@@ -395,53 +387,7 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      var roomCreateRequest = new MatrixCreateRoomRequestDTO();
-      roomCreateRequest.setName(roomName);
-      roomCreateRequest.setRoomAliasName(roomAlias);
-      roomCreateRequest.setPreset("private_chat");
-      roomCreateRequest.setVisibility("private");
-
-      // NOTE: Matrix E2EE is DISABLED because frontend has its own custom encryption layer
-      // The frontend uses RSA-OAEP + AES-GCM encryption on top of Matrix
-      // Enabling Matrix E2EE causes double-encryption and breaks the frontend's crypto
-
-      // Fix: Set initial_state to empty list to prevent NoneType iteration error in Matrix
-      // Synapse
-      roomCreateRequest.setInitialState(new java.util.ArrayList<>());
-
-      HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_CREATE_ROOM);
-      log.info("Creating Matrix room: {} at URL: {}", roomName, url);
-
-      var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
-
-      if (nonNull(response.getBody()) && nonNull(response.getBody().getRoomId())) {
-        log.info(
-            "Successfully created Matrix room: {} with ID: {}",
-            roomName,
-            response.getBody().getRoomId());
-      }
-
-      return response;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not create room ({}) in Matrix. Status: {}, Response: {}",
-          roomName,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      throw new MatrixCreateRoomException(
-          String.format(
-              "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not create room ({}) in Matrix. Reason", roomName, ex);
-      throw new MatrixCreateRoomException(
-          String.format("Could not create room (%s) in Matrix", roomName));
-    }
+    return matrixRoomClient.createRoom(roomName, roomAlias, accessToken);
   }
 
   /**
@@ -456,43 +402,7 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoom(
       String roomId, String userId, String accessToken) throws MatrixInviteUserException {
 
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      var inviteRequest = new MatrixInviteUserRequestDTO();
-      inviteRequest.setUserId(userId);
-
-      HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_INVITE_USER.replace("{roomId}", roomId));
-      log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
-
-      var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
-
-      log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
-
-      return response;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      throw new MatrixInviteUserException(
-          String.format(
-              "Could not invite user (%s) to room (%s) in Matrix: %s",
-              userId, roomId, ex.getResponseBodyAsString()));
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
-          userId,
-          roomId,
-          ex);
-      throw new MatrixInviteUserException(
-          String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
-    }
+    return matrixRoomClient.inviteUserToRoom(roomId, userId, accessToken);
   }
 
   /**
@@ -503,42 +413,7 @@ public class MatrixSynapseService {
    * @return true if successful, false otherwise
    */
   public boolean joinRoom(String roomId, String accessToken) {
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      // Empty body for join request
-      HttpEntity<String> request = new HttpEntity<>("{}", headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_JOIN_ROOM.replace("{roomId}", roomId));
-      log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
-
-      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
-
-      if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully joined Matrix room: {}", roomId);
-        return true;
-      } else {
-        log.warn("Failed to join Matrix room: {}. Status: {}", roomId, response.getStatusCode());
-        return false;
-      }
-    } catch (HttpClientErrorException ex) {
-      // Check if user is already in the room (this is not an error)
-      if (ex.getStatusCode().value() == 403
-          && ex.getResponseBodyAsString().contains("already in the room")) {
-        log.info("User already in Matrix room: {}, skipping join", roomId);
-        return true;
-      }
-      log.error(
-          "Matrix Error: Could not join room ({}). Status: {}, Response: {}",
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not join room ({}). Reason: {}", roomId, ex.getMessage());
-      return false;
-    }
+    return matrixRoomClient.joinRoom(roomId, accessToken);
   }
 
   /**
@@ -957,57 +832,7 @@ public class MatrixSynapseService {
    */
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
-    try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", roomId));
-
-      // Get current power levels
-      HttpHeaders headers = getClientHttpHeaders(accessToken);
-      HttpEntity<Void> getRequest = new HttpEntity<>(headers);
-
-      ResponseEntity<java.util.Map> currentResponse =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, getRequest, java.util.Map.class);
-
-      if (currentResponse.getBody() == null) {
-        log.error("Failed to get current power levels for room {}", roomId);
-        return false;
-      }
-
-      // Update power levels
-      @SuppressWarnings("unchecked")
-      java.util.Map<String, Object> powerLevels =
-          new java.util.HashMap<>(currentResponse.getBody());
-
-      @SuppressWarnings("unchecked")
-      java.util.Map<String, Integer> users =
-          (java.util.Map<String, Integer>)
-              powerLevels.getOrDefault("users", new java.util.HashMap<>());
-
-      // Create new map to avoid modifying the original
-      java.util.Map<String, Integer> updatedUsers = new java.util.HashMap<>(users);
-      updatedUsers.put(userId, powerLevel);
-      powerLevels.put("users", updatedUsers);
-
-      // Send updated power levels
-      HttpEntity<java.util.Map<String, Object>> updateRequest =
-          new HttpEntity<>(powerLevels, headers);
-      restTemplate.put(url, updateRequest);
-
-      log.info("Set power level {} for user {} in room {}", powerLevel, userId, roomId);
-      return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not set power level for user ({}) in room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception e) {
-      log.error(
-          "Failed to set power level for user {} in room {}: {}", userId, roomId, e.getMessage());
-      return false;
-    }
+    return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
   }
 
   /**
@@ -1019,34 +844,7 @@ public class MatrixSynapseService {
    * @return true if successful, false otherwise
    */
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
-    try {
-      String url =
-          matrixConfig.getApiUrl(
-              ENDPOINT_MEMBERSHIP.replace("{roomId}", roomId).replace("{userId}", userId));
-
-      java.util.Map<String, Object> membershipEvent = new java.util.HashMap<>();
-      membershipEvent.put("membership", "leave");
-
-      HttpHeaders headers = getClientHttpHeaders(accessToken);
-      HttpEntity<java.util.Map<String, Object>> request =
-          new HttpEntity<>(membershipEvent, headers);
-
-      restTemplate.put(url, request);
-
-      log.info("Removed user {} from room {}", userId, roomId);
-      return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not remove user ({}) from room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception e) {
-      log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
-      return false;
-    }
+    return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
   }
 
   /**
