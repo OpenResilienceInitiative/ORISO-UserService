@@ -184,7 +184,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), any(Exception.class));
+    verify(logger, atLeastOnce()).error(anyString(), any(Exception.class));
   }
 
   @Test
@@ -196,7 +196,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+    verify(logger, atLeastOnce()).error(anyString());
   }
 
   @Test
