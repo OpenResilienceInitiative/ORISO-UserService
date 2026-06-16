@@ -29,6 +29,28 @@ paths:
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
 
+  /settingsadmin/smtp-credentials:
+    get:
+      tags:
+        - applicationsettings-controller
+      summary: 'Get global SMTP credentials (super admin only)'
+      operationId: getGlobalSmtpCredentials
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationSettingsSmtpCredentialsDTO'
+        204:
+          description: NO CONTENT - no content found
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - insufficient permissions
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+
 components:
   schemas:
     ApplicationSettingsDTO:
@@ -91,3 +113,10 @@ components:
         readOnly:
           type: boolean
           example: false
+    ApplicationSettingsSmtpCredentialsDTO:
+      type: object
+      properties:
+        globalSmtpUsername:
+          type: string
+        globalSmtpPassword:
+          type: string

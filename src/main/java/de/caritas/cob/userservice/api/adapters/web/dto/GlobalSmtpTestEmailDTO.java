@@ -19,10 +19,6 @@ public class GlobalSmtpTestEmailDTO {
 
   @NotNull private Boolean secure;
 
-  @NotBlank private String username;
-
-  @NotBlank private String password;
-
   @NotBlank @Email private String from;
 
   @NotBlank @Email private String recipientEmail;

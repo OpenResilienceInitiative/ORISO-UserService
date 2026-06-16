@@ -32,9 +32,11 @@ public class GlobalSmtpTestEmailController {
     } catch (Exception ex) {
       log.warn("Global SMTP test email failed", ex);
       String reason = "SMTP test mail could not be sent. Please verify your SMTP settings.";
-      if (ex instanceof AuthenticationFailedException) {
+      if (ex instanceof IllegalStateException) {
+        reason = ex.getMessage();
+      } else if (ex instanceof AuthenticationFailedException) {
         reason =
-            "SMTP authentication failed. Please verify username/password and provider auth policy.";
+            "SMTP authentication failed. Please verify stored SMTP credentials and provider auth policy.";
       }
       return ResponseEntity.badRequest().body(Map.of("message", reason));
     }
