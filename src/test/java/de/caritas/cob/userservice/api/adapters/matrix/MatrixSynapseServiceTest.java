@@ -87,6 +87,25 @@ class MatrixSynapseServiceTest {
     verifyNoInteractions(restTemplate);
   }
 
+  @Test
+  void getRoomMessagesShouldUseDedicatedLongPollRestTemplate() {
+    var service = matrixSynapseService();
+    var roomId = "!room:example.org";
+    var messagesUrl = "https://matrix.example/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100";
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100"))
+        .thenReturn(messagesUrl);
+    when(matrixLongPollRestTemplate.exchange(
+            eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("chunk", java.util.List.of())));
+
+    var result = service.getRoomMessages(roomId, ACCESS_TOKEN);
+
+    assertThat(result).isNotNull().isEmpty();
+    verify(matrixLongPollRestTemplate)
+        .exchange(eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    verifyNoInteractions(restTemplate);
+  }
+
   private MatrixSynapseService matrixSynapseService() {
     return new MatrixSynapseService(
         matrixConfig,
