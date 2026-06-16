@@ -14,6 +14,7 @@ import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 /** Posts in-room system messages to Matrix sessions (e.g. user left the chat). */
@@ -40,33 +41,39 @@ public class MatrixSessionSystemMessageService {
       return;
     }
 
-    var resolvedSession = sessionService.getSession(session.getId()).orElse(session);
-    if (isBlank(resolvedSession.getMatrixRoomId())) {
+    var matrixRoomId = session.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      matrixRoomId =
+          sessionService.getSession(session.getId()).map(Session::getMatrixRoomId).orElse(null);
+    }
+    if (isBlank(matrixRoomId)) {
       return;
     }
 
-    resolveMatrixCredentials(resolvedSession)
-        .ifPresent(credentials -> sendUserLeftMessage(resolvedSession, credentials));
+    var displayUsername = resolveDisplayUsername(session);
+    var roomId = matrixRoomId;
+    resolveMatrixCredentials(session)
+        .ifPresent(credentials -> sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
   }
 
-  private void sendUserLeftMessage(Session session, MatrixCredentials credentials) {
+  private void sendUserLeftMessage(
+      Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
     var accessToken =
         matrixSynapseService.loginUser(credentials.username(), credentials.password());
     if (accessToken == null) {
       log.warn(
           "Skipping Matrix user-left message for session {} — login failed for {}",
-          session.getId(),
+          sessionId,
           credentials.username());
       return;
     }
 
-    var username = resolveDisplayUsername(session);
-    var body = buildUserLeftChatBody(username);
-    var response = matrixSynapseService.sendMessage(session.getMatrixRoomId(), body, accessToken);
+    var body = buildUserLeftChatBody(displayUsername);
+    var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn(
           "Matrix user-left message for session {} failed: {}",
-          session.getId(),
+          sessionId,
           response.get("error"));
     }
   }
@@ -109,14 +116,26 @@ public class MatrixSessionSystemMessageService {
   }
 
   private String resolveDisplayUsername(Session session) {
-    User user = session.getUser();
+    var username = extractUsername(session.getUser());
+    if (isNotBlank(username)) {
+      return username;
+    }
+    if (session.getId() == null) {
+      return "";
+    }
+    return sessionService
+        .getSession(session.getId())
+        .map(Session::getUser)
+        .map(this::extractUsername)
+        .filter(StringUtils::isNotBlank)
+        .orElse("");
+  }
+
+  private String extractUsername(User user) {
     if (user == null) {
       return "";
     }
-    if (isNotBlank(user.getUsername())) {
-      return user.getUsername();
-    }
-    return "";
+    return user.getUsername();
   }
 
   private String buildUserLeftChatBody(String username) {
