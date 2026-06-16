@@ -108,6 +108,7 @@ class UsC01MatrixPasswordSmokeTest {
     @Mock private MatrixSynapseService matrixSynapseService;
     @Mock private TenantService tenantService;
     @Mock private AgencyService agencyService;
+    @Mock private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
 
     @InjectMocks private CreateUserFacade createUserFacade;
 
