@@ -74,7 +74,8 @@ public class MatrixMessageController {
       }
 
       String accessToken = accessTokenOpt.get();
-      String matrixUsername = extractMatrixUsernameForLog(isConsultant, keycloakUserId, session.get().getUser());
+      String matrixUsername =
+          extractMatrixUsernameForLog(isConsultant, keycloakUserId, session.get().getUser());
 
       log.info(
           "Sending: {} (role: {}) → Matrix: {}",
@@ -326,7 +327,9 @@ public class MatrixMessageController {
   }
 
   private Optional<String> resolveReadAccessToken(
-      boolean isConsultant, String keycloakUserId, Optional<de.caritas.cob.userservice.api.model.Session> session) {
+      boolean isConsultant,
+      String keycloakUserId,
+      Optional<de.caritas.cob.userservice.api.model.Session> session) {
     if (isConsultant) {
       if (session.isPresent() && session.get().getConsultant() == null) {
         Long agencyId = session.get().getAgencyId();

@@ -42,9 +42,7 @@ class MatrixSynapseServiceTest {
             invocation -> "https://matrix.example.com" + invocation.getArgument(0, String.class));
   }
 
-  /**
-   * US-C01: Synapse admin impersonation login must not require stored user passwords.
-   */
+  /** US-C01: Synapse admin impersonation login must not require stored user passwords. */
   @Test
   void loginUserViaAdmin_Should_ReturnAccessToken_When_AdminLoginSucceeds() {
     when(restTemplate.postForEntity(

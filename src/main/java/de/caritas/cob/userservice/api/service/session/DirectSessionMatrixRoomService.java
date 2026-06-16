@@ -82,9 +82,7 @@ public class DirectSessionMatrixRoomService {
       var consultantToken = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
       if (consultantToken == null) {
         log.error(
-            "Could not obtain consultant token for room {} session {}",
-            roomId,
-            session.getId());
+            "Could not obtain consultant token for room {} session {}", roomId, session.getId());
         return;
       }
 
@@ -104,7 +102,8 @@ public class DirectSessionMatrixRoomService {
         if (joined) {
           log.info("User {} auto-joined direct-session room {}", user.getMatrixUserId(), roomId);
         } else {
-          log.warn("User {} failed to auto-join direct-session room {}", user.getMatrixUserId(), roomId);
+          log.warn(
+              "User {} failed to auto-join direct-session room {}", user.getMatrixUserId(), roomId);
         }
       } else {
         log.warn(

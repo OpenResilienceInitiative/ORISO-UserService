@@ -342,8 +342,7 @@ public class CreateConsultantSaga {
       String rocketChatUserId,
       String matrixUserId) {
     Consultant consultant =
-        buildConsultant(
-            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
+        buildConsultant(consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {

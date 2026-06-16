@@ -282,8 +282,7 @@ public class CreateChatFacade {
       chatService.saveChat(chat);
 
       // Get consultant token for inviting others
-      String consultantToken =
-          matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
+      String consultantToken = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();

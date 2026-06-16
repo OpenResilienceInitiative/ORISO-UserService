@@ -64,6 +64,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -71,13 +72,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * US-C01 smoke tests from the security findings index.
  *
- * <p>Verifies that user/consultant Matrix passwords are not persisted and that Matrix messaging uses
- * Synapse admin impersonation instead.
+ * <p>Verifies that user/consultant Matrix passwords are not persisted and that Matrix messaging
+ * uses Synapse admin impersonation instead.
  */
 class UsC01MatrixPasswordSmokeTest {
 
@@ -146,7 +146,8 @@ class UsC01MatrixPasswordSmokeTest {
 
       when(createNewSessionFacade.initializeNewSession(
               any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-          .thenReturn(new NewRegistrationResponseDto().sessionId(SESSION_ID).status(HttpStatus.CREATED));
+          .thenReturn(
+              new NewRegistrationResponseDto().sessionId(SESSION_ID).status(HttpStatus.CREATED));
 
       when(tenantService.getRestrictedTenantData(org.mockito.Mockito.anyLong()))
           .thenReturn(new RestrictedTenantDTO());
@@ -160,7 +161,8 @@ class UsC01MatrixPasswordSmokeTest {
     }
 
     @Test
-    @DisplayName("Given POST /users/register password, When user is saved, Then entity has no matrixPassword field")
+    @DisplayName(
+        "Given POST /users/register password, When user is saved, Then entity has no matrixPassword field")
     void registration_ShouldNotPersistMatrixPasswordOnUserEntity() {
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
@@ -183,7 +185,8 @@ class UsC01MatrixPasswordSmokeTest {
     }
 
     @Test
-    @DisplayName("Given registration, When Matrix user is created, Then password is only used transiently")
+    @DisplayName(
+        "Given registration, When Matrix user is created, Then password is only used transiently")
     void registration_ShouldUsePasswordOnlyForTransientMatrixCreateUser() throws Exception {
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
@@ -207,9 +210,11 @@ class UsC01MatrixPasswordSmokeTest {
     @MockBean private AuthenticatedUser authenticatedUser;
     @MockBean private de.caritas.cob.userservice.api.service.ConsultantService consultantService;
     @MockBean private UserService userService;
+
     @MockBean
     private de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient
         matrixCredentialClient;
+
     @MockBean private RedisMessageMirrorService redisMessageMirrorService;
 
     @BeforeEach
@@ -223,13 +228,16 @@ class UsC01MatrixPasswordSmokeTest {
       when(authenticatedUser.getUsername()).thenReturn("seeker");
       when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
 
-      when(matrixSynapseService.loginUserViaAdmin(MATRIX_USER_ID)).thenReturn("matrix-access-token");
-      when(matrixSynapseService.sendMessage(eq(MATRIX_ROOM_ID), eq("hello"), eq("matrix-access-token")))
+      when(matrixSynapseService.loginUserViaAdmin(MATRIX_USER_ID))
+          .thenReturn("matrix-access-token");
+      when(matrixSynapseService.sendMessage(
+              eq(MATRIX_ROOM_ID), eq("hello"), eq("matrix-access-token")))
           .thenReturn(Map.of("event_id", "evt-1"));
     }
 
     @Test
-    @DisplayName("Given registered user session, When POST /matrix/sessions/{id}/messages, Then HTTP 200 via admin token")
+    @DisplayName(
+        "Given registered user session, When POST /matrix/sessions/{id}/messages, Then HTTP 200 via admin token")
     void sendMessage_ShouldUseAdminImpersonationNotStoredPassword() throws Exception {
       mockMvc
           .perform(
@@ -290,7 +298,8 @@ class UsC01MatrixPasswordSmokeTest {
 
       when(createNewSessionFacade.initializeNewSession(
               any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-          .thenReturn(new NewRegistrationResponseDto().sessionId(SESSION_ID).status(HttpStatus.CREATED));
+          .thenReturn(
+              new NewRegistrationResponseDto().sessionId(SESSION_ID).status(HttpStatus.CREATED));
 
       when(tenantService.getRestrictedTenantData(org.mockito.Mockito.anyLong()))
           .thenReturn(new RestrictedTenantDTO());
@@ -304,7 +313,8 @@ class UsC01MatrixPasswordSmokeTest {
     }
 
     @Test
-    @DisplayName("Given completed registration, When same thread continues, Then PlainCredentialsHolder.get() is null")
+    @DisplayName(
+        "Given completed registration, When same thread continues, Then PlainCredentialsHolder.get() is null")
     void registration_ShouldClearPlainCredentialsHolderAfterRequest() {
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
@@ -312,7 +322,8 @@ class UsC01MatrixPasswordSmokeTest {
     }
 
     @Test
-    @DisplayName("Given holder cleared after registration, When next simulated request reuses thread, Then no password leak")
+    @DisplayName(
+        "Given holder cleared after registration, When next simulated request reuses thread, Then no password leak")
     void nextRequestOnSameThread_ShouldNotSeePreviousRegistrationPassword() {
       createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 

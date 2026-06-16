@@ -341,25 +341,27 @@ public class MatrixSynapseService {
       String encodedUserId =
           java.net.URLEncoder.encode(matrixUserId, StandardCharsets.UTF_8).replace("+", "%20");
       String url =
-          matrixConfig.getApiUrl(
-              ENDPOINT_ADMIN_USER_LOGIN.replace("{userId}", encodedUserId));
+          matrixConfig.getApiUrl(ENDPOINT_ADMIN_USER_LOGIN.replace("{userId}", encodedUserId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
       headers.setBearerAuth(adminToken);
 
       var response =
-          restTemplate.postForEntity(url, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+          restTemplate.postForEntity(
+              url, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("access_token")) {
         String accessToken = (String) response.getBody().get("access_token");
         impersonationTokenCache.put(
-            matrixUserId, new CachedImpersonationToken(accessToken, now + IMPERSONATION_TOKEN_TTL_MS));
+            matrixUserId,
+            new CachedImpersonationToken(accessToken, now + IMPERSONATION_TOKEN_TTL_MS));
         log.debug("Obtained admin impersonation token for Matrix user {}", matrixUserId);
         return accessToken;
       }
 
-      log.error("Matrix admin impersonation login failed for user {} - no access token", matrixUserId);
+      log.error(
+          "Matrix admin impersonation login failed for user {} - no access token", matrixUserId);
       return null;
     } catch (Exception ex) {
       log.error(
