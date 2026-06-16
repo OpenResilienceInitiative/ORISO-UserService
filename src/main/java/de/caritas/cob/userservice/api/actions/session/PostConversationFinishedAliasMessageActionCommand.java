@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.actions.session;
 
 import static de.caritas.cob.userservice.messageservice.generated.web.model.MessageType.FINISHED_CONVERSATION;
 import static java.util.Objects.nonNull;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace;
 
@@ -41,7 +42,7 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   @Override
   public void execute(Session actionTarget) {
     if (nonNull(actionTarget)) {
-      if (isNotBlank(actionTarget.getGroupId())) {
+      if (shouldPostRocketChatAlias(actionTarget)) {
         try {
           var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
           addDefaultHeaders(messageControllerApi.getApiClient());
@@ -61,6 +62,16 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
         log.error(getStackTrace(e));
       }
     }
+  }
+
+  private boolean shouldPostRocketChatAlias(Session session) {
+    if (isBlank(session.getGroupId())) {
+      return false;
+    }
+    if (isNotBlank(session.getMatrixRoomId())) {
+      return false;
+    }
+    return !session.getGroupId().startsWith("!");
   }
 
   @SuppressWarnings("Duplicates")

@@ -75,6 +75,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
         .thenReturn(new HttpHeaders());
     when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
     var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
 
     this.actionCommand.execute(session);
 
