@@ -40,16 +40,18 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
    */
   @Override
   public void execute(Session actionTarget) {
-    if (nonNull(actionTarget) && isNotBlank(actionTarget.getGroupId())) {
-      try {
-        var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
-        addDefaultHeaders(messageControllerApi.getApiClient());
-        messageControllerApi.saveAliasOnlyMessage(
-            actionTarget.getGroupId(),
-            new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION));
-      } catch (Exception e) {
-        log.error("Unable to post conversation finished message");
-        log.error(getStackTrace(e));
+    if (nonNull(actionTarget)) {
+      if (isNotBlank(actionTarget.getGroupId())) {
+        try {
+          var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
+          addDefaultHeaders(messageControllerApi.getApiClient());
+          messageControllerApi.saveAliasOnlyMessage(
+              actionTarget.getGroupId(),
+              new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION));
+        } catch (Exception e) {
+          log.error("Unable to post conversation finished message");
+          log.error(getStackTrace(e));
+        }
       }
 
       try {

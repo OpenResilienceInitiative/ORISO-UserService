@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionC
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
@@ -28,6 +29,8 @@ public class SessionDeleteService {
 
   private final @NonNull StatisticsService statisticsService;
 
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+
   public void deleteSession(Long sessionId) {
     log.info("Deleting session with id {}", sessionId);
 
@@ -36,6 +39,12 @@ public class SessionDeleteService {
             .getSession(sessionId)
             .orElseThrow(
                 () -> new NotFoundException("A session with an id %s does not exist.", sessionId));
+
+    try {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+    } catch (Exception e) {
+      log.warn("Could not post Matrix user-left message before deleting session {}", sessionId, e);
+    }
 
     var user = session.getUser();
     if (user.getSessions().size() == 1) {

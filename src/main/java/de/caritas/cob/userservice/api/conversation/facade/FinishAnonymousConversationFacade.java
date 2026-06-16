@@ -42,6 +42,12 @@ public class FinishAnonymousConversationFacade {
 
     verifyPermissionToFinish(session);
 
+    // Notify the room first while user/consultant Matrix credentials are still valid.
+    this.actionsRegistry
+        .buildContainerForType(Session.class)
+        .addActionToExecute(PostConversationFinishedAliasMessageActionCommand.class)
+        .executeActions(session);
+
     this.actionsRegistry
         .buildContainerForType(User.class)
         .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
@@ -50,7 +56,6 @@ public class FinishAnonymousConversationFacade {
     this.actionsRegistry
         .buildContainerForType(Session.class)
         .addActionToExecute(DeactivateSessionActionCommand.class)
-        .addActionToExecute(PostConversationFinishedAliasMessageActionCommand.class)
         .addActionToExecute(SetRocketChatRoomReadOnlyActionCommand.class)
         .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
         .executeActions(session);
