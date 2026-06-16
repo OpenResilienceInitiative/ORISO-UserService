@@ -7,7 +7,10 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.session.SessionService;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,19 +27,26 @@ public class MatrixSessionSystemMessageService {
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantService consultantService;
 
   /**
    * Notifies participants in the Matrix room that the advice seeker left the conversation.
    *
-   * @param session the session being finished
+   * @param session the session being finished or deleted
    */
   public void postUserLeftChatMessage(Session session) {
-    if (session == null || isBlank(session.getMatrixRoomId())) {
+    if (session == null || session.getId() == null) {
       return;
     }
 
-    resolveMatrixCredentials(session)
-        .ifPresent(credentials -> sendUserLeftMessage(session, credentials));
+    var resolvedSession = sessionService.getSession(session.getId()).orElse(session);
+    if (isBlank(resolvedSession.getMatrixRoomId())) {
+      return;
+    }
+
+    resolveMatrixCredentials(resolvedSession)
+        .ifPresent(credentials -> sendUserLeftMessage(resolvedSession, credentials));
   }
 
   private void sendUserLeftMessage(Session session, MatrixCredentials credentials) {
@@ -61,15 +71,25 @@ public class MatrixSessionSystemMessageService {
     }
   }
 
-  private java.util.Optional<MatrixCredentials> resolveMatrixCredentials(Session session) {
-    Consultant consultant = session.getConsultant();
-    if (consultant != null
-        && isNotBlank(consultant.getMatrixUserId())
-        && isNotBlank(consultant.getMatrixPassword())) {
-      return java.util.Optional.of(
+  private Optional<MatrixCredentials> resolveMatrixCredentials(Session session) {
+    User user = session.getUser();
+    if (user != null
+        && isNotBlank(user.getMatrixUserId())
+        && isNotBlank(user.getMatrixPassword())) {
+      return Optional.of(
           new MatrixCredentials(
-              extractMatrixLocalpart(consultant.getMatrixUserId()),
-              consultant.getMatrixPassword()));
+              extractMatrixLocalpart(user.getMatrixUserId()), user.getMatrixPassword()));
+    }
+
+    Consultant consultant = session.getConsultant();
+    if (consultant != null && isNotBlank(consultant.getId())) {
+      consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
+      if (isNotBlank(consultant.getMatrixUserId()) && isNotBlank(consultant.getMatrixPassword())) {
+        return Optional.of(
+            new MatrixCredentials(
+                extractMatrixLocalpart(consultant.getMatrixUserId()),
+                consultant.getMatrixPassword()));
+      }
     }
 
     return agencyMatrixCredentialClient
