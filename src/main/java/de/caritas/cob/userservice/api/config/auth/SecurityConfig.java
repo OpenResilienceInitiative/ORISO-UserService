@@ -196,8 +196,10 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
             "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
         .hasAuthority(CONSULTANT_DEFAULT)
-        .antMatchers("/conversations/anonymous/{sessionId:[0-9]+}/finish")
-        .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
+        .antMatchers(
+            "/conversations/anonymous/{sessionId:[0-9]+}/finish",
+            "/service/conversations/anonymous/{sessionId:[0-9]+}/finish")
+        .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT, USER_DEFAULT)
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/consultant/{consultantId:[0-9A-Za-z-]+}")
         .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
         .antMatchers("/users/consultants")

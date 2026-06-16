@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
@@ -138,6 +139,8 @@ class AnonymousEnquiryConversationListProviderIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    this.userRepository.save(user);
     sessions.forEach(
         session -> {
           session.setRegistrationType(ANONYMOUS);
@@ -150,6 +153,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setStatus(SessionStatus.NEW);
           session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
+          session.setUpdateDate(LocalDateTime.now());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);

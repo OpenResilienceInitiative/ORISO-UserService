@@ -219,31 +219,39 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       "SELECT s FROM Session s "
           + "JOIN s.user u "
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
-          + "AND s.registrationType = :registrationType "
           + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
           + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
           + "AND s.mainTopicId IS NULL "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
-      @Param("registrationType") RegistrationType registrationType,
       @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
       Pageable pageable);
 
   @Query(
       "SELECT s FROM Session s "
           + "JOIN s.user u "
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
-          + "AND s.registrationType = :registrationType "
           + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
           + "AND u.dataPrivacyConfirmation IS NOT NULL "
-          + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
+          + "AND s.mainTopicId IN :topicIds "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
       @Param("topicIds") Set<Long> topicIds,
-      @Param("registrationType") RegistrationType registrationType,
       @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
       Pageable pageable);
 
   /**

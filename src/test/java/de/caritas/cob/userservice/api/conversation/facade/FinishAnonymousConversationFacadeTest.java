@@ -13,7 +13,9 @@ import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAl
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -34,8 +36,21 @@ class FinishAnonymousConversationFacadeTest {
 
   @Mock private ActionsRegistry actionsRegistry;
 
+  @Mock private AuthenticatedUser authenticatedUser;
+
   private final ActionCommandMockProvider actionCommandMockProvider =
       new ActionCommandMockProvider();
+
+  private Session anonymousSession() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    return session;
+  }
+
+  private void mockAskerOwnsSession(Session session) {
+    when(this.authenticatedUser.getUserId()).thenReturn(session.getUser().getUserId());
+    when(this.authenticatedUser.isConsultant()).thenReturn(false);
+  }
 
   @Test
   void finishConversation_Should_throwNotFoundException_When_sessionDoesNotExist() {
@@ -48,7 +63,8 @@ class FinishAnonymousConversationFacadeTest {
 
   @Test
   void finishConversation_Should_triggerExpectedActions_When_sessionExists() {
-    Session session = new EasyRandom().nextObject(Session.class);
+    Session session = anonymousSession();
+    mockAskerOwnsSession(session);
     when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
@@ -80,5 +96,17 @@ class FinishAnonymousConversationFacadeTest {
                 PostConversationFinishedAliasMessageActionCommand.class),
             times(1))
         .execute(session);
+  }
+
+  @Test
+  void finishConversation_Should_throwForbiddenException_When_userDoesNotOwnSession() {
+    Session session = anonymousSession();
+    mockAskerOwnsSession(session);
+    when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(this.authenticatedUser.getUserId()).thenReturn("other-user-id");
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> this.finishAnonymousConversationFacade.finishConversation(session.getId()));
   }
 }
