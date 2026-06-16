@@ -489,7 +489,7 @@ public class MatrixSynapseService {
       log.info("Getting messages from Matrix room: {}", roomId);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
@@ -549,7 +549,7 @@ public class MatrixSynapseService {
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null) {

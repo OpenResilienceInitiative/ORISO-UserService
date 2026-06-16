@@ -63,6 +63,30 @@ class MatrixSynapseServiceTest {
         .isEqualTo("Bearer " + ACCESS_TOKEN);
   }
 
+  @Test
+  void syncRoomShouldUseDedicatedLongPollRestTemplate() {
+    var service = matrixSynapseService();
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/sync")).thenReturn(SYNC_URL);
+    when(matrixLongPollRestTemplate.exchange(
+            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("next_batch", "next-token")));
+    var urlCaptor = ArgumentCaptor.forClass(String.class);
+
+    var result = service.syncRoom("!room:example.org", ACCESS_TOKEN, "alice", 30000);
+
+    assertThat(result).isNotNull();
+    verify(matrixLongPollRestTemplate)
+        .exchange(
+            urlCaptor.capture(),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class));
+    assertThat(urlCaptor.getValue()).startsWith(SYNC_URL + "?timeout=30000");
+    assertThat(urlCaptor.getValue()).contains("&filter=");
+    assertThat(urlCaptor.getValue()).contains("%21room%3Aexample.org");
+    verifyNoInteractions(restTemplate);
+  }
+
   private MatrixSynapseService matrixSynapseService() {
     return new MatrixSynapseService(
         matrixConfig,
