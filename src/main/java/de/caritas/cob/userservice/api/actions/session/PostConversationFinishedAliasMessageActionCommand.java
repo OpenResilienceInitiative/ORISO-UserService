@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.messageservice.generated.ApiClient;
 import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
 import lombok.NonNull;
@@ -30,6 +31,7 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   /**
    * Posts a {@link AliasOnlyMessageDTO} with type finished conversation into rocket chat.
@@ -47,6 +49,13 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
             new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION));
       } catch (Exception e) {
         log.error("Unable to post conversation finished message");
+        log.error(getStackTrace(e));
+      }
+
+      try {
+        matrixSessionSystemMessageService.postUserLeftChatMessage(actionTarget);
+      } catch (Exception e) {
+        log.error("Unable to post Matrix user-left message for session {}", actionTarget.getId());
         log.error(getStackTrace(e));
       }
     }
