@@ -99,6 +99,27 @@ class FinishAnonymousConversationFacadeTest {
   }
 
   @Test
+  void finishConversation_Should_triggerExpectedActions_When_registeredLiveChatSessionExists() {
+    Session session = anonymousSession();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+    mockAskerOwnsSession(session);
+    when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(this.sessionService.isAnonymousStyleRegistration(session)).thenReturn(true);
+    when(this.actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
+    when(this.actionsRegistry.buildContainerForType(User.class))
+        .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
+
+    this.finishAnonymousConversationFacade.finishConversation(session.getId());
+
+    verify(
+            this.actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class),
+            times(1))
+        .execute(session);
+  }
+
+  @Test
   void finishConversation_Should_throwForbiddenException_When_userDoesNotOwnSession() {
     Session session = anonymousSession();
     mockAskerOwnsSession(session);

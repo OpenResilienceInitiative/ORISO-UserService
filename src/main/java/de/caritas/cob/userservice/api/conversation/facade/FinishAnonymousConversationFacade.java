@@ -57,7 +57,8 @@ public class FinishAnonymousConversationFacade {
   }
 
   private void verifyPermissionToFinish(Session session) {
-    if (session.getRegistrationType() != ANONYMOUS) {
+    if (session.getRegistrationType() != ANONYMOUS
+        && !sessionService.isAnonymousStyleRegistration(session)) {
       throw new ForbiddenException(
           "Session with id %s is not an anonymous conversation.", session.getId());
     }
