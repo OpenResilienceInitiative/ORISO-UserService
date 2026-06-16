@@ -400,11 +400,10 @@ public class SessionService {
   }
 
   private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
-    // Live-chat style sessions are listed in the anonymous enquiry queue instead.
-    if (isAnonymousStyleRegistration(session)) {
-      return false;
+    if (!isAnonymousStyleRegistration(session)) {
+      return true;
     }
-    return true;
+    return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
   }
 
   /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
