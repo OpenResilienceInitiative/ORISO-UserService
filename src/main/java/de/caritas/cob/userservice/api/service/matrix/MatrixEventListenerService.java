@@ -182,7 +182,7 @@ public class MatrixEventListenerService {
       // Update sync token for next request
       if (syncResult != null && syncResult.containsKey("next_batch")) {
         syncToken = (String) syncResult.get("next_batch");
-        log.debug("🔷 Sync token updated: {}", syncToken);
+        log.debug("🔷 Matrix sync cursor updated");
       }
 
       return syncResult;

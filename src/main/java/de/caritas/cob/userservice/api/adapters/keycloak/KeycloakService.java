@@ -67,8 +67,11 @@ import org.springframework.web.client.RestTemplate;
 public class KeycloakService implements IdentityClient {
 
   private static final String KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
+  private static final String KEYCLOAK_GRANT_TYPE_PASSWORD = "password";
   private static final String BODY_KEY_CLIENT_ID = "client_id";
   private static final String BODY_KEY_GRANT_TYPE = "grant_type";
+  private static final String BODY_KEY_PASSWORD = "password";
+  private static final String BODY_KEY_USERNAME = "username";
   private static final String ENDPOINT_OPENID_CONNECT_LOGIN = "/token";
   private static final String ENDPOINT_OPENID_CONNECT_LOGOUT = "/logout";
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
@@ -163,11 +166,11 @@ public class KeycloakService implements IdentityClient {
   }
 
   private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {
-    MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
-    map.add("username", userName);
-    map.add("password", password);
+    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
+    map.add(BODY_KEY_USERNAME, userName);
+    map.add(BODY_KEY_PASSWORD, password);
     map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
-    map.add(BODY_KEY_GRANT_TYPE, "password");
+    map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_PASSWORD);
 
     var httpHeaders = new HttpHeaders();
     httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -204,7 +207,7 @@ public class KeycloakService implements IdentityClient {
    * @return true if logout was successful
    */
   public boolean logoutUser(final String refreshToken) {
-    MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
+    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
     map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
     map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN);
     map.add(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, refreshToken);
@@ -217,21 +220,38 @@ public class KeycloakService implements IdentityClient {
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGOUT);
     try {
       var response = restTemplate.postForEntity(url, request, Void.class);
-      return wasLogoutSuccessful(response, refreshToken);
+      return wasLogoutSuccessful(response);
     } catch (Exception ex) {
-      log.error("Keycloak error: Could not log out user with refresh token {}", refreshToken, ex);
+      log.error("Keycloak error: Could not log out user", ex);
 
       return false;
     }
   }
 
-  private boolean wasLogoutSuccessful(ResponseEntity<Void> responseEntity, String refreshToken) {
+  private boolean wasLogoutSuccessful(ResponseEntity<Void> responseEntity) {
     if (!responseEntity.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
-      log.error("Keycloak error: Could not log out user with refresh token {}", refreshToken);
+      log.error("Keycloak error: Could not log out user");
 
       return false;
     }
     return true;
+  }
+
+  private static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
+
+    private static final String REDACTED = "[REDACTED]";
+
+    @Override
+    public String toString() {
+      var sanitized = new LinkedMultiValueMap<>(this);
+      if (sanitized.containsKey(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN)) {
+        sanitized.put(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, Collections.singletonList(REDACTED));
+      }
+      if (sanitized.containsKey(BODY_KEY_PASSWORD)) {
+        sanitized.put(BODY_KEY_PASSWORD, Collections.singletonList(REDACTED));
+      }
+      return sanitized.toString();
+    }
   }
 
   /**
