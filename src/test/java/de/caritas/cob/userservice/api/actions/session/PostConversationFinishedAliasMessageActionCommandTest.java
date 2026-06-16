@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.messageservice.generated.web.MessageControllerApi;
 import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
 import java.util.List;
@@ -45,6 +46,8 @@ class PostConversationFinishedAliasMessageActionCommandTest {
   @Mock private IdentityClient identityClient;
 
   @Mock private IdentityClientConfig identityClientConfig;
+
+  @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   @ParameterizedTest
   @MethodSource("sessionsWithoutInteractionsExpected")
@@ -80,5 +83,6 @@ class PostConversationFinishedAliasMessageActionCommandTest {
     var expectedMessageType = new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION);
     verify(this.messageControllerApi, times(1))
         .saveAliasOnlyMessage(session.getGroupId(), expectedMessageType);
+    verify(this.matrixSessionSystemMessageService, times(1)).postUserLeftChatMessage(session);
   }
 }
