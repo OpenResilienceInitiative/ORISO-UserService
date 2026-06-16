@@ -336,8 +336,10 @@ public class MatrixSynapseService {
     }
 
     long now = System.currentTimeMillis();
+    impersonationTokenCache.entrySet().removeIf(e -> now >= e.getValue().expiryMs);
+
     CachedImpersonationToken cached = impersonationTokenCache.get(matrixUserId);
-    if (cached != null && now < cached.expiryMs) {
+    if (cached != null) {
       return cached.token;
     }
 
