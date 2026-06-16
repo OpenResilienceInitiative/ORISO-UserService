@@ -75,9 +75,9 @@ public class MatrixSessionSystemMessageService {
   /**
    * Resolves a Matrix access token for posting a system message to the session room.
    *
-   * <p>Priority: consultant (stable room member) → advice seeker → agency service account.
-   * Each candidate is tried in order; the first successful impersonation is returned so that a
-   * transient failure for one account does not silently suppress the notification.
+   * <p>Priority: consultant (stable room member) → advice seeker → agency service account. Each
+   * candidate is tried in order; the first successful impersonation is returned so that a transient
+   * failure for one account does not silently suppress the notification.
    */
   private Optional<String> resolveMatrixAccessToken(Session session) {
     // 1. Consultant — preferred sender: remains in the room after the session ends.
