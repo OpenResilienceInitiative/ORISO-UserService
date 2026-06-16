@@ -655,6 +655,29 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_returnOk_When_sortingByUpdateDate() throws Exception {
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    "/useradmin/tenantadmins/search?query=*&page=1&perPage=10&order=DESC&field=UPDATE_DATE"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+            .andExpect(jsonPath("_embedded[0]._embedded.updateDate").exists())
+            .andReturn();
+
+    String contentAsString = mvcResult.getResponse().getContentAsString();
+    JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
+
+    assertAllElementsAreOfAdminType(embedded, AdminType.TENANT);
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void searchAgencyAdmins_Should_returnOk_When_attemptedToSearchTenantsWithUserAdminAuthority()
       throws Exception {
@@ -669,6 +692,28 @@ class UserAdminControllerE2EIT {
                     "/useradmin/agencyadmins/search?query=*&page=1&perPage=10&order=ASC&field=FIRSTNAME"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+            .andReturn();
+
+    String contentAsString = mvcResult.getResponse().getContentAsString();
+    JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
+
+    assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_returnOk_When_sortingByUpdateDate() throws Exception {
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    "/useradmin/agencyadmins/search?query=*&page=1&perPage=10&order=DESC&field=UPDATE_DATE"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
+            .andExpect(jsonPath("_embedded[0]._embedded.updateDate").exists())
             .andReturn();
 
     String contentAsString = mvcResult.getResponse().getContentAsString();

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /** Definition for required input data used to create a new consultant. */
 interface ConsultantCreationInput {
@@ -38,4 +39,8 @@ interface ConsultantCreationInput {
   }
 
   Long getTenantId();
+
+  default List<Long> getTopicIds() {
+    return null;
+  }
 }

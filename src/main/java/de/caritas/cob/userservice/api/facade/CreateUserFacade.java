@@ -204,11 +204,18 @@ public class CreateUserFacade {
               language);
 
     } catch (Exception ex) {
+      if (role == UserRole.ANONYMOUS) {
+        log.error(
+            "Keycloak operations failed for anonymous user {}, aborting account creation",
+            userDTO.getUsername(),
+            ex);
+        throw new InternalServerErrorException("Keycloak operations failed for anonymous user", ex);
+      }
       log.error(
           "Keycloak operations failed for user {}, but continuing with user creation",
           userDTO.getUsername(),
           ex);
-      // Continue with user creation even if Keycloak operations fail
+      // Continue with user creation even if Keycloak operations fail (registered askers / Matrix)
       var extendedConsultingTypeResponseDTO =
           consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
       var language =

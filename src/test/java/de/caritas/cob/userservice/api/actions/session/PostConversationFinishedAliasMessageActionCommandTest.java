@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.messageservice.generated.web.MessageControllerApi;
 import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
 import java.util.List;
@@ -46,6 +47,8 @@ class PostConversationFinishedAliasMessageActionCommandTest {
 
   @Mock private IdentityClientConfig identityClientConfig;
 
+  @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+
   @ParameterizedTest
   @MethodSource("sessionsWithoutInteractionsExpected")
   void execute_Should_doNothing_When_sessionIsNullOrWithoutRcRooms(Session session) {
@@ -72,6 +75,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
         .thenReturn(new HttpHeaders());
     when(messageServiceApiControllerFactory.createControllerApi()).thenReturn(messageControllerApi);
     var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
 
     this.actionCommand.execute(session);
 
@@ -80,5 +84,6 @@ class PostConversationFinishedAliasMessageActionCommandTest {
     var expectedMessageType = new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION);
     verify(this.messageControllerApi, times(1))
         .saveAliasOnlyMessage(session.getGroupId(), expectedMessageType);
+    verify(this.matrixSessionSystemMessageService, times(1)).postUserLeftChatMessage(session);
   }
 }

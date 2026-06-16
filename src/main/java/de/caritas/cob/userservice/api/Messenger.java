@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -24,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -39,6 +41,9 @@ public class Messenger implements Messaging {
   private final UserServiceMapper mapper;
   private final StringConverter stringConverter;
   private final AgencyService agencyService;
+
+  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  private long liveChatQueueActivePeriodMinutes;
 
   @Override
   public boolean banUserFromChat(String adviceSeekerId, long chatId) {
@@ -96,11 +101,20 @@ public class Messenger implements Messaging {
   }
 
   @Override
-  public long countPendingEnquiriesAheadOf(Long agencyId, LocalDateTime beforeDate) {
-    if (agencyId == null || beforeDate == null) {
+  public long countPendingEnquiriesAheadOf(
+      Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate) {
+    if (beforeDate == null || consultingTypeId == null) {
       return 0L;
     }
-    return sessionRepository.countPendingEnquiriesAheadOf(agencyId, SessionStatus.NEW, beforeDate);
+    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
+    return sessionRepository.countPendingEnquiriesAheadOf(
+        SessionStatus.NEW,
+        beforeDate,
+        consultingTypeId,
+        mainTopicId,
+        agencyId,
+        minUpdateDate,
+        RegistrationType.ANONYMOUS);
   }
 
   @Override

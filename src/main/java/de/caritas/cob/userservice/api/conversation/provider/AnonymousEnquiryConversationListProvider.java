@@ -12,16 +12,20 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -35,6 +39,10 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
+
+  @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
+  private long liveChatQueueActivePeriodMinutes;
 
   /** {@inheritDoc} */
   @Override
@@ -42,9 +50,11 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
       PageableListRequest pageableListRequest) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
     Set<Integer> relatedConsultingTypes = retrieveRelatedConsultingTypes(consultant);
+    List<Long> consultantTopicIds =
+        consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
 
     Page<Session> anonymousSessionsOfConsultant =
-        queryForRelevantSessions(pageableListRequest, relatedConsultingTypes);
+        queryForRelevantSessions(pageableListRequest, relatedConsultingTypes, consultantTopicIds);
 
     List<ConsultantSessionResponseDTO> sessions =
         anonymousSessionsOfConsultant.stream()
@@ -72,12 +82,25 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
   }
 
   private Page<Session> queryForRelevantSessions(
-      PageableListRequest pageableListRequest, Set<Integer> relatedConsultingTypes) {
+      PageableListRequest pageableListRequest,
+      Set<Integer> relatedConsultingTypes,
+      List<Long> consultantTopicIds) {
     var requestedPage = obtainPageByOffsetAndCount(pageableListRequest);
     var pageable = PageRequest.of(requestedPage, pageableListRequest.getCount());
+    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
 
-    return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultants(
-        relatedConsultingTypes, ANONYMOUS, SessionStatus.NEW, pageable);
+    if (consultantTopicIds == null || consultantTopicIds.isEmpty()) {
+      return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
+          relatedConsultingTypes, SessionStatus.NEW, minUpdateDate, ANONYMOUS, pageable);
+    }
+
+    return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopics(
+        relatedConsultingTypes,
+        new HashSet<>(consultantTopicIds),
+        SessionStatus.NEW,
+        minUpdateDate,
+        ANONYMOUS,
+        pageable);
   }
 
   /** {@inheritDoc} */

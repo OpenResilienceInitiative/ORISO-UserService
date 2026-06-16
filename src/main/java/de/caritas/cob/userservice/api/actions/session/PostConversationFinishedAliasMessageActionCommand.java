@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.actions.session;
 
 import static de.caritas.cob.userservice.messageservice.generated.web.model.MessageType.FINISHED_CONVERSATION;
 import static java.util.Objects.nonNull;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace;
 
@@ -12,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.messageservice.generated.ApiClient;
 import de.caritas.cob.userservice.messageservice.generated.web.model.AliasOnlyMessageDTO;
 import lombok.NonNull;
@@ -30,6 +32,7 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   /**
    * Posts a {@link AliasOnlyMessageDTO} with type finished conversation into rocket chat.
@@ -38,18 +41,37 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
    */
   @Override
   public void execute(Session actionTarget) {
-    if (nonNull(actionTarget) && isNotBlank(actionTarget.getGroupId())) {
+    if (nonNull(actionTarget)) {
+      if (shouldPostRocketChatAlias(actionTarget)) {
+        try {
+          var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
+          addDefaultHeaders(messageControllerApi.getApiClient());
+          messageControllerApi.saveAliasOnlyMessage(
+              actionTarget.getGroupId(),
+              new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION));
+        } catch (Exception e) {
+          log.error("Unable to post conversation finished message");
+          log.error(getStackTrace(e));
+        }
+      }
+
       try {
-        var messageControllerApi = messageServiceApiControllerFactory.createControllerApi();
-        addDefaultHeaders(messageControllerApi.getApiClient());
-        messageControllerApi.saveAliasOnlyMessage(
-            actionTarget.getGroupId(),
-            new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION));
+        matrixSessionSystemMessageService.postUserLeftChatMessage(actionTarget);
       } catch (Exception e) {
-        log.error("Unable to post conversation finished message");
+        log.error("Unable to post Matrix user-left message for session {}", actionTarget.getId());
         log.error(getStackTrace(e));
       }
     }
+  }
+
+  private boolean shouldPostRocketChatAlias(Session session) {
+    if (isBlank(session.getGroupId())) {
+      return false;
+    }
+    if (isNotBlank(session.getMatrixRoomId())) {
+      return false;
+    }
+    return !session.getGroupId().startsWith("!");
   }
 
   @SuppressWarnings("Duplicates")

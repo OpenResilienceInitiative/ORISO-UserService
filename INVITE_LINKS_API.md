@@ -15,7 +15,7 @@ issue, do not work around it in the frontend.
 | Environment | URL |
 |---|---|
 | Local dev (laptop) | `http://localhost:8080` |
-| Dev cluster        | `https://api.oriso-dev.site` |
+| Dev cluster        | `https://api.oriso.org` |
 
 All authenticated endpoints expect:
 

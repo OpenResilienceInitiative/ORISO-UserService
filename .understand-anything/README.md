@@ -1,47 +1,48 @@
-# ORISO UserService Knowledge Graph
+# Understand-Anything Graph: ORISO-UserService
 
-Developer map for the ORISO UserService repository. This folder is generated for onboarding and architecture exploration.
+This directory contains the Understand-Anything graph and developer notes for `ORISO-UserService`.
 
-## Navigation
+## Graph
 
-- [Architecture Summary](./ARCHITECTURE.md)
-- [Developer Onboarding](./ONBOARDING.md)
-- [ORISO Ecosystem Connections](./ORISO-ECOSYSTEM.md)
-- [Findings And Maintenance Risks](./FINDINGS.md)
-- [Dependency Audit Notes](./DEPENDENCY-AUDIT.md)
-- [Visuals](./visuals/)
-- [Raw Knowledge Graph](./knowledge-graph.json)
+- Graph file: `.understand-anything/knowledge-graph.json`
+- Generated at: `2026-06-11T18:45:43.355Z`
+- Source commit: `3e6707fbb14400428ddfe44e0dc36648e4aba41c`
+- Files analyzed: 1141
+- Nodes: 4806
+- Edges: 5842
 
-## Graph Files
+## Repository Purpose
 
-- `knowledge-graph.json` is the dashboard data file.
-- `meta.json` records analysis time, git commit, file count, and graph stats.
-- `fingerprints.json` records file hashes for future incremental updates.
-- `config.json` enables Understand-Anything auto-update behavior for this repository.
+The UserService provides different functionalities from creating and updating user accounts and their sessions, providing session lists up to creating and editing Rocket.Chat groups.
 
-## Open The Dashboard
+## Existing Setup Status
 
-Run this from any terminal:
+Previous graph commit: `65bd6a263f0a362d086121bdafb20992f00949a5`; regenerated at latest dev commit `3e6707fbb14400428ddfe44e0dc36648e4aba41c`.
 
-```bash
-ORISO_USERSERVICE="$HOME/Developer/freelance/Germany/Oriso-frank-client/ORISO/ORISO-UserService"
-cd ~/.understand-anything/repo/understand-anything-plugin/packages/dashboard
-GRAPH_DIR="$ORISO_USERSERVICE" pnpm exec vite --host 127.0.0.1
+## Dashboard
+
+From this repository root:
+
+```sh
+PLUGIN_ROOT="$HOME/.understand-anything-plugin"
+test -d "$PLUGIN_ROOT/packages/dashboard" || PLUGIN_ROOT="$HOME/.understand-anything/repo/understand-anything-plugin"
+cd "$PLUGIN_ROOT/packages/dashboard"
+GRAPH_DIR="$(pwd)" npx vite --host 127.0.0.1
 ```
 
-Open the full `Dashboard URL` printed in the terminal, including the `?token=...` value.
+Use the tokenized URL printed by Vite. The dashboard reads `.understand-anything/knowledge-graph.json`.
 
-## Auto Update
+## Main Files Scanned
 
-Auto-update is enabled in `config.json`. In an agent environment, the matching command is:
-
-```bash
-/understand . --auto-update
-```
-
-If the graph looks stale or your environment does not run the auto-update hook, rebuild it manually:
-
-```bash
-/understand . --full
-```
-
+- `.github/actions/docker-build-push/action.yml (config, yaml)`
+- `.github/actions/maven-build/action.yml (config, yaml)`
+- `.github/workflows/ci-feature-branch.yml (pipeline, yaml)`
+- `.github/workflows/ci-main.yml (pipeline, yaml)`
+- `.github/workflows/ci-pull-request.yml (pipeline, yaml)`
+- `.gitignore (code, unknown)`
+- `.mvn/wrapper/maven-wrapper.properties (config, properties)`
+- `.swagger-codegen-ignore (code, unknown)`
+- `api/appointmentservice.yaml (config, yaml)`
+- `api/conversationservice.yaml (config, yaml)`
+- `api/useradminservice.yaml (config, yaml)`
+- `api/userservice.yaml (config, yaml)`

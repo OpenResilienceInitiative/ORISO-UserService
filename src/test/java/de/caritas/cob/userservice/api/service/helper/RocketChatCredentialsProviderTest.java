@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -139,6 +140,31 @@ public class RocketChatCredentialsProviderTest {
 
     rocketChatConfig.setBaseUrl("http://localhost/api/v1");
     setField(rcCredentialHelper, "rocketChatConfig", rocketChatConfig);
+  }
+
+  @Test
+  public void loginUser_ShouldRedactPassword_WhenRequestBodyIsRenderedForDebugLogging()
+      throws Exception {
+    when(restTemplate.postForEntity(
+            ArgumentMatchers.eq(RC_URL_CHAT_USER_LOGIN),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.<Class<LoginResponseDTO>>any()))
+        .thenReturn(new ResponseEntity<>(LOGIN_RESPONSE_DTO_TECHNICAL_USER_A, HttpStatus.OK));
+
+    rcCredentialHelper.loginUser(TECHNICAL_USER_USERNAME, TECHNICAL_USER_PW);
+
+    var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .postForEntity(
+            ArgumentMatchers.eq(RC_URL_CHAT_USER_LOGIN),
+            requestCaptor.capture(),
+            ArgumentMatchers.<Class<LoginResponseDTO>>any());
+    @SuppressWarnings("unchecked")
+    var request = (HttpEntity<MultiValueMap<String, String>>) requestCaptor.getValue();
+
+    assertEquals(TECHNICAL_USER_PW, request.getBody().getFirst("password"));
+    assertFalse(request.getBody().toString().contains(TECHNICAL_USER_PW));
+    assertTrue(request.getBody().toString().contains("[REDACTED]"));
   }
 
   /** Method: updateCredentials */

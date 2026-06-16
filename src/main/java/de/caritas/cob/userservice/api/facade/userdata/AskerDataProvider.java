@@ -29,7 +29,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.SetUtils;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientResponseException;
 
 /** Provider for asker information. */
 @Component
@@ -97,18 +97,8 @@ public class AskerDataProvider {
   }
 
   private LinkedHashMap<String, Object> getConsultingTypes(User user) {
-
     Set<Session> sessionList = SetUtils.emptyIfNull(user.getSessions());
-    List<Long> agencyIds = mergeAgencyIdsFromSessionAndUser(user, sessionList);
-    List<AgencyDTO> agencyDTOs;
-    try {
-      agencyDTOs = this.agencyService.getAgencies(agencyIds);
-    } catch (HttpClientErrorException.Forbidden e) {
-      // Login must not fail if downstream agency lookup denies this token scope.
-      log.warn(
-          "Forbidden while loading agencies for user {}: {}", user.getUserId(), e.getMessage());
-      agencyDTOs = Collections.emptyList();
-    }
+    List<AgencyDTO> agencyDTOs = agencyDTOsOf(user, sessionList);
     LinkedHashMap<String, Object> consultingTypes = new LinkedHashMap<>();
     for (int type : consultingTypeManager.getAllConsultingTypeIds()) {
       consultingTypes.put(
@@ -116,6 +106,21 @@ public class AskerDataProvider {
     }
 
     return consultingTypes;
+  }
+
+  private List<AgencyDTO> agencyDTOsOf(User user, Set<Session> sessionList) {
+    try {
+      return agencyService.getAgencies(mergeAgencyIdsFromSessionAndUser(user, sessionList));
+    } catch (RestClientResponseException e) {
+      // Do not block login when agency-service cannot provide metadata for this token/agency.
+      // Return a minimal asker profile instead of surfacing agency errors as login failures.
+      log.warn(
+          "Could not load agencies for user {}: status={}, body={}",
+          user.getUserId(),
+          e.getRawStatusCode(),
+          e.getResponseBodyAsString());
+      return List.of();
+    }
   }
 
   private LinkedHashMap<String, Object> getConsultingTypeData(

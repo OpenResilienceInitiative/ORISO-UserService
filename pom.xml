@@ -53,6 +53,7 @@
 		<spring-context-support.version>5.3.35</spring-context-support.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
 		<testcontainers.version>1.17.6</testcontainers.version>
+		<sentry.version>8.43.2</sentry.version>
 	</properties>
 
 	<dependencyManagement>
@@ -110,6 +111,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-amqp</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.sentry</groupId>
+			<artifactId>sentry-spring-boot-starter</artifactId>
+			<version>${sentry.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -301,6 +307,11 @@
 			<groupId>net.logstash.logback</groupId>
 			<artifactId>logstash-logback-encoder</artifactId>
 			<version>7.0.1</version>
+		</dependency>
+		<dependency>
+			<groupId>io.sentry</groupId>
+			<artifactId>sentry-logback</artifactId>
+			<version>${sentry.version}</version>
 		</dependency>
 
 		<dependency>

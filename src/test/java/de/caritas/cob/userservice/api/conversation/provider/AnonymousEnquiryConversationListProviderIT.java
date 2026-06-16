@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
@@ -67,6 +68,7 @@ class AnonymousEnquiryConversationListProviderIT {
   void setup() {
     Consultant consultant = mock(Consultant.class);
     ConsultantAgency consultantAgency = mock(ConsultantAgency.class);
+    when(consultant.getId()).thenReturn("consultant-id");
     when(consultant.getConsultantAgencies()).thenReturn(asSet(consultantAgency));
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
     AgencyDTO agencyDTO = new AgencyDTO().consultingType(CONSULTING_TYPE_ID_OFFENDER);
@@ -137,6 +139,8 @@ class AnonymousEnquiryConversationListProviderIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    this.userRepository.save(user);
     sessions.forEach(
         session -> {
           session.setRegistrationType(ANONYMOUS);
@@ -147,7 +151,9 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
           session.setStatus(SessionStatus.NEW);
+          session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
+          session.setUpdateDate(LocalDateTime.now());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);

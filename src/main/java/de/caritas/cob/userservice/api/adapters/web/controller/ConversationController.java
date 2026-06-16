@@ -18,10 +18,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.generated.api.conversation.controller.ConversationsApi;
 import io.swagger.annotations.Api;
-import java.util.Collections;
-import java.util.Set;
 import javax.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +42,7 @@ public class ConversationController implements ConversationsApi {
   private final @NonNull FinishAnonymousConversationFacade finishAnonymousConversationFacade;
   private final ConversationDtoMapper mapper;
   private final Messaging messenger;
+  private final TopicConsultantRoutingService topicConsultantRoutingService;
   private final AuthenticatedUser authenticatedUser;
 
   /**
@@ -159,22 +159,16 @@ public class ConversationController implements ConversationsApi {
     }
 
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
-    /*
-     * findAvailableConsultants goes through RocketChat — during the Matrix
-     * migration RocketChat is unreachable and throws. Catch and degrade to
-     * an empty set so the waiting-room poll still gets peopleAhead + status,
-     * which is what the asker UI actually needs in real time.
-     */
-    Set<String> consultants;
-    try {
-      consultants = messenger.findAvailableConsultants(consultingTypeId);
-    } catch (Exception ex) {
-      consultants = Collections.emptySet();
-    }
+    var mainTopicId = mapper.mainTopicIdOf(sessionMap);
+    int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId, consultingTypeId);
     var peopleAhead =
         messenger.countPendingEnquiriesAheadOf(
-            mapper.agencyIdOf(sessionMap), mapper.createDateOf(sessionMap));
-    var anonymousEnquiry = mapper.anonymousEnquiryOf(sessionMap, consultants, peopleAhead);
+            mapper.agencyIdOf(sessionMap),
+            consultingTypeId,
+            mainTopicId,
+            mapper.createDateOf(sessionMap));
+    var anonymousEnquiry =
+        mapper.anonymousEnquiryOf(sessionMap, numAvailableConsultants, peopleAhead);
 
     return ResponseEntity.ok(anonymousEnquiry);
   }
@@ -189,5 +183,24 @@ public class ConversationController implements ConversationsApi {
   public ResponseEntity<Void> finishAnonymousConversation(Long sessionId) {
     this.finishAnonymousConversationFacade.finishConversation(sessionId);
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * Topic-scoped sessions use the same Matrix-aware routing as enquiry creation and the public
+   * availability endpoint. Legacy sessions without a topic fall back to RocketChat presence.
+   */
+  private int resolveNumAvailableConsultants(Long mainTopicId, Integer consultingTypeId) {
+    try {
+      if (mainTopicId != null) {
+        return topicConsultantRoutingService.findAvailableConsultantIds(mainTopicId).size();
+      }
+      if (consultingTypeId == null) {
+        return 0;
+      }
+      return messenger.findAvailableConsultants(consultingTypeId).size();
+    } catch (Exception ex) {
+      // Availability is best-effort for this poll — never fail the whole response.
+      return 0;
+    }
   }
 }

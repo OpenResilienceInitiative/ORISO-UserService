@@ -325,6 +325,20 @@ class ConversationControllerAuthorizationIT {
 
   @Test
   @WithMockUser(authorities = {USER_DEFAULT})
+  void finishAnonymousConversation_Should_ReturnOk_When_UserDefaultAuthority() throws Exception {
+    this.mvc
+        .perform(
+            MockMvcRequestBuilders.put(ConversationControllerIT.FINISH_ANONYMOUS_CONVERSATION_PATH)
+                .cookie(csrfCookie)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(this.finishAnonymousConversationFacade, times(1)).finishConversation(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {TECHNICAL_DEFAULT})
   void finishAnonymousConversation_Should_ReturnForbiddenAndCallNoMethods_When_NoValidAuthority()
       throws Exception {
     this.mvc

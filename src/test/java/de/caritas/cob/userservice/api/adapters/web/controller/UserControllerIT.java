@@ -47,11 +47,15 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -74,6 +78,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -82,6 +87,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(UserController.class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(UserChatControllerDelegate.class)
 @TestPropertySource(properties = "spring.profiles.active=testing,feature.topics.enabled=true")
 class UserControllerIT {
 
@@ -303,6 +309,15 @@ class UserControllerIT {
   @SuppressWarnings("unused")
   private ConsultantDtoMapper consultantDtoMapper;
 
+  // Required by the ConsultantDtoMapper spy bean when this WebMvcTest context is created.
+  @MockBean
+  @SuppressWarnings("unused")
+  private ConsultantTopicRepository consultantTopicRepository;
+
+  @MockBean
+  @SuppressWarnings("unused")
+  private TopicService topicService;
+
   @MockBean
   @SuppressWarnings("unused")
   private UserDtoMapper userDtoMapper;
@@ -327,7 +342,15 @@ class UserControllerIT {
 
   @MockBean private AdminUserFacade adminUserFacade;
 
+  @MockBean
+  @SuppressWarnings("unused")
+  private MagicLinkLoginService magicLinkLoginService;
+
   @MockBean private SessionDeleteService sessionDeleteService;
+
+  @MockBean
+  @SuppressWarnings("unused")
+  private EventNotificationService eventNotificationService;
 
   @Mock private Logger logger;
 
@@ -366,6 +389,30 @@ class UserControllerIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isOk());
+  }
+
+  @Test
+  void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
+    /* given */
+    val username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
+    /* given */
+    val username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isConflict());
   }
 
   /** Method: registerUser */

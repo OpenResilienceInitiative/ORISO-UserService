@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -24,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,6 +36,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort.Direction;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 
 @Slf4j
 @Service
@@ -120,9 +123,10 @@ public class AccountManager implements AccountManaging {
         consultantPage.stream().map(ConsultantBase::getId).collect(Collectors.toList());
     var fullConsultants = consultantRepository.findAllByIdIn(consultantIds);
 
-    var consultingAgencies = consultantAgencyRepository.findByConsultantIdIn(consultantIds);
+    var consultingAgencies =
+        consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(consultantIds);
     var agencyIds = userServiceMapper.agencyIdsOf(consultingAgencies);
-    var agencies = agencyService.getAgenciesWithoutCaching(agencyIds);
+    var agencies = fetchAgenciesTolerantly(agencyIds);
 
     var tenantIdsToNameMap =
         fullConsultants.stream()
@@ -222,6 +226,23 @@ public class AccountManager implements AccountManaging {
     return () -> {
       throw new InternalServerErrorException(message);
     };
+  }
+
+  /**
+   * Agencies are resolved via the AgencyService, which responds with 404 when none of the requested
+   * ids exist anymore (e.g. consultants whose agencies were deleted). A consultant listing must not
+   * fail entirely because of such orphaned relations.
+   */
+  private List<AgencyDTO> fetchAgenciesTolerantly(List<Long> agencyIds) {
+    try {
+      return agencyService.getAgenciesWithoutCaching(agencyIds);
+    } catch (RestClientException e) {
+      log.warn(
+          "Could not fetch agencies {} for consultant search; continuing without agency data",
+          agencyIds,
+          e);
+      return List.of();
+    }
   }
 
   private Long resolveEffectiveTenantId() {
