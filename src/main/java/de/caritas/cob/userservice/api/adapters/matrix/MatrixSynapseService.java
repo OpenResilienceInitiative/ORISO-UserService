@@ -331,7 +331,10 @@ public class MatrixSynapseService {
    * @return access token, or null if admin impersonation failed
    */
   public String loginUserViaAdmin(String matrixUserId) {
-    if (matrixUserId == null || matrixUserId.isBlank()) {
+    if (matrixUserId == null
+        || matrixUserId.isBlank()
+        || !matrixUserId.startsWith("@")
+        || !matrixUserId.contains(":")) {
       return null;
     }
 
