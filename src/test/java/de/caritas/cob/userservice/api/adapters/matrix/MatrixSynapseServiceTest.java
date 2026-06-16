@@ -76,11 +76,7 @@ class MatrixSynapseServiceTest {
 
     assertThat(result).isNotNull();
     verify(matrixLongPollRestTemplate)
-        .exchange(
-            urlCaptor.capture(),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(Map.class));
+        .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     assertThat(urlCaptor.getValue()).startsWith(SYNC_URL + "?timeout=30000");
     assertThat(urlCaptor.getValue()).contains("&filter=");
     assertThat(urlCaptor.getValue()).contains("%21room%3Aexample.org");
@@ -91,7 +87,8 @@ class MatrixSynapseServiceTest {
   void getRoomMessagesShouldUseDedicatedLongPollRestTemplate() {
     var service = matrixSynapseService();
     var roomId = "!room:example.org";
-    var messagesUrl = "https://matrix.example/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100";
+    var messagesUrl =
+        "https://matrix.example/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100";
     when(matrixConfig.getApiUrl("/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100"))
         .thenReturn(messagesUrl);
     when(matrixLongPollRestTemplate.exchange(
