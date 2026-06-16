@@ -36,8 +36,7 @@ public class MatrixSessionSystemMessageService {
     }
 
     resolveMatrixCredentials(session)
-        .ifPresent(
-            credentials -> sendUserLeftMessage(session, credentials));
+        .ifPresent(credentials -> sendUserLeftMessage(session, credentials));
   }
 
   private void sendUserLeftMessage(Session session, MatrixCredentials credentials) {
@@ -53,8 +52,7 @@ public class MatrixSessionSystemMessageService {
 
     var username = resolveDisplayUsername(session);
     var body = buildUserLeftChatBody(username);
-    var response =
-        matrixSynapseService.sendMessage(session.getMatrixRoomId(), body, accessToken);
+    var response = matrixSynapseService.sendMessage(session.getMatrixRoomId(), body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn(
           "Matrix user-left message for session {} failed: {}",
@@ -76,9 +74,7 @@ public class MatrixSessionSystemMessageService {
 
     return agencyMatrixCredentialClient
         .fetchMatrixCredentials(session.getAgencyId())
-        .filter(
-            dto ->
-                isNotBlank(dto.getMatrixUserId()) && isNotBlank(dto.getMatrixPassword()))
+        .filter(dto -> isNotBlank(dto.getMatrixUserId()) && isNotBlank(dto.getMatrixPassword()))
         .map(
             dto ->
                 new MatrixCredentials(
@@ -104,8 +100,7 @@ public class MatrixSessionSystemMessageService {
   }
 
   private String buildUserLeftChatBody(String username) {
-    var safeUsername =
-        username == null ? "" : username.replace("\\", "\\\\").replace("\"", "\\\"");
+    var safeUsername = username == null ? "" : username.replace("\\", "\\\\").replace("\"", "\\\"");
     return SYSTEM_NOTIFICATION_PREFIX
         + "{\"type\":\""
         + USER_LEFT_CHAT_TYPE
