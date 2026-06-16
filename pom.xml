@@ -1100,9 +1100,6 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId> <!-- surefire plugin version managed by Spring Boot -->
-				<configuration>
-					<skipTests>true</skipTests>
-				</configuration>
 				<executions>
 					<execution>
 						<id>unit-tests</id>
@@ -1112,7 +1109,6 @@
 						</goals>
 							<configuration>
 								<skipTests>${skip.unit-tests}</skipTests>
-								<testFailureIgnore>true</testFailureIgnore>
 								<includes>
 									<include>**/*Test.java</include>
 								</includes>
@@ -1126,7 +1122,6 @@
 						</goals>
 							<configuration>
 								<skipTests>${skip.integration-tests}</skipTests>
-								<testFailureIgnore>true</testFailureIgnore>
 								<includes>
 									<include>**/*IT.*</include>
 								</includes>
