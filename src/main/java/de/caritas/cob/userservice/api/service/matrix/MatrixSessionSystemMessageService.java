@@ -53,7 +53,9 @@ public class MatrixSessionSystemMessageService {
     var displayUsername = resolveDisplayUsername(session);
     var roomId = matrixRoomId;
     resolveMatrixCredentials(session)
-        .ifPresent(credentials -> sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
+        .ifPresent(
+            credentials ->
+                sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
   }
 
   private void sendUserLeftMessage(
@@ -72,9 +74,7 @@ public class MatrixSessionSystemMessageService {
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn(
-          "Matrix user-left message for session {} failed: {}",
-          sessionId,
-          response.get("error"));
+          "Matrix user-left message for session {} failed: {}", sessionId, response.get("error"));
     }
   }
 
