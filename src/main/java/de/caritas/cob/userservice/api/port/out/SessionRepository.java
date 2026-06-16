@@ -244,7 +244,7 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.updateDate >= :minUpdateDate "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') "
-          + "AND s.mainTopicId IN :topicIds "
+          + "AND (s.mainTopicId IS NULL OR s.mainTopicId IN :topicIds) "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopics(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
