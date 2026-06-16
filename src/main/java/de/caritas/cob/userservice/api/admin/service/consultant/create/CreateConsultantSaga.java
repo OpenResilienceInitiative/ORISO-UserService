@@ -256,7 +256,7 @@ public class CreateConsultantSaga {
 
     var consultant =
         createConsultantInMariaDBOrRollback(
-            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId, password);
+            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
 
     tryAssignConsultantToExistingSessions(consultant);
     return consultant;
@@ -340,15 +340,10 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId,
-      String matrixPassword) {
+      String matrixUserId) {
     Consultant consultant =
         buildConsultant(
-            consultantCreationInput,
-            keycloakUserId,
-            rocketChatUserId,
-            matrixUserId,
-            matrixPassword);
+            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
@@ -452,8 +447,7 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId,
-      String matrixPassword) {
+      String matrixUserId) {
 
     return Consultant.builder()
         .id(keycloakUserId)
@@ -467,7 +461,6 @@ public class CreateConsultantSaga {
         .teamConsultant(consultantCreationInput.isTeamConsultant())
         .rocketChatId(rocketChatUserId)
         .matrixUserId(matrixUserId)
-        .matrixPassword(matrixPassword)
         .encourage2fa(true)
         .magicLinkLoginEnabled(false)
         .notifyEnquiriesRepeating(true)

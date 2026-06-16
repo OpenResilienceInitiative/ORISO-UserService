@@ -94,16 +94,8 @@ public class CreateUserFacade {
             matrixSynapseService.createUser(
                 plainCreds.getUsername(), plainCreds.getPassword(), plainCreds.getUsername());
 
-        log.info(
-            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}, body={}",
-            plainCreds.getUsername(),
-            matrixResponse.getStatusCode(),
-            matrixResponse.getBody() != null,
-            matrixResponse.getBody());
-
         if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
           user.setMatrixUserId(matrixResponse.getBody().getUserId());
-          user.setMatrixPassword(plainCreds.getPassword()); // Save Matrix password for messaging
           userService.saveUser(user);
           log.info(
               "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",

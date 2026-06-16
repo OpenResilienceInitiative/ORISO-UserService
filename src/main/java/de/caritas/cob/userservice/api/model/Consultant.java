@@ -90,10 +90,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "matrix_user_id")
   private String matrixUserId;
 
-  @Column(name = "matrix_password")
-  @Size(max = 255)
-  private String matrixPassword;
-
   @Column(name = "username", updatable = false, nullable = false)
   @Size(max = 255)
   @NonNull

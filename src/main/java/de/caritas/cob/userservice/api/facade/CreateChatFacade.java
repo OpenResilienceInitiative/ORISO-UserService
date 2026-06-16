@@ -261,15 +261,13 @@ public class CreateChatFacade {
         consultantMatrixUsername = consultant.getMatrixUserId().substring(1).split(":")[0];
       }
 
-      String consultantPassword = consultant.getMatrixPassword();
-      if (consultantPassword == null) {
+      if (consultant.getMatrixUserId() == null) {
         throw new InternalServerErrorException("Consultant does not have Matrix credentials");
       }
 
-      // Create room using the WORKING method (same as 1-on-1)
       var matrixResponse =
-          matrixSynapseService.createRoomAsConsultant(
-              roomName, roomAlias, consultantMatrixUsername, consultantPassword);
+          matrixSynapseService.createRoomForMatrixUser(
+              roomName, roomAlias, consultant.getMatrixUserId());
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
@@ -285,7 +283,7 @@ public class CreateChatFacade {
 
       // Get consultant token for inviting others
       String consultantToken =
-          matrixSynapseService.loginUser(consultantMatrixUsername, consultantPassword);
+          matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
@@ -308,9 +306,8 @@ public class CreateChatFacade {
               matrixRoomId, participant.getMatrixUserId(), consultantToken);
 
           // Auto-join the participant
-          String participantUsername = participant.getMatrixUserId().substring(1).split(":")[0];
           String participantToken =
-              matrixSynapseService.loginUser(participantUsername, participant.getMatrixPassword());
+              matrixSynapseService.loginUserViaAdmin(participant.getMatrixUserId());
           if (participantToken != null) {
             matrixSynapseService.joinRoom(matrixRoomId, participantToken);
             log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);
