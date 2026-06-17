@@ -132,15 +132,13 @@ public class SessionSupervisorFacade {
           addedByConsultant.getMatrixUserId().substring(1).split(":")[0];
     }
 
-    String addedByConsultantPassword = addedByConsultant.getMatrixPassword();
-    if (addedByConsultantPassword == null) {
+    if (addedByConsultant.getMatrixUserId() == null) {
       throw new InternalServerErrorException(
           "Consultant adding supervisor does not have Matrix credentials");
     }
 
-    // Login as addedByConsultant to get token
     String consultantToken =
-        matrixSynapseService.loginUser(addedByConsultantMatrixUsername, addedByConsultantPassword);
+        matrixSynapseService.loginUserViaAdmin(addedByConsultant.getMatrixUserId());
     if (consultantToken == null) {
       throw new InternalServerErrorException("Failed to login consultant for Matrix operations");
     }
@@ -183,12 +181,7 @@ public class SessionSupervisorFacade {
     // Login supervisor and join room
     String supervisorMatrixUsername = null;
     if (supervisorMatrixUserId.startsWith("@")) {
-      supervisorMatrixUsername = supervisorMatrixUserId.substring(1).split(":")[0];
-    }
-    String supervisorPassword = supervisorConsultant.getMatrixPassword();
-    if (supervisorPassword != null) {
-      String supervisorToken =
-          matrixSynapseService.loginUser(supervisorMatrixUsername, supervisorPassword);
+      String supervisorToken = matrixSynapseService.loginUserViaAdmin(supervisorMatrixUserId);
       if (supervisorToken != null) {
         boolean joined = matrixSynapseService.joinRoom(matrixRoomId, supervisorToken);
         if (joined) {
@@ -270,11 +263,9 @@ public class SessionSupervisorFacade {
               removedByConsultant.getMatrixUserId().substring(1).split(":")[0];
         }
 
-        String removedByConsultantPassword = removedByConsultant.getMatrixPassword();
-        if (removedByConsultantPassword != null) {
+        if (removedByConsultant.getMatrixUserId() != null) {
           String consultantToken =
-              matrixSynapseService.loginUser(
-                  removedByConsultantMatrixUsername, removedByConsultantPassword);
+              matrixSynapseService.loginUserViaAdmin(removedByConsultant.getMatrixUserId());
           if (consultantToken != null) {
             boolean removed =
                 matrixSynapseService.removeUserFromRoom(

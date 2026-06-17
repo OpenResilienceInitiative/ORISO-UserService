@@ -9,19 +9,25 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class MatrixSynapseServiceTest {
 
+  private static final String MATRIX_USER_ID = "@seeker:matrix.example.com";
+  private static final String IMPERSONATION_TOKEN = "syt_admin_impersonation_token";
   private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
   private static final String ACCESS_TOKEN = "access-token";
 
@@ -30,6 +36,52 @@ class MatrixSynapseServiceTest {
   @Mock private RestTemplate matrixLongPollRestTemplate;
   @Mock private MatrixRoomClient matrixRoomClient;
   @Mock private MatrixMediaClient matrixMediaClient;
+
+  @BeforeEach
+  void setUp() {
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-secret");
+    when(matrixConfig.getApiUrl(org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            invocation -> "https://matrix.example.com" + invocation.getArgument(0, String.class));
+  }
+
+  /** US-C01: Synapse admin impersonation login must not require stored user passwords. */
+  @Test
+  void loginUserViaAdmin_Should_ReturnAccessToken_When_AdminLoginSucceeds() {
+    when(restTemplate.postForEntity(
+            eq("https://matrix.example.com/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
+
+    when(restTemplate.postForEntity(
+            org.mockito.ArgumentMatchers.contains("/_synapse/admin/v1/users/"),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", IMPERSONATION_TOKEN)));
+
+    var service = matrixSynapseService();
+    String token = service.loginUserViaAdmin(MATRIX_USER_ID);
+
+    assertThat(token).isEqualTo(IMPERSONATION_TOKEN);
+    assertThat(service.loginUserViaAdmin(MATRIX_USER_ID)).isEqualTo(IMPERSONATION_TOKEN);
+  }
+
+  @Test
+  void loginUserViaAdmin_Should_ReturnNull_When_MatrixUserIdMissing() {
+    var service = matrixSynapseService();
+    assertThat(service.loginUserViaAdmin(null)).isNull();
+    assertThat(service.loginUserViaAdmin("")).isNull();
+  }
+
+  @Test
+  void loginUserViaAdmin_Should_ReturnNull_When_AdminCredentialsMissing() {
+    when(matrixConfig.getAdminUsername()).thenReturn("");
+    when(matrixConfig.getAdminPassword()).thenReturn("");
+
+    assertThat(matrixSynapseService().loginUserViaAdmin(MATRIX_USER_ID)).isNull();
+  }
 
   @Test
   void makeMatrixRequestShouldUseDedicatedLongPollRestTemplate() {

@@ -215,16 +215,19 @@ public class CreateConsultantSaga {
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
 
-    // MATRIX MIGRATION: Create Matrix user for consultant with plain username
+    // MATRIX MIGRATION: Create Matrix user for consultant with plain username.
+    // A randomly generated password is used for Synapse provisioning — it is never stored
+    // and never needed again; all subsequent Matrix actions use admin impersonation tokens.
     String matrixUserId = null;
     try {
       if (plainCreds != null && plainCreds.getUsername() != null) {
         log.info(
             "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        String matrixProvisioningPassword = userHelper.getRandomPassword();
         var matrixResponse =
             matrixSynapseService.createUser(
                 plainCreds.getUsername(),
-                password,
+                matrixProvisioningPassword,
                 consultantCreationInput.getFirstName()
                     + " "
                     + consultantCreationInput.getLastName());
@@ -256,7 +259,7 @@ public class CreateConsultantSaga {
 
     var consultant =
         createConsultantInMariaDBOrRollback(
-            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId, password);
+            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
 
     tryAssignConsultantToExistingSessions(consultant);
     return consultant;
@@ -340,15 +343,9 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId,
-      String matrixPassword) {
+      String matrixUserId) {
     Consultant consultant =
-        buildConsultant(
-            consultantCreationInput,
-            keycloakUserId,
-            rocketChatUserId,
-            matrixUserId,
-            matrixPassword);
+        buildConsultant(consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
@@ -452,42 +449,35 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId,
-      String matrixPassword) {
+      String matrixUserId) {
 
-    var consultant =
-        Consultant.builder()
-            .id(keycloakUserId)
-            .idOld(consultantCreationInput.getIdOld())
-            .username(consultantCreationInput.getEncodedUsername())
-            .firstName(consultantCreationInput.getFirstName())
-            .lastName(consultantCreationInput.getLastName())
-            .email(consultantCreationInput.getEmail())
-            .absent(isTrue(consultantCreationInput.isAbsent()))
-            .absenceMessage(consultantCreationInput.getAbsenceMessage())
-            .teamConsultant(consultantCreationInput.isTeamConsultant())
-            .rocketChatId(rocketChatUserId)
-            .matrixUserId(matrixUserId)
-            .matrixPassword(matrixPassword)
-            .encourage2fa(true)
-            .magicLinkLoginEnabled(false)
-            .notifyEnquiriesRepeating(true)
-            .notifyNewChatMessageFromAdviceSeeker(true)
-            .languageFormal(consultantCreationInput.isLanguageFormal())
-            .languages(Set.of())
-            .createDate(consultantCreationInput.getCreateDate())
-            .updateDate(consultantCreationInput.getUpdateDate())
-            .tenantId(consultantCreationInput.getTenantId())
-            .status(
-                ConsultantStatus.CREATED) // MATRIX MIGRATION: Set to CREATED (RocketChat optional)
-            .walkThroughEnabled(true)
-            .languageCode(LanguageCode.de)
-            .notificationsEnabled(true)
-            .notificationsSettings(serializeToJsonString(allActiveNotifications()))
-            .build();
-
-    consultant.replaceTopics(consultantCreationInput.getTopicIds());
-    return consultant;
+    return Consultant.builder()
+        .id(keycloakUserId)
+        .idOld(consultantCreationInput.getIdOld())
+        .username(consultantCreationInput.getEncodedUsername())
+        .firstName(consultantCreationInput.getFirstName())
+        .lastName(consultantCreationInput.getLastName())
+        .email(consultantCreationInput.getEmail())
+        .absent(isTrue(consultantCreationInput.isAbsent()))
+        .absenceMessage(consultantCreationInput.getAbsenceMessage())
+        .teamConsultant(consultantCreationInput.isTeamConsultant())
+        .rocketChatId(rocketChatUserId)
+        .matrixUserId(matrixUserId)
+        .encourage2fa(true)
+        .magicLinkLoginEnabled(false)
+        .notifyEnquiriesRepeating(true)
+        .notifyNewChatMessageFromAdviceSeeker(true)
+        .languageFormal(consultantCreationInput.isLanguageFormal())
+        .languages(Set.of())
+        .createDate(consultantCreationInput.getCreateDate())
+        .updateDate(consultantCreationInput.getUpdateDate())
+        .tenantId(consultantCreationInput.getTenantId())
+        .status(ConsultantStatus.CREATED) // MATRIX MIGRATION: Set to CREATED (RocketChat optional)
+        .walkThroughEnabled(true)
+        .languageCode(LanguageCode.de)
+        .notificationsEnabled(true)
+        .notificationsSettings(serializeToJsonString(allActiveNotifications()))
+        .build();
   }
 
   private NotificationsSettingsDTO allActiveNotifications() {
