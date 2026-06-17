@@ -15,9 +15,9 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -29,7 +29,6 @@ import org.springframework.web.client.RestTemplate;
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MatrixSynapseService {
 
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -43,6 +42,7 @@ public class MatrixSynapseService {
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final RestTemplate matrixLongPollRestTemplate;
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
 
@@ -89,6 +89,17 @@ public class MatrixSynapseService {
       this.token = token;
       this.expiryMs = expiryMs;
     }
+  public MatrixSynapseService(
+      MatrixConfig matrixConfig,
+      RestTemplate restTemplate,
+      @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
+      MatrixRoomClient matrixRoomClient,
+      MatrixMediaClient matrixMediaClient) {
+    this.matrixConfig = matrixConfig;
+    this.restTemplate = restTemplate;
+    this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
+    this.matrixRoomClient = matrixRoomClient;
+    this.matrixMediaClient = matrixMediaClient;
   }
 
   /**
@@ -554,7 +565,7 @@ public class MatrixSynapseService {
       log.info("Getting messages from Matrix room: {}", roomId);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
@@ -614,7 +625,7 @@ public class MatrixSynapseService {
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null) {
@@ -821,7 +832,8 @@ public class MatrixSynapseService {
           httpMethod = org.springframework.http.HttpMethod.GET;
       }
 
-      var response = restTemplate.exchange(url, httpMethod, request, java.util.Map.class);
+      var response =
+          matrixLongPollRestTemplate.exchange(url, httpMethod, request, java.util.Map.class);
 
       return response.getBody();
     } catch (Exception ex) {
