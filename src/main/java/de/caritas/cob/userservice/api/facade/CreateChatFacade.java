@@ -261,13 +261,15 @@ public class CreateChatFacade {
         consultantMatrixUsername = consultant.getMatrixUserId().substring(1).split(":")[0];
       }
 
-      if (consultant.getMatrixUserId() == null) {
+      String consultantPassword = consultant.getMatrixPassword();
+      if (consultantPassword == null) {
         throw new InternalServerErrorException("Consultant does not have Matrix credentials");
       }
 
+      // Create room using the WORKING method (same as 1-on-1)
       var matrixResponse =
-          matrixSynapseService.createRoomForMatrixUser(
-              roomName, roomAlias, consultant.getMatrixUserId());
+          matrixSynapseService.createRoomAsConsultant(
+              roomName, roomAlias, consultantMatrixUsername, consultantPassword);
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
@@ -282,7 +284,8 @@ public class CreateChatFacade {
       chatService.saveChat(chat);
 
       // Get consultant token for inviting others
-      String consultantToken = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
+      String consultantToken =
+          matrixSynapseService.loginUser(consultantMatrixUsername, consultantPassword);
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
@@ -305,8 +308,9 @@ public class CreateChatFacade {
               matrixRoomId, participant.getMatrixUserId(), consultantToken);
 
           // Auto-join the participant
+          String participantUsername = participant.getMatrixUserId().substring(1).split(":")[0];
           String participantToken =
-              matrixSynapseService.loginUserViaAdmin(participant.getMatrixUserId());
+              matrixSynapseService.loginUser(participantUsername, participant.getMatrixPassword());
           if (participantToken != null) {
             matrixSynapseService.joinRoom(matrixRoomId, participantToken);
             log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);

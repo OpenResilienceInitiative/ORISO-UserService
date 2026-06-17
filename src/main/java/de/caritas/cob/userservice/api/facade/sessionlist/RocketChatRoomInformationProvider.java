@@ -104,10 +104,12 @@ public class RocketChatRoomInformationProvider {
       de.caritas.cob.userservice.api.model.Consultant consultant) {
     try {
       String matrixUsername = extractMatrixUsername(consultant.getMatrixUserId());
-      if (consultant.getMatrixUserId() != null) {
-        log.info("Fetching Matrix rooms for consultant: {}", matrixUsername);
-        var rooms = matrixSynapseService.getJoinedRoomsForMatrixUser(consultant.getMatrixUserId());
-        log.info("Found {} Matrix rooms for consultant {}", rooms.size(), matrixUsername);
+      String matrixPassword = consultant.getMatrixPassword();
+
+      if (matrixUsername != null && matrixPassword != null) {
+        log.info("🔍 Fetching Matrix rooms for consultant: {}", matrixUsername);
+        var rooms = matrixSynapseService.getJoinedRooms(matrixUsername, matrixPassword);
+        log.info("✅ Found {} Matrix rooms for consultant {}", rooms.size(), matrixUsername);
         return rooms;
       }
 
