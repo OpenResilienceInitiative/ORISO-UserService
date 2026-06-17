@@ -89,6 +89,8 @@ public class MatrixSynapseService {
       this.token = token;
       this.expiryMs = expiryMs;
     }
+  }
+
   public MatrixSynapseService(
       MatrixConfig matrixConfig,
       RestTemplate restTemplate,

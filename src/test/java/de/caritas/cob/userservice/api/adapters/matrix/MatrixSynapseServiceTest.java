@@ -1,10 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.nullValue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -17,17 +12,11 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.http.HttpEntity;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
@@ -38,12 +27,15 @@ import org.springframework.web.client.RestTemplate;
 class MatrixSynapseServiceTest {
 
   private static final String MATRIX_USER_ID = "@seeker:matrix.example.com";
-  private static final String ACCESS_TOKEN = "syt_admin_impersonation_token";
+  private static final String IMPERSONATION_TOKEN = "syt_admin_impersonation_token";
+  private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
+  private static final String ACCESS_TOKEN = "access-token";
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;
-
-  @InjectMocks private MatrixSynapseService matrixSynapseService;
+  @Mock private RestTemplate matrixLongPollRestTemplate;
+  @Mock private MatrixRoomClient matrixRoomClient;
+  @Mock private MatrixMediaClient matrixMediaClient;
 
   @BeforeEach
   void setUp() {
@@ -67,18 +59,20 @@ class MatrixSynapseServiceTest {
             org.mockito.ArgumentMatchers.contains("/_synapse/admin/v1/users/"),
             any(HttpEntity.class),
             eq(Map.class)))
-        .thenReturn(ResponseEntity.ok(Map.of("access_token", ACCESS_TOKEN)));
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", IMPERSONATION_TOKEN)));
 
-    String token = matrixSynapseService.loginUserViaAdmin(MATRIX_USER_ID);
+    var service = matrixSynapseService();
+    String token = service.loginUserViaAdmin(MATRIX_USER_ID);
 
-    assertThat(token, is(ACCESS_TOKEN));
-    assertThat(matrixSynapseService.loginUserViaAdmin(MATRIX_USER_ID), is(ACCESS_TOKEN));
+    assertThat(token).isEqualTo(IMPERSONATION_TOKEN);
+    assertThat(service.loginUserViaAdmin(MATRIX_USER_ID)).isEqualTo(IMPERSONATION_TOKEN);
   }
 
   @Test
   void loginUserViaAdmin_Should_ReturnNull_When_MatrixUserIdMissing() {
-    assertThat(matrixSynapseService.loginUserViaAdmin(null), nullValue());
-    assertThat(matrixSynapseService.loginUserViaAdmin(""), nullValue());
+    var service = matrixSynapseService();
+    assertThat(service.loginUserViaAdmin(null)).isNull();
+    assertThat(service.loginUserViaAdmin("")).isNull();
   }
 
   @Test
@@ -86,17 +80,8 @@ class MatrixSynapseServiceTest {
     when(matrixConfig.getAdminUsername()).thenReturn("");
     when(matrixConfig.getAdminPassword()).thenReturn("");
 
-    assertThat(matrixSynapseService.loginUserViaAdmin(MATRIX_USER_ID), nullValue());
-class MatrixSynapseServiceTest {
-
-  private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
-  private static final String ACCESS_TOKEN = "access-token";
-
-  @Mock private MatrixConfig matrixConfig;
-  @Mock private RestTemplate restTemplate;
-  @Mock private RestTemplate matrixLongPollRestTemplate;
-  @Mock private MatrixRoomClient matrixRoomClient;
-  @Mock private MatrixMediaClient matrixMediaClient;
+    assertThat(matrixSynapseService().loginUserViaAdmin(MATRIX_USER_ID)).isNull();
+  }
 
   @Test
   void makeMatrixRequestShouldUseDedicatedLongPollRestTemplate() {
