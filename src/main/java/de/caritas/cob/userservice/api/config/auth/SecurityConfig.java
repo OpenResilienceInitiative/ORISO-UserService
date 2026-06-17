@@ -270,7 +270,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/userstatistics", "/userstatistics/**")
-        .permitAll()
+        .hasAuthority(TECHNICAL_DEFAULT)
         .antMatchers(HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
         .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
         .antMatchers(HttpMethod.GET, "/actuator/health")
@@ -284,7 +284,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .mvcMatchers(HttpMethod.GET, "/users/availability/{username}")
         .permitAll()
         .mvcMatchers(HttpMethod.GET, "/users/{username}")
-        .permitAll()
+        .hasAuthority(TECHNICAL_DEFAULT)
         .anyRequest()
         .denyAll();
   }
