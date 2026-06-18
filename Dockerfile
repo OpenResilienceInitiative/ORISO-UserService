@@ -1,8 +1,7 @@
 FROM eclipse-temurin:17-jre
 VOLUME ["/tmp","/log"]
-EXPOSE 8080
+EXPOSE 8082
 ARG JAR_FILE
-ENV JAVA_UPPER_VERSION=eclipse-temurin:21-jre
-ENV ENABLE_JDWP=false
+ENV JAVA_UPPER_VERSION=eclipse-temurin:17-jre
 COPY ./target/UserService.jar app.jar
-ENTRYPOINT ["sh","-c","if [ \"$ENABLE_JDWP\" = \"true\" ]; then DEBUG_OPTS='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005'; else DEBUG_OPTS=''; fi; exec java $DEBUG_OPTS -Djava.security.egd=file:/dev/./urandom -jar /app.jar"]
+ENTRYPOINT ["java","-Djava.security.egd=file:/dev/./urandom","-XX:MaxRAMPercentage=75","-jar","/app.jar"]
