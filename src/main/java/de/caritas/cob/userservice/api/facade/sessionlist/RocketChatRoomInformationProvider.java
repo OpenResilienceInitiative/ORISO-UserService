@@ -63,6 +63,14 @@ public class RocketChatRoomInformationProvider {
     List<RoomsUpdateDTO> roomsForUpdate = emptyList();
     List<String> userRooms = emptyList();
 
+    if (isMatrixMigrationCredential(rocketChatCredentials)) {
+      userRooms =
+          consultant != null
+              ? getMatrixRoomsForConsultant(consultant)
+              : getMatrixRoomsForUser(rocketChatCredentials.getRocketChatUserId());
+      return buildRoomInformation(readMessages, roomsForUpdate, userRooms);
+    }
+
     // RocketChat is deprecated - fail gracefully if not available
     try {
       if (nonNull(rocketChatCredentials.getRocketChatUserId())) {
@@ -81,6 +89,11 @@ public class RocketChatRoomInformationProvider {
       }
     }
 
+    return buildRoomInformation(readMessages, roomsForUpdate, userRooms);
+  }
+
+  private RocketChatRoomInformation buildRoomInformation(
+      Map<String, Boolean> readMessages, List<RoomsUpdateDTO> roomsForUpdate, List<String> userRooms) {
     var lastMessagesRoom = getRcRoomLastMessages(roomsForUpdate);
     var groupIdToLastMessageFallbackDate =
         collectFallbackDateOfRoomsWithoutLastMessage(roomsForUpdate);
@@ -92,6 +105,26 @@ public class RocketChatRoomInformationProvider {
         .lastMessagesRoom(lastMessagesRoom)
         .groupIdToLastMessageFallbackDate(groupIdToLastMessageFallbackDate)
         .build();
+  }
+
+  private boolean isMatrixMigrationCredential(RocketChatCredentials rocketChatCredentials) {
+    if (rocketChatCredentials == null) {
+      return true;
+    }
+
+    var userId = rocketChatCredentials.getRocketChatUserId();
+    var token = rocketChatCredentials.getRocketChatToken();
+
+    return isBlank(userId)
+        || isBlank(token)
+        || userId.startsWith("@")
+        || userId.startsWith("dummy-")
+        || token.startsWith("syt_")
+        || token.startsWith("dummy-");
+  }
+
+  private boolean isBlank(String value) {
+    return value == null || value.isBlank();
   }
 
   /**
