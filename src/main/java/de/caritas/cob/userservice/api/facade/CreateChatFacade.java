@@ -255,21 +255,13 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      // Extract consultant username
-      String consultantMatrixUsername = null;
-      if (consultant.getMatrixUserId() != null && consultant.getMatrixUserId().startsWith("@")) {
-        consultantMatrixUsername = consultant.getMatrixUserId().substring(1).split(":")[0];
-      }
-
-      String consultantPassword = consultant.getMatrixPassword();
-      if (consultantPassword == null) {
+      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
         throw new InternalServerErrorException("Consultant does not have Matrix credentials");
       }
 
-      // Create room using the WORKING method (same as 1-on-1)
       var matrixResponse =
-          matrixSynapseService.createRoomAsConsultant(
-              roomName, roomAlias, consultantMatrixUsername, consultantPassword);
+          matrixSynapseService.createRoomAsMatrixUser(
+              roomName, roomAlias, consultant.getMatrixUserId());
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
@@ -284,8 +276,10 @@ public class CreateChatFacade {
       chatService.saveChat(chat);
 
       // Get consultant token for inviting others
-      String consultantToken =
-          matrixSynapseService.loginUser(consultantMatrixUsername, consultantPassword);
+      String consultantToken = matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      if (consultantToken == null) {
+        throw new InternalServerErrorException("Could not create Matrix token for consultant");
+      }
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
@@ -308,9 +302,8 @@ public class CreateChatFacade {
               matrixRoomId, participant.getMatrixUserId(), consultantToken);
 
           // Auto-join the participant
-          String participantUsername = participant.getMatrixUserId().substring(1).split(":")[0];
           String participantToken =
-              matrixSynapseService.loginUser(participantUsername, participant.getMatrixPassword());
+              matrixSynapseService.loginAsUserAccessToken(participant.getMatrixUserId());
           if (participantToken != null) {
             matrixSynapseService.joinRoom(matrixRoomId, participantToken);
             log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);

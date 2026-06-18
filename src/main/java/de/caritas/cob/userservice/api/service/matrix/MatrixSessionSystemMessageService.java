@@ -60,13 +60,12 @@ public class MatrixSessionSystemMessageService {
 
   private void sendUserLeftMessage(
       Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
-    var accessToken =
-        matrixSynapseService.loginUser(credentials.username(), credentials.password());
+    var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
       log.warn(
-          "Skipping Matrix user-left message for session {} — login failed for {}",
+          "Skipping Matrix user-left message for session {} — token unavailable for {}",
           sessionId,
-          credentials.username());
+          credentials.principal());
       return;
     }
 
@@ -80,22 +79,15 @@ public class MatrixSessionSystemMessageService {
 
   private Optional<MatrixCredentials> resolveMatrixCredentials(Session session) {
     User user = session.getUser();
-    if (user != null
-        && isNotBlank(user.getMatrixUserId())
-        && isNotBlank(user.getMatrixPassword())) {
-      return Optional.of(
-          new MatrixCredentials(
-              extractMatrixLocalpart(user.getMatrixUserId()), user.getMatrixPassword()));
+    if (user != null && isNotBlank(user.getMatrixUserId())) {
+      return Optional.of(MatrixCredentials.forMatrixUser(user.getMatrixUserId()));
     }
 
     Consultant consultant = session.getConsultant();
     if (consultant != null && isNotBlank(consultant.getId())) {
       consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
-      if (isNotBlank(consultant.getMatrixUserId()) && isNotBlank(consultant.getMatrixPassword())) {
-        return Optional.of(
-            new MatrixCredentials(
-                extractMatrixLocalpart(consultant.getMatrixUserId()),
-                consultant.getMatrixPassword()));
+      if (isNotBlank(consultant.getMatrixUserId())) {
+        return Optional.of(MatrixCredentials.forMatrixUser(consultant.getMatrixUserId()));
       }
     }
 
@@ -104,7 +96,7 @@ public class MatrixSessionSystemMessageService {
         .filter(dto -> isNotBlank(dto.getMatrixUserId()) && isNotBlank(dto.getMatrixPassword()))
         .map(
             dto ->
-                new MatrixCredentials(
+                MatrixCredentials.forPasswordLogin(
                     extractMatrixLocalpart(dto.getMatrixUserId()), dto.getMatrixPassword()));
   }
 
@@ -149,20 +141,33 @@ public class MatrixSessionSystemMessageService {
   }
 
   private static final class MatrixCredentials {
-    private final String username;
+    private final String matrixUserId;
     private final String password;
+    private final String username;
 
-    private MatrixCredentials(String username, String password) {
+    private MatrixCredentials(String matrixUserId, String username, String password) {
+      this.matrixUserId = matrixUserId;
       this.username = username;
       this.password = password;
     }
 
-    private String username() {
-      return username;
+    private static MatrixCredentials forMatrixUser(String matrixUserId) {
+      return new MatrixCredentials(matrixUserId, null, null);
     }
 
-    private String password() {
-      return password;
+    private static MatrixCredentials forPasswordLogin(String username, String password) {
+      return new MatrixCredentials(null, username, password);
+    }
+
+    private String accessToken(MatrixSynapseService matrixSynapseService) {
+      if (isNotBlank(matrixUserId)) {
+        return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+      }
+      return matrixSynapseService.loginUser(username, password);
+    }
+
+    private String principal() {
+      return isNotBlank(matrixUserId) ? matrixUserId : username;
     }
   }
 }

@@ -103,17 +103,16 @@ public class RocketChatRoomInformationProvider {
   private List<String> getMatrixRoomsForConsultant(
       de.caritas.cob.userservice.api.model.Consultant consultant) {
     try {
-      String matrixUsername = extractMatrixUsername(consultant.getMatrixUserId());
-      String matrixPassword = consultant.getMatrixPassword();
+      String matrixUserId = consultant.getMatrixUserId();
 
-      if (matrixUsername != null && matrixPassword != null) {
-        log.info("🔍 Fetching Matrix rooms for consultant: {}", matrixUsername);
-        var rooms = matrixSynapseService.getJoinedRooms(matrixUsername, matrixPassword);
-        log.info("✅ Found {} Matrix rooms for consultant {}", rooms.size(), matrixUsername);
+      if (matrixUserId != null) {
+        log.info("🔍 Fetching Matrix rooms for consultant: {}", matrixUserId);
+        var rooms = matrixSynapseService.getJoinedRoomsForMatrixUser(matrixUserId);
+        log.info("✅ Found {} Matrix rooms for consultant {}", rooms.size(), matrixUserId);
         return rooms;
       }
 
-      log.warn("Could not find Matrix credentials for consultant {}", consultant.getId());
+      log.warn("Could not find Matrix user ID for consultant {}", consultant.getId());
       return emptyList();
 
     } catch (Exception e) {
