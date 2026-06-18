@@ -12,9 +12,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.net.UnknownHostException;
+import java.util.Map;
+import java.util.Optional;
 import javax.validation.ConstraintViolationException;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,8 +56,14 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   public ResponseEntity<Object> handleJPAConstraintViolationException(
       final org.hibernate.exception.ConstraintViolationException ex, final WebRequest request) {
     log.error(BAD_REQUEST, ex);
+    var reason = conflictReasonOf(ex);
 
-    return handleExceptionInternal(ex, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+    return handleExceptionInternal(
+        ex,
+        reason.map(this::reasonBody).orElse(null),
+        reason.map(this::reasonHeaders).orElseGet(HttpHeaders::new),
+        HttpStatus.CONFLICT,
+        request);
   }
 
   @ExceptionHandler({DistributedTransactionException.class})
@@ -96,9 +106,14 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   public ResponseEntity<Object> handleCustomBadRequest(
       final CustomValidationHttpStatusException ex, final WebRequest request) {
     ex.executeLogging();
+    var reason = Optional.ofNullable(ex.getCustomHttpHeaders().getFirst("X-Reason"));
 
     return handleExceptionInternal(
-        ex, null, ex.getCustomHttpHeaders(), ex.getHttpStatus(), request);
+        ex,
+        reason.map(this::reasonBody).orElse(null),
+        ex.getCustomHttpHeaders(),
+        ex.getHttpStatus(),
+        request);
   }
 
   /**
@@ -190,6 +205,30 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+  }
+
+  private Optional<String> conflictReasonOf(Throwable throwable) {
+    String message =
+        Optional.ofNullable(ExceptionUtils.getRootCause(throwable))
+            .map(Throwable::getMessage)
+            .orElseGet(throwable::getMessage);
+    String normalizedMessage = Optional.ofNullable(message).orElse("").toLowerCase();
+
+    if (normalizedMessage.contains("username")) {
+      return Optional.of(HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE.name());
+    }
+    if (normalizedMessage.contains("email")) {
+      return Optional.of(HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE.name());
+    }
+    return Optional.empty();
+  }
+
+  private HttpHeaders reasonHeaders(String reason) {
+    return new CustomHttpHeader(HttpStatusExceptionReason.valueOf(reason)).buildHeader();
+  }
+
+  private Map<String, String> reasonBody(String reason) {
+    return Map.of("reason", reason);
   }
 
   /**

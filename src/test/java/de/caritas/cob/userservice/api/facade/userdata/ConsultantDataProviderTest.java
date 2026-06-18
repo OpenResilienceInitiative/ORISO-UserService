@@ -34,6 +34,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 
 @ExtendWith(MockitoExtension.class)
 public class ConsultantDataProviderTest {
@@ -74,6 +77,32 @@ public class ConsultantDataProviderTest {
 
     assertNotNull(result);
     assertEquals(AGENCY_DTO_SUCHT, result.get(0));
+  }
+
+  @Test
+  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsServerError() {
+    when(agencyService.getAgencies(any()))
+        .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+
+    var result = underTest.retrieveData(CONSULTANT_WITH_AGENCY);
+
+    assertEquals(CONSULTANT_WITH_AGENCY.getId(), result.getUserId());
+    assertTrue(result.getAgencies().isEmpty());
+    assertFalse(result.isHasAnonymousConversations());
+    Mockito.verifyNoInteractions(consultingTypeManager);
+  }
+
+  @Test
+  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsNotFound() {
+    when(agencyService.getAgencies(any()))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+    var result = underTest.retrieveData(CONSULTANT_WITH_AGENCY);
+
+    assertEquals(CONSULTANT_WITH_AGENCY.getId(), result.getUserId());
+    assertTrue(result.getAgencies().isEmpty());
+    assertFalse(result.isHasAnonymousConversations());
+    Mockito.verifyNoInteractions(consultingTypeManager);
   }
 
   @Test

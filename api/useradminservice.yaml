@@ -598,9 +598,9 @@ paths:
           description: field to sort by
           schema:
             type: string
-            enum: [ FIRSTNAME, LASTNAME, EMAIL ]
+            enum: [ FIRSTNAME, LASTNAME, EMAIL, UPDATE_DATE ]
             default: FIRSTNAME
-            pattern: '^(FIRSTNAME|LASTNAME|EMAIL)$'
+            pattern: '^(FIRSTNAME|LASTNAME|EMAIL|UPDATE_DATE)$'
         - name: order
           in: query
           description: sort order
@@ -933,9 +933,9 @@ paths:
             description: field to sort by
             schema:
               type: string
-              enum: [ FIRSTNAME, LASTNAME, EMAIL, TENANT_ID ]
+              enum: [ FIRSTNAME, LASTNAME, EMAIL, TENANT_ID, UPDATE_DATE ]
               default: FIRSTNAME
-              pattern: '^(FIRSTNAME|LASTNAME|EMAIL|TENANT_ID)$'
+              pattern: '^(FIRSTNAME|LASTNAME|EMAIL|TENANT_ID|UPDATE_DATE)$'
           - name: order
             in: query
             description: sort order
@@ -1238,6 +1238,13 @@ components:
           example: "1"
         isGroupchatConsultant:
           $ref: '#/components/schemas/IsGroupchatConsultant'
+        topicIds:
+          type: array
+          description: ids of topics directly assigned to the consultant
+          items:
+            type: integer
+            format: int64
+          example: [3, 7, 12]
 
     IsGroupchatConsultant:
       type: boolean
@@ -1301,6 +1308,13 @@ components:
           $ref: '#/components/schemas/IsGroupchatConsultant'
         isSupervisor:
           $ref: '#/components/schemas/IsSupervisor'
+        topicIds:
+          type: array
+          description: replaces the full set of topics assigned to the consultant
+          items:
+            type: integer
+            format: int64
+          example: [3, 7, 12]
 
     ConsultantDTO:
       type: object
@@ -1354,6 +1368,30 @@ components:
           type: string
         displayName:
           type: string
+        publicName:
+          type: string
+        roleInOrg:
+          type: string
+        vacated:
+          type: boolean
+        adminRights:
+          type: boolean
+        topics:
+          type: array
+          description: topics directly assigned to the consultant, enriched with names
+          items:
+            $ref: '#/components/schemas/ConsultantTopicDTO'
+
+    ConsultantTopicDTO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 3
+        name:
+          type: string
+          example: "Addiction"
 
     CreateAdminDTO:
       type: object
@@ -1461,6 +1499,14 @@ components:
           type: array
           items:
             $ref: './../services/agencyadminservice.yaml#/components/schemas/AgencyAdminResponseDTO'
+        publicName:
+          type: string
+        roleInOrg:
+          type: string
+        vacated:
+          type: boolean
+        adminRights:
+          type: boolean
 
     AskerResponseDTO:
       type: object

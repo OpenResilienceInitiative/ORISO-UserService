@@ -615,6 +615,35 @@ class UserControllerConsultantE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN, AuthorityValue.RESTRICTED_AGENCY_ADMIN})
+  void searchConsultantsShouldRespondOkWhenRestrictedAdminSortsByUpdateDate() throws Exception {
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("d42c2e5e-143c-4db1-a90f-7cccf82fbb15");
+    long agencyIdToSearchFor = 2L;
+    when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
+        .thenReturn(Lists.newArrayList(agencyIdToSearchFor));
+    givenAnInfix();
+    var numMatching = 12;
+    givenConsultantsMatching(numMatching, infix, Lists.newArrayList(agencyIdToSearchFor));
+
+    mockMvc
+        .perform(
+            get("/users/consultants/search")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept("application/hal+json")
+                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("page", "1")
+                .param("perPage", "10")
+                .param("field", "UPDATE_DATE")
+                .param("order", "DESC"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("total", is(numMatching)))
+        .andExpect(jsonPath("_embedded", hasSize(10)))
+        .andExpect(jsonPath("_embedded[0]._embedded.updateDate", notNullValue()));
+  }
+
+  @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
   void searchConsultantsShouldRespondOkAndPayloadIfStarQueryIsGiven() throws Exception {
     givenAnInfix();

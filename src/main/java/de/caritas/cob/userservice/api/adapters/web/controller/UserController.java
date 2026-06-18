@@ -58,17 +58,10 @@ import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.facade.AssignChatFacade;
-import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.GetChatFacade;
-import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
-import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
-import de.caritas.cob.userservice.api.facade.StartChatFacade;
-import de.caritas.cob.userservice.api.facade.StopChatFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
@@ -77,7 +70,6 @@ import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EnquiryData;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -88,7 +80,6 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.AskerImportService;
-import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -152,14 +143,7 @@ public class UserController implements UsersApi {
   private final @NotNull AssignSessionFacade assignSessionFacade;
   private final @NotNull AssignEnquiryFacade assignEnquiryFacade;
   private final @NotNull DecryptionService decryptionService;
-  private final @NotNull ChatService chatService;
-  private final @NotNull StartChatFacade startChatFacade;
-  private final @NotNull GetChatFacade getChatFacade;
-  private final @NotNull JoinAndLeaveChatFacade joinAndLeaveChatFacade;
-  private final @NotNull AssignChatFacade assignChatFacade;
-  private final @NotNull CreateChatFacade createChatFacade;
-  private final @NotNull StopChatFacade stopChatFacade;
-  private final @NotNull GetChatMembersFacade getChatMembersFacade;
+  private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
   private final @NotNull CreateUserFacade createUserFacade;
   private final @NotNull CreateNewSessionFacade createNewSessionFacade;
   private final @NotNull ConsultantDataFacade consultantDataFacade;
@@ -196,6 +180,14 @@ public class UserController implements UsersApi {
       return ResponseEntity.ok().build();
     }
     return ResponseEntity.notFound().build();
+  }
+
+  @GetMapping("/users/availability/{username}")
+  public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
+    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    return usernameAvailable
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(HttpStatus.CONFLICT).build();
   }
 
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
@@ -435,8 +427,9 @@ public class UserController implements UsersApi {
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
+  // Mapped to both direct path and /service/ prefix (API gateway) so both routes resolve
   @GetMapping(
-      value = "/users/sessions/room/{sessionId}",
+      value = {"/users/sessions/room/{sessionId}", "/service/users/sessions/room/{sessionId}"},
       produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
       @PathVariable Long sessionId,
@@ -447,78 +440,86 @@ public class UserController implements UsersApi {
         sessionId,
         rcToken != null ? "present" : "null");
 
-    GroupSessionListResponseDTO groupSessionList;
-    if (authenticatedUser.isConsultant()) {
-      var consultant = userAccountProvider.retrieveValidatedConsultant();
-      log.info("🔍 User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
+    try {
+      GroupSessionListResponseDTO groupSessionList;
+      if (authenticatedUser.isConsultant()) {
+        var consultant = userAccountProvider.retrieveValidatedConsultant();
+        log.info("🔍 User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
 
-      // MATRIX MIGRATION: Try to find as session first, then as chat
-      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
-      groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
-              consultant, singletonList(sessionId), authenticatedUser.getRoles());
+        // MATRIX MIGRATION: Try to find as session first, then as chat
+        log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
+        groupSessionList =
+            sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+                consultant, singletonList(sessionId), authenticatedUser.getRoles());
 
-      log.info(
-          "🔍 Step 1 result: {} sessions found",
-          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        log.info(
+            "🔍 Step 1 result: {} sessions found",
+            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
 
-      // If no session found, try to find as a chat (group chat)
-      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
-        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+        // If no session found, try to find as a chat (group chat)
+        if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+          log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+          String token = rcToken != null ? rcToken : "dummy-rc-token";
+          var rocketChatCredentials =
+              RocketChatCredentials.builder()
+                  .rocketChatUserId(consultant.getRocketChatId())
+                  .rocketChatToken(token)
+                  .build();
+          groupSessionList =
+              sessionListFacade.retrieveChatsForConsultantByChatIds(
+                  consultant, singletonList(sessionId), rocketChatCredentials);
+
+          log.info(
+              "🔍 Step 2 result: {} chats found",
+              groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        }
+      } else {
+        var user = userAccountProvider.retrieveValidatedUser();
+        log.info("🔍 User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
+
+        // MATRIX MIGRATION: Use dummy RocketChat credentials if no token provided
         String token = rcToken != null ? rcToken : "dummy-rc-token";
+        String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
         var rocketChatCredentials =
             RocketChatCredentials.builder()
-                .rocketChatUserId(consultant.getRocketChatId())
+                .rocketChatUserId(rcUserId)
                 .rocketChatToken(token)
                 .build();
+
+        log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
         groupSessionList =
-            sessionListFacade.retrieveChatsForConsultantByChatIds(
-                consultant, singletonList(sessionId), rocketChatCredentials);
+            sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
+                user.getUserId(),
+                singletonList(sessionId),
+                rocketChatCredentials,
+                authenticatedUser.getRoles());
 
         log.info(
-            "🔍 Step 2 result: {} chats found",
+            "🔍 Step 1 result: {} sessions found",
             groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+
+        // If no session found, try to find as a chat (group chat)
+        if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+          log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
+          groupSessionList =
+              sessionListFacade.retrieveChatsForUserByChatIds(
+                  singletonList(sessionId), rocketChatCredentials);
+
+          log.info(
+              "🔍 Step 2 result: {} chats found",
+              groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
+        }
       }
-    } else {
-      var user = userAccountProvider.retrieveValidatedUser();
-      log.info("🔍 User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
 
-      // MATRIX MIGRATION: Use dummy RocketChat credentials if no token provided
-      String token = rcToken != null ? rcToken : "dummy-rc-token";
-      String rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
-      var rocketChatCredentials =
-          RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
+      consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
 
-      log.info("🔍 Step 1: Trying to find as SESSION with ID: {}", sessionId);
-      groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
-              user.getUserId(),
-              singletonList(sessionId),
-              rocketChatCredentials,
-              authenticatedUser.getRoles());
-
-      log.info(
-          "🔍 Step 1 result: {} sessions found",
-          groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
-
-      // If no session found, try to find as a chat (group chat)
-      if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
-        log.info("🔍 Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
-        groupSessionList =
-            sessionListFacade.retrieveChatsForUserByChatIds(
-                singletonList(sessionId), rocketChatCredentials);
-
-        log.info(
-            "🔍 Step 2 result: {} chats found",
-            groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
-      }
+      return isNotEmpty(groupSessionList.getSessions())
+          ? new ResponseEntity<>(groupSessionList, HttpStatus.OK)
+          : new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    } catch (Exception e) {
+      log.error("Failed to load session room {}: {}", sessionId, e.getMessage(), e);
+      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
-
-    consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
-
-    return isNotEmpty(groupSessionList.getSessions())
-        ? new ResponseEntity<>(groupSessionList, HttpStatus.OK)
-        : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
   @Override
@@ -1115,11 +1116,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<CreateChatResponseDTO> createChatV1(@RequestBody ChatDTO chatDTO) {
-
-    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    var response = createChatFacade.createChatV1(chatDTO, callingConsultant);
-
-    return new ResponseEntity<>(response, HttpStatus.CREATED);
+    return userChatControllerDelegate.createChatV1(chatDTO);
   }
 
   /**
@@ -1133,10 +1130,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<CreateChatResponseDTO> createChatV2(@RequestBody ChatDTO chatDTO) {
-
-    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
-    return new ResponseEntity<>(response, HttpStatus.CREATED);
+    return userChatControllerDelegate.createChatV2(chatDTO);
   }
 
   /**
@@ -1147,19 +1141,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> startChat(@PathVariable Long chatId) {
-
-    var chat =
-        chatService
-            .getChat(chatId)
-            .orElseThrow(
-                () ->
-                    new BadRequestException(
-                        String.format("Chat with id %s not found for starting chat.", chatId)));
-
-    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    startChatFacade.startChat(chat, callingConsultant);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.startChat(chatId);
   }
 
   /**
@@ -1170,16 +1152,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    var response = getChatFacade.getChat(chatId);
-    messenger
-        .findChatMetaInfo(chatId, authenticatedUser.getUserId())
-        .ifPresent(
-            chatMetaInfoMap -> {
-              var bannedChatUserIds = userDtoMapper.bannedChatUserIdsOf(chatMetaInfoMap);
-              response.setBannedUsers(bannedChatUserIds);
-            });
-
-    return new ResponseEntity<>(response, HttpStatus.OK);
+    return userChatControllerDelegate.getChat(chatId);
   }
 
   /**
@@ -1190,10 +1163,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> assignChat(String groupId) {
-
-    assignChatFacade.assignChat(groupId, authenticatedUser);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.assignChat(groupId);
   }
 
   /**
@@ -1204,14 +1174,12 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> joinChat(@PathVariable Long chatId) {
-    joinAndLeaveChatFacade.joinChat(chatId, authenticatedUser);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.joinChat(chatId);
   }
 
   @Override
   public ResponseEntity<Void> verifyCanModerateChat(@PathVariable Long chatId) {
-    joinAndLeaveChatFacade.verifyCanModerate(chatId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.verifyCanModerateChat(chatId);
   }
 
   /**
@@ -1223,21 +1191,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> stopChat(Long chatId) {
-
-    var chat =
-        chatService
-            .getChat(chatId)
-            .orElseThrow(
-                () ->
-                    new BadRequestException(
-                        String.format(
-                            "Chat with id %s not found while trying to stop the chat.", chatId)));
-
-    var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    messenger.unbanUsersInChat(chatId, callingConsultant.getId());
-    stopChatFacade.stopChat(chat, callingConsultant);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.stopChat(chatId);
   }
 
   /**
@@ -1248,10 +1202,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ChatMembersResponseDTO> getChatMembers(@PathVariable Long chatId) {
-
-    var chatMembersResponseDTO = getChatMembersFacade.getChatMembers(chatId);
-
-    return new ResponseEntity<>(chatMembersResponseDTO, HttpStatus.OK);
+    return userChatControllerDelegate.getChatMembers(chatId);
   }
 
   /**
@@ -1262,14 +1213,11 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> leaveChat(@PathVariable Long chatId) {
-
-    joinAndLeaveChatFacade.leaveChat(chatId, authenticatedUser);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userChatControllerDelegate.leaveChat(chatId);
   }
 
   /**
-   * Updates the settings of the given {@link Chat}.
+   * Updates the settings of the given chat.
    *
    * @param chatId Chat Id (required)
    * @param chatDTO {@link ChatDTO} (required)
@@ -1278,30 +1226,12 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<UpdateChatResponseDTO> updateChat(
       @PathVariable Long chatId, @RequestBody ChatDTO chatDTO) {
-
-    var updateChatResponseDTO = chatService.updateChat(chatId, chatDTO, authenticatedUser);
-    return new ResponseEntity<>(updateChatResponseDTO, HttpStatus.OK);
+    return userChatControllerDelegate.updateChat(chatId, chatDTO);
   }
 
   @Override
   public ResponseEntity<Void> banFromChat(String token, String chatUserId, Long chatId) {
-    var adviceSeeker =
-        accountManager
-            .findAdviceSeekerByChatUserId(chatUserId)
-            .orElseThrow(
-                () -> {
-                  throw new NotFoundException("Chat User (%s) not found", chatUserId);
-                });
-    if (!messenger.existsChat(chatId)) {
-      throw new NotFoundException("Chat (%s) not found", chatId);
-    }
-
-    var adviceSeekerId = adviceSeeker.getUserId();
-    if (!messenger.banUserFromChat(adviceSeekerId, chatId)) {
-      throw new NotFoundException("User (%s) not found in Chat (%s)", adviceSeekerId, chatId);
-    }
-
-    return ResponseEntity.noContent().build();
+    return userChatControllerDelegate.banFromChat(chatUserId, chatId);
   }
 
   /**

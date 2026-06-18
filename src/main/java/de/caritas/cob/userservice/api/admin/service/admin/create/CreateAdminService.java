@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -78,18 +79,10 @@ public class CreateAdminService {
 
   private ArrayList<UserRole> getUserRolesForTenantAdmin() {
     if (multitenancyWithSingleDomain) {
-      return Lists.newArrayList(
-          UserRole.USER_ADMIN,
-          UserRole.AGENCY_ADMIN,
-          UserRole.SINGLE_TENANT_ADMIN,
-          UserRole.TENANT_ADMIN);
+      return Lists.newArrayList(UserRole.USER_ADMIN, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN);
     } else {
       return Lists.newArrayList(
-          UserRole.USER_ADMIN,
-          UserRole.AGENCY_ADMIN,
-          UserRole.SINGLE_TENANT_ADMIN,
-          UserRole.TENANT_ADMIN,
-          UserRole.TOPIC_ADMIN);
+          UserRole.USER_ADMIN, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN, UserRole.TOPIC_ADMIN);
     }
   }
 
@@ -101,13 +94,16 @@ public class CreateAdminService {
             : userHelper.getRandomPassword();
     try {
       identityClient.updatePassword(keycloakUserId, password);
+      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
       identityClient.rollBackUser(keycloakUserId);
       throw e;
+    } catch (RuntimeException e) {
+      identityClient.rollBackUser(keycloakUserId);
+      throw new InternalServerErrorException(
+          String.format("Could not complete admin provisioning for type %s", adminType), e);
     }
-    getDefaultRoles(adminType).stream()
-        .forEach(role -> identityClient.updateRole(keycloakUserId, role));
-    return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
   }
 
   private String createKeycloakUser(final CreateAdminDTO createAgencyAdminDTO) {

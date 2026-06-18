@@ -61,7 +61,7 @@ public class MagicLinkLoginService {
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
 
-  @Value("${magic.link.frontend.base-url:https://app.oriso-dev.site}")
+  @Value("${magic.link.frontend.base-url:https://app.oriso.org}")
   private String magicLinkFrontendBaseUrl;
 
   @Value("${keycloak.config.admin-username}")

@@ -31,6 +31,9 @@ public class RegisteredEnquiryConversationListProvider extends DefaultConversati
   @Override
   public ConsultantSessionListResponseDTO buildConversations(PageableListRequest request) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
+    // SessionService already returns the correct union of agency-scoped and topic-scoped
+    // registered enquiries. Re-filtering by the consultant's topics here would wrongly drop
+    // legitimate agency-matched enquiries whose mainTopicId is outside the consultant's topics.
     var registeredEnquiries = sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     return buildConversations(request, consultant, registeredEnquiries);

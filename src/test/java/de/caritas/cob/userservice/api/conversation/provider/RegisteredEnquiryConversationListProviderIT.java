@@ -58,6 +58,7 @@ public class RegisteredEnquiryConversationListProviderIT {
   public void setup() {
     Consultant consultant = mock(Consultant.class);
     ConsultantAgency consultantAgency = mock(ConsultantAgency.class);
+    when(consultant.getId()).thenReturn("consultant-id");
     when(consultantAgency.getAgencyId()).thenReturn(1L);
     when(consultant.getConsultantAgencies()).thenReturn(asSet(consultantAgency));
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
@@ -140,6 +141,7 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setAgencyId(1L);
           session.setStatus(SessionStatus.NEW);
           session.setConsultingTypeId(random.nextInt(127));
+          session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);

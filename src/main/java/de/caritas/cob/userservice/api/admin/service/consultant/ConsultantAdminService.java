@@ -9,6 +9,7 @@ import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.AccountManager;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
@@ -22,10 +23,16 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +58,9 @@ public class ConsultantAdminService {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
+  private final @NonNull TopicService topicService;
+
   /**
    * Finds a {@link Consultant} by the given consultant id and throws a {@link NoContentException}
    * if no consultant for given id exists.
@@ -68,7 +78,28 @@ public class ConsultantAdminService {
                         String.format("Consultant with id %s not found", consultantId)));
     var response = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO();
     enrichWithDisplayName(consultantId, response);
+    enrichWithTopics(consultantId, response);
     return response;
+  }
+
+  private void enrichWithTopics(String consultantId, ConsultantAdminResponseDTO response) {
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultantId);
+    if (topicIds.isEmpty()) {
+      response.getEmbedded().setTopics(Collections.emptyList());
+      return;
+    }
+    Map<Long, TopicDTO> topicsById = topicService.getAllTopicsMap();
+    List<ConsultantTopicDTO> topics =
+        topicIds.stream()
+            .map(
+                id -> {
+                  TopicDTO topic = topicsById.get(id);
+                  return new ConsultantTopicDTO()
+                      .id(id)
+                      .name(topic != null ? topic.getName() : null);
+                })
+            .collect(Collectors.toList());
+    response.getEmbedded().setTopics(topics);
   }
 
   private void enrichWithDisplayName(String consultantId, ConsultantAdminResponseDTO response) {
@@ -90,7 +121,9 @@ public class ConsultantAdminService {
    */
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
-    return createConsultantSaga.createNewConsultant(createConsultantDTO);
+    var response = createConsultantSaga.createNewConsultant(createConsultantDTO);
+    enrichWithTopics(response.getEmbedded().getId(), response);
+    return response;
   }
 
   /**
@@ -110,6 +143,7 @@ public class ConsultantAdminService {
         ConsultantResponseDTOBuilder.getInstance(updatedConsultant).buildResponseDTO();
 
     this.appointmentService.updateConsultant(consultantAdminResponseDTO);
+    enrichWithTopics(consultantId, consultantAdminResponseDTO);
     return consultantAdminResponseDTO;
   }
 

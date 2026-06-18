@@ -88,6 +88,26 @@ public class AdminResponseDTOBuilder implements HalLinkBuilder {
         .email(admin.getEmail())
         .tenantId(String.valueOf(admin.getTenantId()))
         .createDate(String.valueOf(admin.getCreateDate()))
-        .updateDate(String.valueOf(admin.getUpdateDate()));
+        .updateDate(String.valueOf(admin.getUpdateDate()))
+        .publicName(null)
+        .roleInOrg(roleInOrgOf(admin.getType()))
+        .vacated(false)
+        .adminRights(true);
+  }
+
+  private String roleInOrgOf(Admin.AdminType adminType) {
+    if (adminType == null) {
+      return null;
+    }
+    switch (adminType) {
+      case SUPER:
+        return "Platform Admin";
+      case TENANT:
+        return "Tenant Admin";
+      case AGENCY:
+        return "Agency Admin";
+      default:
+        return null;
+    }
   }
 }

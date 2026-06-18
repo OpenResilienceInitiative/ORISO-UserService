@@ -3,11 +3,9 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -17,9 +15,9 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -27,30 +25,25 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.multipart.MultipartFile;
 
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MatrixSynapseService {
 
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
   private static final String ENDPOINT_LOGIN = "/_matrix/client/r0/login";
-  private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
-  private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
-  private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
-  private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
-  private static final String ENDPOINT_POWER_LEVELS =
-      "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
-  private static final String ENDPOINT_MEMBERSHIP =
-      "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
+  private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final RestTemplate matrixLongPollRestTemplate;
+  private final MatrixRoomClient matrixRoomClient;
+  private final MatrixMediaClient matrixMediaClient;
 
   // Cache for Matrix access tokens (username -> access token)
   private final java.util.Map<String, String> accessTokenCache =
@@ -60,9 +53,39 @@ public class MatrixSynapseService {
   private final java.util.Map<String, String> syncTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
+  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the polled
+  // availability endpoint does not hit Synapse once per consultant on every request.
+  private final java.util.Map<String, CachedPresence> presenceCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final class CachedPresence {
+    private final String state;
+    private final boolean available;
+    private final long expiresAt;
+
+    private CachedPresence(String state, boolean available, long expiresAt) {
+      this.state = state;
+      this.available = available;
+      this.expiresAt = expiresAt;
+    }
+  }
+
   // Cached admin access token for admin operations
   private String cachedAdminToken = null;
   private long adminTokenExpiry = 0;
+
+  public MatrixSynapseService(
+      MatrixConfig matrixConfig,
+      RestTemplate restTemplate,
+      @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
+      MatrixRoomClient matrixRoomClient,
+      MatrixMediaClient matrixMediaClient) {
+    this.matrixConfig = matrixConfig;
+    this.restTemplate = restTemplate;
+    this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
+    this.matrixRoomClient = matrixRoomClient;
+    this.matrixMediaClient = matrixMediaClient;
+  }
 
   /**
    * Creates a new user in Matrix Synapse.
@@ -377,53 +400,7 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      var roomCreateRequest = new MatrixCreateRoomRequestDTO();
-      roomCreateRequest.setName(roomName);
-      roomCreateRequest.setRoomAliasName(roomAlias);
-      roomCreateRequest.setPreset("private_chat");
-      roomCreateRequest.setVisibility("private");
-
-      // NOTE: Matrix E2EE is DISABLED because frontend has its own custom encryption layer
-      // The frontend uses RSA-OAEP + AES-GCM encryption on top of Matrix
-      // Enabling Matrix E2EE causes double-encryption and breaks the frontend's crypto
-
-      // Fix: Set initial_state to empty list to prevent NoneType iteration error in Matrix
-      // Synapse
-      roomCreateRequest.setInitialState(new java.util.ArrayList<>());
-
-      HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_CREATE_ROOM);
-      log.info("Creating Matrix room: {} at URL: {}", roomName, url);
-
-      var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
-
-      if (nonNull(response.getBody()) && nonNull(response.getBody().getRoomId())) {
-        log.info(
-            "Successfully created Matrix room: {} with ID: {}",
-            roomName,
-            response.getBody().getRoomId());
-      }
-
-      return response;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not create room ({}) in Matrix. Status: {}, Response: {}",
-          roomName,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      throw new MatrixCreateRoomException(
-          String.format(
-              "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not create room ({}) in Matrix. Reason", roomName, ex);
-      throw new MatrixCreateRoomException(
-          String.format("Could not create room (%s) in Matrix", roomName));
-    }
+    return matrixRoomClient.createRoom(roomName, roomAlias, accessToken);
   }
 
   /**
@@ -438,43 +415,7 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoom(
       String roomId, String userId, String accessToken) throws MatrixInviteUserException {
 
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      var inviteRequest = new MatrixInviteUserRequestDTO();
-      inviteRequest.setUserId(userId);
-
-      HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_INVITE_USER.replace("{roomId}", roomId));
-      log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
-
-      var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
-
-      log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
-
-      return response;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      throw new MatrixInviteUserException(
-          String.format(
-              "Could not invite user (%s) to room (%s) in Matrix: %s",
-              userId, roomId, ex.getResponseBodyAsString()));
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
-          userId,
-          roomId,
-          ex);
-      throw new MatrixInviteUserException(
-          String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
-    }
+    return matrixRoomClient.inviteUserToRoom(roomId, userId, accessToken);
   }
 
   /**
@@ -485,42 +426,7 @@ public class MatrixSynapseService {
    * @return true if successful, false otherwise
    */
   public boolean joinRoom(String roomId, String accessToken) {
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      // Empty body for join request
-      HttpEntity<String> request = new HttpEntity<>("{}", headers);
-
-      var url = matrixConfig.getApiUrl(ENDPOINT_JOIN_ROOM.replace("{roomId}", roomId));
-      log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
-
-      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
-
-      if (response.getStatusCode().is2xxSuccessful()) {
-        log.info("Successfully joined Matrix room: {}", roomId);
-        return true;
-      } else {
-        log.warn("Failed to join Matrix room: {}. Status: {}", roomId, response.getStatusCode());
-        return false;
-      }
-    } catch (HttpClientErrorException ex) {
-      // Check if user is already in the room (this is not an error)
-      if (ex.getStatusCode().value() == 403
-          && ex.getResponseBodyAsString().contains("already in the room")) {
-        log.info("User already in Matrix room: {}, skipping join", roomId);
-        return true;
-      }
-      log.error(
-          "Matrix Error: Could not join room ({}). Status: {}, Response: {}",
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not join room ({}). Reason: {}", roomId, ex.getMessage());
-      return false;
-    }
+    return matrixRoomClient.joinRoom(roomId, accessToken);
   }
 
   /**
@@ -583,7 +489,7 @@ public class MatrixSynapseService {
       log.info("Getting messages from Matrix room: {}", roomId);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
@@ -643,7 +549,7 @@ public class MatrixSynapseService {
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null) {
@@ -795,52 +701,8 @@ public class MatrixSynapseService {
    * @return Map with content_uri and upload success
    */
   public java.util.Map<String, Object> uploadFile(
-      MultipartFile file, String roomId, String accessToken) {
-    try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_MEDIA_UPLOAD);
-
-      log.info(
-          "📤 Uploading file to Matrix: {} ({}bytes)", file.getOriginalFilename(), file.getSize());
-
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-      headers.setContentType(MediaType.parseMediaType(file.getContentType()));
-
-      HttpEntity<byte[]> requestEntity = new HttpEntity<>(file.getBytes(), headers);
-
-      ResponseEntity<java.util.Map> response =
-          restTemplate.postForEntity(url, requestEntity, java.util.Map.class);
-
-      if (response.getBody() != null && response.getBody().containsKey("content_uri")) {
-        String contentUri = (String) response.getBody().get("content_uri");
-        log.info("✅ File uploaded successfully: {}", contentUri);
-
-        // Automatically send file message to room
-        sendFileMessage(
-            roomId,
-            file.getOriginalFilename(),
-            contentUri,
-            file.getContentType(),
-            file.getSize(),
-            accessToken);
-
-        return java.util.Map.of(
-            "success",
-            true,
-            "content_uri",
-            contentUri,
-            "file_name",
-            file.getOriginalFilename(),
-            "file_size",
-            file.getSize());
-      }
-
-      throw new RuntimeException("No content_uri in Matrix upload response");
-
-    } catch (Exception e) {
-      log.error("❌ Failed to upload file to Matrix", e);
-      throw new RuntimeException("Failed to upload file: " + e.getMessage(), e);
-    }
+      org.springframework.web.multipart.MultipartFile file, String roomId, String accessToken) {
+    return matrixMediaClient.uploadFile(file, roomId, accessToken);
   }
 
   /**
@@ -852,102 +714,7 @@ public class MatrixSynapseService {
    * @return the file bytes
    */
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    try {
-      String url =
-          matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
-
-      log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
-
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-
-      HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-      ResponseEntity<byte[]> response =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, requestEntity, byte[].class);
-
-      if (response.getBody() != null) {
-        log.info("✅ File downloaded successfully: {} bytes", response.getBody().length);
-        return response.getBody();
-      }
-
-      throw new RuntimeException("No file data in Matrix download response");
-
-    } catch (Exception e) {
-      log.error("❌ Failed to download file from Matrix", e);
-      throw new RuntimeException("Failed to download file: " + e.getMessage(), e);
-    }
-  }
-
-  /**
-   * Send a file message to a Matrix room.
-   *
-   * @param roomId the room ID
-   * @param fileName the file name
-   * @param contentUri the Matrix content URI (mxc://...)
-   * @param mimeType the file MIME type
-   * @param fileSize the file size in bytes
-   * @param accessToken the access token
-   * @return the send response with event_id
-   */
-  private java.util.Map<String, Object> sendFileMessage(
-      String roomId,
-      String fileName,
-      String contentUri,
-      String mimeType,
-      long fileSize,
-      String accessToken) {
-    try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      // Determine message type based on MIME type
-      String msgtype = "m.file";
-      if (mimeType != null) {
-        if (mimeType.startsWith("image/")) {
-          msgtype = "m.image";
-        } else if (mimeType.startsWith("video/")) {
-          msgtype = "m.video";
-        } else if (mimeType.startsWith("audio/")) {
-          msgtype = "m.audio";
-        }
-      }
-
-      var messageBody = new java.util.HashMap<String, Object>();
-      messageBody.put("msgtype", msgtype);
-      messageBody.put("body", fileName);
-      messageBody.put("url", contentUri);
-
-      var info = new java.util.HashMap<String, Object>();
-      info.put("size", fileSize);
-      if (mimeType != null) {
-        info.put("mimetype", mimeType);
-      }
-      messageBody.put("info", info);
-
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(messageBody, headers);
-
-      String txnId = java.util.UUID.randomUUID().toString();
-      var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
-
-      log.info("📨 Sending file message to Matrix room: {} (type: {})", roomId, msgtype);
-
-      var response =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.PUT, request, java.util.Map.class);
-
-      log.info("✅ File message sent successfully");
-      return response.getBody();
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not send file message to room ({}). Reason: {}",
-          roomId,
-          ex.getMessage());
-      return java.util.Map.of("error", ex.getMessage());
-    }
+    return matrixMediaClient.downloadFile(serverName, mediaId, accessToken);
   }
 
   /**
@@ -989,7 +756,8 @@ public class MatrixSynapseService {
           httpMethod = org.springframework.http.HttpMethod.GET;
       }
 
-      var response = restTemplate.exchange(url, httpMethod, request, java.util.Map.class);
+      var response =
+          matrixLongPollRestTemplate.exchange(url, httpMethod, request, java.util.Map.class);
 
       return response.getBody();
     } catch (Exception ex) {
@@ -1078,57 +846,7 @@ public class MatrixSynapseService {
    */
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
-    try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_POWER_LEVELS.replace("{roomId}", roomId));
-
-      // Get current power levels
-      HttpHeaders headers = getClientHttpHeaders(accessToken);
-      HttpEntity<Void> getRequest = new HttpEntity<>(headers);
-
-      ResponseEntity<java.util.Map> currentResponse =
-          restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, getRequest, java.util.Map.class);
-
-      if (currentResponse.getBody() == null) {
-        log.error("Failed to get current power levels for room {}", roomId);
-        return false;
-      }
-
-      // Update power levels
-      @SuppressWarnings("unchecked")
-      java.util.Map<String, Object> powerLevels =
-          new java.util.HashMap<>(currentResponse.getBody());
-
-      @SuppressWarnings("unchecked")
-      java.util.Map<String, Integer> users =
-          (java.util.Map<String, Integer>)
-              powerLevels.getOrDefault("users", new java.util.HashMap<>());
-
-      // Create new map to avoid modifying the original
-      java.util.Map<String, Integer> updatedUsers = new java.util.HashMap<>(users);
-      updatedUsers.put(userId, powerLevel);
-      powerLevels.put("users", updatedUsers);
-
-      // Send updated power levels
-      HttpEntity<java.util.Map<String, Object>> updateRequest =
-          new HttpEntity<>(powerLevels, headers);
-      restTemplate.put(url, updateRequest);
-
-      log.info("Set power level {} for user {} in room {}", powerLevel, userId, roomId);
-      return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not set power level for user ({}) in room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception e) {
-      log.error(
-          "Failed to set power level for user {} in room {}: {}", userId, roomId, e.getMessage());
-      return false;
-    }
+    return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
   }
 
   /**
@@ -1140,33 +858,140 @@ public class MatrixSynapseService {
    * @return true if successful, false otherwise
    */
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /**
+   * Reads a single user's Matrix presence state ("online", "unavailable", "offline").
+   *
+   * @param matrixUserId the full Matrix user ID (e.g. {@code @user:domain})
+   * @return the presence state, or empty when the lookup could not be performed (no admin token,
+   *     presence disabled on the homeserver, or the request failed)
+   */
+  public java.util.Optional<String> getUserPresence(String matrixUserId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return java.util.Optional.empty();
+    }
+    return readPresence(matrixUserId, adminToken).map(presence -> presence.state);
+  }
+
+  /**
+   * Reads a user's presence and computes whether they are currently available, based on activity
+   * recency rather than the (sticky) presence string alone.
+   */
+  private java.util.Optional<CachedPresence> readPresence(String matrixUserId, String adminToken) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return java.util.Optional.empty();
+    }
+
+    long now = System.currentTimeMillis();
+    CachedPresence cached = presenceCache.get(matrixUserId);
+    if (cached != null && now < cached.expiresAt) {
+      return java.util.Optional.of(cached);
+    }
+
     try {
-      String url =
-          matrixConfig.getApiUrl(
-              ENDPOINT_MEMBERSHIP.replace("{roomId}", roomId).replace("{userId}", userId));
+      String url = matrixConfig.getApiUrl(ENDPOINT_PRESENCE.replace("{userId}", matrixUserId));
+      HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));
 
-      java.util.Map<String, Object> membershipEvent = new java.util.HashMap<>();
-      membershipEvent.put("membership", "leave");
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
-      HttpHeaders headers = getClientHttpHeaders(accessToken);
-      HttpEntity<java.util.Map<String, Object>> request =
-          new HttpEntity<>(membershipEvent, headers);
+      var body = response.getBody();
+      if (body != null && body.get("presence") != null) {
+        String state = String.valueOf(body.get("presence"));
+        Long lastActiveAgo = asLong(body.get("last_active_ago"));
+        boolean currentlyActive = Boolean.TRUE.equals(body.get("currently_active"));
+        boolean available = computeAvailable(state, currentlyActive, lastActiveAgo);
+        var presence = new CachedPresence(state, available, now + PRESENCE_CACHE_TTL_MS);
+        // Cache only successful lookups; failures stay uncached so they retry next poll
+        // (preserving the "every lookup failed -> fall back" semantics in callers).
+        presenceCache.put(matrixUserId, presence);
+        return java.util.Optional.of(presence);
+      }
+      return java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn("Matrix presence lookup failed for {}: {}", matrixUserId, ex.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
 
-      restTemplate.put(url, request);
-
-      log.info("Removed user {} from room {}", userId, roomId);
-      return true;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not remove user ({}) from room ({}). Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
-      return false;
-    } catch (Exception e) {
-      log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
+  /**
+   * A consultant is treated as available when actively connected, or when their last Matrix
+   * activity is recent enough. {@code offline} is never available, and a lingering {@code
+   * online}/{@code unavailable} with stale {@code last_active_ago} is correctly excluded.
+   */
+  private boolean computeAvailable(String state, boolean currentlyActive, Long lastActiveAgo) {
+    if ("offline".equals(state)) {
       return false;
     }
+    if (currentlyActive) {
+      return true;
+    }
+    if (lastActiveAgo != null) {
+      return lastActiveAgo <= matrixConfig.getPresenceActiveThresholdMs();
+    }
+    // No activity timestamp from Synapse — only trust an explicit "online".
+    return "online".equals(state);
+  }
+
+  private Long asLong(Object value) {
+    return value instanceof Number ? ((Number) value).longValue() : null;
+  }
+
+  /**
+   * Returns the subset of the given Matrix user IDs whose presence indicates an active client
+   * (online, or idle-but-connected "unavailable").
+   *
+   * <p>Returns {@link java.util.Optional#empty()} when Matrix presence cannot be determined at all
+   * — presence disabled via {@code matrix.presenceEnabled}, no admin token, or every lookup failed
+   * — so callers can fall back to another availability signal instead of wrongly assuming everyone
+   * is offline. A present (possibly empty) set is an authoritative answer.
+   *
+   * @param matrixUserIds the candidate Matrix user IDs to check
+   * @return online subset, or empty when presence is unavailable
+   */
+  public java.util.Optional<java.util.Set<String>> findOnlineMatrixUserIds(
+      java.util.Collection<String> matrixUserIds) {
+    if (!matrixConfig.isPresenceEnabled()) {
+      log.debug(
+          "Matrix presence disabled (matrix.presenceEnabled=false); availability unavailable");
+      return java.util.Optional.empty();
+    }
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Matrix admin token unavailable; cannot determine consultant presence");
+      return java.util.Optional.empty();
+    }
+    if (matrixUserIds == null || matrixUserIds.isEmpty()) {
+      return java.util.Optional.of(java.util.Set.of());
+    }
+
+    java.util.Set<String> online = new java.util.HashSet<>();
+    int resolved = 0;
+    for (String matrixUserId : matrixUserIds) {
+      if (matrixUserId == null || matrixUserId.isBlank()) {
+        continue;
+      }
+      var presence = readPresence(matrixUserId, adminToken);
+      if (presence.isEmpty()) {
+        continue;
+      }
+      resolved++;
+      if (presence.get().available) {
+        online.add(matrixUserId);
+      }
+    }
+
+    log.info(
+        "Matrix presence: candidates={}, resolved={}, available={}",
+        matrixUserIds.size(),
+        resolved,
+        online.size());
+
+    // No lookup succeeded -> presence genuinely unavailable; let callers fall back.
+    return resolved > 0 ? java.util.Optional.of(online) : java.util.Optional.empty();
   }
 }

@@ -42,9 +42,11 @@ public class CustomLocalDateTime {
    * @return converted time in ISO 8601
    */
   public static String toIsoTime(LocalDateTime localDateTime) {
-    return localDateTime
-        .atOffset(ZoneOffset.UTC)
-        .format(DateTimeFormatter.ofPattern(ISO_DATE_FORMAT));
+    return nonNull(localDateTime)
+        ? localDateTime
+            .atOffset(ZoneOffset.UTC)
+            .format(DateTimeFormatter.ofPattern(ISO_DATE_FORMAT))
+        : null;
   }
 
   /**

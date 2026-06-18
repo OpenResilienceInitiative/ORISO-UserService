@@ -127,10 +127,7 @@ public class CreateUserChatRelationFacade {
     String rcUserId = obtainValidRcUserId(dataDTO, rocketChatCredentials);
 
     log.info(
-        "Validating RocketChat credentials for user {}: token={}, userId={}",
-        user.getUsername(),
-        rcUserToken,
-        rcUserId);
+        "Validating RocketChat credentials for user {}: userId={}", user.getUsername(), rcUserId);
 
     if (isBlank(rcUserToken) || isBlank(rcUserId)) {
       log.warn("RocketChat credentials are blank for user {}, rolling back", user.getUsername());

@@ -92,6 +92,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers(
             "/users/askers/new",
             "/conversations/askers/anonymous/new",
+            "/conversations/anonymous/availability",
             "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages",
             "/users/magic-link/request",
@@ -104,6 +105,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/service/users/magic-link/request",
             "/users/magic-link/consume",
             "/service/users/magic-link/consume")
+        .permitAll()
+        .antMatchers(HttpMethod.OPTIONS, "/**")
         .permitAll()
         .regexMatchers(HttpMethod.POST, ".*/users/magic-link/(request|consume)$")
         .permitAll()
@@ -170,9 +173,12 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/mobiletoken",
             "/users/sessions/{sessionId:[0-9]+}/data")
         .hasAuthority(USER_DEFAULT)
-        .regexMatchers(HttpMethod.GET, "/users/sessions/room\\?rcGroupIds=.+")
+        .regexMatchers(HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers(HttpMethod.GET, "/users/sessions/room/{sessionId:[0-9]+}")
+        .antMatchers(
+            HttpMethod.GET,
+            "/users/sessions/room/{sessionId:[0-9]+}",
+            "/service/users/sessions/room/{sessionId:[0-9]+}")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -190,8 +196,10 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
             "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
         .hasAuthority(CONSULTANT_DEFAULT)
-        .antMatchers("/conversations/anonymous/{sessionId:[0-9]+}/finish")
-        .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
+        .antMatchers(
+            "/conversations/anonymous/{sessionId:[0-9]+}/finish",
+            "/service/conversations/anonymous/{sessionId:[0-9]+}/finish")
+        .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT, USER_DEFAULT)
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/consultant/{consultantId:[0-9A-Za-z-]+}")
         .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
         .antMatchers("/users/consultants")
@@ -222,7 +230,10 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
         .antMatchers(HttpMethod.POST, "/useradmin/consultants/")
         .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
-        .antMatchers(HttpMethod.PUT, "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
+        .antMatchers(
+            HttpMethod.PUT,
+            "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
+            "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
         .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
         .antMatchers(
             HttpMethod.PUT, "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
@@ -259,7 +270,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/userstatistics", "/userstatistics/**")
-        .permitAll()
+        .hasAuthority(TECHNICAL_DEFAULT)
         .antMatchers(HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
         .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
         .antMatchers(HttpMethod.GET, "/actuator/health")
@@ -270,8 +281,10 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .permitAll()
         .antMatchers(HttpMethod.POST, "/actuator/loggers/*")
         .permitAll()
-        .mvcMatchers(HttpMethod.GET, "/users/{username}")
+        .mvcMatchers(HttpMethod.GET, "/users/availability/{username}")
         .permitAll()
+        .mvcMatchers(HttpMethod.GET, "/users/{username}")
+        .hasAuthority(TECHNICAL_DEFAULT)
         .anyRequest()
         .denyAll();
   }

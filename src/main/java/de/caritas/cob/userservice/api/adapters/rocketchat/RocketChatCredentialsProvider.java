@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginRespons
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.logout.LogoutResponseDTO;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
+import java.util.Collections;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
@@ -31,6 +32,9 @@ import org.springframework.web.client.RestTemplate;
 @Service
 @RequiredArgsConstructor
 public class RocketChatCredentialsProvider {
+
+  private static final String BODY_KEY_PASSWORD = "password";
+  private static final String BODY_KEY_USERNAME = "username";
 
   @Value("${rocket.technical.username}")
   private String technicalUsername;
@@ -196,9 +200,9 @@ public class RocketChatCredentialsProvider {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-      MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
-      map.add("username", username);
-      map.add("password", password);
+      MultiValueMap<String, String> map = new SensitiveRocketChatFormData();
+      map.add(BODY_KEY_USERNAME, username);
+      map.add(BODY_KEY_PASSWORD, password);
 
       HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(map, headers);
 
@@ -207,6 +211,21 @@ public class RocketChatCredentialsProvider {
     } catch (Exception ex) {
       throw new RocketChatLoginException(
           String.format("Could not login user (%s) in Rocket.Chat", username));
+    }
+  }
+
+  private static final class SensitiveRocketChatFormData
+      extends LinkedMultiValueMap<String, String> {
+
+    private static final String REDACTED = "[REDACTED]";
+
+    @Override
+    public String toString() {
+      var sanitized = new LinkedMultiValueMap<>(this);
+      if (sanitized.containsKey(BODY_KEY_PASSWORD)) {
+        sanitized.put(BODY_KEY_PASSWORD, Collections.singletonList(REDACTED));
+      }
+      return sanitized.toString();
     }
   }
 

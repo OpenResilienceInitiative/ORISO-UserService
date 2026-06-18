@@ -202,8 +202,8 @@ class CreateAdminServiceIT {
     Whitebox.setInternalState(createAdminService, "multitenancyWithSingleDomain", true);
     List<UserRole> defaultRoles = this.createAdminService.getDefaultRoles(AdminType.TENANT);
 
-    assertThat(defaultRoles)
-        .containsOnly(UserRole.AGENCY_ADMIN, UserRole.SINGLE_TENANT_ADMIN, USER_ADMIN);
+    assertThat(defaultRoles).containsOnly(UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN, USER_ADMIN);
+    assertThat(defaultRoles).doesNotContain(UserRole.SINGLE_TENANT_ADMIN);
   }
 
   @Test
@@ -212,7 +212,8 @@ class CreateAdminServiceIT {
     List<UserRole> defaultRoles = this.createAdminService.getDefaultRoles(AdminType.TENANT);
 
     assertThat(defaultRoles)
-        .containsOnly(UserRole.AGENCY_ADMIN, UserRole.SINGLE_TENANT_ADMIN, USER_ADMIN, TOPIC_ADMIN);
+        .containsOnly(UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN, USER_ADMIN, TOPIC_ADMIN);
+    assertThat(defaultRoles).doesNotContain(UserRole.SINGLE_TENANT_ADMIN);
   }
 
   @Test

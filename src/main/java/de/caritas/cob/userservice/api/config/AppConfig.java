@@ -10,6 +10,7 @@ import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.context.annotation.PropertySources;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
@@ -36,8 +37,20 @@ public class AppConfig {
 
   // RestTemplate Bean
   @Bean
+  @Primary
   public RestTemplate restTemplate(RestTemplateBuilder builder) {
-    return builder.build();
+    return builder
+        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .build();
+  }
+
+  @Bean("matrixLongPollRestTemplate")
+  public RestTemplate matrixLongPollRestTemplate(RestTemplateBuilder builder) {
+    return builder
+        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .setReadTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
+        .build();
   }
 
   /**

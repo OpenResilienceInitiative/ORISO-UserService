@@ -10,7 +10,9 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Service;
 public class SessionToConsultantConditionProvider {
 
   private final @NonNull AgencyService agencyService;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
   /**
    * checks if the {@link Session} is in progress.
@@ -97,6 +100,22 @@ public class SessionToConsultantConditionProvider {
     return consultant.getConsultantAgencies().stream()
         .map(ConsultantAgency::getAgencyId)
         .noneMatch(agencyId -> agencyId.equals(session.getAgencyId()));
+  }
+
+  /**
+   * Checks if the {@link Consultant} is assigned to the {@link Session}'s main topic. Topic-based
+   * external-inbound enquiries are routed to consultants by topic rather than agency, so an
+   * eligible consultant may not share the session's (often deprecated/fallback) agency.
+   *
+   * @return true if the session has a main topic that is assigned to the consultant
+   */
+  public boolean isConsultantAssignedToSessionTopic(Consultant consultant, Session session) {
+    if (isNull(session.getMainTopicId())) {
+      return false;
+    }
+    List<Long> consultantTopicIds =
+        consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    return consultantTopicIds.contains(session.getMainTopicId());
   }
 
   /**

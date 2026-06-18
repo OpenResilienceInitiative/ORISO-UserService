@@ -5,6 +5,7 @@ import static java.util.Collections.sort;
 import static org.apache.commons.lang3.StringUtils.substringAfter;
 
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.LinkedList;
@@ -20,6 +21,7 @@ public class AnonymousUsernameRegistry {
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull IdentityClient identityClient;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @Value("${anonymous.username.prefix}")
@@ -63,8 +65,13 @@ public class AnonymousUsernameRegistry {
   }
 
   private boolean isUsernameOccupied(String username) {
+    // The in-memory ID_REGISTRY resets on every restart, so after a restart the generator hands
+    // out low ids again. Besides the local DB we must therefore also consult Keycloak: a username
+    // that still exists there (e.g. a previous anonymous user) would otherwise trigger a 409
+    // "username already exists" when creating the Keycloak account during invite-link redeem.
     return userService.findUserByUsername(username).isPresent()
-        || consultantService.getConsultantByUsername(username).isPresent();
+        || consultantService.getConsultantByUsername(username).isPresent()
+        || !identityClient.isUsernameAvailable(username);
   }
 
   private int obtainUsernameId(String username) {

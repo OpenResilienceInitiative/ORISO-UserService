@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.config;
 
 import static java.util.Objects.nonNull;
 
+import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import java.util.stream.Collectors;
@@ -35,7 +36,10 @@ public class KeycloakConfig {
 
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
-    return restTemplateBuilder.build();
+    return restTemplateBuilder
+        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .build();
   }
 
   @Bean
@@ -69,6 +73,9 @@ public class KeycloakConfig {
         authenticatedUser.setUserId(securityContext.getToken().getSubject());
         authenticatedUser.setAccessToken(securityContext.getTokenString());
         authenticatedUser.setRoles(securityContext.getToken().getRealmAccess().getRoles());
+        if (claimMap.containsKey("tenantId")) {
+          authenticatedUser.setTenantId(Long.valueOf(claimMap.get("tenantId").toString()));
+        }
       } catch (Exception exception) {
         throw new KeycloakException("Keycloak data missing.", exception);
       }

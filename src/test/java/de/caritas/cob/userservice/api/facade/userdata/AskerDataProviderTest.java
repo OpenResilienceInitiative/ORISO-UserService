@@ -40,6 +40,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class AskerDataProviderTest {
@@ -100,6 +102,27 @@ class AskerDataProviderTest {
     AgencyDTO agency = (AgencyDTO) consultingTypeData.get("agency");
 
     assertEquals(AGENCY_DTO_KREUZBUND, agency);
+  }
+
+  @Test
+  void retrieveData_Should_ReturnUserDataWithoutAgency_When_AgencyServiceReturnsNotFound() {
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(agencyService.getAgencies(Mockito.anyList()))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(consultingTypeManager.getAllConsultingTypeIds())
+        .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
+
+    @SuppressWarnings("unchecked")
+    LinkedHashMap<String, Object> consultingTypeData =
+        (LinkedHashMap<String, Object>)
+            askerDataProvider
+                .retrieveData(USER)
+                .getConsultingTypes()
+                .get(Integer.toString(AGENCY_DTO_SUCHT.getConsultingType()));
+
+    assertNull(consultingTypeData.get("agency"));
+    assertFalse((boolean) consultingTypeData.get("isRegistered"));
   }
 
   @Test
