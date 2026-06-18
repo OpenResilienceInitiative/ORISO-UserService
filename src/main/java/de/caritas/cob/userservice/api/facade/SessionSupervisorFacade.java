@@ -124,7 +124,8 @@ public class SessionSupervisorFacade {
       throw new BadRequestException("Supervisor consultant does not have a Matrix user ID");
     }
 
-    if (addedByConsultant.getMatrixUserId() == null || addedByConsultant.getMatrixUserId().isEmpty()) {
+    if (addedByConsultant.getMatrixUserId() == null
+        || addedByConsultant.getMatrixUserId().isEmpty()) {
       throw new InternalServerErrorException(
           "Consultant adding supervisor does not have Matrix credentials");
     }

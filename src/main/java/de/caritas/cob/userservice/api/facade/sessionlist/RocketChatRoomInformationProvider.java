@@ -93,7 +93,9 @@ public class RocketChatRoomInformationProvider {
   }
 
   private RocketChatRoomInformation buildRoomInformation(
-      Map<String, Boolean> readMessages, List<RoomsUpdateDTO> roomsForUpdate, List<String> userRooms) {
+      Map<String, Boolean> readMessages,
+      List<RoomsUpdateDTO> roomsForUpdate,
+      List<String> userRooms) {
     var lastMessagesRoom = getRcRoomLastMessages(roomsForUpdate);
     var groupIdToLastMessageFallbackDate =
         collectFallbackDateOfRoomsWithoutLastMessage(roomsForUpdate);

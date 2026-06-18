@@ -10,8 +10,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
-import java.nio.charset.StandardCharsets;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import javax.crypto.Mac;
@@ -256,8 +256,7 @@ public class MatrixSynapseService {
 
       HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-      var response =
-          restTemplate.postForEntity(url, request, java.util.Map.class);
+      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
 
       @SuppressWarnings("unchecked")
       java.util.Map<String, Object> responseBody =

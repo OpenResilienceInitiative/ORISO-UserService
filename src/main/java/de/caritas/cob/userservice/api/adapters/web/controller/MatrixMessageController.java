@@ -39,8 +39,9 @@ public class MatrixMessageController {
    * Mint a short-lived Matrix access token for the currently authenticated platform user.
    *
    * <p>The browser needs a user-scoped Matrix token for sync, sending, typing, and calls, but the
-   * platform must not persist or reuse the user's Matrix password. Synapse admin login-as-user keeps
-   * the token scoped to the mapped Matrix user while avoiding a reversible credential in MariaDB.
+   * platform must not persist or reuse the user's Matrix password. Synapse admin login-as-user
+   * keeps the token scoped to the mapped Matrix user while avoiding a reversible credential in
+   * MariaDB.
    */
   @GetMapping("/me/token")
   public ResponseEntity<?> getCurrentUserMatrixToken() {

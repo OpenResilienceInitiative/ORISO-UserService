@@ -52,6 +52,7 @@ public class CreateChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
+
   /**
    * Creates a chat in MariaDB, it's relation to the agency and Rocket.Chat-room (or Matrix room for
    * group chats with consultantIds).
@@ -276,7 +277,8 @@ public class CreateChatFacade {
       chatService.saveChat(chat);
 
       // Get consultant token for inviting others
-      String consultantToken = matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      String consultantToken =
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
       if (consultantToken == null) {
         throw new InternalServerErrorException("Could not create Matrix token for consultant");
       }

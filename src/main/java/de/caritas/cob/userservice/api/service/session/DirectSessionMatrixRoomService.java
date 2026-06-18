@@ -107,7 +107,8 @@ public class DirectSessionMatrixRoomService {
           if (joined) {
             log.info("User {} auto-joined direct-session room {}", user.getUsername(), roomId);
           } else {
-            log.warn("User {} failed to auto-join direct-session room {}", user.getUsername(), roomId);
+            log.warn(
+                "User {} failed to auto-join direct-session room {}", user.getUsername(), roomId);
           }
         } else {
           log.warn(
