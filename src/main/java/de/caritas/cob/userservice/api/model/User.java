@@ -74,6 +74,10 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "matrix_user_id")
   private String matrixUserId;
 
+  @Column(name = "matrix_password")
+  @Size(max = 255)
+  private String matrixPassword;
+
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   private boolean languageFormal;
 

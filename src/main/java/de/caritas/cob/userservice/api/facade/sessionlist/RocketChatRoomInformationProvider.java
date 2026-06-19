@@ -63,14 +63,6 @@ public class RocketChatRoomInformationProvider {
     List<RoomsUpdateDTO> roomsForUpdate = emptyList();
     List<String> userRooms = emptyList();
 
-    if (isMatrixMigrationCredential(rocketChatCredentials)) {
-      userRooms =
-          consultant != null
-              ? getMatrixRoomsForConsultant(consultant)
-              : getMatrixRoomsForUser(rocketChatCredentials.getRocketChatUserId());
-      return buildRoomInformation(readMessages, roomsForUpdate, userRooms);
-    }
-
     // RocketChat is deprecated - fail gracefully if not available
     try {
       if (nonNull(rocketChatCredentials.getRocketChatUserId())) {
@@ -89,13 +81,6 @@ public class RocketChatRoomInformationProvider {
       }
     }
 
-    return buildRoomInformation(readMessages, roomsForUpdate, userRooms);
-  }
-
-  private RocketChatRoomInformation buildRoomInformation(
-      Map<String, Boolean> readMessages,
-      List<RoomsUpdateDTO> roomsForUpdate,
-      List<String> userRooms) {
     var lastMessagesRoom = getRcRoomLastMessages(roomsForUpdate);
     var groupIdToLastMessageFallbackDate =
         collectFallbackDateOfRoomsWithoutLastMessage(roomsForUpdate);
@@ -109,26 +94,6 @@ public class RocketChatRoomInformationProvider {
         .build();
   }
 
-  private boolean isMatrixMigrationCredential(RocketChatCredentials rocketChatCredentials) {
-    if (rocketChatCredentials == null) {
-      return true;
-    }
-
-    var userId = rocketChatCredentials.getRocketChatUserId();
-    var token = rocketChatCredentials.getRocketChatToken();
-
-    return isBlank(userId)
-        || isBlank(token)
-        || userId.startsWith("@")
-        || userId.startsWith("dummy-")
-        || token.startsWith("syt_")
-        || token.startsWith("dummy-");
-  }
-
-  private boolean isBlank(String value) {
-    return value == null || value.isBlank();
-  }
-
   /**
    * Get Matrix rooms for a consultant directly.
    *
@@ -138,16 +103,17 @@ public class RocketChatRoomInformationProvider {
   private List<String> getMatrixRoomsForConsultant(
       de.caritas.cob.userservice.api.model.Consultant consultant) {
     try {
-      String matrixUserId = consultant.getMatrixUserId();
+      String matrixUsername = extractMatrixUsername(consultant.getMatrixUserId());
+      String matrixPassword = consultant.getMatrixPassword();
 
-      if (matrixUserId != null) {
-        log.info("🔍 Fetching Matrix rooms for consultant: {}", matrixUserId);
-        var rooms = matrixSynapseService.getJoinedRoomsForMatrixUser(matrixUserId);
-        log.info("✅ Found {} Matrix rooms for consultant {}", rooms.size(), matrixUserId);
+      if (matrixUsername != null && matrixPassword != null) {
+        log.info("🔍 Fetching Matrix rooms for consultant: {}", matrixUsername);
+        var rooms = matrixSynapseService.getJoinedRooms(matrixUsername, matrixPassword);
+        log.info("✅ Found {} Matrix rooms for consultant {}", rooms.size(), matrixUsername);
         return rooms;
       }
 
-      log.warn("Could not find Matrix user ID for consultant {}", consultant.getId());
+      log.warn("Could not find Matrix credentials for consultant {}", consultant.getId());
       return emptyList();
 
     } catch (Exception e) {
