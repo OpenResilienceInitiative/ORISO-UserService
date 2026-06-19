@@ -215,18 +215,16 @@ public class CreateConsultantSaga {
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
 
-    // MATRIX MIGRATION: Create Matrix user for consultant with a random password that is never
-    // persisted. User-scoped Matrix tokens are minted via Synapse admin login-as-user.
+    // MATRIX MIGRATION: Create Matrix user for consultant with plain username
     String matrixUserId = null;
     try {
       if (plainCreds != null && plainCreds.getUsername() != null) {
-        String matrixPassword = userHelper.getRandomPassword();
         log.info(
             "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
         var matrixResponse =
             matrixSynapseService.createUser(
                 plainCreds.getUsername(),
-                matrixPassword,
+                password,
                 consultantCreationInput.getFirstName()
                     + " "
                     + consultantCreationInput.getLastName());
@@ -258,7 +256,7 @@ public class CreateConsultantSaga {
 
     var consultant =
         createConsultantInMariaDBOrRollback(
-            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
+            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId, password);
 
     tryAssignConsultantToExistingSessions(consultant);
     return consultant;
@@ -342,9 +340,15 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId) {
+      String matrixUserId,
+      String matrixPassword) {
     Consultant consultant =
-        buildConsultant(consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
+        buildConsultant(
+            consultantCreationInput,
+            keycloakUserId,
+            rocketChatUserId,
+            matrixUserId,
+            matrixPassword);
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
@@ -448,7 +452,8 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String rocketChatUserId,
-      String matrixUserId) {
+      String matrixUserId,
+      String matrixPassword) {
 
     var consultant =
         Consultant.builder()
@@ -463,6 +468,7 @@ public class CreateConsultantSaga {
             .teamConsultant(consultantCreationInput.isTeamConsultant())
             .rocketChatId(rocketChatUserId)
             .matrixUserId(matrixUserId)
+            .matrixPassword(matrixPassword)
             .encourage2fa(true)
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
