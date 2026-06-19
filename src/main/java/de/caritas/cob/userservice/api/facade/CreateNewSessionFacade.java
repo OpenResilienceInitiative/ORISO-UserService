@@ -47,6 +47,7 @@ public class CreateNewSessionFacade {
         rocketChatCredentials,
         Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
   }
+
   /**
    * Initializes the new consulting type settings and creates a session or a chat-agency relation
    * depending on its type. This method should be used for new consulting type registrations.
