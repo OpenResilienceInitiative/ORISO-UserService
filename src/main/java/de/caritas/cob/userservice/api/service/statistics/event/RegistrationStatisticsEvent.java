@@ -58,6 +58,7 @@ public class RegistrationStatisticsEvent implements StatisticsEvent {
     return new SimpleModule()
         .addSerializer(OffsetDateTime.class, new OffsetDateTimeToStringSerializer());
   }
+
   /** {@inheritDoc} */
   public EventType getEventType() {
     return EVENT_TYPE;

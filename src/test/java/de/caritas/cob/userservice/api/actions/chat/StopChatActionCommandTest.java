@@ -130,7 +130,8 @@ class StopChatActionCommandTest {
 
   @Test
   void stopChatShouldDeleteChatGroupAndNotRecreateWhenNotRepetitive()
-      throws RocketChatCreateGroupException, RocketChatUserNotInitializedException,
+      throws RocketChatCreateGroupException,
+          RocketChatUserNotInitializedException,
           RocketChatAddUserToGroupException {
     Chat chatWithDate =
         Chat.builder()
