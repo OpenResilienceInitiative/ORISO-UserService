@@ -267,39 +267,46 @@ public class AssignEnquiryFacade {
             String consultantToken =
                 matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
 
-            if (consultantToken != null) {
-              // Auto-join consultant to room
-              boolean consultantJoined =
-                  matrixSynapseService.joinRoom(existingRoomId, consultantToken);
-              if (consultantJoined) {
-                log.info(
-                    "Consultant {} successfully joined existing room {} (all messages preserved)",
-                    consultant.getUsername(),
-                    existingRoomId);
+            if (isBlank(consultantToken)) {
+              log.warn(
+                  "Failed to mint consultant Matrix token for room reuse on session {}, creating new room",
+                  session.getId());
+              createNewMatrixRoom(session, consultant);
+              return;
+            }
 
-                // Remove agency service account from room (now only consultant + user remain)
-                boolean agencyRemoved =
-                    matrixSynapseService.removeUserFromRoom(
-                        existingRoomId, agencyCredentials.getMatrixUserId(), agencyToken);
-                if (agencyRemoved) {
-                  log.info(
-                      "Removed agency service account {} from room {} (only consultant + user remain)",
-                      agencyCredentials.getMatrixUserId(),
-                      existingRoomId);
-                } else {
-                  log.warn(
-                      "Failed to remove agency service account {} from room {}",
-                      agencyCredentials.getMatrixUserId(),
-                      existingRoomId);
-                }
-              } else {
-                log.warn(
-                    "Consultant {} failed to join existing room {}",
-                    consultant.getUsername(),
-                    existingRoomId);
-              }
+            // Auto-join consultant to room
+            boolean consultantJoined =
+                matrixSynapseService.joinRoom(existingRoomId, consultantToken);
+            if (!consultantJoined) {
+              log.warn(
+                  "Consultant {} failed to join existing room {} for session {}, creating new room",
+                  consultant.getUsername(),
+                  existingRoomId,
+                  session.getId());
+              createNewMatrixRoom(session, consultant);
+              return;
+            }
+
+            log.info(
+                "Consultant {} successfully joined existing room {} (all messages preserved)",
+                consultant.getUsername(),
+                existingRoomId);
+
+            // Remove agency service account from room (now only consultant + user remain)
+            boolean agencyRemoved =
+                matrixSynapseService.removeUserFromRoom(
+                    existingRoomId, agencyCredentials.getMatrixUserId(), agencyToken);
+            if (agencyRemoved) {
+              log.info(
+                  "Removed agency service account {} from room {} (only consultant + user remain)",
+                  agencyCredentials.getMatrixUserId(),
+                  existingRoomId);
             } else {
-              log.error("Failed to login consultant for room join");
+              log.warn(
+                  "Failed to remove agency service account {} from room {}",
+                  agencyCredentials.getMatrixUserId(),
+                  existingRoomId);
             }
 
             // DON'T overwrite session.matrixRoomId - keep existing room ID
