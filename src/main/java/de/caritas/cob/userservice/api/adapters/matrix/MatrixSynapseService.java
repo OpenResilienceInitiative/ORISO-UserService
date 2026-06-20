@@ -25,6 +25,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 /** Service for Matrix Synapse functionalities. */
@@ -264,6 +265,13 @@ public class MatrixSynapseService {
               ? java.util.Map.of()
               : (java.util.Map<String, Object>) response.getBody();
       return responseBody;
+    } catch (HttpStatusCodeException ex) {
+      log.error(
+          "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
+          matrixUserId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return null;
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not create login token for user ({}). Reason: {}",
