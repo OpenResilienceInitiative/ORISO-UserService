@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Supplier;
 import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
@@ -390,71 +391,98 @@ public class AssignEnquiryFacade {
    * @param consultant the consultant
    */
   private void createNewMatrixRoom(Session session, Consultant consultant) {
+    String staleRoomId = session.getMatrixRoomId();
+    session.setMatrixRoomId(null);
+
     try {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
-      var roomAlias = "session_" + session.getId();
+      var roomAlias = buildUniqueSessionRoomAlias(session.getId(), consultant.getId());
 
       var matrixResponse =
           matrixSynapseService.createRoomAsMatrixUser(
               roomName, roomAlias, consultant.getMatrixUserId());
 
-      if (matrixResponse != null
-          && matrixResponse.getBody() != null
-          && matrixResponse.getBody().getRoomId() != null) {
-        session.setMatrixRoomId(matrixResponse.getBody().getRoomId());
+      if (matrixResponse == null
+          || matrixResponse.getBody() == null
+          || matrixResponse.getBody().getRoomId() == null) {
         sessionService.saveSession(session);
+        log.error(
+            "Matrix createRoom returned no room id for session {}, cleared stale room {}",
+            session.getId(),
+            staleRoomId);
+        return;
+      }
 
-        // Invite user to room
-        String consultantToken =
-            matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      String roomId = matrixResponse.getBody().getRoomId();
+      session.setMatrixRoomId(roomId);
+      session.setGroupId(roomId);
+      sessionService.saveSession(session);
 
-        if (consultantToken != null) {
-          String roomId = matrixResponse.getBody().getRoomId();
+      // Invite user to room
+      String consultantToken =
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
 
-          // Invite the user to the room
-          matrixSynapseService.inviteUserToRoom(
-              roomId, session.getUser().getMatrixUserId(), consultantToken);
+      if (consultantToken != null) {
+        // Invite the user to the room
+        matrixSynapseService.inviteUserToRoom(
+            roomId, session.getUser().getMatrixUserId(), consultantToken);
 
-          if (session.getUser().getMatrixUserId() != null) {
-            String userToken =
-                matrixSynapseService.loginAsUserAccessToken(session.getUser().getMatrixUserId());
-            if (userToken != null) {
-              boolean userJoined = matrixSynapseService.joinRoom(roomId, userToken);
-              if (userJoined) {
-                log.info(
-                    "User {} auto-accepted room invitation for room: {}",
-                    session.getUser().getUsername(),
-                    roomId);
-              } else {
-                log.warn(
-                    "User {} failed to auto-accept room invitation for room: {}",
-                    session.getUser().getUsername(),
-                    roomId);
-              }
+        if (session.getUser().getMatrixUserId() != null) {
+          String userToken =
+              matrixSynapseService.loginAsUserAccessToken(session.getUser().getMatrixUserId());
+          if (userToken != null) {
+            boolean userJoined = matrixSynapseService.joinRoom(roomId, userToken);
+            if (userJoined) {
+              log.info(
+                  "User {} auto-accepted room invitation for room: {}",
+                  session.getUser().getUsername(),
+                  roomId);
+            } else {
+              log.warn(
+                  "User {} failed to auto-accept room invitation for room: {}",
+                  session.getUser().getUsername(),
+                  roomId);
             }
-          } else {
-            log.warn(
-                "User {} has invalid matrix_user_id, skipping auto-join",
-                session.getUser().getUsername());
           }
-
-          // Consultant auto-joins (as room creator, consultant is already in room, but let's
-          // ensure)
-          boolean consultantJoined = matrixSynapseService.joinRoom(roomId, consultantToken);
-          if (consultantJoined) {
-            log.info("Consultant {} confirmed in room: {}", consultant.getUsername(), roomId);
-          }
+        } else {
+          log.warn(
+              "User {} has invalid matrix_user_id, skipping auto-join",
+              session.getUser().getUsername());
         }
 
-        log.info(
-            "Successfully created new Matrix room: {} with ID: {} for session: {}",
-            roomName,
-            matrixResponse.getBody().getRoomId(),
-            session.getId());
+        // Consultant auto-joins (as room creator, consultant is already in room, but let's
+        // ensure)
+        boolean consultantJoined = matrixSynapseService.joinRoom(roomId, consultantToken);
+        if (consultantJoined) {
+          log.info("Consultant {} confirmed in room: {}", consultant.getUsername(), roomId);
+        }
       }
+
+      log.info(
+          "Successfully created new Matrix room: {} with ID: {} for session: {}",
+          roomName,
+          roomId,
+          session.getId());
     } catch (Exception e) {
+      session.setMatrixRoomId(null);
+      sessionService.saveSession(session);
       log.error(
-          "Failed to create new Matrix room for session {}: {}", session.getId(), e.getMessage());
+          "Failed to create new Matrix room for session {} (cleared stale room {}): {}",
+          session.getId(),
+          staleRoomId,
+          e.getMessage(),
+          e);
     }
+  }
+
+  private String buildUniqueSessionRoomAlias(Long sessionId, String consultantId) {
+    String safeConsultantId =
+        isBlank(consultantId) ? "unknown" : consultantId.replaceAll("[^a-zA-Z0-9]", "");
+    return "session_"
+        + sessionId
+        + "_"
+        + safeConsultantId
+        + "_"
+        + UUID.randomUUID().toString().substring(0, 8);
   }
 }
