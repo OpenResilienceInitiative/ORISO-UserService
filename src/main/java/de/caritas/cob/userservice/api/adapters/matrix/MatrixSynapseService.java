@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
@@ -243,9 +242,8 @@ public class MatrixSynapseService {
     }
 
     try {
-      String encodedUserId = URLEncoder.encode(matrixUserId, StandardCharsets.UTF_8);
       String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedUserId));
+          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
 
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
