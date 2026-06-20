@@ -19,7 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 /** Controller for Matrix messaging endpoints. */
 @RestController
-@RequestMapping("/matrix")
+@RequestMapping({"/matrix", "/service/matrix"})
 @RequiredArgsConstructor
 @Slf4j
 public class MatrixMessageController {
