@@ -126,7 +126,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .permitAll()
         .antMatchers("/users/sessions/askers")
         .permitAll()
-        .antMatchers("/matrix/sync/**")
+        .antMatchers("/matrix/sync/**", "/service/matrix/sync/**")
         .permitAll()
         .antMatchers(
             "/users/email",
@@ -142,7 +142,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/chat/{chatId:[0-9]+}/leave",
             "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
             "/users/consultants/toggleWalkThrough",
-            "/matrix/**")
+            "/matrix/**",
+            "/service/matrix/**")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/users/system-notification-emails/test")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
@@ -293,7 +294,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
   public void configure(WebSecurity web) throws Exception {
     // Completely ignore actuator endpoints and registration endpoint from Spring Security to avoid
     // Keycloak challenges
-    web.ignoring().antMatchers("/actuator/**", "/users/askers/new", "/matrix/sync/**");
+    web.ignoring()
+        .antMatchers(
+            "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
   }
 
   /**

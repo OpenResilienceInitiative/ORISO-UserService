@@ -24,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 /** Service for Matrix Synapse functionalities. */
@@ -31,7 +32,9 @@ import org.springframework.web.client.RestTemplate;
 @Service
 public class MatrixSynapseService {
 
+  private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
+  private static final String ENDPOINT_ADMIN_LOGIN_AS_USER = "/_synapse/admin/v1/users/%s/login";
   private static final String ENDPOINT_LOGIN = "/_matrix/client/r0/login";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
@@ -221,6 +224,70 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Creates a short-lived Matrix access token for a user via the Synapse admin API.
+   *
+   * @param matrixUserId full Matrix user ID, e.g. {@code @user:server}
+   * @param validForMs validity duration in milliseconds
+   * @return login response body, including {@code access_token}, or {@code null} when unavailable
+   */
+  public java.util.Map<String, Object> loginAsUser(String matrixUserId, long validForMs) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Matrix admin token unavailable; cannot create user token for {}", matrixUserId);
+      return null;
+    }
+
+    try {
+      String url =
+          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var body = new java.util.HashMap<String, Object>();
+      if (validForMs > 0) {
+        body.put("valid_until_ms", System.currentTimeMillis() + validForMs);
+      }
+
+      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
+
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> responseBody =
+          response.getBody() == null
+              ? java.util.Map.of()
+              : (java.util.Map<String, Object>) response.getBody();
+      return responseBody;
+    } catch (HttpStatusCodeException ex) {
+      log.error(
+          "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
+          matrixUserId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return null;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix Error: Could not create login token for user ({}). Reason: {}",
+          matrixUserId,
+          ex.getMessage());
+      return null;
+    }
+  }
+
+  public String loginAsUserAccessToken(String matrixUserId) {
+    var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS);
+    if (tokenResponse == null || tokenResponse.get("access_token") == null) {
+      return null;
+    }
+    return String.valueOf(tokenResponse.get("access_token"));
+  }
+
+  /**
    * Gets or creates an admin access token for administrative operations. Creates a technical admin
    * user if it doesn't exist.
    *
@@ -383,6 +450,17 @@ public class MatrixSynapseService {
     String accessToken = loginUser(consultantUsername, consultantPassword);
     if (accessToken == null) {
       throw new MatrixCreateRoomException("Could not obtain access token for consultant");
+    }
+
+    return createRoom(roomName, roomAlias, accessToken);
+  }
+
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createRoomAsMatrixUser(
+      String roomName, String roomAlias, String matrixUserId) throws MatrixCreateRoomException {
+
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      throw new MatrixCreateRoomException("Could not obtain access token for Matrix user");
     }
 
     return createRoom(roomName, roomAlias, accessToken);
@@ -830,6 +908,50 @@ public class MatrixSynapseService {
 
     } catch (Exception e) {
       log.error("Error getting joined rooms for user {}: {}", username, e.getMessage());
+      return java.util.Collections.emptyList();
+    }
+  }
+
+  public java.util.List<String> getJoinedRoomsForMatrixUser(String matrixUserId) {
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      log.warn("Could not create Matrix token for {} to get joined rooms", matrixUserId);
+      return java.util.Collections.emptyList();
+    }
+    return getJoinedRoomsWithToken(accessToken, matrixUserId);
+  }
+
+  private java.util.List<String> getJoinedRoomsWithToken(
+      String accessToken, String principalForLog) {
+    try {
+      var headers = new HttpHeaders();
+      headers.set("Authorization", "Bearer " + accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var url = matrixConfig.getApiUrl(ENDPOINT_JOINED_ROOMS);
+      HttpEntity<Void> request = new HttpEntity<>(headers);
+
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+        @SuppressWarnings("unchecked")
+        java.util.List<String> joinedRooms =
+            (java.util.List<String>) response.getBody().get("joined_rooms");
+        log.info(
+            "✅ User {} has {} joined Matrix rooms",
+            principalForLog,
+            joinedRooms != null ? joinedRooms.size() : 0);
+        return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
+      }
+
+      log.warn(
+          "Failed to get joined rooms for user {}: {}", principalForLog, response.getStatusCode());
+      return java.util.Collections.emptyList();
+
+    } catch (Exception e) {
+      log.error("Error getting joined rooms for user {}: {}", principalForLog, e.getMessage());
       return java.util.Collections.emptyList();
     }
   }
