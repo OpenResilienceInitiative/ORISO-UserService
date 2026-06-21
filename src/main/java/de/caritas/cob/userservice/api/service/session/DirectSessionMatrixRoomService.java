@@ -64,14 +64,14 @@ public class DirectSessionMatrixRoomService {
       var roomAlias = "session_" + session.getId();
 
       var createRoomResponse =
-          matrixSynapseService.createRoomForMatrixUser(
+          matrixSynapseService.createRoomAsMatrixUser(
               roomName, roomAlias, consultant.getMatrixUserId());
 
       if (createRoomResponse == null
           || createRoomResponse.getBody() == null
           || createRoomResponse.getBody().getRoomId() == null) {
         log.error(
-            "Matrix createRoomForMatrixUser returned no room id for session {}", session.getId());
+            "Matrix createRoomAsConsultant returned no room id for session {}", session.getId());
         return;
       }
 
@@ -79,10 +79,14 @@ public class DirectSessionMatrixRoomService {
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
 
-      var consultantToken = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
+      var consultantToken =
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
       if (consultantToken == null) {
         log.error(
-            "Could not obtain consultant token for room {} session {}", roomId, session.getId());
+            "Could not create Matrix token for consultant {} after creating room {} for session {}",
+            consultant.getUsername(),
+            roomId,
+            session.getId());
         return;
       }
 
@@ -96,20 +100,22 @@ public class DirectSessionMatrixRoomService {
             ex.getMessage());
       }
 
-      var userToken = matrixSynapseService.loginUserViaAdmin(user.getMatrixUserId());
-      if (userToken != null) {
-        boolean joined = matrixSynapseService.joinRoom(roomId, userToken);
-        if (joined) {
-          log.info("User {} auto-joined direct-session room {}", user.getMatrixUserId(), roomId);
+      if (user.getMatrixUserId() != null) {
+        var userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
+        if (userToken != null) {
+          boolean joined = matrixSynapseService.joinRoom(roomId, userToken);
+          if (joined) {
+            log.info("User {} auto-joined direct-session room {}", user.getUsername(), roomId);
+          } else {
+            log.warn(
+                "User {} failed to auto-join direct-session room {}", user.getUsername(), roomId);
+          }
         } else {
           log.warn(
-              "User {} failed to auto-join direct-session room {}", user.getMatrixUserId(), roomId);
+              "Could not create Matrix token for user {} to auto-join direct-session room {}",
+              user.getUsername(),
+              roomId);
         }
-      } else {
-        log.warn(
-            "User {} could not obtain Matrix token to auto-join direct-session room {}",
-            user.getMatrixUserId(),
-            roomId);
       }
 
       boolean consultantJoined = matrixSynapseService.joinRoom(roomId, consultantToken);
@@ -155,6 +161,7 @@ public class DirectSessionMatrixRoomService {
         log.info(
             "Created Matrix account for consultant {} during direct-session provisioning",
             consultant.getUsername());
+        return;
       }
     } catch (Exception ex) {
       log.error(

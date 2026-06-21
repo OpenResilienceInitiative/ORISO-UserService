@@ -48,7 +48,7 @@ public class AgencyPreAssignmentRoomService {
 
     if (isBlank(user.getMatrixUserId())) {
       log.warn(
-          "User {} missing Matrix user id, skipping agency holding room for session {}",
+          "User {} missing Matrix user ID, skipping agency holding room for session {}",
           user.getUserId(),
           session.getId());
       return;
@@ -125,7 +125,7 @@ public class AgencyPreAssignmentRoomService {
     try {
       matrixSynapseService.inviteUserToRoom(roomId, user.getMatrixUserId(), agencyToken);
 
-      String userToken = matrixSynapseService.loginUserViaAdmin(user.getMatrixUserId());
+      String userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
       if (!isBlank(userToken)) {
         matrixSynapseService.joinRoom(roomId, userToken);
       }

@@ -760,7 +760,8 @@ class CreateEnquiryMessageFacadeTest {
 
   @Test
   void createEnquiryMessage_Should_DeleteRcGroup_WhenRemoveSystemMessagesFails()
-      throws RocketChatCreateGroupException, RocketChatRemoveSystemMessagesException,
+      throws RocketChatCreateGroupException,
+          RocketChatRemoveSystemMessagesException,
           RocketChatUserNotInitializedException {
 
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(SESSION_WITHOUT_CONSULTANT));

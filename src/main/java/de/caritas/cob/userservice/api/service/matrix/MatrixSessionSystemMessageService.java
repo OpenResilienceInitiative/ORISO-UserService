@@ -52,18 +52,23 @@ public class MatrixSessionSystemMessageService {
 
     var displayUsername = resolveDisplayUsername(session);
     var roomId = matrixRoomId;
-    var accessToken = resolveMatrixAccessToken(session);
-    if (accessToken.isEmpty()) {
-      log.warn(
-          "Skipping Matrix user-left message for session {} — no Matrix account available",
-          session.getId());
-      return;
-    }
-    sendUserLeftMessage(session.getId(), roomId, displayUsername, accessToken.get());
+    resolveMatrixCredentials(session)
+        .ifPresent(
+            credentials ->
+                sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
   }
 
   private void sendUserLeftMessage(
-      Long sessionId, String matrixRoomId, String displayUsername, String accessToken) {
+      Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
+    var accessToken = credentials.accessToken(matrixSynapseService);
+    if (accessToken == null) {
+      log.warn(
+          "Skipping Matrix user-left message for session {} — token unavailable for {}",
+          sessionId,
+          credentials.principal());
+      return;
+    }
+
     var body = buildUserLeftChatBody(displayUsername);
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
@@ -72,50 +77,26 @@ public class MatrixSessionSystemMessageService {
     }
   }
 
-  /**
-   * Resolves a Matrix access token for posting a system message to the session room.
-   *
-   * <p>Priority: consultant (stable room member) → advice seeker → agency service account. Each
-   * candidate is tried in order; the first successful impersonation is returned so that a transient
-   * failure for one account does not silently suppress the notification.
-   */
-  private Optional<String> resolveMatrixAccessToken(Session session) {
-    // 1. Consultant — preferred sender: remains in the room after the session ends.
+  private Optional<MatrixCredentials> resolveMatrixCredentials(Session session) {
+    User user = session.getUser();
+    if (user != null && isNotBlank(user.getMatrixUserId())) {
+      return Optional.of(MatrixCredentials.forMatrixUser(user.getMatrixUserId()));
+    }
+
     Consultant consultant = session.getConsultant();
     if (consultant != null && isNotBlank(consultant.getId())) {
       consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
       if (isNotBlank(consultant.getMatrixUserId())) {
-        String token = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
-        if (token != null) {
-          return Optional.of(token);
-        }
-        log.warn(
-            "Admin impersonation failed for consultant {} (session {}), trying next candidate",
-            consultant.getMatrixUserId(),
-            session.getId());
+        return Optional.of(MatrixCredentials.forMatrixUser(consultant.getMatrixUserId()));
       }
     }
 
-    // 2. Advice seeker — still in the room at notification time (deactivation happens after).
-    User user = session.getUser();
-    if (user != null && isNotBlank(user.getMatrixUserId())) {
-      String token = matrixSynapseService.loginUserViaAdmin(user.getMatrixUserId());
-      if (token != null) {
-        return Optional.of(token);
-      }
-      log.warn(
-          "Admin impersonation failed for user {} (session {}), trying agency fallback",
-          user.getMatrixUserId(),
-          session.getId());
-    }
-
-    // 3. Agency service account — password-based login for system accounts.
     return agencyMatrixCredentialClient
         .fetchMatrixCredentials(session.getAgencyId())
         .filter(dto -> isNotBlank(dto.getMatrixUserId()) && isNotBlank(dto.getMatrixPassword()))
         .map(
             dto ->
-                matrixSynapseService.loginUser(
+                MatrixCredentials.forPasswordLogin(
                     extractMatrixLocalpart(dto.getMatrixUserId()), dto.getMatrixPassword()));
   }
 
@@ -157,5 +138,36 @@ public class MatrixSessionSystemMessageService {
         + "\",\"username\":\""
         + safeUsername
         + "\"}";
+  }
+
+  private static final class MatrixCredentials {
+    private final String matrixUserId;
+    private final String password;
+    private final String username;
+
+    private MatrixCredentials(String matrixUserId, String username, String password) {
+      this.matrixUserId = matrixUserId;
+      this.username = username;
+      this.password = password;
+    }
+
+    private static MatrixCredentials forMatrixUser(String matrixUserId) {
+      return new MatrixCredentials(matrixUserId, null, null);
+    }
+
+    private static MatrixCredentials forPasswordLogin(String username, String password) {
+      return new MatrixCredentials(null, username, password);
+    }
+
+    private String accessToken(MatrixSynapseService matrixSynapseService) {
+      if (isNotBlank(matrixUserId)) {
+        return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+      }
+      return matrixSynapseService.loginUser(username, password);
+    }
+
+    private String principal() {
+      return isNotBlank(matrixUserId) ? matrixUserId : username;
+    }
   }
 }

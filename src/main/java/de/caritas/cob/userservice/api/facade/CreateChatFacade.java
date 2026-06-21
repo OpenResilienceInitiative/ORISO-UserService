@@ -52,6 +52,7 @@ public class CreateChatFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
+
   /**
    * Creates a chat in MariaDB, it's relation to the agency and Rocket.Chat-room (or Matrix room for
    * group chats with consultantIds).
@@ -255,18 +256,12 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      // Extract consultant username
-      String consultantMatrixUsername = null;
-      if (consultant.getMatrixUserId() != null && consultant.getMatrixUserId().startsWith("@")) {
-        consultantMatrixUsername = consultant.getMatrixUserId().substring(1).split(":")[0];
-      }
-
-      if (consultant.getMatrixUserId() == null) {
+      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
         throw new InternalServerErrorException("Consultant does not have Matrix credentials");
       }
 
       var matrixResponse =
-          matrixSynapseService.createRoomForMatrixUser(
+          matrixSynapseService.createRoomAsMatrixUser(
               roomName, roomAlias, consultant.getMatrixUserId());
 
       matrixRoomId = matrixResponse.getBody().getRoomId();
@@ -282,7 +277,11 @@ public class CreateChatFacade {
       chatService.saveChat(chat);
 
       // Get consultant token for inviting others
-      String consultantToken = matrixSynapseService.loginUserViaAdmin(consultant.getMatrixUserId());
+      String consultantToken =
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      if (consultantToken == null) {
+        throw new InternalServerErrorException("Could not create Matrix token for consultant");
+      }
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
@@ -306,7 +305,7 @@ public class CreateChatFacade {
 
           // Auto-join the participant
           String participantToken =
-              matrixSynapseService.loginUserViaAdmin(participant.getMatrixUserId());
+              matrixSynapseService.loginAsUserAccessToken(participant.getMatrixUserId());
           if (participantToken != null) {
             matrixSynapseService.joinRoom(matrixRoomId, participantToken);
             log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);

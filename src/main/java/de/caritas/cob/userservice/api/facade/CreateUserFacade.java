@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
@@ -53,7 +52,7 @@ public class CreateUserFacade {
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
-  private final @NonNull UserHelper userHelper;
+
   private final @NonNull TenantService tenantService;
 
   private final @NonNull AgencyService agencyService;
@@ -86,17 +85,20 @@ public class CreateUserFacade {
     // Ensure user is fully persisted before creating session
     user = userService.saveUser(user);
 
-    // Create Matrix user with PLAIN username from ThreadLocal.
-    // A randomly generated password is used for Synapse provisioning — it is never stored
-    // and never needed again; all subsequent Matrix actions use admin impersonation tokens.
+    // Create Matrix user with a random local Matrix password that is never persisted.
     try {
-      if (plainCreds != null
-          && plainCreds.getUsername() != null
-          && plainCreds.getPassword() != null) {
-        String matrixProvisioningPassword = userHelper.getRandomPassword();
+      if (plainCreds != null && plainCreds.getUsername() != null) {
+        String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
         var matrixResponse =
             matrixSynapseService.createUser(
-                plainCreds.getUsername(), matrixProvisioningPassword, plainCreds.getUsername());
+                plainCreds.getUsername(), matrixPassword, plainCreds.getUsername());
+
+        log.info(
+            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}, body={}",
+            plainCreds.getUsername(),
+            matrixResponse.getStatusCode(),
+            matrixResponse.getBody() != null,
+            matrixResponse.getBody());
 
         if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
           user.setMatrixUserId(matrixResponse.getBody().getUserId());
@@ -111,7 +113,7 @@ public class CreateUserFacade {
               plainCreds.getUsername());
         }
       } else {
-        log.warn("Plain credentials not available from ThreadLocal, skipping Matrix user creation");
+        log.warn("Plain username not available from ThreadLocal, skipping Matrix user creation");
       }
     } catch (Exception e) {
       log.error(

@@ -47,6 +47,8 @@ public class UserServiceApplication {
     executor.setMaxPoolSize(THREAD_MAX_POOL_SIZE);
     executor.setQueueCapacity(THREAD_QUEUE_CAPACITY);
     executor.setThreadNamePrefix(THREAD_NAME_PREFIX);
+    executor.setWaitForTasksToCompleteOnShutdown(true);
+    executor.setAwaitTerminationSeconds(25);
     executor.initialize();
     return executor;
   }

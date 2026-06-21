@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*;
  * real-time event notifications via LiveService.
  */
 @RestController
-@RequestMapping("/matrix/sync")
+@RequestMapping({"/matrix/sync", "/service/matrix/sync"})
 @RequiredArgsConstructor
 @Slf4j
 public class MatrixSyncController {

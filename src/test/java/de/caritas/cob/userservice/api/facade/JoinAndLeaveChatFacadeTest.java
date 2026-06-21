@@ -300,7 +300,8 @@ class JoinAndLeaveChatFacadeTest {
 
   @Test
   void leaveChat_Should_RemoveConsultantFromRocketChatGroup()
-      throws RocketChatRemoveUserFromGroupException, RocketChatUserNotInitializedException,
+      throws RocketChatRemoveUserFromGroupException,
+          RocketChatUserNotInitializedException,
           RocketChatGetGroupMembersException {
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
     when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))

@@ -2,17 +2,13 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
-import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
-import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,10 +19,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 /** Controller for Matrix messaging endpoints. */
 @RestController
-@RequestMapping("/matrix")
+@RequestMapping({"/matrix", "/service/matrix"})
 @RequiredArgsConstructor
 @Slf4j
 public class MatrixMessageController {
+
+  private static final long MATRIX_BROWSER_TOKEN_TTL_MS = 55 * 60 * 1000L;
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
@@ -36,6 +34,68 @@ public class MatrixMessageController {
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
+
+  /**
+   * Mint a short-lived Matrix access token for the currently authenticated platform user.
+   *
+   * <p>The browser needs a user-scoped Matrix token for sync, sending, typing, and calls, but the
+   * platform must not persist or reuse the user's Matrix password. Synapse admin login-as-user
+   * keeps the token scoped to the mapped Matrix user while avoiding a reversible credential in
+   * MariaDB.
+   */
+  @GetMapping("/me/token")
+  public ResponseEntity<?> getCurrentUserMatrixToken() {
+    try {
+      String matrixUserId = getCurrentMatrixUserId();
+      if (matrixUserId == null || matrixUserId.isBlank()) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(Map.of("error", "Matrix user not configured"));
+      }
+
+      var tokenResponse =
+          matrixSynapseService.loginAsUser(matrixUserId, MATRIX_BROWSER_TOKEN_TTL_MS);
+      if (tokenResponse == null || tokenResponse.get("access_token") == null) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(Map.of("error", "Matrix token unavailable"));
+      }
+
+      var response = new java.util.HashMap<String, Object>();
+      response.put("accessToken", tokenResponse.get("access_token"));
+      response.put("userId", tokenResponse.getOrDefault("user_id", matrixUserId));
+      response.put("deviceId", tokenResponse.getOrDefault("device_id", ""));
+      response.put("expiresInMs", MATRIX_BROWSER_TOKEN_TTL_MS);
+
+      return ResponseEntity.ok(response);
+    } catch (Exception ex) {
+      log.error("Could not create Matrix token for current user", ex);
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+          .body(Map.of("error", "Matrix token unavailable"));
+    }
+  }
+
+  private String getCurrentMatrixUserId() {
+    String keycloakUserId = authenticatedUser.getUserId();
+    if (authenticatedUser.isConsultant()) {
+      return consultantService
+          .getConsultant(keycloakUserId)
+          .map(de.caritas.cob.userservice.api.model.Consultant::getMatrixUserId)
+          .orElse(null);
+    }
+
+    return userService
+        .getUser(keycloakUserId)
+        .map(de.caritas.cob.userservice.api.model.User::getMatrixUserId)
+        .orElse(null);
+  }
+
+  private String createCurrentMatrixAccessToken() {
+    String matrixUserId = getCurrentMatrixUserId();
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+
+    return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+  }
 
   /**
    * Send a message to a Matrix room.
@@ -56,32 +116,19 @@ public class MatrixMessageController {
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
 
-      String keycloakUserId = authenticatedUser.getUserId();
       String keycloakUsername = authenticatedUser.getUsername();
 
+      // Check Keycloak roles - SIMPLE and RELIABLE!
       boolean isConsultant =
           authenticatedUser.getRoles() != null
               && authenticatedUser.getRoles().contains("consultant");
 
-      Optional<String> accessTokenOpt =
-          isConsultant
-              ? obtainConsultantAccessToken(keycloakUserId)
-              : obtainUserAccessToken(session.get().getUser());
-
-      if (accessTokenOpt.isEmpty()) {
+      String accessToken = createCurrentMatrixAccessToken();
+      if (accessToken == null) {
+        log.error("Matrix token minting failed for {}", keycloakUsername);
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-            .body(Map.of("error", "Matrix login failed"));
+            .body(Map.of("error", "Matrix token unavailable"));
       }
-
-      String accessToken = accessTokenOpt.get();
-      String matrixUsername =
-          extractMatrixUsernameForLog(isConsultant, keycloakUserId, session.get().getUser());
-
-      log.info(
-          "Sending: {} (role: {}) → Matrix: {}",
-          keycloakUsername,
-          isConsultant ? "consultant" : "user",
-          matrixUsername);
 
       String message = (String) messageRequest.get("message");
       String roomId = session.get().getMatrixRoomId();
@@ -97,7 +144,7 @@ public class MatrixMessageController {
           message,
           eventId == null ? null : String.valueOf(eventId));
 
-      log.info("Message sent to room {} by {}", roomId, matrixUsername);
+      log.info("Message sent to room {} by {}", roomId, keycloakUsername);
       return ResponseEntity.ok(Map.of("success", true));
 
     } catch (Exception e) {
@@ -117,11 +164,15 @@ public class MatrixMessageController {
   public ResponseEntity<?> getMessages(@PathVariable Long sessionId) {
 
     try {
+      // MATRIX MIGRATION: Check both Session (1-on-1) and Chat (group chats)
       String matrixRoomId = null;
+
+      // Try Session first (1-on-1 chats)
       var session = sessionService.getSession(sessionId);
       if (session.isPresent() && session.get().getMatrixRoomId() != null) {
         matrixRoomId = session.get().getMatrixRoomId();
       } else {
+        // Try Chat (group chats)
         var chat = chatService.getChat(sessionId);
         if (chat.isPresent() && chat.get().getMatrixRoomId() != null) {
           matrixRoomId = chat.get().getMatrixRoomId();
@@ -133,23 +184,63 @@ public class MatrixMessageController {
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
-      String keycloakUserId = authenticatedUser.getUserId();
       String keycloakUsername = authenticatedUser.getUsername();
 
+      // Check Keycloak roles
       boolean isConsultant =
           authenticatedUser.getRoles() != null
               && authenticatedUser.getRoles().contains("consultant");
 
-      Optional<String> accessTokenOpt =
-          resolveReadAccessToken(isConsultant, keycloakUserId, session);
+      String accessToken;
 
-      if (accessTokenOpt.isEmpty()) {
+      if (isConsultant) {
+        // For group chats or accepted sessions, use consultant's own Matrix credentials
+        // For enquiries (NEW status, no consultant assigned), use agency's Matrix credentials
+        if (session.isPresent() && session.get().getConsultant() == null) {
+          // This is an enquiry - use agency's Matrix service account
+          Long agencyId = session.get().getAgencyId();
+          if (agencyId == null) {
+            log.warn("Session {} has no agency ID", sessionId);
+            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          }
+
+          var agencyCredentials = matrixCredentialClient.fetchMatrixCredentials(agencyId);
+          if (agencyCredentials.isEmpty()) {
+            log.warn("No Matrix credentials for agency {}", agencyId);
+            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          }
+
+          String agencyMatrixId = agencyCredentials.get().getMatrixUserId();
+          String matrixUsername;
+          if (agencyMatrixId != null && agencyMatrixId.startsWith("@")) {
+            matrixUsername = agencyMatrixId.substring(1).split(":")[0];
+          } else {
+            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          }
+
+          String password = agencyCredentials.get().getMatrixPassword();
+          if (password == null) {
+            return ResponseEntity.ok(Map.of("messages", new Object[0]));
+          }
+          accessToken = matrixSynapseService.loginUser(matrixUsername, password);
+        } else {
+          accessToken = createCurrentMatrixAccessToken();
+        }
+      } else {
+        // USER - only for 1-on-1 sessions
+        if (session.isEmpty()) {
+          log.error("User trying to access group chat {} - not allowed", sessionId);
+          return ResponseEntity.ok(Map.of("messages", new Object[0]));
+        }
+
+        accessToken = createCurrentMatrixAccessToken();
+      }
+
+      if (accessToken == null) {
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
-      log.info("Fetching messages for {}", keycloakUsername);
-
-      var messages = matrixSynapseService.getRoomMessages(matrixRoomId, accessTokenOpt.get());
+      var messages = matrixSynapseService.getRoomMessages(matrixRoomId, accessToken);
 
       log.info("Retrieved {} messages from room {}", messages.size(), matrixRoomId);
 
@@ -176,33 +267,16 @@ public class MatrixMessageController {
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
-      String keycloakUserId = authenticatedUser.getUserId();
-
-      boolean isConsultant =
-          authenticatedUser.getRoles() != null
-              && authenticatedUser.getRoles().contains("consultant");
-
-      Optional<String> accessTokenOpt =
-          isConsultant
-              ? obtainConsultantAccessToken(keycloakUserId)
-              : obtainUserAccessToken(session.get().getUser());
-
-      if (accessTokenOpt.isEmpty()) {
+      String username = authenticatedUser.getUsername();
+      String accessToken = createCurrentMatrixAccessToken();
+      if (accessToken == null) {
         return ResponseEntity.ok(Map.of("messages", new Object[0]));
       }
 
       String roomId = session.get().getMatrixRoomId();
-      String matrixUsername =
-          isConsultant
-              ? extractMatrixUsername(
-                  consultantService
-                      .getConsultant(keycloakUserId)
-                      .map(Consultant::getMatrixUserId)
-                      .orElse(null))
-              : extractMatrixUsername(session.get().getUser().getMatrixUserId());
 
-      var syncResult =
-          matrixSynapseService.syncRoom(roomId, accessTokenOpt.get(), matrixUsername, 30000);
+      // Use 30-second timeout for long-polling
+      var syncResult = matrixSynapseService.syncRoom(roomId, accessToken, username, 30000);
 
       return ResponseEntity.ok(syncResult);
 
@@ -223,21 +297,20 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestParam("file") MultipartFile file) {
 
     try {
-      log.info("Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
+      log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
 
+      // MATRIX MIGRATION: Check both Session (1-on-1) and Chat (group chats)
       String matrixRoomId = null;
-      User sessionUser = null;
 
       var session = sessionService.getSession(sessionId);
       if (session.isPresent() && session.get().getMatrixRoomId() != null) {
         matrixRoomId = session.get().getMatrixRoomId();
-        sessionUser = session.get().getUser();
-        log.info("Upload: Found 1-on-1 session with Matrix room: {}", matrixRoomId);
+        log.info("📤 Upload: Found 1-on-1 session with Matrix room: {}", matrixRoomId);
       } else {
         var chat = chatService.getChat(sessionId);
         if (chat.isPresent() && chat.get().getMatrixRoomId() != null) {
           matrixRoomId = chat.get().getMatrixRoomId();
-          log.info("Upload: Found group chat with Matrix room: {}", matrixRoomId);
+          log.info("📤 Upload: Found group chat with Matrix room: {}", matrixRoomId);
         }
       }
 
@@ -247,40 +320,27 @@ public class MatrixMessageController {
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
 
-      String keycloakUserId = authenticatedUser.getUserId();
       String keycloakUsername = authenticatedUser.getUsername();
 
-      boolean isConsultant =
-          authenticatedUser.getRoles() != null
-              && authenticatedUser.getRoles().contains("consultant");
-
-      Optional<String> accessTokenOpt;
-      if (isConsultant) {
-        accessTokenOpt = obtainConsultantAccessToken(keycloakUserId);
-      } else {
-        if (sessionUser == null) {
-          return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-              .body(Map.of("error", "User session not found"));
-        }
-        accessTokenOpt = obtainUserAccessToken(sessionUser);
-      }
-
-      if (accessTokenOpt.isEmpty()) {
+      String accessToken = createCurrentMatrixAccessToken();
+      if (accessToken == null) {
+        log.error("Matrix token minting failed for {}", keycloakUsername);
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-            .body(Map.of("error", "Matrix login failed"));
+            .body(Map.of("error", "Matrix token unavailable"));
       }
 
-      log.info("Upload: {} → Matrix room {}", keycloakUsername, matrixRoomId);
+      String roomId = matrixRoomId;
 
+      // Upload file to Matrix and automatically send as message
       java.util.Map<String, Object> result =
-          matrixSynapseService.uploadFile(file, matrixRoomId, accessTokenOpt.get());
+          matrixSynapseService.uploadFile(file, roomId, accessToken);
 
-      log.info("File uploaded and message sent successfully");
+      log.info("✅ File uploaded and message sent successfully");
 
       return ResponseEntity.ok(result);
 
     } catch (Exception e) {
-      log.error("Error uploading file", e);
+      log.error("❌ Error uploading file", e);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
           .body(Map.of("error", "Internal server error: " + e.getMessage()));
     }
@@ -300,20 +360,22 @@ public class MatrixMessageController {
 
     try {
       log.info(
-          "Download request for media: {}/{} by user: {}",
+          "📥 Download request for media: {}/{} by user: {}",
           serverName,
           mediaId,
           authenticatedUser.getUsername());
 
+      // Use admin token for downloads (Matrix media is accessible to all authenticated users)
       String adminToken = matrixSynapseService.getAdminToken();
       if (adminToken == null) {
-        log.error("Failed to get admin token for download");
+        log.error("❌ Failed to get admin token for download");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
       }
 
+      // Download file from Matrix
       byte[] fileBytes = matrixSynapseService.downloadFile(serverName, mediaId, adminToken);
 
-      log.info("File downloaded: {} bytes", fileBytes.length);
+      log.info("✅ File downloaded: {} bytes", fileBytes.length);
 
       return ResponseEntity.ok()
           .header("Content-Disposition", "attachment")
@@ -321,89 +383,8 @@ public class MatrixMessageController {
           .body(fileBytes);
 
     } catch (Exception e) {
-      log.error("Error downloading file", e);
+      log.error("❌ Error downloading file", e);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
     }
-  }
-
-  private Optional<String> resolveReadAccessToken(
-      boolean isConsultant,
-      String keycloakUserId,
-      Optional<de.caritas.cob.userservice.api.model.Session> session) {
-    if (isConsultant) {
-      if (session.isPresent() && session.get().getConsultant() == null) {
-        Long agencyId = session.get().getAgencyId();
-        if (agencyId == null) {
-          return Optional.empty();
-        }
-        return obtainAgencyAccessToken(agencyId);
-      }
-      return obtainConsultantAccessToken(keycloakUserId);
-    }
-
-    if (session.isEmpty()) {
-      return Optional.empty();
-    }
-    return obtainUserAccessToken(session.get().getUser());
-  }
-
-  private Optional<String> obtainConsultantAccessToken(String keycloakUserId) {
-    var consultant = consultantService.getConsultant(keycloakUserId);
-    if (consultant.isEmpty()) {
-      log.error("Consultant not found for keycloak user {}", keycloakUserId);
-      return Optional.empty();
-    }
-    String matrixUserId = consultant.get().getMatrixUserId();
-    if (matrixUserId == null || !matrixUserId.startsWith("@")) {
-      log.error("Consultant {} missing Matrix ID", keycloakUserId);
-      return Optional.empty();
-    }
-    return Optional.ofNullable(matrixSynapseService.loginUserViaAdmin(matrixUserId));
-  }
-
-  private Optional<String> obtainUserAccessToken(User user) {
-    if (user == null) {
-      return Optional.empty();
-    }
-    String matrixUserId = user.getMatrixUserId();
-    if (matrixUserId == null || !matrixUserId.startsWith("@")) {
-      log.error("User {} missing Matrix ID", user.getUserId());
-      return Optional.empty();
-    }
-    return Optional.ofNullable(matrixSynapseService.loginUserViaAdmin(matrixUserId));
-  }
-
-  private Optional<String> obtainAgencyAccessToken(Long agencyId) {
-    var agencyCredentials = matrixCredentialClient.fetchMatrixCredentials(agencyId);
-    if (agencyCredentials.isEmpty()) {
-      log.warn("No Matrix credentials for agency {}", agencyId);
-      return Optional.empty();
-    }
-    AgencyMatrixCredentialsDTO credentials = agencyCredentials.get();
-    String agencyMatrixUsername = extractMatrixUsername(credentials.getMatrixUserId());
-    String password = credentials.getMatrixPassword();
-    if (agencyMatrixUsername == null || password == null) {
-      return Optional.empty();
-    }
-    return Optional.ofNullable(matrixSynapseService.loginUser(agencyMatrixUsername, password));
-  }
-
-  private String extractMatrixUsernameForLog(
-      boolean isConsultant, String keycloakUserId, User sessionUser) {
-    if (isConsultant) {
-      return consultantService
-          .getConsultant(keycloakUserId)
-          .map(Consultant::getMatrixUserId)
-          .map(this::extractMatrixUsername)
-          .orElse("unknown");
-    }
-    return extractMatrixUsername(sessionUser != null ? sessionUser.getMatrixUserId() : null);
-  }
-
-  private String extractMatrixUsername(String matrixUserId) {
-    if (matrixUserId != null && matrixUserId.startsWith("@")) {
-      return matrixUserId.substring(1).split(":")[0];
-    }
-    return null;
   }
 }

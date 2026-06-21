@@ -124,23 +124,16 @@ public class SessionSupervisorFacade {
       throw new BadRequestException("Supervisor consultant does not have a Matrix user ID");
     }
 
-    // Get addedByConsultant's Matrix credentials for room operations
-    String addedByConsultantMatrixUsername = null;
-    if (addedByConsultant.getMatrixUserId() != null
-        && addedByConsultant.getMatrixUserId().startsWith("@")) {
-      addedByConsultantMatrixUsername =
-          addedByConsultant.getMatrixUserId().substring(1).split(":")[0];
-    }
-
-    if (addedByConsultant.getMatrixUserId() == null) {
+    if (addedByConsultant.getMatrixUserId() == null
+        || addedByConsultant.getMatrixUserId().isEmpty()) {
       throw new InternalServerErrorException(
           "Consultant adding supervisor does not have Matrix credentials");
     }
 
     String consultantToken =
-        matrixSynapseService.loginUserViaAdmin(addedByConsultant.getMatrixUserId());
+        matrixSynapseService.loginAsUserAccessToken(addedByConsultant.getMatrixUserId());
     if (consultantToken == null) {
-      throw new InternalServerErrorException("Failed to login consultant for Matrix operations");
+      throw new InternalServerErrorException("Failed to create consultant Matrix token");
     }
 
     // Invite supervisor to Matrix room
@@ -178,18 +171,14 @@ public class SessionSupervisorFacade {
           matrixRoomId);
     }
 
-    // Login supervisor and join room
-    String supervisorMatrixUsername = null;
-    if (supervisorMatrixUserId.startsWith("@")) {
-      String supervisorToken = matrixSynapseService.loginUserViaAdmin(supervisorMatrixUserId);
-      if (supervisorToken != null) {
-        boolean joined = matrixSynapseService.joinRoom(matrixRoomId, supervisorToken);
-        if (joined) {
-          log.info(
-              "Supervisor {} successfully joined Matrix room {}",
-              supervisorConsultant.getUsername(),
-              matrixRoomId);
-        }
+    String supervisorToken = matrixSynapseService.loginAsUserAccessToken(supervisorMatrixUserId);
+    if (supervisorToken != null) {
+      boolean joined = matrixSynapseService.joinRoom(matrixRoomId, supervisorToken);
+      if (joined) {
+        log.info(
+            "Supervisor {} successfully joined Matrix room {}",
+            supervisorConsultant.getUsername(),
+            matrixRoomId);
       }
     }
 
@@ -255,17 +244,9 @@ public class SessionSupervisorFacade {
     if (matrixRoomId != null && !matrixRoomId.isEmpty()) {
       String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
       if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
-        // Get removedByConsultant's Matrix credentials
-        String removedByConsultantMatrixUsername = null;
-        if (removedByConsultant.getMatrixUserId() != null
-            && removedByConsultant.getMatrixUserId().startsWith("@")) {
-          removedByConsultantMatrixUsername =
-              removedByConsultant.getMatrixUserId().substring(1).split(":")[0];
-        }
-
         if (removedByConsultant.getMatrixUserId() != null) {
           String consultantToken =
-              matrixSynapseService.loginUserViaAdmin(removedByConsultant.getMatrixUserId());
+              matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId());
           if (consultantToken != null) {
             boolean removed =
                 matrixSynapseService.removeUserFromRoom(
