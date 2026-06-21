@@ -85,14 +85,13 @@ public class CreateUserFacade {
     // Ensure user is fully persisted before creating session
     user = userService.saveUser(user);
 
-    // Create Matrix user with PLAIN credentials from ThreadLocal
+    // Create Matrix user with a random local Matrix password that is never persisted.
     try {
-      if (plainCreds != null
-          && plainCreds.getUsername() != null
-          && plainCreds.getPassword() != null) {
+      if (plainCreds != null && plainCreds.getUsername() != null) {
+        String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
         var matrixResponse =
             matrixSynapseService.createUser(
-                plainCreds.getUsername(), plainCreds.getPassword(), plainCreds.getUsername());
+                plainCreds.getUsername(), matrixPassword, plainCreds.getUsername());
 
         log.info(
             "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}, body={}",
@@ -103,7 +102,6 @@ public class CreateUserFacade {
 
         if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
           user.setMatrixUserId(matrixResponse.getBody().getUserId());
-          user.setMatrixPassword(plainCreds.getPassword()); // Save Matrix password for messaging
           userService.saveUser(user);
           log.info(
               "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
@@ -115,7 +113,7 @@ public class CreateUserFacade {
               plainCreds.getUsername());
         }
       } else {
-        log.warn("Plain credentials not available from ThreadLocal, skipping Matrix user creation");
+        log.warn("Plain username not available from ThreadLocal, skipping Matrix user creation");
       }
     } catch (Exception e) {
       log.error(

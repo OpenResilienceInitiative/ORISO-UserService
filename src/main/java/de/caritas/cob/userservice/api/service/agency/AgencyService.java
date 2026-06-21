@@ -30,6 +30,7 @@ public class AgencyService {
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+
   /**
    * Returns the {@link AgencyDTO} for the provided agencyId. Agency will be cached for further
    * requests.

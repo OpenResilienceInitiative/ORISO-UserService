@@ -223,6 +223,7 @@ public class TestConstants {
               null,
               null,
               null));
+
   /** Rocket.Chat credentials */
   public static final String TECHNICAL_USER_A_USERNAME = "techUserAName";
 
@@ -632,6 +633,7 @@ public class TestConstants {
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
+
   /** UserAgency */
   public static final UserAgency USER_AGENCY = new UserAgency(USER, AGENCY_ID);
 
@@ -1371,6 +1373,7 @@ public class TestConstants {
   public static final String CONSULTANT_ROLE = "consultant";
   public static final Set<String> CONSULTANT_ROLES =
       new HashSet<>(Collections.singletonList(CONSULTANT_ROLE));
+
   /** Registration values */
   public static final String USERNAME_TOO_SHORT = "flo";
 
@@ -1382,6 +1385,7 @@ public class TestConstants {
   public static final String GENDER_VALUE = "1";
   public static final String STATE_VALUE = "16";
   public static final boolean TERMS_ACCEPTED = true;
+
   /** ConsultingTypeSettings */
   public static final ExtendedConsultingTypeResponseDTO CONSULTING_TYPE_SETTINGS_KREUZBUND =
       new ExtendedConsultingTypeResponseDTO()

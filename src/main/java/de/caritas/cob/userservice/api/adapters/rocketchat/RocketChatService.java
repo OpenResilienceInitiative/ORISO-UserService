@@ -757,7 +757,8 @@ public class RocketChatService implements MessageClient {
    * @param rcGroupId the rocket chat group id
    */
   public void removeAllStandardUsersFromGroup(String rcGroupId)
-      throws RocketChatGetGroupMembersException, RocketChatRemoveUserFromGroupException,
+      throws RocketChatGetGroupMembersException,
+          RocketChatRemoveUserFromGroupException,
           RocketChatUserNotInitializedException {
     List<GroupMemberDTO> groupMemberList = getChatUsers(rcGroupId);
 
