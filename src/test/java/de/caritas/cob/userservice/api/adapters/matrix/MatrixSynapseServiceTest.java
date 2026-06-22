@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,8 +16,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -123,6 +127,44 @@ class MatrixSynapseServiceTest {
 
     assertThat(result).containsEntry("access_token", "user-token");
     verify(matrixConfig).getApiUrl(expectedPath);
+  }
+
+  @Test
+  void loginAsUserShouldRetryWithLocalServerNameWhenStoredMatrixUserIdIsNonLocal() {
+    var service = matrixSynapseService();
+    var storedMatrixUserId = "@anonymous-1:oriso.org";
+    var localMatrixUserId = "@anonymous-1:matrix.local";
+    var storedPath = "/_synapse/admin/v1/users/%40anonymous-1%3Aoriso.org/login";
+    var localPath = "/_synapse/admin/v1/users/%40anonymous-1%3Amatrix.local/login";
+    var storedUrl = "https://matrix.example" + storedPath;
+    var localUrl = "https://matrix.example" + localPath;
+    var nonLocalUserException =
+        HttpClientErrorException.create(
+            HttpStatus.BAD_REQUEST,
+            "BAD_REQUEST",
+            HttpHeaders.EMPTY,
+            "{\"errcode\":\"M_UNKNOWN\",\"error\":\"Only local users can be logged in as\"}"
+                .getBytes(StandardCharsets.UTF_8),
+            StandardCharsets.UTF_8);
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/login")).thenReturn(LOGIN_URL);
+    when(restTemplate.postForEntity(eq(LOGIN_URL), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("access_token", "admin-token", "user_id", "@admin:matrix.local")));
+    when(matrixConfig.getApiUrl(storedPath)).thenReturn(storedUrl);
+    when(restTemplate.postForEntity(eq(storedUrl), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(nonLocalUserException);
+    when(matrixConfig.getApiUrl(localPath)).thenReturn(localUrl);
+    when(restTemplate.postForEntity(eq(localUrl), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "user-token")));
+
+    var result = service.loginAsUser(storedMatrixUserId, 10_000);
+
+    assertThat(result).containsEntry("access_token", "user-token");
+    verify(matrixConfig).getApiUrl(storedPath);
+    verify(matrixConfig).getApiUrl(localPath);
   }
 
   private MatrixSynapseService matrixSynapseService() {
