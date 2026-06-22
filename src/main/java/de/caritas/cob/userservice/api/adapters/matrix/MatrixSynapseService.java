@@ -13,12 +13,10 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -78,7 +76,6 @@ public class MatrixSynapseService {
   // Cached admin access token for admin operations
   private String cachedAdminToken = null;
   private long adminTokenExpiry = 0;
-  private String cachedLocalServerName = null;
 
   public MatrixSynapseService(
       MatrixConfig matrixConfig,
@@ -245,33 +242,28 @@ public class MatrixSynapseService {
     }
 
     try {
-      return postLoginAsUser(matrixUserId, adminToken, validForMs);
-    } catch (HttpStatusCodeException ex) {
-      var retryMatrixUserId = localMatrixUserIdForRetry(matrixUserId, ex);
-      if (retryMatrixUserId.isPresent()) {
-        try {
-          log.warn(
-              "Retrying Matrix login token for local homeserver user {} after Synapse rejected {}"
-                  + " as non-local",
-              retryMatrixUserId.get(),
-              matrixUserId);
-          return postLoginAsUser(retryMatrixUserId.get(), adminToken, validForMs);
-        } catch (HttpStatusCodeException retryEx) {
-          log.error(
-              "Matrix Error: Could not create login token for retry user ({}). Status: {},"
-                  + " Response: {}",
-              retryMatrixUserId.get(),
-              retryEx.getStatusCode(),
-              retryEx.getResponseBodyAsString());
-          return null;
-        } catch (Exception retryEx) {
-          log.error(
-              "Matrix Error: Could not create login token for retry user ({}). Reason: {}",
-              retryMatrixUserId.get(),
-              retryEx.getMessage());
-          return null;
-        }
+      String url =
+          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var body = new java.util.HashMap<String, Object>();
+      if (validForMs > 0) {
+        body.put("valid_until_ms", System.currentTimeMillis() + validForMs);
       }
+
+      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
+
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> responseBody =
+          response.getBody() == null
+              ? java.util.Map.of()
+              : (java.util.Map<String, Object>) response.getBody();
+      return responseBody;
+    } catch (HttpStatusCodeException ex) {
       log.error(
           "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
           matrixUserId,
@@ -284,94 +276,6 @@ public class MatrixSynapseService {
           matrixUserId,
           ex.getMessage());
       return null;
-    }
-  }
-
-  private java.util.Map<String, Object> postLoginAsUser(
-      String matrixUserId, String adminToken, long validForMs) {
-
-    String encodedMatrixUserId = java.net.URLEncoder.encode(matrixUserId, StandardCharsets.UTF_8);
-    String url =
-        matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
-
-    var headers = getClientHttpHeaders(adminToken);
-    headers.setContentType(MediaType.APPLICATION_JSON);
-
-    var body = new java.util.HashMap<String, Object>();
-    if (validForMs > 0) {
-      body.put("valid_until_ms", System.currentTimeMillis() + validForMs);
-    }
-
-    HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
-
-    var response = restTemplate.postForEntity(url, request, java.util.Map.class);
-
-    @SuppressWarnings("unchecked")
-    java.util.Map<String, Object> responseBody =
-        response.getBody() == null
-            ? java.util.Map.of()
-            : (java.util.Map<String, Object>) response.getBody();
-    return responseBody;
-  }
-
-  private Optional<String> localMatrixUserIdForRetry(
-      String matrixUserId, HttpStatusCodeException exception) {
-
-    if (!isNonLocalMatrixUserError(exception)) {
-      return Optional.empty();
-    }
-
-    var localpart = extractLocalpart(matrixUserId);
-    var localServerName = resolveLocalServerName();
-    if (localpart.isEmpty() || localServerName.isEmpty()) {
-      return Optional.empty();
-    }
-
-    var localMatrixUserId = "@" + localpart.get() + ":" + localServerName.get();
-    if (localMatrixUserId.equals(matrixUserId)) {
-      return Optional.empty();
-    }
-    return Optional.of(localMatrixUserId);
-  }
-
-  private boolean isNonLocalMatrixUserError(HttpStatusCodeException exception) {
-    return exception != null
-        && exception.getResponseBodyAsString() != null
-        && exception.getResponseBodyAsString().contains("Only local users can be logged in as");
-  }
-
-  private Optional<String> extractLocalpart(String matrixUserId) {
-    if (StringUtils.isBlank(matrixUserId)) {
-      return Optional.empty();
-    }
-    String value = matrixUserId;
-    if (value.startsWith("@")) {
-      value = value.substring(1);
-    }
-    int colonIndex = value.indexOf(':');
-    if (colonIndex > 0) {
-      value = value.substring(0, colonIndex);
-    }
-    return StringUtils.isBlank(value) ? Optional.empty() : Optional.of(value);
-  }
-
-  private Optional<String> resolveLocalServerName() {
-    if (StringUtils.isNotBlank(cachedLocalServerName)) {
-      return Optional.of(cachedLocalServerName);
-    }
-    return StringUtils.isBlank(matrixConfig.getServerName())
-        ? Optional.empty()
-        : Optional.of(matrixConfig.getServerName());
-  }
-
-  private void rememberLocalServerName(Object matrixUserId) {
-    if (matrixUserId == null) {
-      return;
-    }
-    String value = String.valueOf(matrixUserId);
-    int colonIndex = value.indexOf(':');
-    if (colonIndex > 0 && colonIndex < value.length() - 1) {
-      cachedLocalServerName = value.substring(colonIndex + 1);
     }
   }
 
@@ -513,7 +417,6 @@ public class MatrixSynapseService {
 
       if (response.getBody() != null && response.getBody().containsKey("access_token")) {
         String accessToken = (String) response.getBody().get("access_token");
-        rememberLocalServerName(response.getBody().get("user_id"));
         accessTokenCache.put(username, accessToken);
         log.info("Successfully logged in Matrix user: {}", username);
         return accessToken;

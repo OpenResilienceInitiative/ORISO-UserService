@@ -19,8 +19,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.powermock.reflect.Whitebox.setInternalState;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
@@ -32,13 +32,9 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInit
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
-import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +45,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
+import org.slf4j.Logger;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 @ExtendWith(SpringExtension.class)
@@ -60,21 +57,9 @@ public class CreateChatV1FacadeTest {
 
   @Mock private ChatService chatService;
 
-  @Mock private SessionService sessionService;
-
   @Mock private Consultant consultant;
 
   @Mock private RocketChatService rocketChatService;
-
-  @Mock private MatrixSynapseService matrixSynapseService;
-
-  @Mock private MatrixAccessTokenService matrixAccessTokenService;
-
-  @Mock private ConsultantRepository consultantRepository;
-
-  @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
-
-  @Mock private UserRepository userRepository;
 
   @Mock private Chat chat;
 
@@ -88,12 +73,15 @@ public class CreateChatV1FacadeTest {
   @Spy
   private ChatConverter chatConverter;
 
+  @Mock private Logger logger;
+
   @BeforeEach
   public void setup() {
     when(chat.getId()).thenReturn(CHAT_ID);
     when(chat.getConsultingTypeId()).thenReturn(15);
     when(chat.getCreateDate()).thenReturn(LocalDateTime.now());
     when(agencyService.getAgency(any())).thenReturn(AGENCY_DTO_KREUZBUND);
+    setInternalState(LogService.class, "LOGGER", logger);
   }
 
   @Test

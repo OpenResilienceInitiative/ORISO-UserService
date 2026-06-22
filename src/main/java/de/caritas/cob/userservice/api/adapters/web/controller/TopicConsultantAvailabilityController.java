@@ -25,10 +25,7 @@ public class TopicConsultantAvailabilityController {
 
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
-  @GetMapping({
-    "/conversations/anonymous/availability",
-    "/service/conversations/anonymous/availability"
-  })
+  @GetMapping("/conversations/anonymous/availability")
   public ResponseEntity<ConsultantAvailabilityDTO> getTopicConsultantAvailability(
       @RequestParam Long topicId, @RequestParam(required = false) Integer consultingTypeId) {
 

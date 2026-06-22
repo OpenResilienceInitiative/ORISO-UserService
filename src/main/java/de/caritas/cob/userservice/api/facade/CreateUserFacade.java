@@ -70,6 +70,11 @@ public class CreateUserFacade {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
+    log.info(
+        "MATRIX: Plain credentials from ThreadLocal: username='{}', password exists={}",
+        plainCreds != null ? plainCreds.getUsername() : "NULL",
+        plainCreds != null && plainCreds.getPassword() != null);
+
     userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
     userVerifier.checkIfUsernameIsAvailable(userDTO);
     agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
@@ -87,6 +92,13 @@ public class CreateUserFacade {
         var matrixResponse =
             matrixSynapseService.createUser(
                 plainCreds.getUsername(), matrixPassword, plainCreds.getUsername());
+
+        log.info(
+            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}, body={}",
+            plainCreds.getUsername(),
+            matrixResponse.getStatusCode(),
+            matrixResponse.getBody() != null,
+            matrixResponse.getBody());
 
         if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
           user.setMatrixUserId(matrixResponse.getBody().getUserId());

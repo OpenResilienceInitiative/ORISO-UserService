@@ -3,10 +3,11 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
-import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -23,13 +24,16 @@ import org.springframework.web.multipart.MultipartFile;
 @Slf4j
 public class MatrixMessageController {
 
+  private static final long MATRIX_BROWSER_TOKEN_TTL_MS = 55 * 60 * 1000L;
+
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ChatService chatService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull ConsultantService consultantService;
+  private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
-  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
 
   /**
    * Mint a short-lived Matrix access token for the currently authenticated platform user.
@@ -42,23 +46,24 @@ public class MatrixMessageController {
   @GetMapping("/me/token")
   public ResponseEntity<?> getCurrentUserMatrixToken() {
     try {
-      var matrixUserId = matrixAccessTokenService.resolveCurrentMatrixUserId(authenticatedUser);
-      if (matrixUserId.isEmpty()) {
+      String matrixUserId = getCurrentMatrixUserId();
+      if (matrixUserId == null || matrixUserId.isBlank()) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", "Matrix user not configured"));
       }
 
-      var tokenResponse = matrixAccessTokenService.createBrowserToken(authenticatedUser);
-      if (tokenResponse.isEmpty()) {
+      var tokenResponse =
+          matrixSynapseService.loginAsUser(matrixUserId, MATRIX_BROWSER_TOKEN_TTL_MS);
+      if (tokenResponse == null || tokenResponse.get("access_token") == null) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
             .body(Map.of("error", "Matrix token unavailable"));
       }
 
       var response = new java.util.HashMap<String, Object>();
-      response.put("accessToken", tokenResponse.get().getAccessToken());
-      response.put("userId", tokenResponse.get().getUserId());
-      response.put("deviceId", tokenResponse.get().getDeviceId());
-      response.put("expiresInMs", tokenResponse.get().getExpiresInMs());
+      response.put("accessToken", tokenResponse.get("access_token"));
+      response.put("userId", tokenResponse.getOrDefault("user_id", matrixUserId));
+      response.put("deviceId", tokenResponse.getOrDefault("device_id", ""));
+      response.put("expiresInMs", MATRIX_BROWSER_TOKEN_TTL_MS);
 
       return ResponseEntity.ok(response);
     } catch (Exception ex) {
@@ -68,8 +73,28 @@ public class MatrixMessageController {
     }
   }
 
+  private String getCurrentMatrixUserId() {
+    String keycloakUserId = authenticatedUser.getUserId();
+    if (authenticatedUser.isConsultant()) {
+      return consultantService
+          .getConsultant(keycloakUserId)
+          .map(de.caritas.cob.userservice.api.model.Consultant::getMatrixUserId)
+          .orElse(null);
+    }
+
+    return userService
+        .getUser(keycloakUserId)
+        .map(de.caritas.cob.userservice.api.model.User::getMatrixUserId)
+        .orElse(null);
+  }
+
   private String createCurrentMatrixAccessToken() {
-    return matrixAccessTokenService.createServerAccessToken(authenticatedUser);
+    String matrixUserId = getCurrentMatrixUserId();
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+
+    return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
   }
 
   /**
