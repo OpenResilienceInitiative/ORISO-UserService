@@ -379,32 +379,6 @@ class ConversationControllerAuthorizationIT {
   }
 
   @Test
-  @WithMockUser(authorities = {CONSULTANT_DEFAULT})
-  void setConsultantLiveAvailability_Should_ReturnNoContent_When_ServicePathAndConsultantAuthority()
-      throws Exception {
-    mvc.perform(
-            MockMvcRequestBuilders.put("/service/conversations/consultants/availability")
-                .cookie(csrfCookie)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .content("{\"available\":true}")
-                .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNoContent());
-  }
-
-  @Test
-  @WithMockUser(authorities = {USER_DEFAULT})
-  void setConsultantLiveAvailability_Should_ReturnForbidden_When_ServicePathAndUserAuthority()
-      throws Exception {
-    mvc.perform(
-            MockMvcRequestBuilders.put("/service/conversations/consultants/availability")
-                .cookie(csrfCookie)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .content("{\"available\":true}")
-                .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
   void getAnonymousEnquiryDetails_Should_ReturnUnauthorized_When_NoKeycloakAuthorization()
       throws Exception {
     mvc.perform(

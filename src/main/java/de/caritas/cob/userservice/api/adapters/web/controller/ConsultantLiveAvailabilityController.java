@@ -22,10 +22,7 @@ public class ConsultantLiveAvailabilityController {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull ConsultantActivityRegistry consultantActivityRegistry;
 
-  @PutMapping({
-    "/conversations/consultants/availability",
-    "/service/conversations/consultants/availability"
-  })
+  @PutMapping("/conversations/consultants/availability")
   public ResponseEntity<Void> setLiveChatAvailability(
       @RequestBody ConsultantLiveAvailabilityRequestDTO request) {
 
