@@ -242,9 +242,8 @@ public class MatrixSynapseService {
     }
 
     try {
-      String encodedMatrixUserId = java.net.URLEncoder.encode(matrixUserId, StandardCharsets.UTF_8);
       String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
+          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
 
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);

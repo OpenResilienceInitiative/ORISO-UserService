@@ -30,7 +30,6 @@ public class MatrixSessionSystemMessageService {
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
 
   /**
    * Notifies participants in the Matrix room that the advice seeker left the conversation.
@@ -61,7 +60,7 @@ public class MatrixSessionSystemMessageService {
 
   private void sendUserLeftMessage(
       Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
-    var accessToken = credentials.accessToken(matrixAccessTokenService, matrixSynapseService);
+    var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
       log.warn(
           "Skipping Matrix user-left message for session {} — token unavailable for {}",
@@ -160,12 +159,9 @@ public class MatrixSessionSystemMessageService {
       return new MatrixCredentials(null, username, password);
     }
 
-    private String accessToken(
-        MatrixAccessTokenService matrixAccessTokenService,
-        MatrixSynapseService matrixSynapseService) {
+    private String accessToken(MatrixSynapseService matrixSynapseService) {
       if (isNotBlank(matrixUserId)) {
-        return matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
-            matrixUserId, "session-system-message");
+        return matrixSynapseService.loginAsUserAccessToken(matrixUserId);
       }
       return matrixSynapseService.loginUser(username, password);
     }

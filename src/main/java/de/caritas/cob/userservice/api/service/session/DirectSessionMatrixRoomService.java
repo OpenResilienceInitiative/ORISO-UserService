@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +25,6 @@ public class DirectSessionMatrixRoomService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionService sessionService;
   private final @NonNull UserHelper userHelper;
-  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
@@ -82,8 +80,7 @@ public class DirectSessionMatrixRoomService {
       sessionService.saveSession(session);
 
       var consultantToken =
-          matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
-              consultant.getMatrixUserId(), "direct-session-consultant-invite");
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
       if (consultantToken == null) {
         log.error(
             "Could not create Matrix token for consultant {} after creating room {} for session {}",
@@ -104,9 +101,7 @@ public class DirectSessionMatrixRoomService {
       }
 
       if (user.getMatrixUserId() != null) {
-        var userToken =
-            matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
-                user.getMatrixUserId(), "direct-session-user-join");
+        var userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
         if (userToken != null) {
           boolean joined = matrixSynapseService.joinRoom(roomId, userToken);
           if (joined) {
