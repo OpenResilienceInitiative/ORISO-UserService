@@ -23,6 +23,7 @@ import org.springframework.web.client.RestTemplate;
 class MatrixSynapseServiceTest {
 
   private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
+  private static final String LOGIN_URL = "https://matrix.example/_matrix/client/r0/login";
   private static final String ACCESS_TOKEN = "access-token";
 
   @Mock private MatrixConfig matrixConfig;
@@ -101,6 +102,27 @@ class MatrixSynapseServiceTest {
     verify(matrixLongPollRestTemplate)
         .exchange(eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void loginAsUserShouldEncodeMatrixUserIdPathSegment() {
+    var service = matrixSynapseService();
+    var matrixUserId = "@consultant/special:matrix.example";
+    var expectedPath = "/_synapse/admin/v1/users/%40consultant%2Fspecial%3Amatrix.example/login";
+    var adminLoginUrl = "https://matrix.example" + expectedPath;
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/login")).thenReturn(LOGIN_URL);
+    when(restTemplate.postForEntity(eq(LOGIN_URL), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "admin-token")));
+    when(matrixConfig.getApiUrl(expectedPath)).thenReturn(adminLoginUrl);
+    when(restTemplate.postForEntity(eq(adminLoginUrl), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "user-token")));
+
+    var result = service.loginAsUser(matrixUserId, 10_000);
+
+    assertThat(result).containsEntry("access_token", "user-token");
+    verify(matrixConfig).getApiUrl(expectedPath);
   }
 
   private MatrixSynapseService matrixSynapseService() {
