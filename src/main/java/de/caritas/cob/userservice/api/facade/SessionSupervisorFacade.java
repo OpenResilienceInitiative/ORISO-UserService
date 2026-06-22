@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -39,6 +40,7 @@ public class SessionSupervisorFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
 
@@ -131,7 +133,8 @@ public class SessionSupervisorFacade {
     }
 
     String consultantToken =
-        matrixSynapseService.loginAsUserAccessToken(addedByConsultant.getMatrixUserId());
+        matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+            addedByConsultant.getMatrixUserId(), "session-supervisor-added-by-consultant");
     if (consultantToken == null) {
       throw new InternalServerErrorException("Failed to create consultant Matrix token");
     }
@@ -171,7 +174,9 @@ public class SessionSupervisorFacade {
           matrixRoomId);
     }
 
-    String supervisorToken = matrixSynapseService.loginAsUserAccessToken(supervisorMatrixUserId);
+    String supervisorToken =
+        matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+            supervisorMatrixUserId, "session-supervisor-join");
     if (supervisorToken != null) {
       boolean joined = matrixSynapseService.joinRoom(matrixRoomId, supervisorToken);
       if (joined) {
@@ -246,7 +251,9 @@ public class SessionSupervisorFacade {
       if (supervisorMatrixUserId != null && !supervisorMatrixUserId.isEmpty()) {
         if (removedByConsultant.getMatrixUserId() != null) {
           String consultantToken =
-              matrixSynapseService.loginAsUserAccessToken(removedByConsultant.getMatrixUserId());
+              matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+                  removedByConsultant.getMatrixUserId(),
+                  "session-supervisor-removed-by-consultant");
           if (consultantToken != null) {
             boolean removed =
                 matrixSynapseService.removeUserFromRoom(

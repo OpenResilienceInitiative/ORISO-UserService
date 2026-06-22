@@ -12,6 +12,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKET_CHA
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
 import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -19,15 +20,22 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -35,7 +43,14 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -51,15 +66,21 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class AssignEnquiryFacadeTest {
   public static final long CURRENT_TENANT_ID = 1L;
+  private static final String USER_MATRIX_ID = "@user:matrix.local";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.local";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.local";
+  private static final String MATRIX_TOKEN = "matrix-token";
 
   @InjectMocks AssignEnquiryFacade assignEnquiryFacade;
   @Mock SessionService sessionService;
   @Mock RocketChatFacade rocketChatFacade;
+  @Mock IdentityClient identityClient;
 
   @Mock
   @SuppressWarnings("unused")
@@ -70,19 +91,42 @@ class AssignEnquiryFacadeTest {
   ConsultingTypeManager consultingTypeManager;
 
   @Mock SessionToConsultantVerifier sessionToConsultantVerifier;
-  @Mock Logger logger;
   @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
   @Mock TenantContextProvider tenantContextProvider;
   @Mock StatisticsService statisticsService;
+  @Mock EmailNotificationFacade emailNotificationFacade;
   @Mock HttpServletRequest httpServletRequest;
+  @Mock MatrixSynapseService matrixSynapseService;
+  @Mock ConsultantRepository consultantRepository;
+  @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  @Mock LiveEventNotificationService liveEventNotificationService;
+  @Mock EventNotificationService eventNotificationService;
+  @Mock MatrixAccessTokenService matrixAccessTokenService;
+  private ListAppender<ILoggingEvent> logAppender;
+  private User originalAnonymousUser;
+  private String originalAnonymousMatrixUserId;
+  private String originalSessionMatrixUserId;
+  private String originalU25MatrixUserId;
+  private String originalConsultantMatrixUserId;
 
   @BeforeEach
-  public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+  public void setup() throws Exception {
+    var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(LogService.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+    mockMatrixRoomCreation();
+    rememberOriginalStaticFixtureState();
+    ensureMatrixParticipants(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    ensureMatrixParticipants(U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    ensureMatrixParticipants(ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   @AfterEach
   public void tearDown() {
+    var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(LogService.class);
+    logger.detachAppender(logAppender);
+    restoreOriginalStaticFixtureState();
     TenantContext.clear();
   }
 
@@ -136,8 +180,7 @@ class AssignEnquiryFacadeTest {
     verify(sessionService, times(1))
         .updateConsultantAndStatusForSession(
             U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
-    verifyAsync(
-        (a) -> verify(logger, times(1)).error(anyString(), anyString(), anyString(), anyString()));
+    verifyAsync((a) -> assertThat(logAppender.list).anyMatch(this::isErrorLog));
   }
 
   @Test
@@ -151,8 +194,7 @@ class AssignEnquiryFacadeTest {
 
     verifyConsultantAndSessionHaveBeenChecked(
         U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verifyAsync(
-        (a) -> verify(logger, times(1)).error(anyString(), anyString(), anyString(), anyString()));
+    verifyAsync((a) -> assertThat(logAppender.list).anyMatch(this::isErrorLog));
     verify(sessionService, times(1))
         .updateConsultantAndStatusForSession(
             U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, IN_PROGRESS);
@@ -172,6 +214,7 @@ class AssignEnquiryFacadeTest {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("consultantRcId");
+    ensureMatrixParticipants(session, consultant);
     when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
         .thenReturn(
             asList(
@@ -207,6 +250,7 @@ class AssignEnquiryFacadeTest {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("newConsultantRcId");
+    ensureMatrixParticipants(session, consultant);
     when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
         .thenReturn(
             asList(
@@ -280,5 +324,70 @@ class AssignEnquiryFacadeTest {
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getStatus());
     verify(sessionService, times(1))
         .updateConsultantAndStatusForSession(ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, null, NEW);
+  }
+
+  private boolean isErrorLog(ILoggingEvent event) {
+    return Level.ERROR.equals(event.getLevel());
+  }
+
+  private void mockMatrixRoomCreation() throws Exception {
+    var roomResponse = new MatrixCreateRoomResponseDTO();
+    roomResponse.setRoomId(MATRIX_ROOM_ID);
+
+    lenient()
+        .when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(roomResponse));
+    lenient()
+        .when(
+            matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+                anyString(), anyString()))
+        .thenReturn(MATRIX_TOKEN);
+    lenient()
+        .when(matrixSynapseService.inviteUserToRoom(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
+    lenient().when(matrixSynapseService.joinRoom(anyString(), anyString())).thenReturn(true);
+  }
+
+  private void ensureMatrixParticipants(Session session, Consultant consultant) {
+    if (session.getUser() == null) {
+      session.setUser(
+          User.builder()
+              .userId("user-id")
+              .username("user")
+              .email("user@example.org")
+              .languageFormal(false)
+              .build());
+    }
+    session.getUser().setMatrixUserId(USER_MATRIX_ID);
+    consultant.setMatrixUserId(CONSULTANT_MATRIX_ID);
+  }
+
+  private void rememberOriginalStaticFixtureState() {
+    originalAnonymousUser = ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getUser();
+    originalAnonymousMatrixUserId =
+        originalAnonymousUser == null ? null : originalAnonymousUser.getMatrixUserId();
+    originalSessionMatrixUserId =
+        SESSION_WITHOUT_CONSULTANT.getUser() == null
+            ? null
+            : SESSION_WITHOUT_CONSULTANT.getUser().getMatrixUserId();
+    originalU25MatrixUserId =
+        U25_SESSION_WITHOUT_CONSULTANT.getUser() == null
+            ? null
+            : U25_SESSION_WITHOUT_CONSULTANT.getUser().getMatrixUserId();
+    originalConsultantMatrixUserId = CONSULTANT_WITH_AGENCY.getMatrixUserId();
+  }
+
+  private void restoreOriginalStaticFixtureState() {
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(originalAnonymousUser);
+    if (originalAnonymousUser != null) {
+      originalAnonymousUser.setMatrixUserId(originalAnonymousMatrixUserId);
+    }
+    if (SESSION_WITHOUT_CONSULTANT.getUser() != null) {
+      SESSION_WITHOUT_CONSULTANT.getUser().setMatrixUserId(originalSessionMatrixUserId);
+    }
+    if (U25_SESSION_WITHOUT_CONSULTANT.getUser() != null) {
+      U25_SESSION_WITHOUT_CONSULTANT.getUser().setMatrixUserId(originalU25MatrixUserId);
+    }
+    CONSULTANT_WITH_AGENCY.setMatrixUserId(originalConsultantMatrixUserId);
   }
 }

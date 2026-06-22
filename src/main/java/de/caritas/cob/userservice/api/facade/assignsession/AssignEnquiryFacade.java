@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -62,6 +63,7 @@ public class AssignEnquiryFacade {
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
 
   /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
@@ -264,7 +266,8 @@ public class AssignEnquiryFacade {
 
             // Login consultant and join room
             String consultantToken =
-                matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+                matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+                    consultant.getMatrixUserId(), "assign-enquiry-consultant-join-existing-room");
 
             if (isBlank(consultantToken)) {
               log.warn(
@@ -431,7 +434,8 @@ public class AssignEnquiryFacade {
       String roomId = matrixResponse.getBody().getRoomId();
 
       String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+          matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+              consultant.getMatrixUserId(), "assign-enquiry-consultant-created-room");
 
       if (isBlank(consultantToken)) {
         log.error(
@@ -445,7 +449,8 @@ public class AssignEnquiryFacade {
           roomId, session.getUser().getMatrixUserId(), consultantToken);
 
       String userToken =
-          matrixSynapseService.loginAsUserAccessToken(session.getUser().getMatrixUserId());
+          matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+              session.getUser().getMatrixUserId(), "assign-enquiry-user-join-created-room");
       if (isBlank(userToken)) {
         log.error(
             "Could not mint user Matrix token after inviting user {} to room {}",

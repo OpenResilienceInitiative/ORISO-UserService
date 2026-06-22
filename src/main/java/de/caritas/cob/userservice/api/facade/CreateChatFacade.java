@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixAccessTokenService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.function.BiFunction;
@@ -49,6 +50,7 @@ public class CreateChatFacade {
   private final @NonNull AgencyService agencyService;
   private final @NonNull ChatConverter chatConverter;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixAccessTokenService matrixAccessTokenService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
@@ -278,7 +280,8 @@ public class CreateChatFacade {
 
       // Get consultant token for inviting others
       String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+          matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+              consultant.getMatrixUserId(), "group-chat-creator-invite");
       if (consultantToken == null) {
         throw new InternalServerErrorException("Could not create Matrix token for consultant");
       }
@@ -305,7 +308,8 @@ public class CreateChatFacade {
 
           // Auto-join the participant
           String participantToken =
-              matrixSynapseService.loginAsUserAccessToken(participant.getMatrixUserId());
+              matrixAccessTokenService.createServerAccessTokenForMatrixUserId(
+                  participant.getMatrixUserId(), "group-chat-participant-join");
           if (participantToken != null) {
             matrixSynapseService.joinRoom(matrixRoomId, participantToken);
             log.info("Consultant {} joined group chat room: {}", participantId, matrixRoomId);
