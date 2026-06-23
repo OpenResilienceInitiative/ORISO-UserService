@@ -174,11 +174,19 @@ class MatrixSynapseServiceTest {
   }
 
   private void stubAdminLogin() {
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
+    when(matrixConfig.getApiUrl(any(String.class)))
+        .thenAnswer(
+            invocation -> "https://matrix.example.com" + invocation.getArgument(0, String.class));
     when(restTemplate.postForEntity(
             eq("https://matrix.example.com/_matrix/client/r0/login"),
             any(HttpEntity.class),
             eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", ADMIN_TOKEN)));
+  }
+
+  @Test
   void loginAsUserShouldEncodeMatrixUserIdOnce() {
     var expectedUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login";
     stubAdminLogin(expectedUrl);
