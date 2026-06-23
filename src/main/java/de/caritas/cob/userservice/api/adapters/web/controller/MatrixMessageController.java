@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +34,7 @@ public class MatrixMessageController {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
-  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
+  private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /**
    * Mint a short-lived Matrix access token for the currently authenticated platform user.
@@ -136,13 +137,15 @@ public class MatrixMessageController {
       var response = matrixSynapseService.sendMessage(roomId, message, accessToken);
       Object eventId = response != null ? response.get("event_id") : null;
 
-      redisMessageMirrorService.mirrorOutgoingMessage(
-          sessionId,
-          roomId,
-          keycloakUsername,
-          isConsultant,
-          message,
-          eventId == null ? null : String.valueOf(eventId));
+      redisMessageMirrorService.ifPresent(
+          mirror ->
+              mirror.mirrorOutgoingMessage(
+                  sessionId,
+                  roomId,
+                  keycloakUsername,
+                  isConsultant,
+                  message,
+                  eventId == null ? null : String.valueOf(eventId)));
 
       log.info("Message sent to room {} by {}", roomId, keycloakUsername);
       return ResponseEntity.ok(Map.of("success", true));

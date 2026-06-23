@@ -31,7 +31,7 @@ public class MatrixEventListenerService {
   private final @NonNull SessionService sessionService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
-  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
+  private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
@@ -314,13 +314,15 @@ public class MatrixEventListenerService {
     // Debug mirror: capture actual Matrix timeline messages so Redis Commander can show them.
     // This is feature-flagged/TTL-bound in RedisMessageMirrorService.
     Long sessionId = roomToSessionMap.get(roomId);
-    redisMessageMirrorService.mirrorOutgoingMessage(
-        sessionId,
-        roomId,
-        senderId,
-        senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
-        messageBody,
-        event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null);
+    redisMessageMirrorService.ifPresent(
+        mirror ->
+            mirror.mirrorOutgoingMessage(
+                sessionId,
+                roomId,
+                senderId,
+                senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
+                messageBody,
+                event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
