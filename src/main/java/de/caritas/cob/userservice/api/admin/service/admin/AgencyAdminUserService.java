@@ -13,10 +13,13 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.AbstractMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +42,7 @@ public class AgencyAdminUserService {
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull AgencyService agencyService;
   private final @NonNull TenantService tenantService;
+  private final @NonNull ConsultantRepository consultantRepository;
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
     final Admin newAdmin = createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
@@ -81,8 +85,18 @@ public class AgencyAdminUserService {
 
     var agencies = agencyService.getAgenciesWithoutCaching(agencyIds);
 
+    Set<String> idsWithConsultantIdentity =
+        adminIds.isEmpty()
+            ? Collections.emptySet()
+            : consultantRepository.findActiveIdsByIdIn(adminIds);
+
     return userServiceMapper.mapOfAdmin(
-        adminsPage, fullAdmins, agencies, agenciesOfAdmin, tenantIdsToNameMap);
+        adminsPage,
+        fullAdmins,
+        agencies,
+        agenciesOfAdmin,
+        tenantIdsToNameMap,
+        idsWithConsultantIdentity);
   }
 
   public AdminResponseDTO patchAgencyAdmin(String adminId, PatchAdminDTO patchAdminDTO) {

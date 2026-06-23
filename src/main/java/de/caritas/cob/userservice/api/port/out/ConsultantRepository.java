@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
@@ -34,6 +35,9 @@ public interface ConsultantRepository
   List<Consultant> findByDeleteDateIsNull();
 
   List<Consultant> findAllByIdIn(List<String> ids);
+
+  @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")
+  Set<String> findActiveIdsByIdIn(@Param("ids") Collection<String> ids);
 
   @Query(
       value =

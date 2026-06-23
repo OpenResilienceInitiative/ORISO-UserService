@@ -27,6 +27,8 @@ class AccountManagerTest {
 
   @Mock ConsultantRepository consultantRepository;
 
+  @Mock de.caritas.cob.userservice.api.port.out.AdminRepository adminRepository;
+
   @Mock ConsultantAgencyRepository consultantAgencyRepository;
 
   @Mock UserServiceMapper userServiceMapper;
@@ -79,7 +81,8 @@ class AccountManagerTest {
             Mockito.anyList(),
             Mockito.eq(List.of()),
             Mockito.anyList(),
-            Mockito.anyMap());
+            Mockito.anyMap(),
+            Mockito.any());
   }
 
   @Test

@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
@@ -44,6 +45,8 @@ import org.springframework.web.client.RestClientException;
 public class AccountManager implements AccountManaging {
 
   private final ConsultantRepository consultantRepository;
+
+  private final AdminRepository adminRepository;
 
   private final UserRepository userRepository;
 
@@ -148,8 +151,18 @@ public class AccountManager implements AccountManaging {
                     },
                     (existing, replacement) -> existing));
 
+    var consultantIdsWithAdminIdentity =
+        consultantIds.isEmpty()
+            ? java.util.Collections.<String>emptySet()
+            : adminRepository.findExistingIdsByIdIn(consultantIds);
+
     return userServiceMapper.mapOf(
-        consultantPage, fullConsultants, agencies, consultingAgencies, tenantIdsToNameMap);
+        consultantPage,
+        fullConsultants,
+        agencies,
+        consultingAgencies,
+        tenantIdsToNameMap,
+        consultantIdsWithAdminIdentity);
   }
 
   @Override
