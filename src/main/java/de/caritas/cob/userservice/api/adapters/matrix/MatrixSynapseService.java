@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
@@ -264,9 +265,7 @@ public class MatrixSynapseService {
     }
 
     try {
-      String encodedMatrixUserId = encodeMatrixUserIdForAdminPath(matrixUserId);
-      String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
+      URI uri = adminLoginAsUserUri(matrixUserId);
 
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -278,7 +277,7 @@ public class MatrixSynapseService {
 
       HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
+      var response = restTemplate.postForEntity(uri, request, java.util.Map.class);
 
       @SuppressWarnings("unchecked")
       java.util.Map<String, Object> responseBody =
@@ -309,6 +308,13 @@ public class MatrixSynapseService {
     } catch (IllegalArgumentException ex) {
       return UriUtils.encode(matrixUserId, StandardCharsets.UTF_8);
     }
+  }
+
+  private URI adminLoginAsUserUri(String matrixUserId) {
+    String encodedMatrixUserId = encodeMatrixUserIdForAdminPath(matrixUserId);
+    String url =
+        matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
+    return URI.create(url);
   }
 
   public String loginAsUserAccessToken(String matrixUserId) {
@@ -526,10 +532,7 @@ public class MatrixSynapseService {
     }
 
     try {
-      String encodedUserId =
-          java.net.URLEncoder.encode(matrixUserId, StandardCharsets.UTF_8).replace("+", "%20");
-      String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedUserId));
+      URI uri = adminLoginAsUserUri(matrixUserId);
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -537,7 +540,7 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.postForEntity(
-              url, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+              uri, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("access_token")) {
         String accessToken = (String) response.getBody().get("access_token");
