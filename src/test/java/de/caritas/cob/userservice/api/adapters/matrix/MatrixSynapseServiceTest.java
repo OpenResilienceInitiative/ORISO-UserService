@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -30,6 +31,9 @@ class MatrixSynapseServiceTest {
   private static final String IMPERSONATION_TOKEN = "syt_admin_impersonation_token";
   private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
   private static final String ACCESS_TOKEN = "access-token";
+  private static final String MATRIX_BASE_URL = "https://matrix.example";
+  private static final String MATRIX_ADMIN_TOKEN = "admin-token";
+  private static final String MATRIX_USER_TOKEN = "user-token";
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;
@@ -175,6 +179,45 @@ class MatrixSynapseServiceTest {
             any(HttpEntity.class),
             eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", ADMIN_TOKEN)));
+  void loginAsUserShouldEncodeMatrixUserIdOnce() {
+    var expectedUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login";
+    stubAdminLogin(expectedUrl);
+    var service = matrixSynapseService();
+
+    var accessToken = service.loginAsUserAccessToken("@alice:example.org");
+
+    assertThat(accessToken).isEqualTo(MATRIX_USER_TOKEN);
+    verify(restTemplate).postForEntity(eq(expectedUrl), any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
+  void loginAsUserShouldNotDoubleEncodeMatrixUserId() {
+    var expectedUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login";
+    stubAdminLogin(expectedUrl);
+    var service = matrixSynapseService();
+
+    var accessToken = service.loginAsUserAccessToken("%40alice%3Aexample.org");
+
+    assertThat(accessToken).isEqualTo(MATRIX_USER_TOKEN);
+    verify(restTemplate).postForEntity(eq(expectedUrl), any(HttpEntity.class), eq(Map.class));
+    verify(restTemplate, times(0))
+        .postForEntity(
+            eq(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%2540alice%253Aexample.org/login"),
+            any(HttpEntity.class),
+            eq(Map.class));
+  }
+
+  private void stubAdminLogin(String expectedLoginAsUserUrl) {
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
+    when(matrixConfig.getApiUrl(any(String.class)))
+        .thenAnswer(invocation -> MATRIX_BASE_URL + invocation.getArgument(0, String.class));
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)));
+    when(restTemplate.postForEntity(
+            eq(expectedLoginAsUserUrl), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
   }
 
   private MatrixSynapseService matrixSynapseService() {
