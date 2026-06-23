@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.net.URI;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -188,34 +189,58 @@ class MatrixSynapseServiceTest {
 
   @Test
   void loginAsUserShouldEncodeMatrixUserIdOnce() {
-    var expectedUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login";
-    stubAdminLogin(expectedUrl);
+    var expectedUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminLogin(expectedUri);
     var service = matrixSynapseService();
 
     var accessToken = service.loginAsUserAccessToken("@alice:example.org");
 
     assertThat(accessToken).isEqualTo(MATRIX_USER_TOKEN);
-    verify(restTemplate).postForEntity(eq(expectedUrl), any(HttpEntity.class), eq(Map.class));
+    verify(restTemplate).postForEntity(eq(expectedUri), any(HttpEntity.class), eq(Map.class));
   }
 
   @Test
   void loginAsUserShouldNotDoubleEncodeMatrixUserId() {
-    var expectedUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login";
-    stubAdminLogin(expectedUrl);
+    var expectedUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminLogin(expectedUri);
     var service = matrixSynapseService();
 
     var accessToken = service.loginAsUserAccessToken("%40alice%3Aexample.org");
 
     assertThat(accessToken).isEqualTo(MATRIX_USER_TOKEN);
-    verify(restTemplate).postForEntity(eq(expectedUrl), any(HttpEntity.class), eq(Map.class));
+    verify(restTemplate).postForEntity(eq(expectedUri), any(HttpEntity.class), eq(Map.class));
     verify(restTemplate, times(0))
         .postForEntity(
-            eq(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%2540alice%253Aexample.org/login"),
+            eq(
+                URI.create(
+                    MATRIX_BASE_URL + "/_synapse/admin/v1/users/%2540alice%253Aexample.org/login")),
             any(HttpEntity.class),
             eq(Map.class));
   }
 
-  private void stubAdminLogin(String expectedLoginAsUserUrl) {
+  @Test
+  void loginUserViaAdminShouldNotDoubleEncodeMatrixUserId() {
+    var expectedUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40alice%3Aexample.org/login");
+    stubAdminLogin(expectedUri);
+    var service = matrixSynapseService();
+
+    var accessToken = service.loginUserViaAdmin("@alice:example.org");
+
+    assertThat(accessToken).isEqualTo(MATRIX_USER_TOKEN);
+    verify(restTemplate).postForEntity(eq(expectedUri), any(HttpEntity.class), eq(Map.class));
+    verify(restTemplate, times(0))
+        .postForEntity(
+            eq(
+                URI.create(
+                    MATRIX_BASE_URL + "/_synapse/admin/v1/users/%2540alice%253Aexample.org/login")),
+            any(HttpEntity.class),
+            eq(Map.class));
+  }
+
+  private void stubAdminLogin(URI expectedLoginAsUserUri) {
     when(matrixConfig.getAdminUsername()).thenReturn("admin");
     when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
     when(matrixConfig.getApiUrl(any(String.class)))
@@ -224,7 +249,7 @@ class MatrixSynapseServiceTest {
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)));
     when(restTemplate.postForEntity(
-            eq(expectedLoginAsUserUrl), any(HttpEntity.class), eq(Map.class)))
+            eq(expectedLoginAsUserUri), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
   }
 
