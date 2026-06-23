@@ -90,7 +90,7 @@ class MatrixSynapseServiceTest {
         .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     assertThat(urlCaptor.getValue()).startsWith(SYNC_URL + "?timeout=30000");
     assertThat(urlCaptor.getValue()).contains("&filter=");
-    assertThat(urlCaptor.getValue()).contains("%21room%3Aexample.org");
+    assertThat(urlCaptor.getValue()).contains("%22!room:example.org%22");
     verifyNoInteractions(restTemplate);
   }
 
@@ -98,19 +98,23 @@ class MatrixSynapseServiceTest {
   void getRoomMessagesShouldUseDedicatedLongPollRestTemplate() {
     var service = matrixSynapseService();
     var roomId = "!room:example.org";
-    var messagesUrl =
-        "https://matrix.example/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100";
-    when(matrixConfig.getApiUrl("/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100"))
-        .thenReturn(messagesUrl);
+    when(matrixConfig.getApiUrl(any(String.class)))
+        .thenAnswer(
+            invocation -> "https://matrix.example" + invocation.getArgument(0, String.class));
     when(matrixLongPollRestTemplate.exchange(
-            eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("chunk", java.util.List.of())));
+    var urlCaptor = ArgumentCaptor.forClass(String.class);
 
     var result = service.getRoomMessages(roomId, ACCESS_TOKEN);
 
     assertThat(result).isNotNull().isEmpty();
     verify(matrixLongPollRestTemplate)
-        .exchange(eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+        .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    assertThat(urlCaptor.getValue())
+        .startsWith("https://matrix.example/_matrix/client/r0/rooms/" + roomId + "/messages?");
+    assertThat(urlCaptor.getValue()).contains("dir=b");
+    assertThat(urlCaptor.getValue()).contains("limit=100");
     verifyNoInteractions(restTemplate);
   }
 

@@ -44,6 +44,9 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
+  private static final String ENDPOINT_SEND_MESSAGE =
+      "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
+  private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
@@ -397,7 +400,8 @@ public class MatrixSynapseService {
 
       // Update display name using Synapse ADMIN v2 API
       String url =
-          matrixConfig.getApiUrl(ENDPOINT_UPDATE_USER_ADMIN.replace("{userId}", matrixUserId));
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -440,7 +444,8 @@ public class MatrixSynapseService {
       }
 
       String url =
-          matrixConfig.getApiUrl(ENDPOINT_DEACTIVATE_USER.replace("{userId}", matrixUserId));
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_DEACTIVATE_USER, java.util.Map.of("userId", matrixUserId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -478,7 +483,9 @@ public class MatrixSynapseService {
         return false;
       }
 
-      String url = matrixConfig.getApiUrl(ENDPOINT_PURGE_ROOM.replace("{roomId}", matrixRoomId));
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PURGE_ROOM, java.util.Map.of("roomId", matrixRoomId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -704,8 +711,10 @@ public class MatrixSynapseService {
 
       String txnId = java.util.UUID.randomUUID().toString();
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_MESSAGE,
+              java.util.Map.of("roomId", roomId, "txnId", txnId));
 
       log.info("Sending message to Matrix room: {}", roomId);
 
@@ -736,8 +745,11 @@ public class MatrixSynapseService {
       HttpEntity<Void> request = new HttpEntity<>(headers);
 
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100");
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ROOM_MESSAGES,
+              java.util.Map.of("roomId", roomId),
+              java.util.Map.of("dir", "b", "limit", 100));
 
       log.info("Getting messages from Matrix room: {}", roomId);
 
@@ -785,19 +797,16 @@ public class MatrixSynapseService {
       // Get the last sync token if available
       String since = syncTokenCache.getOrDefault(username, "");
 
-      // Build sync URL with room filter
-      String filter =
-          java.net.URLEncoder.encode(
-              "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}",
-              java.nio.charset.StandardCharsets.UTF_8);
+      String filter = "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}";
+      var queryParams = new java.util.LinkedHashMap<String, Object>();
+      queryParams.put("timeout", timeout);
+      if (!since.isEmpty()) {
+        queryParams.put("since", since);
+      }
+      queryParams.put("filter", filter);
 
       String url =
-          matrixConfig.getApiUrl(ENDPOINT_SYNC)
-              + "?timeout="
-              + timeout
-              + (since.isEmpty() ? "" : "&since=" + since)
-              + "&filter="
-              + filter;
+          MatrixUrlBuilder.buildUrl(matrixConfig, ENDPOINT_SYNC, java.util.Map.of(), queryParams);
 
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
@@ -1190,7 +1199,9 @@ public class MatrixSynapseService {
     }
 
     try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_PRESENCE.replace("{userId}", matrixUserId));
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PRESENCE, java.util.Map.of("userId", matrixUserId));
       HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));
 
       var response =
