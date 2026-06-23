@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeletionPauseRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
@@ -24,6 +25,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
@@ -31,10 +33,12 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
+import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import java.net.URLDecoder;
@@ -48,6 +52,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -70,6 +75,8 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
+  private final @NonNull UserIdentitiesService userIdentitiesService;
 
   /**
    * Creates the root hal based navigation entity.
@@ -119,6 +126,54 @@ public class UserAdminController implements UseradminApi {
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
 
     return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Grants an existing admin user a full functional consultant identity (multi-identity
+   * foundation). Mirrors {@link #createConsultant} and returns the created consultant identity.
+   *
+   * <p>Mapped to both {@code /useradmin/admins/{adminId}/grant-consultant-identity} (direct) and
+   * the {@code /service}-prefixed variant (via API gateway) so internal service calls work without
+   * relying on the gateway to strip the {@code /service} prefix.
+   *
+   * @param adminId the Keycloak id of the existing admin user (required)
+   * @param grantConsultantIdentityDTO the consultant-specific attributes (required)
+   * @return {@link ConsultantAdminResponseDTO}
+   */
+  @PostMapping(
+      value = {
+        "/useradmin/admins/{adminId}/grant-consultant-identity",
+        "/service/useradmin/admins/{adminId}/grant-consultant-identity"
+      },
+      produces = "application/hal+json",
+      consumes = "application/json")
+  public ResponseEntity<ConsultantAdminResponseDTO> grantConsultantIdentity(
+      @PathVariable String adminId,
+      @Valid @RequestBody GrantConsultantIdentityDTO grantConsultantIdentityDTO) {
+    var consultant =
+        grantConsultantIdentityService.grantConsultantIdentityToAdmin(
+            adminId, grantConsultantIdentityDTO);
+    return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Returns which platform identities the given user currently holds (admin row, non-deleted
+   * consultant row and Keycloak realm roles). Data source for the admin-panel "has rights
+   * elsewhere" badge.
+   *
+   * <p>Mapped to both {@code /useradmin/users/{userId}/identities} (direct) and the {@code
+   * /service}-prefixed variant (via API gateway).
+   *
+   * @param userId the Keycloak id of the user (required)
+   * @return {@link UserIdentitiesDTO}
+   */
+  @GetMapping(
+      value = {
+        "/useradmin/users/{userId}/identities",
+        "/service/useradmin/users/{userId}/identities"
+      })
+  public ResponseEntity<UserIdentitiesDTO> getUserIdentities(@PathVariable String userId) {
+    return ResponseEntity.ok(this.userIdentitiesService.getUserIdentities(userId));
   }
 
   /**
