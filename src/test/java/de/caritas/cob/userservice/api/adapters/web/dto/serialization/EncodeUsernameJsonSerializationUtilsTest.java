@@ -12,11 +12,13 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,7 +37,13 @@ public class EncodeUsernameJsonSerializationUtilsTest {
 
   @BeforeEach
   public void setup() {
+    PlainCredentialsHolder.clear();
     objectMapper = new ObjectMapper();
+  }
+
+  @AfterEach
+  public void tearDown() {
+    PlainCredentialsHolder.clear();
   }
 
   @Test
@@ -45,6 +53,18 @@ public class EncodeUsernameJsonSerializationUtilsTest {
     String json = "{\"username:\":\"" + USERNAME_DECODED + "\"}";
     String result = deserializeUsername(json);
     assertEquals(USERNAME_ENCODED, result);
+  }
+
+  @Test
+  public void deserialize_Should_ClearPlainPasswordFromPlainCredentialsHolder() throws IOException {
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    PlainCredentialsHolder.set(null, "platform-password");
+
+    String json = "{\"username:\":\"" + USERNAME_DECODED + "\"}";
+    deserializeUsername(json);
+
+    assertEquals(USERNAME_DECODED, PlainCredentialsHolder.get().getUsername());
+    assertNull(PlainCredentialsHolder.get().getPassword());
   }
 
   @Test

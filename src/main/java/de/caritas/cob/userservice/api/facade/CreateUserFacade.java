@@ -71,9 +71,8 @@ public class CreateUserFacade {
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
     log.info(
-        "MATRIX: Plain credentials from ThreadLocal: username='{}', password exists={}",
-        plainCreds != null ? plainCreds.getUsername() : "NULL",
-        plainCreds != null && plainCreds.getPassword() != null);
+        "MATRIX: Plain username from ThreadLocal is available={}",
+        plainCreds != null && plainCreds.getUsername() != null);
 
     userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
     userVerifier.checkIfUsernameIsAvailable(userDTO);
@@ -94,11 +93,10 @@ public class CreateUserFacade {
                 plainCreds.getUsername(), matrixPassword, plainCreds.getUsername());
 
         log.info(
-            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}, body={}",
+            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
             plainCreds.getUsername(),
             matrixResponse.getStatusCode(),
-            matrixResponse.getBody() != null,
-            matrixResponse.getBody());
+            matrixResponse.getBody() != null);
 
         if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
           user.setMatrixUserId(matrixResponse.getBody().getUserId());

@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
@@ -242,8 +243,9 @@ public class MatrixSynapseService {
     }
 
     try {
+      String encodedMatrixUserId = encodeMatrixUserIdForAdminPath(matrixUserId);
       String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
+          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
 
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -276,6 +278,15 @@ public class MatrixSynapseService {
           matrixUserId,
           ex.getMessage());
       return null;
+    }
+  }
+
+  private static String encodeMatrixUserIdForAdminPath(String matrixUserId) {
+    try {
+      return UriUtils.encode(
+          UriUtils.decode(matrixUserId, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException ex) {
+      return UriUtils.encode(matrixUserId, StandardCharsets.UTF_8);
     }
   }
 
