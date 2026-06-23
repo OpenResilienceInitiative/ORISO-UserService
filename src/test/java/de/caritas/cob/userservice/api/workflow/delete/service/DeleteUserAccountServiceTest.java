@@ -5,6 +5,7 @@ import static java.util.Collections.singletonList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,11 +21,14 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteRocketChatAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteRocketChatConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -44,7 +48,23 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private WorkflowErrorMailService workflowErrorMailService;
 
+  @Mock private DeletionLifecycleService deletionLifecycleService;
+
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
+
+  @BeforeEach
+  public void setupLifecycleMocks() {
+    lenient()
+        .when(deletionLifecycleService.normalizeUserLifecycle(any(User.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    lenient().when(deletionLifecycleService.isReadyForHardDelete(any(User.class))).thenReturn(true);
+    lenient()
+        .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
+        .thenReturn(true);
+  }
 
   @Test
   public void deleteUserAccounts_Should_notPerformAnyDeletion_When_noUserAccountIsMarkedDeleted() {
@@ -64,6 +84,8 @@ public class DeleteUserAccountServiceTest {
     this.deleteUserAccountService.deleteUserAccounts();
 
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
+    verify(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class), times(1))
+        .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verifyNoMoreInteractions(this.workflowErrorMailService);
@@ -83,6 +105,8 @@ public class DeleteUserAccountServiceTest {
 
     verify(this.actionsRegistry, times(1))
         .buildContainerForType(ConsultantDeletionWorkflowDTO.class);
+    verify(this.commandMockProvider.getActionMock(DeleteMatrixConsultantAction.class), times(1))
+        .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseConsultantAction.class), times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
     verifyNoMoreInteractions(this.workflowErrorMailService);

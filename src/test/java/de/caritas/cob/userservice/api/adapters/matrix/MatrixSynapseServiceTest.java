@@ -17,12 +17,18 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixSynapseServiceTest {
 
+  private static final String MATRIX_USER_ID = "@seeker:matrix.example.com";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.com";
+  private static final String ADMIN_TOKEN = "admin-token";
+  private static final String IMPERSONATION_TOKEN = "syt_admin_impersonation_token";
   private static final String SYNC_URL = "https://matrix.example/_matrix/client/r0/sync";
   private static final String ACCESS_TOKEN = "access-token";
   private static final String MATRIX_BASE_URL = "https://matrix.example";
@@ -105,6 +111,79 @@ class MatrixSynapseServiceTest {
     verify(matrixLongPollRestTemplate)
         .exchange(eq(messagesUrl), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void deactivateUserShouldReturnTrueWhenSynapseAdminApiSucceeds() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq("https://matrix.example.com/_synapse/admin/v1/deactivate/" + MATRIX_USER_ID),
+            eq(HttpMethod.POST),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenReturn(ResponseEntity.ok(""));
+
+    assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
+  }
+
+  @Test
+  void deactivateUserShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq("https://matrix.example.com/_synapse/admin/v1/deactivate/" + MATRIX_USER_ID),
+            eq(HttpMethod.POST),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isFalse();
+  }
+
+  @Test
+  void deactivateUserShouldReturnFalseWhenAdminTokenMissing() {
+    when(matrixConfig.getAdminUsername()).thenReturn("");
+
+    assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isFalse();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void purgeRoomShouldReturnTrueWhenSynapseAdminApiSucceeds() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq("https://matrix.example.com/_synapse/admin/v2/rooms/" + MATRIX_ROOM_ID),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenReturn(ResponseEntity.ok(""));
+
+    assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID)).isTrue();
+  }
+
+  @Test
+  void purgeRoomShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq("https://matrix.example.com/_synapse/admin/v2/rooms/" + MATRIX_ROOM_ID),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID)).isFalse();
+  }
+
+  private void stubAdminLogin() {
+    when(matrixConfig.getAdminUsername()).thenReturn("admin");
+    when(matrixConfig.getAdminPassword()).thenReturn("admin-password");
+    when(matrixConfig.getApiUrl(any(String.class)))
+        .thenAnswer(
+            invocation -> "https://matrix.example.com" + invocation.getArgument(0, String.class));
+    when(restTemplate.postForEntity(
+            eq("https://matrix.example.com/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", ADMIN_TOKEN)));
   }
 
   @Test
