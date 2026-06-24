@@ -21,18 +21,13 @@ final class MatrixUrlBuilder {
       String endpoint,
       Map<String, ?> uriVariables,
       Map<String, ?> queryParams) {
-    String url =
-        UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
-            .buildAndExpand(uriVariables)
-            .encode()
-            .toUriString();
-    var builder = UriComponentsBuilder.fromUriString(url);
+    var builder = UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint));
     queryParams.forEach(
         (name, value) -> {
           if (value != null) {
             builder.queryParam(name, value);
           }
         });
-    return builder.build().encode().toUriString();
+    return builder.buildAndExpand(uriVariables).encode().toUriString();
   }
 }
