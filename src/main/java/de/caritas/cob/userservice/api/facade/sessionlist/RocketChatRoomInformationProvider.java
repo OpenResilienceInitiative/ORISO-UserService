@@ -1,24 +1,42 @@
 package de.caritas.cob.userservice.api.facade.sessionlist;
 
 import static java.util.Collections.emptyList;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import static java.util.Collections.emptyMap;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import static java.util.Objects.nonNull;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import static java.util.Objects.requireNonNull;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsLastMessageDTO;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.Date;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.List;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.Map;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.stream.Collectors;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.extern.slf4j.Slf4j;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.stereotype.Component;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 
 @Slf4j
 @Component
@@ -194,7 +212,7 @@ public class RocketChatRoomInformationProvider {
     if (matrixUserId == null || !matrixUserId.startsWith("@")) {
       return null;
     }
-    return matrixUserId.substring(1).split(":")[0];
+    return MatrixIds.localpart(matrixUserId);
   }
 
   private Map<String, Boolean> buildMessagesWithReadInfo(

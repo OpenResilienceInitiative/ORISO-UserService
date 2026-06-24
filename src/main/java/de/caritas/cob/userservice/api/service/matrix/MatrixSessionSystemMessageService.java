@@ -1,21 +1,36 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.Optional;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.NonNull;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.RequiredArgsConstructor;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.extern.slf4j.Slf4j;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.apache.commons.lang3.StringUtils;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.stereotype.Service;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 
 /** Posts in-room system messages to Matrix sessions (e.g. user left the chat). */
 @Service
@@ -102,7 +117,7 @@ public class MatrixSessionSystemMessageService {
 
   private String extractMatrixLocalpart(String matrixUserId) {
     if (matrixUserId.startsWith("@")) {
-      return matrixUserId.substring(1).split(":")[0];
+      return MatrixIds.localpart(matrixUserId);
     }
     return matrixUserId;
   }
