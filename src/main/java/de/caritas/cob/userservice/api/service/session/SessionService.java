@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
@@ -18,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -95,6 +97,23 @@ public class SessionService {
    */
   public Optional<Session> getSession(Long sessionId) {
     return sessionRepository.findById(sessionId);
+  }
+
+  /**
+   * Returns the session only if the authenticated user is allowed to access it.
+   *
+   * @param sessionId the session ID
+   * @param authenticatedUser the authenticated caller
+   * @return the authorized {@link Session}
+   */
+  public Session assertUserHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
+    var session =
+        getSession(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+
+    checkUserPermissionForSession(session, authenticatedUser.getUserId(), roles);
+    return session;
   }
 
   /**
