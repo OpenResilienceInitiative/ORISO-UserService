@@ -17,4 +17,4 @@ runs:
 
   - name: Build with Maven Wrapper
     shell: bash
-    run: ./mvnw -B package
+    run: ./mvnw -B verify
