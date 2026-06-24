@@ -18,6 +18,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -25,6 +28,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 public class ConsultantAdminFilterServiceBase {
 
   @Autowired private ConsultantAdminFilterService consultantAdminFilterService;
+
+  @Autowired private ConsultantRepository consultantRepository;
 
   @MockBean
   @SuppressWarnings("unused")
@@ -143,6 +148,33 @@ public class ConsultantAdminFilterServiceBase {
         .forEach(
             consultant ->
                 assertThat(consultant.getEmbedded().getEmail(), is("addiction@caritas.de")));
+  }
+
+  public void findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion() {
+    var deletedConsultant =
+        this.consultantRepository
+            .findByEmailAndDeleteDateIsNull("addiction@consultant.de")
+            .orElseThrow();
+    var originalDeleteDate = deletedConsultant.getDeleteDate();
+    var originalStatus = deletedConsultant.getStatus();
+
+    try {
+      deletedConsultant.setDeleteDate(LocalDateTime.now());
+      deletedConsultant.setStatus(ConsultantStatus.IN_DELETION);
+      this.consultantRepository.save(deletedConsultant);
+
+      var consultantFilter = new ConsultantFilter().email("addiction@consultant.de");
+
+      ConsultantSearchResultDTO result =
+          this.consultantAdminFilterService.findFilteredConsultants(
+              1, 100, consultantFilter, new Sort());
+
+      assertThat(result.getEmbedded(), hasSize(0));
+    } finally {
+      deletedConsultant.setDeleteDate(originalDeleteDate);
+      deletedConsultant.setStatus(originalStatus);
+      this.consultantRepository.save(deletedConsultant);
+    }
   }
 
   public void findFilteredConsultants_Should_returnResultWithSelfLink() {

@@ -18,6 +18,7 @@ public class ConsultantFilterSpecification {
   public static Specification<Consultant> of(ConsultantFilter filter) {
     return (root, query, cb) -> {
       var predicates = new ArrayList<Predicate>();
+      predicates.add(cb.isNull(root.get("deleteDate")));
       if (nonNull(filter)) {
         if (isNotBlank(filter.getUsername())) {
           predicates.add(
