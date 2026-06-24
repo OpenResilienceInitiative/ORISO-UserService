@@ -804,7 +804,11 @@ public class KeycloakService implements IdentityClient {
    * @param userId the userId
    */
   public void deleteUser(String userId) {
-    keycloakClient.getUsersResource().get(userId).remove();
+    try {
+      keycloakClient.getUsersResource().get(userId).remove();
+    } catch (javax.ws.rs.NotFoundException e) {
+      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+    }
   }
 
   /**
