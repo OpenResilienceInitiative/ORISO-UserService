@@ -910,7 +910,7 @@ public class SessionService {
 
   public List<Session> findSessionsByUser(User user) {
     if (nonNull(user)) {
-      return sessionRepository.findByUser(user);
+      return sessionRepository.findByUserWithSessionData(user);
     }
     return emptyList();
   }

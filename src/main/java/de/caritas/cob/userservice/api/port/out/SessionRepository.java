@@ -98,6 +98,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   List<Session> findByUser(User user);
 
+  @Query("select distinct s from Session s left join fetch s.sessionData where s.user = :user")
+  List<Session> findByUserWithSessionData(@Param("user") User user);
+
   List<Session> findByUserAndConsultingTypeId(User user, int consultingTypeId);
 
   /**
