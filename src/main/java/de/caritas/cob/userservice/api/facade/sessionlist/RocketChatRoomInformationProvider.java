@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsLastMess
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.util.Date;
 import java.util.List;
@@ -194,7 +195,7 @@ public class RocketChatRoomInformationProvider {
     if (matrixUserId == null || !matrixUserId.startsWith("@")) {
       return null;
     }
-    return matrixUserId.substring(1).split(":")[0];
+    return MatrixIds.localpart(matrixUserId);
   }
 
   private Map<String, Boolean> buildMessagesWithReadInfo(

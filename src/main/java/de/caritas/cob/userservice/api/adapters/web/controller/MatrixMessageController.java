@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -209,7 +210,7 @@ public class MatrixMessageController {
           String agencyMatrixId = agencyCredentials.get().getMatrixUserId();
           String matrixUsername;
           if (agencyMatrixId != null && agencyMatrixId.startsWith("@")) {
-            matrixUsername = agencyMatrixId.substring(1).split(":")[0];
+            matrixUsername = MatrixIds.localpart(agencyMatrixId);
           } else {
             return ResponseEntity.ok(Map.of("messages", new Object[0]));
           }

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveF
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -211,7 +212,7 @@ public class AssignEnquiryFacade {
             // Extract agency Matrix username
             String agencyMatrixUsername = null;
             if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-              agencyMatrixUsername = agencyCredentials.getMatrixUserId().substring(1).split(":")[0];
+              agencyMatrixUsername = MatrixIds.localpart(agencyCredentials.getMatrixUserId());
             }
 
             if (isBlank(agencyMatrixUsername)) {

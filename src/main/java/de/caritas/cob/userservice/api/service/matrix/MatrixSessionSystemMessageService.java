@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -102,7 +103,7 @@ public class MatrixSessionSystemMessageService {
 
   private String extractMatrixLocalpart(String matrixUserId) {
     if (matrixUserId.startsWith("@")) {
-      return matrixUserId.substring(1).split(":")[0];
+      return MatrixIds.localpart(matrixUserId);
     }
     return matrixUserId;
   }
