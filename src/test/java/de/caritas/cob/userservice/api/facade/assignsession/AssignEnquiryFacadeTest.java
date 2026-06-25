@@ -11,15 +11,18 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKET_CHAT_SYSTEM_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
 import static java.util.Arrays.asList;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -28,8 +31,10 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -59,6 +64,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class AssignEnquiryFacadeTest {
@@ -90,13 +97,50 @@ class AssignEnquiryFacadeTest {
 
   private LogbackCaptor logCaptor;
 
+  private static final String USER_MATRIX_ID = "@user:matrix.example.com";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
+  private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
+  private static final String MATRIX_TOKEN = "syt_matrix_token";
+
   @BeforeEach
-  public void setup() {
+  public void setup() throws MatrixCreateRoomException {
     logCaptor = LogbackCaptor.attach(LogService.class);
+
+    // dev's Matrix migration: assignEnquiry now provisions a Matrix room and reads
+    // session.getUser().getMatrixUserId() / consultant.getMatrixUserId(). The shared
+    // TestConstants do not set these, so populate them here (reset in tearDown) and stub the
+    // MatrixSynapseService happy path so room creation succeeds for every assignment test.
+    USER_WITH_RC_ID.setMatrixUserId(USER_MATRIX_ID);
+    CONSULTANT_WITH_AGENCY.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    // Anonymous enquiry constant has no user wired; assignEnquiry now dereferences it.
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_RC_ID);
+
+    givenMatrixRoomCreationSucceeds();
+  }
+
+  private void givenMatrixRoomCreationSucceeds() throws MatrixCreateRoomException {
+    var roomResponse = new MatrixCreateRoomResponseDTO();
+    roomResponse.setRoomId(MATRIX_ROOM_ID);
+    lenient()
+        .when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(roomResponse));
+    lenient()
+        .when(matrixSynapseService.loginAsUserAccessToken(anyString()))
+        .thenReturn(MATRIX_TOKEN);
+    lenient().when(matrixSynapseService.joinRoom(anyString(), anyString())).thenReturn(true);
+    lenient()
+        .when(
+            matrixSynapseService.setUserPowerLevel(anyString(), anyString(), anyInt(), anyString()))
+        .thenReturn(true);
   }
 
   @AfterEach
   public void tearDown() {
+    // Undo mutations of the shared TestConstants so other test classes are not affected.
+    USER_WITH_RC_ID.setMatrixUserId(null);
+    CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
+
     logCaptor.detach();
     TenantContext.clear();
   }
