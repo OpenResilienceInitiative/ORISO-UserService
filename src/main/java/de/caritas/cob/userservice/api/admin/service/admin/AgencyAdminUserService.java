@@ -10,6 +10,8 @@ import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminServ
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
@@ -43,6 +45,7 @@ public class AgencyAdminUserService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull TenantService tenantService;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull AuthenticatedUser authenticatedUser;
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
     final Admin newAdmin = createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
@@ -50,18 +53,43 @@ public class AgencyAdminUserService {
   }
 
   public AdminResponseDTO findAgencyAdmin(final String adminId) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     return AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
   }
 
   public AdminResponseDTO updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     final Admin updatedAdmin = updateAdminService.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
   }
 
   public void deleteAgencyAdmin(final String adminId) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     this.deleteAdminService.deleteAgencyAdmin(adminId);
+  }
+
+  /**
+   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
+   * may only act on agency admins that share at least one of their own agencies. This prevents a
+   * single Beratungsstellen-Admin from reading, editing or deleting admins of other Träger by
+   * targeting their id directly, mirroring the agency scoping already applied to consultants.
+   */
+  private void assertCallerMayAccessAgencyAdmin(final String targetAdminId) {
+    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return;
+    }
+    var callerAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
+    var targetAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(targetAdminId);
+    if (Collections.disjoint(callerAgencyIds, targetAgencyIds)) {
+      log.warn(
+          "Restricted agency admin {} attempted to access agency admin {} outside their agencies",
+          authenticatedUser.getUserId(),
+          targetAdminId);
+      throw new ForbiddenException(
+          "Agency admin is not allowed to access an admin outside their own agencies");
+    }
   }
 
   public List<Long> findAgenciesOfAdmin(final String adminId) {
@@ -69,8 +97,7 @@ public class AgencyAdminUserService {
   }
 
   public Map<String, Object> findAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage =
-        retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
+    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -97,6 +124,22 @@ public class AgencyAdminUserService {
         agenciesOfAdmin,
         tenantIdsToNameMap,
         idsWithConsultantIdentity);
+  }
+
+  /**
+   * Returns the infix-matched agency admins visible to the current caller. A restricted agency
+   * admin only sees admins of their own agencies; platform/tenant admins keep the full list. This
+   * closes the cross-Träger leak where any holder of the user-admin authority (which every agency
+   * admin also carries, to manage consultants) could list every agency admin of every Träger.
+   */
+  private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      var callerAgencyIds =
+          retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
+      return retrieveAdminService.findAllByInfixScopedToAgencies(
+          infix, Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
+    }
+    return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
   }
 
   public AdminResponseDTO patchAgencyAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
