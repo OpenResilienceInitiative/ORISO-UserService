@@ -7,7 +7,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatRollbackService;
@@ -53,7 +53,7 @@ public class RocketChatRollbackServiceTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(RocketChatRollbackService.class, "log", logger);
+    setField(RocketChatRollbackService.class, "log", logger);
   }
 
   /** Method: rollbackRemoveUsersFromRocketChatGroup */

@@ -12,7 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.model.User;
@@ -42,8 +42,8 @@ public class DeleteKeycloakAskerActionTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteKeycloakAskerAction.class, "log", logger);
-    setInternalState(DeleteKeycloakUserAction.class, "log", logger);
+    setField(DeleteKeycloakAskerAction.class, "log", logger);
+    setField(DeleteKeycloakUserAction.class, "log", logger);
   }
 
   @Test

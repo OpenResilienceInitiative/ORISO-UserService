@@ -7,7 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -43,7 +43,7 @@ public class MailServiceTest {
 
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
-    setInternalState(MailService.class, "log", logger);
+    setField(MailService.class, "log", logger);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
     when(this.mailsControllerApi.getApiClient()).thenReturn(this.apiClient);
   }

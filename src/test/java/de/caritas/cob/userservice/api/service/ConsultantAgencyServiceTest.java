@@ -12,7 +12,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -85,7 +85,7 @@ public class ConsultantAgencyServiceTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @Test

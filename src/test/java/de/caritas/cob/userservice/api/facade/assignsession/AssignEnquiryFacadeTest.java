@@ -23,7 +23,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
@@ -78,7 +78,7 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @AfterEach

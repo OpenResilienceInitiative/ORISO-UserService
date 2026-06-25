@@ -10,7 +10,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import java.io.PrintWriter;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +31,7 @@ public class LogServiceTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @Test

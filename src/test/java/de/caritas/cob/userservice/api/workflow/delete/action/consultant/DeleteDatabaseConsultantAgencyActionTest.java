@@ -12,7 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -39,7 +39,7 @@ public class DeleteDatabaseConsultantAgencyActionTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteDatabaseConsultantAgencyAction.class, "log", logger);
+    setField(DeleteDatabaseConsultantAgencyAction.class, "log", logger);
   }
 
   @Test

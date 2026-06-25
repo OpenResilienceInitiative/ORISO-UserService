@@ -31,7 +31,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
@@ -334,9 +334,9 @@ class EmailNotificationFacadeTest {
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
-    setInternalState(EmailNotificationFacade.class, "log", logger);
-    setInternalState(AssignEnquiryEmailSupplier.class, "log", logger);
-    setInternalState(NewMessageEmailSupplier.class, "log", logger);
+    setField(EmailNotificationFacade.class, "log", logger);
+    setField(AssignEnquiryEmailSupplier.class, "log", logger);
+    setField(NewMessageEmailSupplier.class, "log", logger);
     when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
         .thenReturn(false);
   }

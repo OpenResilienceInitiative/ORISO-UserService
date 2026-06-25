@@ -21,7 +21,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.google.common.collect.Lists;
@@ -113,7 +112,7 @@ public class KeycloakServiceTest {
     setField(keycloakService, "keycloakClientId", "app");
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
-    setInternalState(KeycloakService.class, "log", logger);
+    setField(KeycloakService.class, "log", logger);
   }
 
   @Test

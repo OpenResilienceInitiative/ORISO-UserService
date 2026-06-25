@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -70,7 +70,7 @@ class ChatServiceTest {
 
   @BeforeEach
   void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @Test

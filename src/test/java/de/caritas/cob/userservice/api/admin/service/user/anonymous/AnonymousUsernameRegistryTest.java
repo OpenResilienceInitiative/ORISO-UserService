@@ -9,8 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.internal.WhiteboxImpl.getInternalState;
-import static org.powermock.reflect.internal.WhiteboxImpl.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.getField;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
@@ -23,14 +22,11 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoSettings;
-import org.powermock.modules.junit4.PowerMockRunner;
 
-@RunWith(PowerMockRunner.class)
 @MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class AnonymousUsernameRegistryTest {
 
@@ -63,7 +59,7 @@ class AnonymousUsernameRegistryTest {
   }
 
   private void setIdRegistryField(LinkedList<Integer> idRegistryListWithoutThree) {
-    setInternalState(AnonymousUsernameRegistry.class, "ID_REGISTRY", idRegistryListWithoutThree);
+    setField(AnonymousUsernameRegistry.class, "ID_REGISTRY", idRegistryListWithoutThree);
   }
 
   @Test
@@ -178,8 +174,9 @@ class AnonymousUsernameRegistryTest {
     verify(usernameTranscoder, times(1)).decodeUsername(usernameToDelete);
   }
 
+  @SuppressWarnings("unchecked")
   private List<Integer> getIdRegistryField() {
-    return getInternalState(AnonymousUsernameRegistry.class, "ID_REGISTRY");
+    return (List<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
   }
 
   @Test

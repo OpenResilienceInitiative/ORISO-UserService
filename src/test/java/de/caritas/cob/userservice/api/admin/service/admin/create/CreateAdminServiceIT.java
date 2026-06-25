@@ -29,7 +29,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
-import org.powermock.reflect.Whitebox;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
@@ -199,7 +198,7 @@ class CreateAdminServiceIT {
 
   @Test
   void getUserRolesForTenantAdmin_ShouldGetProperDefaultRoles_ForSingleDomainMultitenancy() {
-    Whitebox.setInternalState(createAdminService, "multitenancyWithSingleDomain", true);
+    ReflectionTestUtils.setField(createAdminService, "multitenancyWithSingleDomain", true);
     List<UserRole> defaultRoles = this.createAdminService.getDefaultRoles(AdminType.TENANT);
 
     assertThat(defaultRoles).containsOnly(UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN, USER_ADMIN);
@@ -208,7 +207,7 @@ class CreateAdminServiceIT {
 
   @Test
   void getUserRolesForTenantAdmin_ShouldGetProperDefaultRoles_ForMultidomainMultitenancy() {
-    Whitebox.setInternalState(createAdminService, "multitenancyWithSingleDomain", false);
+    ReflectionTestUtils.setField(createAdminService, "multitenancyWithSingleDomain", false);
     List<UserRole> defaultRoles = this.createAdminService.getDefaultRoles(AdminType.TENANT);
 
     assertThat(defaultRoles)

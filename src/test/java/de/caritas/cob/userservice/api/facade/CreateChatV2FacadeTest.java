@@ -21,7 +21,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -85,7 +85,7 @@ public class CreateChatV2FacadeTest {
   public void setup() {
     when(chat.getId()).thenReturn(CHAT_ID);
     when(chat.getCreateDate()).thenReturn(LocalDateTime.now());
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @Test

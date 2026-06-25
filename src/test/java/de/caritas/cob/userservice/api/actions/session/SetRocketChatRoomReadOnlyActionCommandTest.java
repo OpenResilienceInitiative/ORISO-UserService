@@ -7,7 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.model.Session;
@@ -33,7 +33,7 @@ class SetRocketChatRoomReadOnlyActionCommandTest {
 
   @BeforeAll
   public static void setup() {
-    setInternalState(SetRocketChatRoomReadOnlyActionCommand.class, "log", LOGGER);
+    setField(SetRocketChatRoomReadOnlyActionCommand.class, "log", LOGGER);
   }
 
   @ParameterizedTest

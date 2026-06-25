@@ -9,7 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -50,7 +50,7 @@ public class AssignEnquiryEmailSupplierTest {
             consultantService,
             null,
             false);
-    setInternalState(AssignEnquiryEmailSupplier.class, "log", logger);
+    setField(AssignEnquiryEmailSupplier.class, "log", logger);
   }
 
   @Test

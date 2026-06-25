@@ -19,7 +19,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -81,7 +81,7 @@ public class CreateChatV1FacadeTest {
     when(chat.getConsultingTypeId()).thenReturn(15);
     when(chat.getCreateDate()).thenReturn(LocalDateTime.now());
     when(agencyService.getAgency(any())).thenReturn(AGENCY_DTO_KREUZBUND);
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
   }
 
   @Test

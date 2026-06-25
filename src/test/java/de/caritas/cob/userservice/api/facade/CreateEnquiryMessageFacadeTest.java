@@ -43,7 +43,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -207,7 +206,7 @@ class CreateEnquiryMessageFacadeTest {
         ROCKET_CHAT_SYSTEM_USER_ID);
     setField(
         createEnquiryMessageFacade, "rocketChatRoomNameGenerator", rocketChatRoomNameGenerator);
-    setInternalState(LogService.class, "LOGGER", logger);
+    setField(LogService.class, "LOGGER", logger);
 
     this.session = new Session();
     session.setId(SESSION_ID);

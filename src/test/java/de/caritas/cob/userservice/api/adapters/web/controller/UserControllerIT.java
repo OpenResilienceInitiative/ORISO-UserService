@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -362,9 +362,9 @@ class UserControllerIT {
     drugsMap.put("others", false);
     HashMap<String, Object> addictiveDrugsMap = new HashMap<>();
     addictiveDrugsMap.put("drugs", drugsMap);
-    setInternalState(UserController.class, "log", logger);
-    setInternalState(LogService.class, "LOGGER", logger);
-    setInternalState(ApiResponseEntityExceptionHandler.class, "log", logger);
+    setField(UserController.class, "log", logger);
+    setField(LogService.class, "LOGGER", logger);
+    setField(ApiResponseEntityExceptionHandler.class, "log", logger);
     TenantContext.clear();
   }
 

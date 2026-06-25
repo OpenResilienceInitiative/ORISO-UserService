@@ -13,7 +13,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -40,7 +40,7 @@ public class DeleteDatabaseAskerActionTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteDatabaseAskerAction.class, "log", logger);
+    setField(DeleteDatabaseAskerAction.class, "log", logger);
   }
 
   @Test

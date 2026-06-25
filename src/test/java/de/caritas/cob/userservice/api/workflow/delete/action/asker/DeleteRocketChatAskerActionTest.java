@@ -13,7 +13,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteUserException;
@@ -41,7 +41,7 @@ public class DeleteRocketChatAskerActionTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteRocketChatAskerAction.class, "log", logger);
+    setField(DeleteRocketChatAskerAction.class, "log", logger);
   }
 
   @Test

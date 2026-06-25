@@ -13,7 +13,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -41,7 +41,7 @@ public class DeleteAppointmentServiceConsultantActionTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteAppointmentServiceConsultantAction.class, "log", logger);
+    setField(DeleteAppointmentServiceConsultantAction.class, "log", logger);
   }
 
   @Test

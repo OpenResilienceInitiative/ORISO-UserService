@@ -14,7 +14,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.config.apiclient.LiveServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -63,7 +63,7 @@ public class LiveEventNotificationServiceTest {
 
   @BeforeEach
   public void setup() {
-    setInternalState(LiveEventNotificationService.class, "log", logger);
+    setField(LiveEventNotificationService.class, "log", logger);
     when(liveServiceApiControllerFactory.createControllerApi()).thenReturn(liveControllerApi);
   }
 
