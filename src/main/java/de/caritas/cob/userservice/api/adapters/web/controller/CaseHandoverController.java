@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -63,6 +64,15 @@ public class CaseHandoverController {
   })
   public ResponseEntity<CaseHandoverStatus> getStatus(@PathVariable Long sessionId) {
     return ResponseEntity.ok(caseHandoverService.getStatus(sessionId));
+  }
+
+  @GetMapping({"/users/case-handover/candidates", "/service/users/case-handover/candidates"})
+  public ResponseEntity<ConsultantSessionListResponseDTO> searchCandidates(
+      @RequestParam(name = "query", defaultValue = "") String query,
+      @RequestParam(name = "offset", defaultValue = "0") @Min(0) int offset,
+      @RequestParam(name = "count", defaultValue = "15") @Min(1) @Max(200) int count,
+      @RequestParam(name = "archived", defaultValue = "false") boolean archived) {
+    return ResponseEntity.ok(caseHandoverService.searchCandidates(query, offset, count, archived));
   }
 
   @PostMapping({
