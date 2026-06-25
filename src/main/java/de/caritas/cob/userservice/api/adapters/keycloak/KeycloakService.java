@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static java.lang.Boolean.TRUE;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
@@ -375,6 +376,7 @@ public class KeycloakService implements IdentityClient {
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
+    String creationError = keycloakError;
     try (var response = keycloakClient.getUsersResource().create(kcUser)) {
       if (response.getStatus() == HttpStatus.CREATED.value()) {
         final String createdUserId = getCreatedUserId(response.getLocation());
@@ -394,14 +396,14 @@ public class KeycloakService implements IdentityClient {
         }
         return new KeycloakCreateUserResponseDTO(createdUserId);
       }
-      handleCreateKeycloakUserError(response);
+      creationError = handleCreateKeycloakUserError(response);
     }
     throw new InternalServerErrorException(
         String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, keycloakError));
+            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, creationError));
   }
 
-  private void handleCreateKeycloakUserError(Response response) {
+  private String handleCreateKeycloakUserError(Response response) {
     final int status = response.getStatus();
     String rawResponse = "";
 
@@ -414,24 +416,29 @@ public class KeycloakService implements IdentityClient {
 
     String combinedError = rawResponse.toLowerCase();
 
-    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedEmail().toLowerCase())
+    String duplicatedEmailMarker = identityClientConfig.getErrorMessageDuplicatedEmail();
+    if ((isNotBlank(duplicatedEmailMarker)
+            && combinedError.contains(duplicatedEmailMarker.toLowerCase()))
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    if (combinedError.contains(
-            identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
+    String duplicatedUsernameMarker = identityClientConfig.getErrorMessageDuplicatedUsername();
+    if ((isNotBlank(duplicatedUsernameMarker)
+            && combinedError.contains(duplicatedUsernameMarker.toLowerCase()))
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    keycloakError =
+    // Build a local, non-opaque message; never mutate the injected keycloakError template (shared
+    // singleton field -> would clobber under concurrency).
+    String createUserError =
         !rawResponse.isBlank()
             ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
             : String.format("Keycloak create-user failed with status %s", status);
 
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+    return createUserError;
   }
 
   /**
@@ -772,16 +779,11 @@ public class KeycloakService implements IdentityClient {
    * @param emailAddress the email address to set
    */
   public void updateEmail(String userId, String emailAddress) {
-    // Temporarily bypass Keycloak email update for testing
-    log.info("Bypassing Keycloak email update for user: {} with email: {}", userId, emailAddress);
-    return;
-
-    // Original code (commented out):
-    // var userResource = keycloakClient.getUsersResource().get(userId);
-    // verifyEmail(userResource, emailAddress);
-    // UserRepresentation representation = userResource.toRepresentation();
-    // representation.setEmail(emailAddress);
-    // userResource.update(representation);
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    verifyEmail(userResource, emailAddress);
+    UserRepresentation representation = userResource.toRepresentation();
+    representation.setEmail(emailAddress);
+    userResource.update(representation);
   }
 
   /**

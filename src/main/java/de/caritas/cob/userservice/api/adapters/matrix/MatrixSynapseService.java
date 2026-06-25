@@ -865,8 +865,19 @@ public class MatrixSynapseService {
       }
 
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
-    } catch (Exception ex) {
-      log.error("Matrix Error: Could not sync room ({}). Reason: {}", roomId, ex.getMessage());
+    } catch (HttpStatusCodeException ex) {
+      // Transient/upstream HTTP failure: degrade gracefully so the long-poll endpoint keeps
+      // working.
+      log.error(
+          "Matrix Error: Could not sync room ({}). HTTP {} - {}",
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
+    } catch (RuntimeException ex) {
+      // Unexpected (e.g. URL-building / parsing bugs): log the full stack trace so the failure is
+      // not hidden as a silent "no messages forever" condition.
+      log.error("Matrix Error: Could not sync room ({}). Unexpected failure.", roomId, ex);
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
     }
   }

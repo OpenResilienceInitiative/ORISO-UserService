@@ -74,43 +74,61 @@ class MatrixSynapseServiceTest {
         .isEqualTo("Bearer " + ACCESS_TOKEN);
   }
 
-  // TODO(PRODUCTION BUG): syncRoom never reaches the long-poll RestTemplate.
-  //
-  // MatrixSynapseService.syncRoom (src/main/.../matrix/MatrixSynapseService.java:790-872) builds
-  // its
-  // URL via MatrixUrlBuilder.buildUrl(...) (src/main/.../matrix/MatrixUrlBuilder.java:18-36). That
-  // helper appends the query params and then calls buildAndExpand(uriVariables).encode(). The
-  // "filter" query param is a JSON string ({"room":{"timeline":...}}). UriComponentsBuilder treats
-  // the embedded {"room"...} braces as a URI-template variable named "room", but uriVariables is
-  // empty (Map.of()), so buildAndExpand throws:
-  //     java.lang.IllegalArgumentException: Map has no value for '"room"'
-  // syncRoom catches it (line 868) and silently returns an empty result, so
-  // matrixLongPollRestTemplate
-  // is NEVER invoked. Consequence: the dedicated long-poll sync path is effectively dead in
-  // production and never fetches messages.
-  //
-  // Expected (once fixed): matrixLongPollRestTemplate.exchange(...) is called with a URL starting
-  // "...sync?timeout=30000" and containing the encoded room id; verifyNoInteractions(restTemplate).
-  // Actual (current behavior asserted below): zero interactions with matrixLongPollRestTemplate,
-  // result is the swallowed empty fallback {messages:[], next_batch:""}.
-  // Fix must land in src/main (MatrixUrlBuilder should not template-expand the JSON filter param,
-  // e.g. URI-encode query values directly instead of buildAndExpand) - out of scope for this
-  // test-only PR, so we pin the current (buggy) behavior here.
   @Test
   void syncRoomShouldUseDedicatedLongPollRestTemplate() {
     var service = matrixSynapseService();
     when(matrixConfig.getApiUrl("/_matrix/client/r0/sync")).thenReturn(SYNC_URL);
+    when(matrixLongPollRestTemplate.exchange(
+            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("next_batch", "next-token")));
+    var urlCaptor = ArgumentCaptor.forClass(String.class);
 
     var result = service.syncRoom("!room:example.org", ACCESS_TOKEN, "alice", 30000);
 
-    // Bug: the JSON filter param breaks URL building, the exception is swallowed, and neither
-    // RestTemplate is ever touched. Assert that documented-broken behavior so the suite stays
-    // green.
+    // The JSON filter param is bound as a URI variable, so the URL builds correctly and the
+    // dedicated long-poll RestTemplate is actually invoked. The room id stays literal ('!' and ':'
+    // are query-legal) while the surrounding JSON quotes are percent-encoded (%22).
     assertThat(result).isNotNull();
-    assertThat(result).containsEntry("messages", new java.util.ArrayList<>());
-    assertThat(result).containsEntry("next_batch", "");
-    verifyNoInteractions(matrixLongPollRestTemplate);
+    verify(matrixLongPollRestTemplate)
+        .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    assertThat(urlCaptor.getValue()).startsWith(SYNC_URL + "?timeout=30000");
+    assertThat(urlCaptor.getValue()).contains("&filter=");
+    assertThat(urlCaptor.getValue()).contains("%22!room:example.org%22");
     verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void syncRoomShouldReturnParsedMessagesAndResumeFromCachedToken() {
+    var service = matrixSynapseService();
+    var roomId = "!room:example.org";
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/sync")).thenReturn(SYNC_URL);
+    var textEvent =
+        Map.<String, Object>of(
+            "type", "m.room.message", "content", Map.of("msgtype", "m.text", "body", "hello"));
+    var body =
+        Map.<String, Object>of(
+            "next_batch",
+            "batch-1",
+            "rooms",
+            Map.of(
+                "join",
+                Map.of(
+                    roomId, Map.of("timeline", Map.of("events", java.util.List.of(textEvent))))));
+    when(matrixLongPollRestTemplate.exchange(
+            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(body));
+    var urlCaptor = ArgumentCaptor.forClass(String.class);
+
+    var first = service.syncRoom(roomId, ACCESS_TOKEN, "alice", 0);
+
+    assertThat((java.util.List<?>) first.get("messages")).hasSize(1);
+    assertThat(first).containsEntry("next_batch", "batch-1");
+
+    // a second sync resumes from the cached next_batch token
+    service.syncRoom(roomId, ACCESS_TOKEN, "alice", 0);
+    verify(matrixLongPollRestTemplate, times(2))
+        .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    assertThat(urlCaptor.getAllValues().get(1)).contains("since=batch-1");
   }
 
   @Test
