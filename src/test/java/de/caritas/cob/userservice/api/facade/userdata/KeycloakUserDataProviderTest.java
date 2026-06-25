@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.keycloak.representations.idm.UserRepresentation;
@@ -46,6 +47,46 @@ class KeycloakUserDataProviderTest {
     // then
     assertKeycloakUserRepresentationAttributesConverted(userRepresentation, userDataResponseDTO);
     assertRolesTakenFromAuthenticatedUserBean(userDataResponseDTO);
+    assertOtherDtoAttributesSetToDefaults(userDataResponseDTO);
+  }
+
+  @Test
+  void retrieveData_Should_ReturnTokenBasedUserData_When_KeycloakUserLookupThrows() {
+    // given
+    Mockito.when(authenticatedUser.isAnonymous()).thenReturn(false);
+    Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
+    Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
+    Mockito.when(authenticatedUser.getRoles()).thenReturn(Set.of("tenant-admin"));
+    Mockito.when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("tenant-admin"));
+    Mockito.when(keycloakService.getById("userId")).thenThrow(new RuntimeException("not found"));
+
+    // when
+    UserDataResponseDTO userDataResponseDTO =
+        keycloakUserDataProvider.retrieveAuthenticatedUserData();
+
+    // then
+    assertThat(userDataResponseDTO.getUserId()).isEqualTo("userId");
+    assertThat(userDataResponseDTO.getUserName()).isEqualTo("username");
+    assertThat(userDataResponseDTO.getUserRoles()).containsExactly("tenant-admin");
+    assertThat(userDataResponseDTO.getGrantedAuthorities()).containsExactly("tenant-admin");
+    assertOtherDtoAttributesSetToDefaults(userDataResponseDTO);
+  }
+
+  @Test
+  void retrieveData_Should_ReturnTokenBasedUserData_When_KeycloakUserLookupReturnsNull() {
+    // given
+    Mockito.when(authenticatedUser.isAnonymous()).thenReturn(false);
+    Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
+    Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
+    Mockito.when(keycloakService.getById("userId")).thenReturn(null);
+
+    // when
+    UserDataResponseDTO userDataResponseDTO =
+        keycloakUserDataProvider.retrieveAuthenticatedUserData();
+
+    // then
+    assertThat(userDataResponseDTO.getUserId()).isEqualTo("userId");
+    assertThat(userDataResponseDTO.getUserName()).isEqualTo("username");
     assertOtherDtoAttributesSetToDefaults(userDataResponseDTO);
   }
 
