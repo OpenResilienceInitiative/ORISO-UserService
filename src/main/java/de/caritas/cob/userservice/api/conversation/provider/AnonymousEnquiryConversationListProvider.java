@@ -29,6 +29,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** {@link ConversationListProvider} to provide anonymous enquiry conversations. */
 @Service
@@ -46,6 +47,7 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
 
   /** {@inheritDoc} */
   @Override
+  @Transactional(readOnly = true)
   public ConsultantSessionListResponseDTO buildConversations(
       PageableListRequest pageableListRequest) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
