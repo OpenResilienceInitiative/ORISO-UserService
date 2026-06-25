@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static org.apache.commons.lang3.BooleanUtils.isFalse;
-
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
@@ -31,6 +29,8 @@ class UserTwoFactorAuthControllerDelegate {
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
+    assertTwoFactorAuthAllowed();
+
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase(Locale.ROOT);
 
@@ -49,6 +49,8 @@ class UserTwoFactorAuthControllerDelegate {
   }
 
   ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
+    assertTwoFactorAuthAllowed();
+
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 
@@ -68,22 +70,7 @@ class UserTwoFactorAuthControllerDelegate {
   }
 
   ResponseEntity<Void> activateTwoFactorAuthByApp(OneTimePasswordDTO oneTimePasswordDTO) {
-    if (authenticatedUser.isAdviceSeeker()
-        && isFalse(identityClientConfig.getOtpAllowedForUsers())) {
-      throw new ConflictException("2FA is disabled for user role");
-    }
-    if (authenticatedUser.isConsultant()
-        && isFalse(identityClientConfig.getOtpAllowedForConsultants())) {
-      throw new ConflictException("2FA is disabled for consultant role");
-    }
-    if (authenticatedUser.isSingleTenantAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForSingleTenantAdmins())) {
-      throw new ConflictException("2FA is disabled for single tenant admin role");
-    }
-    if (authenticatedUser.isTenantSuperAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForTenantSuperAdmins())) {
-      throw new ConflictException("2FA is disabled for tenant admin role");
-    }
+    assertTwoFactorAuthAllowed();
 
     var isValid =
         identityManager.setUpOneTimePassword(
@@ -99,5 +86,15 @@ class UserTwoFactorAuthControllerDelegate {
         usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * The OTP role policy must gate every 2FA setup path — app and email alike — so a role with 2FA
+   * disabled cannot sidestep the policy by choosing the email flow.
+   */
+  private void assertTwoFactorAuthAllowed() {
+    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+      throw new ConflictException("2FA is disabled for user role");
+    }
   }
 }

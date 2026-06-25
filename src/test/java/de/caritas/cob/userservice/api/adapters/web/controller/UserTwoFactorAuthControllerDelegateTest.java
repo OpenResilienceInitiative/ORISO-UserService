@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,6 +46,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void startTwoFactorAuthByEmailSetupShouldCreateOtpForNormalizedEmail() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
@@ -60,6 +62,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void startTwoFactorAuthByEmailSetupShouldThrowProjectExceptionWhenOtpSetupFails() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
@@ -75,6 +78,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void startTwoFactorAuthByEmailSetupShouldReturnPreconditionFailedWhenEmailIsUnavailable() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
@@ -88,6 +92,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void finishTwoFactorAuthByEmailSetupShouldPatchUserWhenOtpWasCreated() {
+    allowOtpForCurrentRoles();
     var patchMap = Map.<String, Object>of("email", "person@example.org");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
@@ -103,6 +108,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void finishTwoFactorAuthByEmailSetupShouldReturnBadRequestWhenAttemptsRemain() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
@@ -116,6 +122,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void finishTwoFactorAuthByEmailSetupShouldReturnPreconditionFailedWhenOtpAlreadyCreated() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
@@ -129,6 +136,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void finishTwoFactorAuthByEmailSetupShouldReturnTooManyRequestsWhenAttemptsAreExhausted() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
@@ -141,9 +149,8 @@ class UserTwoFactorAuthControllerDelegateTest {
   }
 
   @Test
-  void activateTwoFactorAuthByAppShouldRejectAdviceSeekerWhenOtpIsDisabledForUsers() {
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForUsers()).thenReturn(false);
+  void activateTwoFactorAuthByAppShouldRejectRoleWithoutOtpPolicy() {
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
@@ -153,7 +160,31 @@ class UserTwoFactorAuthControllerDelegateTest {
   }
 
   @Test
+  void startTwoFactorAuthByEmailSetupShouldRejectRoleWithoutOtpPolicy() {
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+
+    assertThatThrownBy(
+            () -> delegate.startTwoFactorAuthByEmailSetup(new EmailDTO("person@example.org")))
+        .isInstanceOf(ConflictException.class)
+        .hasMessage("2FA is disabled for user role");
+
+    verifyNoInteractions(identityManager);
+  }
+
+  @Test
+  void finishTwoFactorAuthByEmailSetupShouldRejectRoleWithoutOtpPolicy() {
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.finishTwoFactorAuthByEmailSetup(OTP))
+        .isInstanceOf(ConflictException.class)
+        .hasMessage("2FA is disabled for user role");
+
+    verifyNoInteractions(identityManager);
+  }
+
+  @Test
   void activateTwoFactorAuthByAppShouldReturnOkWhenOtpIsAccepted() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, OTP, SECRET)).thenReturn(true);
@@ -165,6 +196,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByAppShouldReturnBadRequestWhenOtpIsRejected() {
+    allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, OTP, SECRET)).thenReturn(false);
@@ -187,5 +219,9 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   private OneTimePasswordDTO oneTimePassword() {
     return new OneTimePasswordDTO(SECRET, OTP);
+  }
+
+  private void allowOtpForCurrentRoles() {
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
   }
 }

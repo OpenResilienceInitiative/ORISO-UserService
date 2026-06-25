@@ -174,11 +174,14 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = AuthorityValue.RESTRICTED_AGENCY_ADMIN)
   void startTwoFactorAuthByEmailSetupShouldRespondWithNoContent_If_Called_As_AgencyAdmin()
       throws Exception {
+    givenAValidRestrictedAgencyAdmin();
     startTwoFactorAuthorizationAndAssertResponseIsCorrect();
   }
 
   private void startTwoFactorAuthorizationAndAssertResponseIsCorrect() throws Exception {
-    givenAValidConsultant();
+    if (isNull(consultant)) {
+      givenAValidConsultant();
+    }
     givenAValidEmailDTO();
     givenKeycloakFoundNoEmailInUse();
     givenABearerToken();
@@ -203,6 +206,25 @@ class UserController2faE2EIT {
     var otpSetupDTO = otpSetupCaptor.getValue().getBody();
     assertNotNull(otpSetupDTO);
     assertEquals(emailDTO.getEmail().toLowerCase(), otpSetupDTO.getEmail());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void startTwoFactorAuthByEmailSetupShouldRespondWithConflictIfOtpIsDisabledForConsultant()
+      throws Exception {
+    givenAValidConsultant();
+    identityConfig.setOtpAllowedForConsultants(false);
+    givenAValidEmailDTO();
+
+    mockMvc
+        .perform(
+            put("/users/2fa/email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(emailDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
   }
 
   @Test
@@ -653,6 +675,25 @@ class UserController2faE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.RESTRICTED_AGENCY_ADMIN)
+  void activateTwoFactorAuthByAppShouldRespondWithConflictIfRestrictedAgencyAdminOtpIsDisabled()
+      throws Exception {
+    givenAValidRestrictedAgencyAdmin();
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(false);
+    givenACorrectlyFormattedOneTimePasswordDTO();
+
+    mockMvc
+        .perform(
+            put("/users/2fa/app")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(oneTimePasswordDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void deactivateTwoFactorAuthByAppShouldRespondWithOK() throws Exception {
     givenAValidConsultant();
@@ -942,6 +983,7 @@ class UserController2faE2EIT {
 
   private void givenAValidConsultant() {
     consultant = consultantRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForConsultants(true);
     when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
     when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
     when(authenticatedUser.isConsultant()).thenReturn(true);
@@ -952,11 +994,25 @@ class UserController2faE2EIT {
 
   private void givenAValidUser() {
     user = userRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForUsers(true);
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+  }
+
+  private void givenAValidRestrictedAgencyAdmin() {
+    consultant = consultantRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(true);
+    when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
+    when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
+    when(authenticatedUser.getRoles())
+        .thenReturn(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue()));
+    when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("restrictedAgencyAdmin"));
   }
 }
