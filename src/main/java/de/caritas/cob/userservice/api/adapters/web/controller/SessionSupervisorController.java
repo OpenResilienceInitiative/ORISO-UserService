@@ -95,26 +95,8 @@ public class SessionSupervisorController {
     if (supervisor.getSession() != null
         && supervisor.getSupervisorConsultant() != null
         && supervisor.getSupervisorConsultant().getId() != null) {
-      String roomRef =
-          supervisor.getSession().getMatrixRoomId() != null
-                  && !supervisor.getSession().getMatrixRoomId().isBlank()
-              ? supervisor.getSession().getMatrixRoomId()
-              : supervisor.getSession().getGroupId();
-      eventNotificationService.createEvent(
-          supervisor.getSupervisorConsultant().getId(),
-          "supervisor.assigned",
-          EventNotificationService.CATEGORY_SYSTEM,
-          "Supervisor assignment",
-          String.format(
-              "You were added as supervisor to chat #%s.", supervisor.getSession().getId()),
-          roomRef != null
-              ? "/sessions/consultant/sessionView/"
-                  + roomRef
-                  + "/"
-                  + supervisor.getSession().getId()
-              : null,
-          supervisor.getSession().getId(),
-          supervisor.getSession().getTenantId());
+      eventNotificationService.createSupervisorAssignedNotification(
+          supervisor.getSession(), supervisor.getSupervisorConsultant().getId());
     }
 
     SessionSupervisorResponseDTO response = mapToDTO(supervisor);
