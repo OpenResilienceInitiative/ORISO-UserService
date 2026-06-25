@@ -182,7 +182,9 @@ public class SecurityConfig {
                     "/users/askers/session/new",
                     "/users/account",
                     "/users/mobiletoken",
-                    "/users/sessions/{sessionId:[0-9]+}/data")
+                    "/users/sessions/{sessionId:[0-9]+}/data",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
@@ -204,6 +206,12 @@ public class SecurityConfig {
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/conversations/consultants/**",
+                    "/users/case-handover/reasons",
+                    "/service/users/case-handover/reasons",
+                    "/users/case-handover/batch",
+                    "/service/users/case-handover/batch",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
@@ -282,6 +290,12 @@ public class SecurityConfig {
                 .requestMatchers("/users/consultants/search")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    "/users/case-handover/reason-policies",
+                    "/service/users/case-handover/reason-policies")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers("/users/case-handover/logs", "/service/users/case-handover/logs")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
