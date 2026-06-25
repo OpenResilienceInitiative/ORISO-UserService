@@ -4,7 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -33,24 +33,24 @@ class UserVerifierTest {
 
   @Test
   void
-      checkIfUsernameIsAvailable_Should_ThrowCustomValidationHttpStatusException_When_UsernameIsNotAvailable() {
+      checkIfUsernameIsAvailable_ShouldNot_ThrowException_And_ShouldNot_QueryKeycloak_When_UsernameCheckIsBypassed() {
+    // Production currently bypasses the username availability check entirely (keycloak permission
+    // workaround in UserVerifier#checkIfUsernameIsAvailable), so no CONFLICT is ever thrown and
+    // KeycloakService is never queried. See flags for the temporarily disabled CONFLICT behaviour.
     UserDTO userDTO = easyRandom.nextObject(UserDTO.class);
-    when(keycloakService.isUsernameAvailable(userDTO.getUsername())).thenReturn(false);
 
-    try {
-      userVerifier.checkIfUsernameIsAvailable(userDTO);
-    } catch (CustomValidationHttpStatusException exception) {
-      assertThat(exception, instanceOf(CustomValidationHttpStatusException.class));
-      assertEquals(HttpStatus.CONFLICT, exception.getHttpStatus());
-    }
+    userVerifier.checkIfUsernameIsAvailable(userDTO);
+
+    verifyNoInteractions(keycloakService);
   }
 
   @Test
   void checkIfUsernameIsAvailable_ShouldNot_ThrowException_When_UsernameIsAvailable() {
     UserDTO userDTO = easyRandom.nextObject(UserDTO.class);
-    when(keycloakService.isUsernameAvailable(userDTO.getUsername())).thenReturn(true);
 
     userVerifier.checkIfUsernameIsAvailable(userDTO);
+
+    verifyNoInteractions(keycloakService);
   }
 
   @Test

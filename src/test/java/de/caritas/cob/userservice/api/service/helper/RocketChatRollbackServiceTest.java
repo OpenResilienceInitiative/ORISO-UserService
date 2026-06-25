@@ -1,30 +1,27 @@
 package de.caritas.cob.userservice.api.service.helper;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
-import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatRollbackService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLeaveFromGroupException;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Arrays;
 import java.util.List;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class RocketChatRollbackServiceTest {
@@ -48,13 +45,7 @@ public class RocketChatRollbackServiceTest {
 
   @InjectMocks private RocketChatRollbackService rocketChatRollbackService;
   @Mock private RocketChatService rocketChatService;
-  @Mock Logger logger;
   @Mock private RocketChatCredentialsProvider rcCredentialHelper;
-
-  @BeforeEach
-  public void setup() {
-    setField(RocketChatRollbackService.class, "log", logger);
-  }
 
   /** Method: rollbackRemoveUsersFromRocketChatGroup */
   @Test
@@ -70,10 +61,15 @@ public class RocketChatRollbackServiceTest {
 
     when(rcCredentialHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
-    rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
-        GROUP_ID, GROUP_MEMBER_DTO_LIST);
+    try (var logCaptor = LogbackCaptor.forClass(RocketChatRollbackService.class)) {
+      rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
+          GROUP_ID, GROUP_MEMBER_DTO_LIST);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+      assertThat(
+              logCaptor.contains(
+                  Level.ERROR, "Could not add technical user from Rocket.Chat group"))
+          .isTrue();
+    }
   }
 
   @Test
@@ -88,10 +84,15 @@ public class RocketChatRollbackServiceTest {
 
     when(rcCredentialHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
-    rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
-        GROUP_ID, GROUP_MEMBER_DTO_LIST);
+    try (var logCaptor = LogbackCaptor.forClass(RocketChatRollbackService.class)) {
+      rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
+          GROUP_ID, GROUP_MEMBER_DTO_LIST);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+      assertThat(
+              logCaptor.contains(
+                  Level.ERROR, "Could not leave from Rocket.Chat group as technical user"))
+          .isTrue();
+    }
   }
 
   @Test
@@ -107,10 +108,15 @@ public class RocketChatRollbackServiceTest {
 
     when(rcCredentialHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
-    rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
-        GROUP_ID, GROUP_MEMBER_DTO_LIST);
+    try (var logCaptor = LogbackCaptor.forClass(RocketChatRollbackService.class)) {
+      rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
+          GROUP_ID, GROUP_MEMBER_DTO_LIST);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+      assertThat(
+              logCaptor.contains(
+                  Level.ERROR, "Could not leave from Rocket.Chat group as technical user"))
+          .isTrue();
+    }
   }
 
   @Test
@@ -126,9 +132,13 @@ public class RocketChatRollbackServiceTest {
 
     when(rcCredentialHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
-    rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
-        GROUP_ID, GROUP_MEMBER_DTO_LIST);
+    try (var logCaptor = LogbackCaptor.forClass(RocketChatRollbackService.class)) {
+      rocketChatRollbackService.rollbackRemoveUsersFromRocketChatGroup(
+          GROUP_ID, GROUP_MEMBER_DTO_LIST);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), any(Exception.class));
+      assertThat(
+              logCaptor.contains(Level.ERROR, "Error during rollback while adding back the users"))
+          .isTrue();
+    }
   }
 }

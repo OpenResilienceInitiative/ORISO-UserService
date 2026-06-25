@@ -1,20 +1,20 @@
 package de.caritas.cob.userservice.api.service.helper;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.mailservice.generated.ApiClient;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,14 +22,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 
 @ExtendWith(MockitoExtension.class)
 public class MailServiceTest {
-
-  @Mock private Logger logger;
 
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
 
@@ -43,7 +40,6 @@ public class MailServiceTest {
 
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
-    setField(MailService.class, "log", logger);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
     when(this.mailsControllerApi.getApiClient()).thenReturn(this.apiClient);
   }
@@ -63,9 +59,11 @@ public class MailServiceTest {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
     doThrow(new RuntimeException()).when(this.mailsControllerApi).sendMails(any());
 
-    mailService.sendEmailNotification(new MailsDTO());
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      mailService.sendEmailNotification(new MailsDTO());
 
-    verify(logger, atLeastOnce()).error(anyString(), any(Exception.class));
+      assertThat(logCaptor.contains(Level.ERROR, "Error while calling the MailService")).isTrue();
+    }
   }
 
   @Test
@@ -83,9 +81,11 @@ public class MailServiceTest {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
     doThrow(new RuntimeException()).when(this.mailsControllerApi).sendErrorMail(any());
 
-    mailService.sendErrorEmailNotification(new ErrorMailDTO());
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      mailService.sendErrorEmailNotification(new ErrorMailDTO());
 
-    verify(logger, atLeastOnce()).error(anyString(), any(Exception.class));
+      assertThat(logCaptor.contains(Level.ERROR, "Error while calling the MailService")).isTrue();
+    }
   }
 
   private HttpHeaders getCsrfHttpHeaders() {

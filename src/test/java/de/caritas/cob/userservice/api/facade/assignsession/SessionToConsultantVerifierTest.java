@@ -10,12 +10,10 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
-import de.caritas.cob.userservice.api.model.User;
 import org.assertj.core.api.Fail;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -97,26 +95,28 @@ class SessionToConsultantVerifierTest {
 
   @Test
   void
-      verifyPreconditionsForAssignment_Should_throwException_When_consultantDoesNotHaveRocketChatIdInDb() {
-    when(sessionToConsultantConditionProvider.hasConsultantNoRcId(any())).thenReturn(true);
-    ConsultantSessionDTO consultantSessionDTO =
-        ConsultantSessionDTO.builder()
-            .consultant(mock(Consultant.class))
-            .session(mock(Session.class))
-            .build();
+      verifyPreconditionsForAssignment_Should_Not_throwException_When_consultantDoesNotHaveRocketChatIdInDb() {
+    // Since the Matrix migration the Rocket.Chat id verification is intentionally disabled in
+    // SessionToConsultantVerifier (see "MATRIX MIGRATION: Commented out RocketChat ID
+    // verification"). A missing consultant Rocket.Chat id therefore no longer blocks assignment.
+    Session session = mock(Session.class);
+    when(session.getRegistrationType()).thenReturn(RegistrationType.REGISTERED);
 
-    assertThrows(
-        InternalServerErrorException.class,
+    ConsultantSessionDTO consultantSessionDTO =
+        ConsultantSessionDTO.builder().consultant(mock(Consultant.class)).session(session).build();
+
+    assertDoesNotThrow(
         () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
   }
 
   @Test
-  void verifyPreconditionsForAssignment_Should_throwException_When_sessionUserHasNoRocketChatId() {
-    when(sessionToConsultantConditionProvider.hasSessionUserNoRcId(any())).thenReturn(true);
-
+  void
+      verifyPreconditionsForAssignment_Should_Not_throwException_When_sessionUserHasNoRocketChatId() {
+    // Since the Matrix migration the Rocket.Chat id verification is intentionally disabled in
+    // SessionToConsultantVerifier (see "MATRIX MIGRATION: Commented out RocketChat ID
+    // verification"). A missing session-user Rocket.Chat id therefore no longer blocks assignment.
     Session sessionWithUser = mock(Session.class);
-    User user = mock(User.class);
-    when(sessionWithUser.getUser()).thenReturn(user);
+    when(sessionWithUser.getRegistrationType()).thenReturn(RegistrationType.REGISTERED);
 
     ConsultantSessionDTO consultantSessionDTO =
         ConsultantSessionDTO.builder()
@@ -124,8 +124,7 @@ class SessionToConsultantVerifierTest {
             .session(sessionWithUser)
             .build();
 
-    assertThrows(
-        InternalServerErrorException.class,
+    assertDoesNotThrow(
         () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
   }
 

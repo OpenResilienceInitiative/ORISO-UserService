@@ -44,6 +44,8 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private WorkflowErrorMailService workflowErrorMailService;
 
+  @Mock private DeletionLifecycleService deletionLifecycleService;
+
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
   @Test
@@ -58,6 +60,8 @@ public class DeleteUserAccountServiceTest {
   public void deleteUserAccounts_Should_performAskerDeletion_When_userIsMarkedAsDeleted() {
     User user = new User();
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
+    when(this.deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
+    when(this.deletionLifecycleService.isReadyForHardDelete(user)).thenReturn(true);
     when(this.actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class))
         .thenReturn(this.commandMockProvider.getActionContainer(AskerDeletionWorkflowDTO.class));
 
@@ -75,6 +79,9 @@ public class DeleteUserAccountServiceTest {
     Consultant consultant = new Consultant();
     when(this.consultantRepository.findAllByDeleteDateNotNull())
         .thenReturn(singletonList(consultant));
+    when(this.deletionLifecycleService.normalizeConsultantLifecycle(consultant))
+        .thenReturn(consultant);
+    when(this.deletionLifecycleService.isReadyForHardDelete(consultant)).thenReturn(true);
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(
             this.commandMockProvider.getActionContainer(ConsultantDeletionWorkflowDTO.class));
@@ -98,6 +105,11 @@ public class DeleteUserAccountServiceTest {
     User user = new User();
     user.setRcUserId("rc user id");
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
+    when(this.deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
+    when(this.deletionLifecycleService.isReadyForHardDelete(user)).thenReturn(true);
+    when(this.deletionLifecycleService.normalizeConsultantLifecycle(consultant))
+        .thenReturn(consultant);
+    when(this.deletionLifecycleService.isReadyForHardDelete(consultant)).thenReturn(true);
     RocketChatService rocketChatService = mock(RocketChatService.class);
     DeleteRocketChatAskerAction deleteRocketChatAskerAction =
         new DeleteRocketChatAskerAction(rocketChatService);

@@ -15,7 +15,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -23,6 +22,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
@@ -39,12 +39,14 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.HashMap;
 import java.util.List;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.Response;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,7 +69,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClientException;
@@ -88,7 +89,6 @@ public class KeycloakServiceTest {
   @InjectMocks private KeycloakService keycloakService;
 
   @Mock private RestTemplate restTemplate;
-  @Mock private Logger logger;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private UserAccountInputValidator userAccountInputValidator;
   @Mock private IdentityClientConfig identityClientConfig;
@@ -105,6 +105,8 @@ public class KeycloakServiceTest {
 
   EasyRandom easyRandom = new EasyRandom();
 
+  private LogbackCaptor logCaptor;
+
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
     givenAKeycloakLoginUrl();
@@ -112,7 +114,12 @@ public class KeycloakServiceTest {
     setField(keycloakService, "keycloakClientId", "app");
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
-    setField(KeycloakService.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(KeycloakService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -129,7 +136,7 @@ public class KeycloakServiceTest {
   public void
       changePassword_Should_ReturnFalseAndLogError_When_KeycloakPasswordChangeFailsWithException() {
     assertFalse(keycloakService.changePassword(USER_ID, NEW_PW));
-    verify(logger, atLeastOnce()).info(anyString(), any(Object.class));
+    assertTrue(logCaptor.contains(Level.INFO, "Could not change password for user with id"));
   }
 
   @Test
@@ -183,7 +190,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString(), any(Exception.class));
+    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
@@ -195,7 +202,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString());
+    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
@@ -777,7 +784,8 @@ public class KeycloakServiceTest {
 
     this.keycloakService.rollBackUser("userId");
 
-    verify(logger).error(anyString(), anyString());
+    assertTrue(
+        logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
   }
 
   @Test

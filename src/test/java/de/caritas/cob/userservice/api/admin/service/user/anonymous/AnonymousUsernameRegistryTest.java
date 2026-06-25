@@ -58,8 +58,15 @@ class AnonymousUsernameRegistryTest {
     assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 3"));
   }
 
+  @SuppressWarnings("unchecked")
   private void setIdRegistryField(LinkedList<Integer> idRegistryListWithoutThree) {
-    setField(AnonymousUsernameRegistry.class, "ID_REGISTRY", idRegistryListWithoutThree);
+    // ID_REGISTRY is a static final mutable LinkedList that is never reassigned in production, so
+    // instead of replacing the field reference (impossible on JDK 17) we clear and repopulate the
+    // existing list to control the registry contents for the test.
+    LinkedList<Integer> idRegistry =
+        (LinkedList<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
+    idRegistry.clear();
+    idRegistry.addAll(idRegistryListWithoutThree);
   }
 
   @Test

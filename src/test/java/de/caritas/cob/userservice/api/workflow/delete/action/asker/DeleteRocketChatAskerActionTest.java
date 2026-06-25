@@ -3,32 +3,34 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ROCKET_CHAT;
 import static java.util.Collections.emptyList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteUserException;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.workflow.delete.action.DeleteRocketChatUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteRocketChatAskerActionTest {
@@ -37,11 +39,16 @@ public class DeleteRocketChatAskerActionTest {
 
   @Mock private RocketChatService rocketChatService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setField(DeleteRocketChatAskerAction.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(DeleteRocketChatUserAction.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -86,6 +93,6 @@ public class DeleteRocketChatAskerActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("userId"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete Rocket.Chat user account"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
   }
 }

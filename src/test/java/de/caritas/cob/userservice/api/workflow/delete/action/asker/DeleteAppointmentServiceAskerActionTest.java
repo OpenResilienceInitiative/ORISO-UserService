@@ -3,31 +3,31 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.APPOINTMENT_SERVICE;
 import static java.util.Collections.emptyList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteAppointmentServiceAskerActionTest {
@@ -36,11 +36,16 @@ public class DeleteAppointmentServiceAskerActionTest {
 
   @Mock private AppointmentService appointmentService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setField(DeleteAppointmentServiceAskerAction.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(DeleteAppointmentServiceAskerAction.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -52,7 +57,7 @@ public class DeleteAppointmentServiceAskerActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     verify(this.appointmentService, times(1)).deleteAsker(any());
-    verifyNoMoreInteractions(this.logger);
+    assertThat(logCaptor.events()).isEmpty();
   }
 
   @Test
@@ -72,6 +77,7 @@ public class DeleteAppointmentServiceAskerActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("user id"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete asker"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(logCaptor.contains(Level.ERROR, "Appointment service delete workflow error"))
+        .isTrue();
   }
 }

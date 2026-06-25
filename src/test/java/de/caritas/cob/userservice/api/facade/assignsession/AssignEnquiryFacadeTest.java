@@ -13,6 +13,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WI
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
 import static java.util.Arrays.asList;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -23,11 +24,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -35,11 +38,16 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
@@ -51,7 +59,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 class AssignEnquiryFacadeTest {
@@ -70,19 +77,27 @@ class AssignEnquiryFacadeTest {
   ConsultingTypeManager consultingTypeManager;
 
   @Mock SessionToConsultantVerifier sessionToConsultantVerifier;
-  @Mock Logger logger;
   @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
   @Mock TenantContextProvider tenantContextProvider;
   @Mock StatisticsService statisticsService;
   @Mock HttpServletRequest httpServletRequest;
+  @Mock EmailNotificationFacade emailNotificationFacade;
+  @Mock MatrixSynapseService matrixSynapseService;
+  @Mock ConsultantRepository consultantRepository;
+  @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  @Mock LiveEventNotificationService liveEventNotificationService;
+  @Mock EventNotificationService eventNotificationService;
+
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setField(LogService.class, "LOGGER", logger);
+    logCaptor = LogbackCaptor.attach(LogService.class);
   }
 
   @AfterEach
   public void tearDown() {
+    logCaptor.detach();
     TenantContext.clear();
   }
 
@@ -136,8 +151,7 @@ class AssignEnquiryFacadeTest {
     verify(sessionService, times(1))
         .updateConsultantAndStatusForSession(
             U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
-    verifyAsync(
-        (a) -> verify(logger, times(1)).error(anyString(), anyString(), anyString(), anyString()));
+    verifyAsync((a) -> assertEquals(1, logCaptor.countAtLevel(Level.ERROR)));
   }
 
   @Test
@@ -151,8 +165,7 @@ class AssignEnquiryFacadeTest {
 
     verifyConsultantAndSessionHaveBeenChecked(
         U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verifyAsync(
-        (a) -> verify(logger, times(1)).error(anyString(), anyString(), anyString(), anyString()));
+    verifyAsync((a) -> assertEquals(1, logCaptor.countAtLevel(Level.ERROR)));
     verify(sessionService, times(1))
         .updateConsultantAndStatusForSession(
             U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, IN_PROGRESS);

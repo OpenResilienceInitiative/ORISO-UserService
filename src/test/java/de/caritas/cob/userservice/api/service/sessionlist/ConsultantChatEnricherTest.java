@@ -52,7 +52,8 @@ public class ConsultantChatEnricherTest {
             .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
             .userRooms(USERS_ROOMS_LIST)
             .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(Mockito.any()))
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
+            Mockito.any(), Mockito.any()))
         .thenReturn(rocketChatRoomInformation);
 
     ConsultantSessionResponseDTO result =
@@ -77,7 +78,8 @@ public class ConsultantChatEnricherTest {
             .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
             .userRooms(USERS_EMPTY_ROOMS_LIST)
             .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(Mockito.any()))
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
+            Mockito.any(), Mockito.any()))
         .thenReturn(rocketChatRoomInformation);
 
     ConsultantSessionResponseDTO result =
@@ -101,7 +103,8 @@ public class ConsultantChatEnricherTest {
             .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
             .userRooms(USERS_ROOMS_LIST)
             .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(Mockito.any()))
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
+            Mockito.any(), Mockito.any()))
         .thenReturn(rocketChatRoomInformation);
     when(sessionListAnalyser.getAttachmentFromRocketChatMessageIfAvailable(
             Mockito.eq(CONSULTANT_2.getRocketChatId()), Mockito.any()))
@@ -130,7 +133,8 @@ public class ConsultantChatEnricherTest {
             .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
             .userRooms(USERS_ROOMS_LIST)
             .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(Mockito.any()))
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
+            Mockito.any(), Mockito.any()))
         .thenReturn(rocketChatRoomInformation);
 
     ConsultantSessionResponseDTO result =
@@ -154,7 +158,8 @@ public class ConsultantChatEnricherTest {
             .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
             .userRooms(USERS_ROOMS_LIST)
             .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(Mockito.any()))
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
+            Mockito.any(), Mockito.any()))
         .thenReturn(rocketChatRoomInformation);
 
     ConsultantSessionResponseDTO result =

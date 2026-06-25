@@ -8,26 +8,28 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteDatabaseAskerActionTest {
@@ -36,11 +38,21 @@ public class DeleteDatabaseAskerActionTest {
 
   @Mock private UserRepository userRepository;
 
-  @Mock private Logger logger;
+  @Mock private IdentityTombstoneService identityTombstoneService;
+
+  private final ch.qos.logback.classic.Logger logger =
+      (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DeleteDatabaseAskerAction.class);
+  private final ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
 
   @BeforeEach
   public void setup() {
-    setField(DeleteDatabaseAskerAction.class, "log", logger);
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logger.detachAppender(logAppender);
   }
 
   @Test
@@ -52,7 +64,8 @@ public class DeleteDatabaseAskerActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     verify(this.userRepository, times(1)).delete(any());
-    verifyNoMoreInteractions(this.logger);
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
   }
 
   @Test
@@ -71,6 +84,7 @@ public class DeleteDatabaseAskerActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("user id"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete user"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
   }
 }

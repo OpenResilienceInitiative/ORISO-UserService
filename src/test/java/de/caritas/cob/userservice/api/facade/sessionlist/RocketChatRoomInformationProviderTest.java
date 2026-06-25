@@ -13,9 +13,11 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_3
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Objects;
@@ -32,6 +34,10 @@ class RocketChatRoomInformationProviderTest {
   @InjectMocks private RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
 
   @Mock private RocketChatService rocketChatService;
+
+  @Mock private MatrixSynapseService matrixSynapseService;
+
+  @Mock private ConsultantRepository consultantRepository;
 
   @Test
   void retrieveRocketChatInformation_Should_Return_CorrectMessagesReadMap() {

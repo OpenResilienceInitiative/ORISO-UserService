@@ -5,19 +5,19 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTarge
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ROCKET_CHAT;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -25,17 +25,18 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteChatActionTest {
@@ -46,11 +47,16 @@ public class DeleteChatActionTest {
 
   @Mock private RocketChatService rocketChatService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setField(DeleteChatAction.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(DeleteChatAction.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -62,7 +68,7 @@ public class DeleteChatActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verifyNoMoreInteractions(this.logger);
+    assertThat(logCaptor.events()).isEmpty();
     verifyNoMoreInteractions(this.rocketChatService);
     verify(this.chatRepository, times(1)).findByChatOwner(any());
     verifyNoMoreInteractions(this.chatRepository);
@@ -80,7 +86,7 @@ public class DeleteChatActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verifyNoMoreInteractions(this.logger);
+    assertThat(logCaptor.events()).isEmpty();
     verify(this.rocketChatService, times(5)).deleteGroupAsTechnicalUser(any());
     verify(this.chatRepository, times(1)).findByChatOwner(any());
     verify(this.chatRepository, times(1)).deleteAll(chats);
@@ -102,7 +108,7 @@ public class DeleteChatActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(6));
-    verify(logger, times(6)).error(anyString(), any(Exception.class));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(6);
   }
 
   @Test
@@ -132,6 +138,7 @@ public class DeleteChatActionTest {
     assertThat(workflowErrors.get(1).getIdentifier(), is(chat.getChatOwner().getId()));
     assertThat(workflowErrors.get(1).getReason(), is("Unable to delete chats in database"));
     assertThat(workflowErrors.get(1).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(2);
+    assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
   }
 }

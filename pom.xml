@@ -30,7 +30,6 @@
 		<skip.integration-tests>false</skip.integration-tests>
 		<keycloak.version>17.0.0</keycloak.version>
 		<springfox.version>2.9.2</springfox.version>
-		<powermock.version>2.0.2</powermock.version>
 		<adapters.web.generated.path>
 			${project.groupId}.${project.artifactId}.generated.api.adapters.web
 		</adapters.web.generated.path>
@@ -391,18 +390,6 @@
 			</exclusions>
 		</dependency>
 		<dependency>
-			<artifactId>powermock-module-junit4</artifactId>
-			<groupId>org.powermock</groupId>
-			<scope>test</scope>
-			<version>${powermock.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>junit</groupId>
-					<artifactId>junit</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-core</artifactId>
 			<version>5.12.0</version>
@@ -422,12 +409,6 @@
 		</dependency>
 
 
-		<dependency>
-			<artifactId>powermock-api-mockito2</artifactId>
-			<groupId>org.powermock</groupId>
-			<scope>test</scope>
-			<version>${powermock.version}</version>
-		</dependency>
 		<dependency>
 			<groupId>org.reflections</groupId>
 			<artifactId>reflections</artifactId>

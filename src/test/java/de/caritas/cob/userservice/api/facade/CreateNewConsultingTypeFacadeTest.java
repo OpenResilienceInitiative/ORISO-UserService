@@ -96,7 +96,7 @@ public class CreateNewConsultingTypeFacadeTest {
 
   @Test
   public void
-      initializeNewConsultingType_Should_RegisterNewUserChatRelationAndReturnNull_When_ProvidedWithGroupChatConsultingType_For_NewConsultingTypeRegistrations() {
+      initializeNewConsultingType_Should_RegisterNewUserChatRelationAndReturnSessionId_When_ProvidedWithGroupChatConsultingType_For_NewConsultingTypeRegistrations() {
     EasyRandom easyRandom = new EasyRandom();
     UserDTO userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setConsultingType(String.valueOf(CONSULTING_TYPE_ID_KREUZBUND));
@@ -107,14 +107,19 @@ public class CreateNewConsultingTypeFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings("15"))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    // Group chat registrations now also create a session in addition to the user-chat relation.
+    when(createSessionFacade.createUserSession(any(), any(), any(), eq(validationConstraints)))
+        .thenReturn(1L);
 
     var responseDto =
         createNewSessionFacade.initializeNewSession(userDTO, user, rocketChatCredentials);
 
-    assertNull(responseDto.getSessionId());
+    assertEquals(1L, responseDto.getSessionId().longValue());
     assertThat(responseDto.getStatus(), is(CREATED));
     verify(createUserChatRelationFacade, times(1))
         .initializeUserChatAgencyRelation(any(), any(), any());
+    verify(createSessionFacade, times(1))
+        .createUserSession(any(), any(), any(), eq(validationConstraints));
   }
 
   @Test

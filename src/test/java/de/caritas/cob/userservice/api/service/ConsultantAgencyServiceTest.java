@@ -12,7 +12,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -29,13 +28,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.slf4j.Logger;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 @ExtendWith(SpringExtension.class)
@@ -72,7 +69,6 @@ public class ConsultantAgencyServiceTest {
 
   @InjectMocks private ConsultantAgencyService consultantAgencyService;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
-  @Mock private Logger logger;
   @Mock private AgencyService agencyService;
 
   @Mock
@@ -82,11 +78,6 @@ public class ConsultantAgencyServiceTest {
   @Mock
   @SuppressWarnings("unused")
   private UserDtoMapper userDtoMapper;
-
-  @BeforeEach
-  public void setup() {
-    setField(LogService.class, "LOGGER", logger);
-  }
 
   @Test
   public void saveConsultantAgency_Should_SaveConsultantAgency() {

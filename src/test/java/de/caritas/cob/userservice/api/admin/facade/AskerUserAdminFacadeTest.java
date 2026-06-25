@@ -5,6 +5,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,6 +35,8 @@ public class AskerUserAdminFacadeTest {
   @Mock private UserService userService;
 
   @Mock private UsernameTranscoder usernameTranscoder;
+
+  @Mock private DeletionLifecycleService deletionLifecycleService;
 
   @Test
   public void markAskerForDeletion_Should_throwNotFoundException_When_askerDoesNotExist() {
@@ -64,6 +68,13 @@ public class AskerUserAdminFacadeTest {
       markAskerForDeletion_Should_markUserForDeletion_When_askerExistsAndIsNotMarkedForDeletion() {
     User user = new User();
     when(this.userService.getUser(any())).thenReturn(Optional.of(user));
+    doAnswer(
+            invocation -> {
+              invocation.<User>getArgument(0).setDeleteDate(nowInUtc());
+              return null;
+            })
+        .when(this.deletionLifecycleService)
+        .beginUserDeletion(any(User.class), any());
 
     this.askerUserAdminFacade.markAskerForDeletion("user id");
 
