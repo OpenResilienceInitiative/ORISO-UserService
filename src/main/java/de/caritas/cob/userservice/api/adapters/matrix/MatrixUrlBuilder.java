@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.util.UriUtils;
 
 final class MatrixUrlBuilder {
 
@@ -21,13 +23,25 @@ final class MatrixUrlBuilder {
       String endpoint,
       Map<String, ?> uriVariables,
       Map<String, ?> queryParams) {
-    var builder = UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint));
+    // Expand path template variables on the endpoint FIRST, while no query params are present, so
+    // that query values containing literal braces (e.g. a JSON `filter`) are never mistaken for
+    // URI-template variables by buildAndExpand (which previously threw IllegalArgumentException and
+    // silently disabled the room long-poll sync).
+    String expandedUrl =
+        UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
+            .buildAndExpand(uriVariables)
+            .encode()
+            .toUriString();
+    var builder = UriComponentsBuilder.fromUriString(expandedUrl);
     queryParams.forEach(
         (name, value) -> {
           if (value != null) {
-            builder.queryParam(name, value);
+            builder.queryParam(
+                name, UriUtils.encodeQueryParam(value.toString(), StandardCharsets.UTF_8));
           }
         });
-    return builder.buildAndExpand(uriVariables).encode().toUriString();
+    // Components are already encoded (path via .encode(), query values via encodeQueryParam), so
+    // build with encoded=true and do not expand again.
+    return builder.build(true).toUriString();
   }
 }

@@ -261,21 +261,24 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteEmailAddress_Should_useServicesCorrectly() {
-    // TODO(FLAG production): deleteEmailAddress -> updateDummyEmail(userId) -> updateEmail(...),
-    // and KeycloakService#updateEmail (KeycloakService.java:774-785) is a no-op (the real Keycloak
-    // update is commented out behind a "Bypassing Keycloak email update" log). The dummy email is
-    // therefore never persisted to Keycloak. This test asserts the CURRENT (bypassed) behavior:
-    // the user id is resolved and the dummy email computed, but no UserResource update happens.
-    // Restore the userResource.update(...) verification once the production bypass is removed.
+    // deleteEmailAddress -> updateDummyEmail(userId) -> updateEmail(...), which now persists the
+    // dummy email to Keycloak (verifyEmail + setEmail + userResource.update). Verify the dummy
+    // email
+    // is resolved and actually written via UserResource#update.
     var userId = random(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
     when(userHelper.getDummyEmail(userId)).thenReturn("dummy");
+    UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
+    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     keycloakService.deleteEmailAddress();
 
     verify(authenticatedUser).getUserId();
     verify(userHelper).getDummyEmail(userId);
-    Mockito.verifyNoInteractions(keycloakClient);
+    verify(userRepresentation).setEmail("dummy");
+    verify(userResource).update(userRepresentation);
   }
 
   @Test
@@ -497,6 +500,49 @@ public class KeycloakServiceTest {
 
           this.keycloakService.createKeycloakUser(userDTO);
         });
+  }
+
+  @Test
+  public void
+      createKeycloakUser_Should_notThrowNpe_When_duplicateMarkersAreNull_And_fallBackToStatus() {
+    // Guards the null-safe errorMatchesMarker(...): when the configured duplicate-email/username
+    // markers are unset (null), production must NOT NPE while lower-casing them. Instead it falls
+    // through to the status-based handling and still maps a 409 CONFLICT carrying "email" to a
+    // CustomValidationHttpStatusException (EMAIL_NOT_AVAILABLE), not an opaque 500.
+    UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
+    Response response = mock(Response.class);
+    when(identityClientConfig.getErrorMessageDuplicatedEmail()).thenReturn(null);
+    when(identityClientConfig.getErrorMessageDuplicatedUsername()).thenReturn(null);
+    when(response.getStatus()).thenReturn(HttpStatus.CONFLICT.value());
+    when(response.readEntity(String.class)).thenReturn("User exists with same email");
+    when(usersResource.create(any())).thenReturn(response);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    CustomValidationHttpStatusException exception =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> this.keycloakService.createKeycloakUser(userDTO));
+
+    assertThat(
+        exception.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
+  }
+
+  @Test
+  public void
+      createKeycloakUser_Should_throwInternalServerError_When_duplicateMarkersAreNull_And_statusUnknown() {
+    // Same null-marker guard, but with a non-conflict status and an unrelated error body: the
+    // method must fall through to a generic InternalServerErrorException rather than NPE.
+    UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
+    Response response = mock(Response.class);
+    when(identityClientConfig.getErrorMessageDuplicatedEmail()).thenReturn(null);
+    when(identityClientConfig.getErrorMessageDuplicatedUsername()).thenReturn(null);
+    when(response.getStatus()).thenReturn(HttpStatus.INTERNAL_SERVER_ERROR.value());
+    when(response.readEntity(String.class)).thenReturn("unexpected keycloak failure");
+    when(usersResource.create(any())).thenReturn(response);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThrows(
+        InternalServerErrorException.class, () -> this.keycloakService.createKeycloakUser(userDTO));
   }
 
   @Test
@@ -724,18 +770,21 @@ public class KeycloakServiceTest {
 
   @Test
   public void updateDummyMail_id_Should_callServicesCorrectly() {
-    // TODO(FLAG production): updateDummyEmail(String) -> updateEmail(...), and
-    // KeycloakService#updateEmail (KeycloakService.java:774-785) is a no-op (the real Keycloak
-    // update is commented out behind a "Bypassing Keycloak email update" log). The dummy email is
-    // therefore never persisted to Keycloak. This test asserts the CURRENT (bypassed) behavior:
-    // the dummy email is computed but no UserResource update happens. Restore the
-    // userResource.update(...) verification once the production bypass is removed.
-    when(userHelper.getDummyEmail(anyString())).thenReturn("dummy");
+    // updateDummyEmail(String) -> updateEmail(...), which now persists the dummy email to Keycloak
+    // (verifyEmail + setEmail + userResource.update). Verify the dummy email is computed and
+    // written
+    // via UserResource#update.
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
+    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     keycloakService.updateDummyEmail("userId");
 
     verify(userHelper).getDummyEmail("userId");
-    Mockito.verifyNoInteractions(keycloakClient);
+    verify(userRepresentation).setEmail("dummy");
+    verify(userResource).update(userRepresentation);
   }
 
   @Test
@@ -887,15 +936,20 @@ public class KeycloakServiceTest {
 
   @Test
   public void changeEmailAddress_Should_callServicesCorrectly_When_emailIsChangedAndAvailable() {
-    // TODO(FLAG production): KeycloakService#updateEmail (KeycloakService.java:774-785) is
-    // currently a no-op — it logs "Bypassing Keycloak email update" and returns, with the real
-    // Keycloak update commented out. As long as that bypass stands, no UserResource is touched and
-    // email changes are silently dropped. This test asserts the CURRENT (bypassed) behavior; once
-    // the production bypass is removed it must be restored to verify
-    // userRepresentation.setEmail(...) + userResource.update(...).
+    // KeycloakService#updateEmail now restores the real Keycloak update: it resolves the user,
+    // verifies email availability, sets the new email on the representation and persists it via
+    // UserResource#update. Verify the new email is set and the representation is written back.
+    UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
+    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
     this.keycloakService.updateEmail("userId", "anotherEmail");
 
-    Mockito.verifyNoInteractions(keycloakClient);
+    verify(userRepresentation).setEmail("anotherEmail");
+    ArgumentCaptor<UserRepresentation> captor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(captor.capture());
+    assertThat(captor.getValue(), is(userRepresentation));
   }
 
   @Test
