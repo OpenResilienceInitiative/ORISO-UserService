@@ -59,6 +59,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Service for sessions */
@@ -286,6 +287,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return A list of {@link ConsultantSessionResponseDTO}
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getTeamSessionsForConsultant(Consultant consultant) {
 
     List<Session> sessions = new ArrayList<>();
@@ -355,6 +357,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getRegisteredEnquiriesForConsultant(
       Consultant consultant) {
     List<Session> mergedSessions = new ArrayList<>();
@@ -448,6 +451,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getActiveAndDoneSessionsForConsultant(
       Consultant consultant) {
     return Stream.of(
@@ -589,6 +593,7 @@ public class SessionService {
    * @param roles the roles of the given consultant
    * @return {@link ConsultantSessionResponseDTO}
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndGroupIds(
       Consultant consultant, Set<String> rcGroupIds, Set<String> roles) {
     checkForUserOrConsultantRole(roles);
@@ -610,6 +615,7 @@ public class SessionService {
    * @param roles the roles of the given consultant
    * @return {@link ConsultantSessionResponseDTO}
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getSessionsByIds(
       Consultant consultant, Set<Long> sessionIds, Set<String> roles) {
     checkForUserOrConsultantRole(roles);
@@ -843,6 +849,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getArchivedSessionsForConsultant(
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedSessions(consultant);
@@ -861,6 +868,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getArchivedTeamSessionsForConsultant(
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedTeamSessionsForConsultant(consultant);
