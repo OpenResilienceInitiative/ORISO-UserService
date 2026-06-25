@@ -326,6 +326,30 @@ class SessionServiceTest {
   }
 
   @Test
+  void findSessionsByUser_Should_ReturnSessionsWithSessionData_When_ProvidedWithUser() {
+
+    List<Session> sessions = new ArrayList<>();
+    sessions.add(SESSION);
+    sessions.add(SESSION_2);
+
+    when(sessionRepository.findByUserWithSessionData(USER)).thenReturn(sessions);
+
+    List<Session> result = sessionService.findSessionsByUser(USER);
+
+    assertEquals(sessions, result);
+    verify(sessionRepository, never()).findByUser(USER);
+  }
+
+  @Test
+  void findSessionsByUser_Should_ReturnEmptyList_When_UserIsNull() {
+
+    List<Session> result = sessionService.findSessionsByUser(null);
+
+    assertEquals(List.of(), result);
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
   void getSessionsForUserByConsultingType_Should_ReturnListOfSessionsForUser() {
 
     List<Session> sessions = new ArrayList<>();
