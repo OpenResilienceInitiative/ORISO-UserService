@@ -44,6 +44,7 @@ public class RollbackFacade {
           .forEach(e -> log.error("Consultant delete error during rollback: ", e));
     }
   }
+
   /**
    * Deletes the provided user in Keycloak, MariaDB and its related session or user-chat/agency
    * relations depending on the provided {@link RollbackUserAccountInformation}.

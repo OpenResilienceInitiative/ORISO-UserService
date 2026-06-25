@@ -21,7 +21,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
 @Slf4j
 @Service
@@ -256,16 +255,10 @@ public class MatrixRoomClient {
   }
 
   private String buildUrl(String endpoint) {
-    return UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
-        .build()
-        .encode()
-        .toUriString();
+    return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint);
   }
 
   private String buildUrl(String endpoint, Map<String, ?> uriVariables) {
-    return UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
-        .buildAndExpand(uriVariables)
-        .encode()
-        .toUriString();
+    return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint, uriVariables);
   }
 }

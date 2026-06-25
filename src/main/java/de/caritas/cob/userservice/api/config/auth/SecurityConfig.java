@@ -126,7 +126,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .permitAll()
         .antMatchers("/users/sessions/askers")
         .permitAll()
-        .antMatchers("/matrix/sync/**")
+        .antMatchers("/matrix/sync/**", "/service/matrix/sync/**")
         .permitAll()
         .antMatchers(
             "/users/email",
@@ -142,7 +142,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/chat/{chatId:[0-9]+}/leave",
             "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
             "/users/consultants/toggleWalkThrough",
-            "/matrix/**")
+            "/matrix/**",
+            "/service/matrix/**")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/users/system-notification-emails/test")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
@@ -224,6 +225,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/chat/{chatId:[0-9]+}/update",
             "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
         .hasAuthority(UPDATE_CHAT)
+        .antMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
+        .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
         .antMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
         .hasAuthority(TENANT_ADMIN)
         .antMatchers("/useradmin/data/*")
@@ -245,6 +248,16 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/service/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
             "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause")
         .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+        .antMatchers(
+            HttpMethod.POST,
+            "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",
+            "/service/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity")
+        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+        .antMatchers(
+            HttpMethod.GET,
+            "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
+            "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
+        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/useradmin", "/useradmin/**")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/users/consultants/search")
@@ -270,7 +283,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
         .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
         .antMatchers("/userstatistics", "/userstatistics/**")
-        .permitAll()
+        .hasAuthority(TECHNICAL_DEFAULT)
         .antMatchers(HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
         .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
         .antMatchers(HttpMethod.GET, "/actuator/health")
@@ -284,7 +297,7 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .mvcMatchers(HttpMethod.GET, "/users/availability/{username}")
         .permitAll()
         .mvcMatchers(HttpMethod.GET, "/users/{username}")
-        .permitAll()
+        .hasAuthority(TECHNICAL_DEFAULT)
         .anyRequest()
         .denyAll();
   }
@@ -293,7 +306,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
   public void configure(WebSecurity web) throws Exception {
     // Completely ignore actuator endpoints and registration endpoint from Spring Security to avoid
     // Keycloak challenges
-    web.ignoring().antMatchers("/actuator/**", "/users/askers/new", "/matrix/sync/**");
+    web.ignoring()
+        .antMatchers(
+            "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
   }
 
   /**

@@ -16,9 +16,12 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.util.AbstractMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +45,7 @@ public class TenantAdminUserService {
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull TenantService tenantService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull ConsultantRepository consultantRepository;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -103,8 +107,18 @@ public class TenantAdminUserService {
 
     var tenantIdsToNameMap = tenantIdsToNameMap(fullAdmins);
 
+    Set<String> idsWithConsultantIdentity =
+        adminIds.isEmpty()
+            ? Collections.emptySet()
+            : consultantRepository.findActiveIdsByIdIn(adminIds);
+
     return userServiceMapper.mapOfAdmin(
-        adminsPage, fullAdmins, Lists.newArrayList(), Lists.newArrayList(), tenantIdsToNameMap);
+        adminsPage,
+        fullAdmins,
+        Lists.newArrayList(),
+        Lists.newArrayList(),
+        tenantIdsToNameMap,
+        idsWithConsultantIdentity);
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {

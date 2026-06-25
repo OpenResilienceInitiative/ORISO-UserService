@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -102,7 +103,8 @@ public class UserServiceMapper {
       List<Consultant> fullConsultants,
       List<AgencyDTO> agencyDTOS,
       List<ConsultantAgencyBase> consultantAgencies,
-      Map<Long, String> tenantIdsToNameMap) {
+      Map<Long, String> tenantIdsToNameMap,
+      Set<String> idsWithOtherIdentity) {
 
     var agencyLookupMap =
         agencyDTOS.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
@@ -122,7 +124,11 @@ public class UserServiceMapper {
               nonNull(fullConsultant)
                   ? mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap)
                   : new ArrayList<Map<String, Object>>();
-          var consultantMap = mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap);
+          var hasOtherIdentity =
+              nonNull(idsWithOtherIdentity)
+                  && idsWithOtherIdentity.contains(consultantBase.getId());
+          var consultantMap =
+              mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap, hasOtherIdentity);
           consultants.add(consultantMap);
         });
 
@@ -142,7 +148,8 @@ public class UserServiceMapper {
       List<Admin> fullAdmins,
       List<AgencyDTO> agencyDTOs,
       List<AdminAgencyBase> agenciesOfAdmin,
-      Map<Long, String> tenantIdsToNameMap) {
+      Map<Long, String> tenantIdsToNameMap,
+      Set<String> idsWithOtherIdentity) {
     var agencyLookupMap =
         agencyDTOs.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
 
@@ -157,7 +164,10 @@ public class UserServiceMapper {
         adminBase -> {
           var fullAdmin = fullAdminLookupMap.get(adminBase.getId());
           var agencies = mapOfAgencies(fullAdmin, agencyLookupMap, adminAgencyLookupMap);
-          var adminMap = mapOfAdmin(adminBase, fullAdmin, agencies, tenantIdsToNameMap);
+          var hasOtherIdentity =
+              nonNull(idsWithOtherIdentity) && idsWithOtherIdentity.contains(adminBase.getId());
+          var adminMap =
+              mapOfAdmin(adminBase, fullAdmin, agencies, tenantIdsToNameMap, hasOtherIdentity);
           admins.add(adminMap);
         });
 
@@ -241,7 +251,8 @@ public class UserServiceMapper {
       ConsultantBase consultantBase,
       Consultant fullConsultant,
       List<Map<String, Object>> agencies,
-      Map<Long, String> tenantIdsToNameMap) {
+      Map<Long, String> tenantIdsToNameMap,
+      boolean hasOtherIdentity) {
     var status =
         isNull(fullConsultant) || isNull(fullConsultant.getStatus())
             ? ConsultantStatus.ERROR.toString()
@@ -283,6 +294,7 @@ public class UserServiceMapper {
         tenantIdsToNameMap.containsKey(tenantId)
             ? tenantIdsToNameMap.get(tenantId)
             : StringUtils.EMPTY);
+    map.put("hasOtherIdentity", hasOtherIdentity);
     return map;
   }
 
@@ -290,7 +302,8 @@ public class UserServiceMapper {
       AdminBase adminBase,
       Admin fullAdmin,
       List<Map<String, Object>> agencies,
-      Map<Long, String> tenantIdsToNameMap) {
+      Map<Long, String> tenantIdsToNameMap,
+      boolean hasOtherIdentity) {
 
     Map<String, Object> map = new HashMap<>();
     map.put("id", adminBase.getId());
@@ -308,6 +321,7 @@ public class UserServiceMapper {
         "updatedAt",
         nonNull(fullAdmin.getUpdateDate()) ? fullAdmin.getUpdateDate().toString() : null);
     map.put("agencies", agencies);
+    map.put("hasOtherIdentity", hasOtherIdentity);
 
     return map;
   }

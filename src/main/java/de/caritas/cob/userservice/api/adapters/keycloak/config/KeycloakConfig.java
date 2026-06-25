@@ -2,8 +2,10 @@ package de.caritas.cob.userservice.api.adapters.keycloak.config;
 
 import static java.util.Objects.nonNull;
 
+import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.constraints.NotBlank;
@@ -35,7 +37,10 @@ public class KeycloakConfig {
 
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
-    return restTemplateBuilder.build();
+    return restTemplateBuilder
+        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .build();
   }
 
   @Bean
@@ -52,7 +57,8 @@ public class KeycloakConfig {
 
   @Bean
   @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
-  public AuthenticatedUser authenticatedUser(HttpServletRequest request) {
+  public AuthenticatedUser authenticatedUser(
+      HttpServletRequest request, UsernameTranscoder usernameTranscoder) {
     var userPrincipal = request.getUserPrincipal();
     var authenticatedUser = new AuthenticatedUser();
 
@@ -63,7 +69,8 @@ public class KeycloakConfig {
 
       try {
         if (claimMap.containsKey("username")) {
-          authenticatedUser.setUsername(claimMap.get("username").toString());
+          authenticatedUser.setUsername(
+              usernameTranscoder.decodeUsername(claimMap.get("username").toString()));
         }
         // Use the subject (sub) field for userId instead of otherClaims
         authenticatedUser.setUserId(securityContext.getToken().getSubject());

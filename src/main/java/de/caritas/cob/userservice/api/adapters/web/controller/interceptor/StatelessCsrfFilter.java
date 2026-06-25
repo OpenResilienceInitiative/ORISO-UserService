@@ -109,8 +109,9 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       List<String> csrfWhitelist =
           new ArrayList<>(Arrays.asList(csrfSecurityProperties.getWhitelist().getConfigUris()));
       csrfWhitelist.addAll(Arrays.asList(csrfSecurityProperties.getWhitelist().getAdminUris()));
+      final String requestUri = request.getRequestURI().toLowerCase();
       return csrfWhitelist.parallelStream()
-          .anyMatch(request.getRequestURI().toLowerCase()::contains);
+          .anyMatch(whitelistUri -> requestUri.startsWith(whitelistUri.toLowerCase()));
     }
 
     private boolean isWhiteListHeader(HttpServletRequest request) {

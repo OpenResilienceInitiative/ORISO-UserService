@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static java.util.Objects.nonNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
@@ -12,6 +14,8 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,11 +25,13 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EventNotificationService {
@@ -41,6 +47,7 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
+  private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
@@ -52,12 +59,15 @@ public class EventNotificationService {
     }
 
     String consultantName = resolveConsultantName(consultant);
+    Map<String, Object> params = baseParams(session);
+    params.put("consultantName", consultantName);
     createEvent(
         session.getUser().getUserId(),
         "inquiry.accepted",
         CATEGORY_SYSTEM,
         "Inquiry accepted",
         String.format("Your request was accepted by %s. Chat is now active.", consultantName),
+        serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
@@ -66,6 +76,8 @@ public class EventNotificationService {
   @Transactional
   public void createSupervisorAddedNotification(
       Session session, String recipientUserId, String supervisorName) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "supervisorName", supervisorName);
     createEvent(
         recipientUserId,
         "supervisor.added",
@@ -74,7 +86,30 @@ public class EventNotificationService {
         String.format(
             "%s was added as a consultant supervisor to your chat #%s.",
             safeValue(supervisorName, "A supervisor"), session.getId()),
+        serializeParams(params),
         buildSessionActionPath(session),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  /**
+   * WP-06 Slice 2b: notify the consultant who was just assigned as supervisor. Extracted from
+   * SessionSupervisorController so every event_notification producer goes through this service and
+   * carries structured params uniformly.
+   */
+  @Transactional
+  public void createSupervisorAssignedNotification(Session session, String recipientConsultantId) {
+    if (session == null || recipientConsultantId == null || recipientConsultantId.isBlank()) {
+      return;
+    }
+    createEvent(
+        recipientConsultantId,
+        "supervisor.assigned",
+        CATEGORY_SYSTEM,
+        "Supervisor assignment",
+        String.format("You were added as supervisor to chat #%s.", session.getId()),
+        serializeParams(baseParams(session)),
+        buildSessionActionPath(session, null, true),
         session.getId(),
         session.getTenantId());
   }
@@ -82,6 +117,8 @@ public class EventNotificationService {
   @Transactional
   public void createSupervisorRemovedNotification(
       Session session, String recipientUserId, String supervisorName) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "supervisorName", supervisorName);
     createEvent(
         recipientUserId,
         "supervisor.removed",
@@ -90,6 +127,7 @@ public class EventNotificationService {
         String.format(
             "%s was removed from supervision for chat #%s.",
             safeValue(supervisorName, "A supervisor"), session.getId()),
+        serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
@@ -104,6 +142,9 @@ public class EventNotificationService {
     String previous = safeValue(oldDisplayName, "your counselor");
     String updated = safeValue(newDisplayName, "your counselor");
     String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
+    Map<String, Object> params = baseParams(session);
+    params.put("oldName", previous);
+    params.put("newName", updated);
     createEvent(
         recipientUserId,
         "counselor.renamed",
@@ -112,9 +153,119 @@ public class EventNotificationService {
         String.format(
             "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
             previous, updated, changedAt),
+        serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
+  }
+
+  /**
+   * WP-06 Slice 2 (Tier 1): persist a "New client request" timeline event ({@code request.new}) for
+   * each eligible consultant when a new enquiry is created. The recipient population mirrors the
+   * consultants already notified by email — the Activity Timeline is the consultant's inbox.
+   *
+   * <p>Carries structured params (ADR-AT-01) for client-side rendering, plus a title/text fallback
+   * so today's frontend renders the same card until it reads params. Best-effort: persisting a
+   * notification must never break enquiry creation, so per-recipient failures are swallowed and
+   * logged.
+   */
+  @Transactional
+  public void createNewClientRequestNotifications(
+      Session session, Collection<String> recipientConsultantIds) {
+    if (session == null || recipientConsultantIds == null) {
+      return;
+    }
+    String actionPath = buildSessionActionPath(session, null, true);
+    String params = buildNewClientRequestParams(session);
+    recipientConsultantIds.stream()
+        .filter(id -> id != null && !id.isBlank())
+        .distinct()
+        .forEach(
+            consultantId -> {
+              try {
+                createEvent(
+                    consultantId,
+                    "request.new",
+                    CATEGORY_SYSTEM,
+                    "New client request",
+                    "A new client request is waiting.",
+                    params,
+                    actionPath,
+                    session.getId(),
+                    session.getTenantId());
+              } catch (RuntimeException ex) {
+                log.warn(
+                    "Could not persist request.new notification for consultant {} (session {})",
+                    consultantId,
+                    session.getId(),
+                    ex);
+              }
+            });
+  }
+
+  private String buildNewClientRequestParams(Session session) {
+    Map<String, Object> params = baseParams(session);
+    if (session.getAgencyId() != null) {
+      params.put("agencyId", session.getAgencyId());
+    }
+    if (session.getMainTopicId() != null) {
+      params.put("topicId", session.getMainTopicId());
+    }
+    params.put("consultingTypeId", session.getConsultingTypeId());
+    return serializeParams(params);
+  }
+
+  // WP-06 Slice 2b: structured params for message/thread events. Per ADR-AT-01 these carry only
+  // non-content metadata (sender label, content class, recipient role, thread id) — NEVER the
+  // message preview/body, which stays client-hydrated from the Matrix room.
+  private String buildMessageParams(
+      Session session, String senderName, String contentClass, String recipientRole) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "senderName", senderName);
+    putIfPresent(params, "contentClass", contentClass);
+    putIfPresent(params, "recipientRole", recipientRole);
+    return serializeParams(params);
+  }
+
+  private String buildThreadReplyParams(
+      Session session,
+      String senderName,
+      String contentClass,
+      String threadRootId,
+      String recipientRole) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "senderName", senderName);
+    putIfPresent(params, "contentClass", contentClass);
+    putIfPresent(params, "threadRootId", threadRootId);
+    putIfPresent(params, "recipientRole", recipientRole);
+    return serializeParams(params);
+  }
+
+  /** Seed a params map with the session id every timeline event references. */
+  private Map<String, Object> baseParams(Session session) {
+    Map<String, Object> params = new LinkedHashMap<>();
+    if (session != null && session.getId() != null) {
+      params.put("sessionId", session.getId());
+    }
+    return params;
+  }
+
+  private void putIfPresent(Map<String, Object> params, String key, String value) {
+    if (value != null && !value.isBlank()) {
+      params.put(key, value);
+    }
+  }
+
+  private String serializeParams(Map<String, Object> params) {
+    if (params == null || params.isEmpty()) {
+      return null;
+    }
+    try {
+      return paramsObjectMapper.writeValueAsString(params);
+    } catch (JsonProcessingException ex) {
+      log.warn("Could not serialize event_notification params", ex);
+      return null;
+    }
   }
 
   @Transactional
@@ -176,6 +327,7 @@ public class EventNotificationService {
     Session session = sessionOpt.get();
     String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
     String text = buildMessageNotificationText(senderLabel, messagePreview, envelope);
+    String contentClass = envelope != null ? envelope.getContentClass() : null;
 
     if (!supervisorMessage
         && session.getUser() != null
@@ -188,6 +340,7 @@ public class EventNotificationService {
           CATEGORY_MESSAGE,
           "New message",
           text,
+          buildMessageParams(session, senderLabel, contentClass, "user"),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), null),
           session.getId(),
           session.getTenantId());
@@ -203,6 +356,7 @@ public class EventNotificationService {
           CATEGORY_MESSAGE,
           "New message",
           text,
+          buildMessageParams(session, senderLabel, contentClass, "consultant"),
           buildSessionActionPathForRecipient(session, session.getConsultant().getId(), null),
           session.getId(),
           session.getTenantId());
@@ -284,6 +438,7 @@ public class EventNotificationService {
     String text =
         buildThreadReplyNotificationText(
             senderLabel, messagePreview, threadParentPreview, envelope);
+    String contentClass = envelope != null ? envelope.getContentClass() : null;
 
     if (!supervisorMessage
         && session.getUser() != null
@@ -296,6 +451,7 @@ public class EventNotificationService {
           CATEGORY_MESSAGE,
           "New thread reply",
           text,
+          buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "user"),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), threadRootId),
           session.getId(),
           session.getTenantId());
@@ -311,6 +467,7 @@ public class EventNotificationService {
           CATEGORY_MESSAGE,
           "New thread reply",
           text,
+          buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "consultant"),
           buildSessionActionPathForRecipient(
               session, session.getConsultant().getId(), threadRootId),
           session.getId(),
@@ -396,6 +553,34 @@ public class EventNotificationService {
       String actionPath,
       Long sourceSessionId,
       Long tenantId) {
+    createEvent(
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        null,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /**
+   * Low-level builder. WP-06 / ADR-AT-01: {@code params} carries structured JSON the client renders
+   * visible strings from; {@code title}/{@code text} remain a fallback until the frontend renders
+   * purely from params.
+   */
+  @Transactional
+  public void createEvent(
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
     if (recipientUserId == null || recipientUserId.isBlank()) {
       return;
     }
@@ -406,6 +591,7 @@ public class EventNotificationService {
             .category(nonNull(category) ? category : CATEGORY_SYSTEM)
             .title(nonNull(title) ? title : "Notification")
             .text(nonNull(text) ? text : "")
+            .params(params)
             .actionPath(actionPath)
             .sourceSessionId(sourceSessionId)
             .readDate(null)
@@ -422,6 +608,7 @@ public class EventNotificationService {
         .category(item.getCategory())
         .title(item.getTitle())
         .text(item.getText())
+        .params(item.getParams())
         .actionPath(item.getActionPath())
         .sourceSessionId(item.getSourceSessionId())
         .readAt(
@@ -680,6 +867,10 @@ public class EventNotificationService {
     private final String category;
     private final String title;
     private final String text;
+
+    /** WP-06 / ADR-AT-01: structured JSON params for client-side string rendering. */
+    private final String params;
+
     private final String actionPath;
     private final Long sourceSessionId;
     private final String createdAt;

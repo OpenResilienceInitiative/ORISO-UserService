@@ -21,6 +21,10 @@ import org.springframework.web.multipart.MultipartFile;
 public class MatrixMediaClient {
 
   private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
+  private static final String ENDPOINT_MEDIA_DOWNLOAD =
+      "/_matrix/media/r0/download/{serverName}/{mediaId}";
+  private static final String ENDPOINT_SEND_MESSAGE =
+      "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -72,7 +76,11 @@ public class MatrixMediaClient {
   }
 
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    String url = matrixConfig.getApiUrl("/_matrix/media/r0/download/" + serverName + "/" + mediaId);
+    String url =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig,
+            ENDPOINT_MEDIA_DOWNLOAD,
+            Map.of("serverName", serverName, "mediaId", mediaId));
     log.info("📥 Downloading file from Matrix: {}/{}", serverName, mediaId);
 
     HttpHeaders headers = new HttpHeaders();
@@ -134,8 +142,8 @@ public class MatrixMediaClient {
 
       String txnId = UUID.randomUUID().toString();
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_SEND_MESSAGE, Map.of("roomId", roomId, "txnId", txnId));
 
       log.info("📨 Sending file message to Matrix room: {} (type: {})", roomId, msgtype);
 

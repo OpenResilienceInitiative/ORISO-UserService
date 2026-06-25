@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -9,6 +10,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
 
 public interface AdminRepository extends CrudRepository<Admin, String> {
 
@@ -40,4 +42,7 @@ public interface AdminRepository extends CrudRepository<Admin, String> {
   List<Admin> findByType(Admin.AdminType type);
 
   List<Admin> findAllByIdIn(Set<String> adminIds);
+
+  @Query("SELECT a.id FROM Admin a WHERE a.id IN :ids")
+  Set<String> findExistingIdsByIdIn(@Param("ids") Collection<String> ids);
 }

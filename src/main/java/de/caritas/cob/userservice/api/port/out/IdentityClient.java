@@ -73,6 +73,8 @@ public interface IdentityClient {
 
   boolean userHasRole(String userId, String userRole);
 
+  List<String> getRealmRoles(String userId);
+
   List<UserRepresentation> findByUsername(String username);
 
   void closeSession(String sessionId);

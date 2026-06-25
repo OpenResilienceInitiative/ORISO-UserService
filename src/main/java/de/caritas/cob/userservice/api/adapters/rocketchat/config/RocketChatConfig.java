@@ -9,6 +9,7 @@ import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
+import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import java.util.Arrays;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.constraints.AssertTrue;
@@ -50,6 +51,8 @@ public class RocketChatConfig {
   @Bean("rocketChatRestTemplate")
   public RestTemplate rocketChatRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
+        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .defaultHeader(CONTENT_TYPE, MediaType.APPLICATION_JSON.toString())
         .build();
   }

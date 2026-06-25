@@ -50,6 +50,8 @@ class AgencyAdminUserServiceTest {
 
   @Mock private TenantService tenantService;
 
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
   @Test
   void findAgencyAdminsByInfix_Should_NotFail_WhenTenantServiceReturnsNotFound() {
     // given
@@ -73,7 +75,12 @@ class AgencyAdminUserServiceTest {
     when(tenantService.getRestrictedTenantData(2L))
         .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
     when(userServiceMapper.mapOfAdmin(
-            Mockito.any(), Mockito.anyList(), Mockito.anyList(), Mockito.anyList(), Mockito.any()))
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
         .thenReturn(new HashMap<>());
 
     // when
@@ -87,7 +94,8 @@ class AgencyAdminUserServiceTest {
             Mockito.eq(fullAdmins),
             Mockito.anyList(),
             Mockito.anyList(),
-            tenantNameMapCaptor.capture());
+            tenantNameMapCaptor.capture(),
+            Mockito.any());
     Assertions.assertEquals("Known tenant", tenantNameMapCaptor.getValue().get(1L));
     Assertions.assertFalse(tenantNameMapCaptor.getValue().containsKey(2L));
   }

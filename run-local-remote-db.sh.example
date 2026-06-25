@@ -16,6 +16,8 @@ export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso.org/service"
 export AGENCY_SERVICE_API_URL="https://api.oriso.org/service"
 export TENANT_SERVICE_API_URL="https://api.oriso.org/service"
 export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso.org"
+export IDENTITY_TECHNICAL_USER_USERNAME="technical"
+export IDENTITY_TECHNICAL_USER_PASSWORD='CHANGE_ME'
 
 export ROCKET_CHAT_BASE_URL="http://localhost:3000/api/v1"
 export ROCKET_CHAT_MONGO_URL="mongodb://localhost:27017/rocketchat?retryWrites=false"

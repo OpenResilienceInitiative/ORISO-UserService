@@ -851,6 +851,23 @@ public class KeycloakService implements IdentityClient {
     }
   }
 
+  /**
+   * Returns the names of all realm roles currently assigned to the given user.
+   *
+   * @param userId Keycloak user ID
+   * @return the realm role names assigned to the user
+   */
+  @Override
+  public List<String> getRealmRoles(String userId) {
+    try {
+      return getUserRoles(userId).stream().map(RoleRepresentation::getName).toList();
+    } catch (Exception ex) {
+      var error = String.format("Could not get roles for user id %s", userId);
+      log.error("Keycloak error: " + error, ex);
+      throw new KeycloakException(error);
+    }
+  }
+
   private Optional<UserRole> toUserRole(RoleRepresentation roleRepresentation) {
     return UserRole.getRoleByValue(roleRepresentation.getName());
   }

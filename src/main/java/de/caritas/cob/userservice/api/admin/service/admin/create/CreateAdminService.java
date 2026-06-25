@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.admin.create;
 
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.ROLE_NOT_FOUND;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.Validate.notNull;
 
@@ -20,10 +21,12 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.List;
+import javax.ws.rs.NotFoundException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -99,6 +102,12 @@ public class CreateAdminService {
     } catch (CustomValidationHttpStatusException e) {
       identityClient.rollBackUser(keycloakUserId);
       throw e;
+    } catch (NotFoundException e) {
+      // A required Keycloak realm role (e.g. restricted-agency-admin or user-admin) is missing.
+      // Surface a specific, machine-readable reason so the admin panel can show a clear message
+      // instead of a generic 500, while still rolling back the partially created user.
+      identityClient.rollBackUser(keycloakUserId);
+      throw new CustomValidationHttpStatusException(ROLE_NOT_FOUND, HttpStatus.NOT_FOUND);
     } catch (RuntimeException e) {
       identityClient.rollBackUser(keycloakUserId);
       throw new InternalServerErrorException(

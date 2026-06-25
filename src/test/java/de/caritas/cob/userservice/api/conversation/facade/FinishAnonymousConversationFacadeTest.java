@@ -67,6 +67,7 @@ class FinishAnonymousConversationFacadeTest {
     mockAskerOwnsSession(session);
     when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
     when(this.actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
     when(this.actionsRegistry.buildContainerForType(User.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));
@@ -107,6 +108,7 @@ class FinishAnonymousConversationFacadeTest {
     when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
     when(this.sessionService.isAnonymousStyleRegistration(session)).thenReturn(true);
     when(this.actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));
     when(this.actionsRegistry.buildContainerForType(User.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(User.class));

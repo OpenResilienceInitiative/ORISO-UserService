@@ -70,8 +70,10 @@ import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EnquiryData;
+import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
@@ -171,6 +173,7 @@ public class UserController implements UsersApi {
 
   private final @NonNull SessionDeleteService sessionDeleteService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -617,10 +620,7 @@ public class UserController implements UsersApi {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
     }
-    var otpInfoDTO =
-        identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())
-            ? identityManager.getOtpCredential(authenticatedUser.getUsername())
-            : null;
+    var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 
     var fullUserData =
         userDtoMapper.userDataOf(
@@ -630,6 +630,22 @@ public class UserController implements UsersApi {
             identityClientConfig.getDisplayNameAllowedForConsultants());
 
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
+  }
+
+  private OtpInfoDTO retrieveOtpCredentialIfAllowed() {
+    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+      return null;
+    }
+    try {
+      return identityManager.getOtpCredential(
+          usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
+    } catch (Exception ex) {
+      log.warn(
+          "Could not retrieve OTP credential for authenticated user {}; returning user data without OTP state",
+          authenticatedUser.getUserId(),
+          ex);
+      return null;
+    }
   }
 
   private boolean isAgencyAdmin() {
@@ -1041,7 +1057,9 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updatePassword(@RequestBody PasswordDTO passwordDTO) {
     var username = authenticatedUser.getUsername();
-    if (!identityManager.validatePasswordIgnoring2fa(username, passwordDTO.getOldPassword())) {
+    var encodedUsername = usernameTranscoder.encodeUsername(username);
+    if (!identityManager.validatePasswordIgnoring2fa(
+        encodedUsername, passwordDTO.getOldPassword())) {
       var message = String.format("Could not log in user %s into Keycloak", username);
       throw new BadRequestException(message);
     }
@@ -1286,7 +1304,8 @@ public class UserController implements UsersApi {
       @Valid DeleteUserAccountDTO deleteUserAccountDTO) {
     var username = authenticatedUser.getUsername();
     var password = deleteUserAccountDTO.getPassword();
-    if (!identityManager.validatePasswordIgnoring2fa(username, password)) {
+    var encodedUsername = usernameTranscoder.encodeUsername(username);
+    if (!identityManager.validatePasswordIgnoring2fa(encodedUsername, password)) {
       var message = String.format("Could not log in user %s into Keycloak", username);
       throw new BadRequestException(message);
     }
@@ -1360,7 +1379,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
-    var username = authenticatedUser.getUsername();
+    var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase();
 
     if (!identityManager.isEmailAvailableOrOwn(username, email)) {
@@ -1379,7 +1398,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
-    var username = authenticatedUser.getUsername();
+    var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 
     if (Boolean.parseBoolean(validationResult.get("created"))) {
@@ -1424,7 +1443,7 @@ public class UserController implements UsersApi {
 
     var isValid =
         identityManager.setUpOneTimePassword(
-            authenticatedUser.getUsername(),
+            usernameTranscoder.encodeUsername(authenticatedUser.getUsername()),
             oneTimePasswordDTO.getOtp(),
             oneTimePasswordDTO.getSecret());
 
@@ -1438,7 +1457,8 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> deactivateTwoFactorAuthByApp() {
-    identityManager.deleteOneTimePassword(authenticatedUser.getUsername());
+    identityManager.deleteOneTimePassword(
+        usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

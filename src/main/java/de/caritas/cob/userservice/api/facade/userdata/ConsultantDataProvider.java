@@ -27,6 +27,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientResponseException;
 
 /** Provider for consultant information. */
@@ -48,6 +49,7 @@ public class ConsultantDataProvider {
    * @param consultant a {@link Consultant} instance
    * @return the user data
    */
+  @Transactional(readOnly = true)
   public UserDataResponseDTO retrieveData(Consultant consultant) {
     if (isEmpty(consultant.getConsultantAgencies())) {
       throw new InternalServerErrorException(

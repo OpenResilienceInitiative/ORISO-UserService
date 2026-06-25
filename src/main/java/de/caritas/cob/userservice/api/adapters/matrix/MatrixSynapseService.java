@@ -10,38 +10,48 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MatrixSynapseService {
 
+  private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
+  private static final String ENDPOINT_ADMIN_LOGIN_AS_USER = "/_synapse/admin/v1/users/%s/login";
   private static final String ENDPOINT_LOGIN = "/_matrix/client/r0/login";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
+  private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
+  private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
+  private static final String ENDPOINT_SEND_MESSAGE =
+      "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
+  private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final RestTemplate matrixLongPollRestTemplate;
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
 
@@ -53,8 +63,10 @@ public class MatrixSynapseService {
   private final java.util.Map<String, String> syncTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the polled
-  // availability endpoint does not hit Synapse once per consultant on every request.
+  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the
+  // polled
+  // availability endpoint does not hit Synapse once per consultant on every
+  // request.
   private final java.util.Map<String, CachedPresence> presenceCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -73,6 +85,36 @@ public class MatrixSynapseService {
   // Cached admin access token for admin operations
   private String cachedAdminToken = null;
   private long adminTokenExpiry = 0;
+
+  // Short-lived impersonation tokens obtained via Synapse admin API (matrixUserId
+  // -> token)
+  private final java.util.Map<String, CachedImpersonationToken> impersonationTokenCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final long IMPERSONATION_TOKEN_TTL_MS = 50 * 60 * 1000L;
+
+  private static final class CachedImpersonationToken {
+    private final String token;
+    private final long expiryMs;
+
+    private CachedImpersonationToken(String token, long expiryMs) {
+      this.token = token;
+      this.expiryMs = expiryMs;
+    }
+  }
+
+  public MatrixSynapseService(
+      MatrixConfig matrixConfig,
+      RestTemplate restTemplate,
+      @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
+      MatrixRoomClient matrixRoomClient,
+      MatrixMediaClient matrixMediaClient) {
+    this.matrixConfig = matrixConfig;
+    this.restTemplate = restTemplate;
+    this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
+    this.matrixRoomClient = matrixRoomClient;
+    this.matrixMediaClient = matrixMediaClient;
+  }
 
   /**
    * Creates a new user in Matrix Synapse.
@@ -208,13 +250,93 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Creates a short-lived Matrix access token for a user via the Synapse admin API.
+   *
+   * @param matrixUserId full Matrix user ID, e.g. {@code @user:server}
+   * @param validForMs validity duration in milliseconds
+   * @return login response body, including {@code access_token}, or {@code null} when unavailable
+   */
+  public java.util.Map<String, Object> loginAsUser(String matrixUserId, long validForMs) {
+    if (matrixUserId == null || matrixUserId.isBlank()) {
+      return null;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Matrix admin token unavailable; cannot create user token for {}", matrixUserId);
+      return null;
+    }
+
+    try {
+      URI uri = adminLoginAsUserUri(matrixUserId);
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var body = new java.util.HashMap<String, Object>();
+      if (validForMs > 0) {
+        body.put("valid_until_ms", System.currentTimeMillis() + validForMs);
+      }
+
+      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+      var response = restTemplate.postForEntity(uri, request, java.util.Map.class);
+
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> responseBody =
+          response.getBody() == null
+              ? java.util.Map.of()
+              : (java.util.Map<String, Object>) response.getBody();
+      return responseBody;
+    } catch (HttpStatusCodeException ex) {
+      log.error(
+          "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
+          matrixUserId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return null;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix Error: Could not create login token for user ({}). Reason: {}",
+          matrixUserId,
+          ex.getMessage());
+      return null;
+    }
+  }
+
+  private static String encodeMatrixUserIdForAdminPath(String matrixUserId) {
+    try {
+      return UriUtils.encode(
+          UriUtils.decode(matrixUserId, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException ex) {
+      return UriUtils.encode(matrixUserId, StandardCharsets.UTF_8);
+    }
+  }
+
+  private URI adminLoginAsUserUri(String matrixUserId) {
+    String encodedMatrixUserId = encodeMatrixUserIdForAdminPath(matrixUserId);
+    String url =
+        matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
+    return URI.create(url);
+  }
+
+  public String loginAsUserAccessToken(String matrixUserId) {
+    var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS);
+    if (tokenResponse == null || tokenResponse.get("access_token") == null) {
+      return null;
+    }
+    return String.valueOf(tokenResponse.get("access_token"));
+  }
+
+  /**
    * Gets or creates an admin access token for administrative operations. Creates a technical admin
    * user if it doesn't exist.
    *
    * @return admin access token, or null if failed
    */
   private String getAdminAccessToken() {
-    // Check if cached token is still valid (expires in 1 hour, we refresh after 50 minutes)
+    // Check if cached token is still valid (expires in 1 hour, we refresh after 50
+    // minutes)
     long now = System.currentTimeMillis();
     if (cachedAdminToken != null && now < adminTokenExpiry) {
       return cachedAdminToken;
@@ -278,7 +400,8 @@ public class MatrixSynapseService {
 
       // Update display name using Synapse ADMIN v2 API
       String url =
-          matrixConfig.getApiUrl(ENDPOINT_UPDATE_USER_ADMIN.replace("{userId}", matrixUserId));
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -307,7 +430,146 @@ public class MatrixSynapseService {
   }
 
   /**
-   * Logs in a Matrix user and returns access token.
+   * Deactivates and erases a Matrix user via the Synapse admin API.
+   *
+   * @param matrixUserId the full Matrix user ID (e.g., @username:domain)
+   * @return true if successful, false otherwise
+   */
+  public boolean deactivateUser(String matrixUserId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user deactivation");
+        return false;
+      }
+
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_DEACTIVATE_USER, java.util.Map.of("userId", matrixUserId));
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var body = new java.util.HashMap<String, Object>();
+      body.put("erase", true);
+
+      var request = new HttpEntity<>(body, headers);
+
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.POST, request, String.class);
+
+      log.info("Successfully deactivated Matrix user: {}", matrixUserId);
+      return response.getStatusCode().is2xxSuccessful();
+
+    } catch (Exception ex) {
+      log.warn("Failed to deactivate Matrix user {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Purges a Matrix room and its message history via the Synapse admin API.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return true if successful, false otherwise
+   */
+  public boolean purgeRoom(String matrixRoomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix room purge");
+        return false;
+      }
+
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PURGE_ROOM, java.util.Map.of("roomId", matrixRoomId));
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var body = new java.util.HashMap<String, Object>();
+      body.put("purge", true);
+
+      var request = new HttpEntity<>(body, headers);
+
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.DELETE, request, String.class);
+
+      log.info("Successfully purged Matrix room: {}", matrixRoomId);
+      return response.getStatusCode().is2xxSuccessful();
+
+    } catch (Exception ex) {
+      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Obtains a short-lived Matrix access token for {@code matrixUserId} via the Synapse admin API,
+   * without requiring knowledge of the user's password.
+   *
+   * @param matrixUserId full Matrix user ID (e.g. {@code @username:domain})
+   * @return access token, or null if admin impersonation failed
+   */
+  public String loginUserViaAdmin(String matrixUserId) {
+    if (matrixUserId == null
+        || matrixUserId.isBlank()
+        || !matrixUserId.startsWith("@")
+        || !matrixUserId.contains(":")) {
+      return null;
+    }
+
+    long now = System.currentTimeMillis();
+    impersonationTokenCache.entrySet().removeIf(e -> now >= e.getValue().expiryMs);
+
+    CachedImpersonationToken cached = impersonationTokenCache.get(matrixUserId);
+    if (cached != null) {
+      return cached.token;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Cannot impersonate Matrix user {} without admin token", matrixUserId);
+      return null;
+    }
+
+    try {
+      URI uri = adminLoginAsUserUri(matrixUserId);
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var response =
+          restTemplate.postForEntity(
+              uri, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+
+      if (response.getBody() != null && response.getBody().containsKey("access_token")) {
+        String accessToken = (String) response.getBody().get("access_token");
+        impersonationTokenCache.put(
+            matrixUserId,
+            new CachedImpersonationToken(accessToken, now + IMPERSONATION_TOKEN_TTL_MS));
+        log.debug("Obtained admin impersonation token for Matrix user {}", matrixUserId);
+        return accessToken;
+      }
+
+      log.error(
+          "Matrix admin impersonation login failed for user {} - no access token", matrixUserId);
+      return null;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix admin impersonation login failed for user {}: {}", matrixUserId, ex.getMessage());
+      return null;
+    }
+  }
+
+  /**
+   * Logs in a Matrix user with username/password and returns access token.
    *
    * @param username the username
    * @param password the password
@@ -370,6 +632,17 @@ public class MatrixSynapseService {
     String accessToken = loginUser(consultantUsername, consultantPassword);
     if (accessToken == null) {
       throw new MatrixCreateRoomException("Could not obtain access token for consultant");
+    }
+
+    return createRoom(roomName, roomAlias, accessToken);
+  }
+
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createRoomAsMatrixUser(
+      String roomName, String roomAlias, String matrixUserId) throws MatrixCreateRoomException {
+
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      throw new MatrixCreateRoomException("Could not obtain access token for Matrix user");
     }
 
     return createRoom(roomName, roomAlias, accessToken);
@@ -438,8 +711,10 @@ public class MatrixSynapseService {
 
       String txnId = java.util.UUID.randomUUID().toString();
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_MESSAGE,
+              java.util.Map.of("roomId", roomId, "txnId", txnId));
 
       log.info("Sending message to Matrix room: {}", roomId);
 
@@ -470,13 +745,16 @@ public class MatrixSynapseService {
       HttpEntity<Void> request = new HttpEntity<>(headers);
 
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100");
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ROOM_MESSAGES,
+              java.util.Map.of("roomId", roomId),
+              java.util.Map.of("dir", "b", "limit", 100));
 
       log.info("Getting messages from Matrix room: {}", roomId);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
@@ -519,24 +797,21 @@ public class MatrixSynapseService {
       // Get the last sync token if available
       String since = syncTokenCache.getOrDefault(username, "");
 
-      // Build sync URL with room filter
-      String filter =
-          java.net.URLEncoder.encode(
-              "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}",
-              java.nio.charset.StandardCharsets.UTF_8);
+      String filter = "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}";
+      var queryParams = new java.util.LinkedHashMap<String, Object>();
+      queryParams.put("timeout", timeout);
+      if (!since.isEmpty()) {
+        queryParams.put("since", since);
+      }
+      queryParams.put("filter", filter);
 
       String url =
-          matrixConfig.getApiUrl(ENDPOINT_SYNC)
-              + "?timeout="
-              + timeout
-              + (since.isEmpty() ? "" : "&since=" + since)
-              + "&filter="
-              + filter;
+          MatrixUrlBuilder.buildUrl(matrixConfig, ENDPOINT_SYNC, java.util.Map.of(), queryParams);
 
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
       var response =
-          restTemplate.exchange(
+          matrixLongPollRestTemplate.exchange(
               url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null) {
@@ -654,7 +929,8 @@ public class MatrixSynapseService {
   private String generateMac(String nonce, String username, String password, boolean admin)
       throws MatrixCreateUserException {
     try {
-      // Construct the message to sign: nonce + "\0" + username + "\0" + password + "\0" + (admin ?
+      // Construct the message to sign: nonce + "\0" + username + "\0" + password +
+      // "\0" + (admin ?
       // "admin" : "notadmin")
       String message =
           nonce + "\0" + username + "\0" + password + "\0" + (admin ? "admin" : "notadmin");
@@ -743,7 +1019,8 @@ public class MatrixSynapseService {
           httpMethod = org.springframework.http.HttpMethod.GET;
       }
 
-      var response = restTemplate.exchange(url, httpMethod, request, java.util.Map.class);
+      var response =
+          matrixLongPollRestTemplate.exchange(url, httpMethod, request, java.util.Map.class);
 
       return response.getBody();
     } catch (Exception ex) {
@@ -820,6 +1097,50 @@ public class MatrixSynapseService {
     }
   }
 
+  public java.util.List<String> getJoinedRoomsForMatrixUser(String matrixUserId) {
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      log.warn("Could not create Matrix token for {} to get joined rooms", matrixUserId);
+      return java.util.Collections.emptyList();
+    }
+    return getJoinedRoomsWithToken(accessToken, matrixUserId);
+  }
+
+  private java.util.List<String> getJoinedRoomsWithToken(
+      String accessToken, String principalForLog) {
+    try {
+      var headers = new HttpHeaders();
+      headers.set("Authorization", "Bearer " + accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      var url = matrixConfig.getApiUrl(ENDPOINT_JOINED_ROOMS);
+      HttpEntity<Void> request = new HttpEntity<>(headers);
+
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+        @SuppressWarnings("unchecked")
+        java.util.List<String> joinedRooms =
+            (java.util.List<String>) response.getBody().get("joined_rooms");
+        log.info(
+            "✅ User {} has {} joined Matrix rooms",
+            principalForLog,
+            joinedRooms != null ? joinedRooms.size() : 0);
+        return joinedRooms != null ? joinedRooms : java.util.Collections.emptyList();
+      }
+
+      log.warn(
+          "Failed to get joined rooms for user {}: {}", principalForLog, response.getStatusCode());
+      return java.util.Collections.emptyList();
+
+    } catch (Exception e) {
+      log.error("Error getting joined rooms for user {}: {}", principalForLog, e.getMessage());
+      return java.util.Collections.emptyList();
+    }
+  }
+
   /**
    * Sets the power level (permissions) for a user in a Matrix room. Power level 100 = admin, 50 =
    * moderator, 0 = default user
@@ -878,7 +1199,9 @@ public class MatrixSynapseService {
     }
 
     try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_PRESENCE.replace("{userId}", matrixUserId));
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PRESENCE, java.util.Map.of("userId", matrixUserId));
       HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));
 
       var response =

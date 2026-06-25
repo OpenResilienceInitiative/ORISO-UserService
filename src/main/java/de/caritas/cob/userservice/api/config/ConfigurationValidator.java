@@ -31,6 +31,12 @@ public class ConfigurationValidator {
   @Value("${identity.openid-connect-url:}")
   private String identityOpenIdConnectUrl;
 
+  @Value("${identity.technical-user.username:}")
+  private String identityTechnicalUsername;
+
+  @Value("${identity.technical-user.password:}")
+  private String identityTechnicalPassword;
+
   @Value("${rocket-chat.base-url:}")
   private String rocketChatBaseUrl;
 
@@ -76,6 +82,12 @@ public class ConfigurationValidator {
     }
     if (isEmpty(identityOpenIdConnectUrl)) {
       missingConfigs.add("identity.openid-connect-url (IDENTITY_OPENID_CONNECT_URL)");
+    }
+    if (isEmpty(identityTechnicalUsername)) {
+      missingConfigs.add("identity.technical-user.username (IDENTITY_TECHNICAL_USER_USERNAME)");
+    }
+    if (isEmpty(identityTechnicalPassword)) {
+      missingConfigs.add("identity.technical-user.password (IDENTITY_TECHNICAL_USER_PASSWORD)");
     }
     if (isEmpty(rocketChatBaseUrl)) {
       missingConfigs.add("rocket-chat.base-url (ROCKET_CHAT_BASE_URL)");
