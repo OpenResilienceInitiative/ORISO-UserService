@@ -167,7 +167,13 @@ public class CreateEnquiryMessageFacade {
       return false;
     }
     var rcUserId = credentials.getRocketChatUserId();
-    return !isBlank(rcUserId) && !MATRIX_MIGRATION_DUMMY_RC_USER_ID.equals(rcUserId);
+    return !isBlank(rcUserId)
+        && !MATRIX_MIGRATION_DUMMY_RC_USER_ID.equals(rcUserId)
+        && !isMatrixUserId(rcUserId);
+  }
+
+  private boolean isMatrixUserId(String userId) {
+    return userId != null && userId.startsWith("@") && userId.contains(":");
   }
 
   private CreateEnquiryMessageResponseDTO createMatrixEnquiryMessage(
