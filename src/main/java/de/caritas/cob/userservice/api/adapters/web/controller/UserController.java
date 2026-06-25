@@ -1366,6 +1366,8 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
+    assertTwoFactorAuthAllowed();
+
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase();
 
@@ -1411,22 +1413,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> activateTwoFactorAuthByApp(OneTimePasswordDTO oneTimePasswordDTO) {
-    if (authenticatedUser.isAdviceSeeker()
-        && isFalse(identityClientConfig.getOtpAllowedForUsers())) {
-      throw new ConflictException("2FA is disabled for user role");
-    }
-    if (authenticatedUser.isConsultant()
-        && isFalse(identityClientConfig.getOtpAllowedForConsultants())) {
-      throw new ConflictException("2FA is disabled for consultant role");
-    }
-    if (authenticatedUser.isSingleTenantAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForSingleTenantAdmins())) {
-      throw new ConflictException("2FA is disabled for single tenant admin role");
-    }
-    if (authenticatedUser.isTenantSuperAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForTenantSuperAdmins())) {
-      throw new ConflictException("2FA is disabled for tenant admin role");
-    }
+    assertTwoFactorAuthAllowed();
 
     var isValid =
         identityManager.setUpOneTimePassword(
@@ -1435,6 +1422,12 @@ public class UserController implements UsersApi {
             oneTimePasswordDTO.getSecret());
 
     return isValid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+  }
+
+  private void assertTwoFactorAuthAllowed() {
+    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+      throw new ConflictException("2FA is disabled for user role");
+    }
   }
 
   /**
