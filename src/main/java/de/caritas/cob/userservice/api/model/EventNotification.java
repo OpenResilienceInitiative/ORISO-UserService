@@ -55,6 +55,15 @@ public class EventNotification implements TenantAware {
   @Column(name = "text", columnDefinition = "text")
   private String text;
 
+  /**
+   * WP-06 / ADR-AT-01: structured params (JSON) the client uses to render the event's visible
+   * strings from i18n templates instead of server-stored text. Additive for now — populated
+   * alongside {@code title}/{@code text} until the frontend renders purely from params and the
+   * display-text columns are dropped.
+   */
+  @Column(name = "params", columnDefinition = "text")
+  private String params;
+
   @Column(name = "action_path", length = 512)
   private String actionPath;
 

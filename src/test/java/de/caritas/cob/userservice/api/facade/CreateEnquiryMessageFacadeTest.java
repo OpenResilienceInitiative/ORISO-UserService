@@ -78,6 +78,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -190,6 +191,8 @@ class CreateEnquiryMessageFacadeTest {
 
   @Mock private LiveEventNotificationService liveEventNotificationService;
 
+  @Mock private EventNotificationService eventNotificationService;
+
   private Session session;
   private User user;
   private ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO;
@@ -285,6 +288,8 @@ class CreateEnquiryMessageFacadeTest {
         .postWelcomeMessageIfConfigured(any(), any(), any(), any());
     verify(sessionService, atLeastOnce()).saveSession(any());
     verify(emailNotificationFacade, atLeastOnce()).sendNewEnquiryEmailNotification(any(), any());
+    verify(eventNotificationService, atLeastOnce())
+        .createNewClientRequestNotifications(Mockito.eq(session), any());
     assertEquals(SESSION_ID, response.getSessionId());
     assertEquals(RC_GROUP_ID, response.getRcGroupId());
     assertEquals(response.getT(), messageResponse.getT());
