@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -23,6 +25,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -74,8 +77,13 @@ class CaseHandoverServiceTest {
     session.setConsultant(previous);
     session.setUser(asker);
     session.setStatus(SessionStatus.IN_PROGRESS);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setGroupId("room-123");
     session.setTenantId(7L);
+    session.setPostcode("12345");
+    session.setLanguageCode(LanguageCode.de);
+    session.setCreateDate(LocalDateTime.now());
+    session.setUpdateDate(LocalDateTime.now());
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(requester);
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
@@ -160,6 +168,24 @@ class CaseHandoverServiceTest {
 
     assertEquals("NOT_REQUESTED", status.getStatus());
     assertFalse(status.isCanViewContent());
+  }
+
+  @Test
+  void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+        .thenReturn(List.of(session));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(1, response.getCount());
+    var candidate = response.getSessions().get(0);
+    assertEquals(123L, candidate.getSession().getId());
+    assertEquals("asker", candidate.getUser().getUsername());
+    assertNull(candidate.getUser().getSessionData());
+    assertEquals("previous", candidate.getConsultant().getId());
   }
 
   @Test

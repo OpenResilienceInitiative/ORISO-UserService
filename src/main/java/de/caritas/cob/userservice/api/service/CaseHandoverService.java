@@ -1,22 +1,30 @@
 package de.caritas.cob.userservice.api.service;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -165,6 +173,45 @@ public class CaseHandoverService {
                 .build());
   }
 
+  @Transactional(readOnly = true)
+  public ConsultantSessionListResponseDTO searchCandidates(
+      String query, int offset, int count, boolean archived) {
+    Consultant requester = retrieveCurrentConsultant();
+    List<Long> agencyIds = new ArrayList<>(consultantAgencyIds(requester));
+    int safeOffset = Math.max(0, offset);
+    int safeCount = Math.max(1, Math.min(count, 200));
+
+    if (agencyIds.isEmpty()) {
+      return emptyCandidateResponse(safeOffset);
+    }
+
+    List<SessionStatus> statuses =
+        archived
+            ? List.of(SessionStatus.IN_ARCHIVE)
+            : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
+    List<Session> candidates =
+        sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+                agencyIds, requester, statuses);
+
+    List<Session> matchingCandidates =
+        candidates.stream()
+            .filter(session -> matchesCandidateQuery(session, query))
+            .collect(Collectors.toList());
+    List<ConsultantSessionResponseDTO> page =
+        matchingCandidates.stream()
+            .skip(safeOffset)
+            .limit(safeCount)
+            .map(this::toCandidateDto)
+            .collect(Collectors.toList());
+
+    return new ConsultantSessionListResponseDTO()
+        .sessions(page)
+        .offset(safeOffset)
+        .count(page.size())
+        .total(matchingCandidates.size());
+  }
+
   @Transactional
   public CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
     Consultant requester = retrieveCurrentConsultant();
@@ -285,6 +332,77 @@ public class CaseHandoverService {
     return sessionRepository
         .findById(sessionId)
         .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+  }
+
+  private ConsultantSessionListResponseDTO emptyCandidateResponse(int offset) {
+    return new ConsultantSessionListResponseDTO()
+        .sessions(List.of())
+        .offset(offset)
+        .count(0)
+        .total(0);
+  }
+
+  private boolean matchesCandidateQuery(Session session, String query) {
+    String normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.isBlank()) {
+      return true;
+    }
+
+    List<String> haystack =
+        List.of(
+            String.valueOf(session.getId()),
+            nullable(session.getAgencyId()),
+            nullable(session.getPostcode()),
+            nullable(session.getMainTopicId()),
+            nullable(session.getUser() != null ? session.getUser().getUsername() : null),
+            nullable(
+                session.getConsultant() != null ? session.getConsultant().getUsername() : null),
+            nullable(
+                session.getConsultant() != null ? session.getConsultant().getDisplayName() : null),
+            nullable(
+                session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
+            nullable(
+                session.getConsultant() != null ? session.getConsultant().getLastName() : null));
+
+    return haystack.stream()
+        .map(this::normalizeSearchText)
+        .anyMatch(value -> value.contains(normalizedQuery));
+  }
+
+  private String nullable(Object value) {
+    return value == null ? "" : String.valueOf(value);
+  }
+
+  private String normalizeSearchText(String value) {
+    return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private ConsultantSessionResponseDTO toCandidateDto(Session session) {
+    ConsultantSessionResponseDTO dto =
+        new ConsultantSessionResponseDTO()
+            .session(new SessionMapper().convertToSessionDTO(session));
+
+    User user = session.getUser();
+    if (user != null) {
+      SessionUserDTO userDto = new SessionUserDTO();
+      userDto.setId(user.getUserId());
+      userDto.setUsername(new UsernameTranscoder().decodeUsername(user.getUsername()));
+      userDto.setDeleted(user.getDeleteDate() != null);
+      dto.user(userDto);
+    }
+
+    Consultant consultant = session.getConsultant();
+    if (consultant != null) {
+      dto.consultant(
+          new SessionConsultantForConsultantDTO()
+              .id(consultant.getId())
+              .firstName(consultant.getFirstName())
+              .lastName(consultant.getLastName())
+              .username(consultant.getUsername())
+              .displayName(consultant.getDisplayName()));
+    }
+
+    return dto;
   }
 
   private void verifyEligibleSameAgency(Session session, Consultant consultant) {
