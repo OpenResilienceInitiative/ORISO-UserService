@@ -174,9 +174,9 @@ public class AppointmentController implements AppointmentsApi {
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryAppointment(
       @PathVariable Long sessionId,
-      @RequestHeader String rcToken,
-      @RequestHeader String rcUserId,
-      @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO) {
+      @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO,
+      @RequestHeader(value = "RCToken", required = false) String rcToken,
+      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
     var rocketChatCredentials =

@@ -244,16 +244,16 @@ public class UserController implements UsersApi {
   /**
    * Creates a new session or chat-agency relation depending on the provided consulting type.
    *
-   * @param rcToken Rocket.Chat token (required)
-   * @param rcUserId Rocket.Chat user ID (required)
+   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
+   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param newRegistrationDto {@link NewRegistrationDto}
    * @return {@link ResponseEntity} containing {@link NewRegistrationResponseDto}
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewConsultingType(
-      @RequestHeader String rcToken,
-      @RequestHeader String rcUserId,
-      @Valid @RequestBody NewRegistrationDto newRegistrationDto) {
+      @Valid @RequestBody NewRegistrationDto newRegistrationDto,
+      @RequestHeader(value = "RCToken", required = false) String rcToken,
+      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
     var rocketChatCredentials =
@@ -272,16 +272,16 @@ public class UserController implements UsersApi {
   /**
    * Creates a new session or chat-agency relation depending on the provided topic.
    *
-   * @param rcToken Rocket.Chat token (required)
-   * @param rcUserId Rocket.Chat user ID (required)
+   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
+   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param newRegistrationDto {@link NewRegistrationDto}
    * @return {@link ResponseEntity} containing {@link NewRegistrationResponseDto}
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewSession(
-      @RequestHeader String rcToken,
-      @RequestHeader(value = "RCUserId", required = true) String rcUserId,
-      de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto newRegistrationDto) {
+      de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto newRegistrationDto,
+      @RequestHeader(value = "RCToken", required = false) String rcToken,
+      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
     var user = this.userAccountProvider.retrieveValidatedUser();
     var rocketChatCredentials =
         RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
@@ -327,17 +327,17 @@ public class UserController implements UsersApi {
 
   /**
    * @param sessionId Session Id (required)
-   * @param rcToken Rocket.Chat token (required)
-   * @param rcUserId Rocket.Chat user ID (required)
+   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
+   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param enquiryMessage Enquiry message (required)
    * @return {@link ResponseEntity} containing {@link CreateEnquiryMessageResponseDTO}
    */
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
       @PathVariable Long sessionId,
-      @RequestHeader String rcToken,
-      @RequestHeader String rcUserId,
-      @RequestBody EnquiryMessageDTO enquiryMessage) {
+      @RequestBody EnquiryMessageDTO enquiryMessage,
+      @RequestHeader(value = "RCToken", required = false) String rcToken,
+      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
     var rocketChatCredentials =

@@ -187,12 +187,12 @@ paths:
             format: int64
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: RCUserId
           in: header
-          required: true
+          required: false
           schema:
             type: string
       requestBody:

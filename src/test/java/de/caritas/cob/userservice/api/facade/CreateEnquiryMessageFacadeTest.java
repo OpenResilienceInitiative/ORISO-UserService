@@ -46,6 +46,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -77,6 +78,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -86,6 +88,7 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Welc
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResponseDTO;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
@@ -170,6 +173,8 @@ class CreateEnquiryMessageFacadeTest {
 
   @Mock private RocketChatService rocketChatService;
 
+  @Mock private MatrixSynapseService matrixSynapseService;
+
   @Mock private MessageServiceProvider messageServiceProvider;
 
   @Mock private ConsultantAgencyService consultantAgencyService;
@@ -187,6 +192,8 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private LiveEventNotificationService liveEventNotificationService;
 
   @Mock private EventNotificationService eventNotificationService;
+
+  @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
 
   private Session session;
   private User user;
@@ -232,6 +239,90 @@ class CreateEnquiryMessageFacadeTest {
     this.rocketChatCredentials = RocketChatCredentials.builder().build();
     RequestContextHolder.setRequestAttributes(
         new ServletRequestAttributes(Mockito.mock(HttpServletRequest.class)));
+    resetRequestAttributes();
+  }
+
+  @Test
+  void createEnquiryMessage_Should_PostMatrixEnquiry_When_RocketChatCredentialsAreMissing()
+      throws Exception {
+    var matrixRoomId = "!session-room:oriso.org";
+    var matrixUserId = "@asker:oriso.org";
+    var matrixToken = "matrix-token";
+    var matrixEventId = "$event";
+    user.setMatrixUserId(matrixUserId);
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setIsConsultantDirectlySet(false);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setMatrixRoomId(matrixRoomId);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId()))
+        .thenReturn(extendedConsultingTypeResponseDTO);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+    when(matrixSynapseService.loginAsUserAccessToken(matrixUserId)).thenReturn(matrixToken);
+    when(matrixSynapseService.sendMessage(matrixRoomId, MESSAGE, matrixToken))
+        .thenReturn(Map.of("event_id", matrixEventId));
+
+    final var response =
+        createEnquiryMessageFacade.createEnquiryMessage(
+            new EnquiryData(user, SESSION_ID, MESSAGE, null, null));
+
+    verify(rocketChatService, never()).getUserInfo(anyString());
+    verify(rocketChatService, never()).createPrivateGroup(anyString(), any());
+    verify(messageServiceProvider, never())
+        .postEnquiryMessage(
+            any(RocketChatData.class), any(CreateEnquiryExceptionInformation.class));
+    verify(agencyPreAssignmentRoomService, never()).ensureHoldingRoom(any(), any());
+    verify(sessionService).saveSession(session);
+    assertEquals(SESSION_ID, response.getSessionId());
+    assertEquals(matrixRoomId, response.getRcGroupId());
+    assertEquals(matrixEventId, response.getT());
+    assertEquals(matrixRoomId, session.getGroupId());
+    assertEquals(matrixRoomId, session.getMatrixRoomId());
+    assertEquals(SessionStatus.NEW, session.getStatus());
+    assertNotNull(session.getEnquiryMessageDate());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void createEnquiryMessage_Should_CreateMatrixEnquiryWithoutMessage_When_AppointmentEnquiry()
+      throws Exception {
+    var matrixRoomId = "!appointment-room:oriso.org";
+    var matrixUserId = "@asker:oriso.org";
+    user.setMatrixUserId(matrixUserId);
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setIsConsultantDirectlySet(false);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setMatrixRoomId(matrixRoomId);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId()))
+        .thenReturn(extendedConsultingTypeResponseDTO);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+
+    final var response =
+        createEnquiryMessageFacade.createEnquiryMessage(
+            new EnquiryData(user, SESSION_ID, null, null, null, null, EMAIL));
+
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+    verify(matrixSynapseService, never()).sendMessage(anyString(), any(), anyString());
+    verify(messageServiceProvider, never()).assignUserToRocketChatGroup(anyString(), any());
+    verify(sessionService).saveSession(session);
+    assertEquals(SESSION_ID, response.getSessionId());
+    assertEquals(matrixRoomId, response.getRcGroupId());
+    assertEquals("", response.getT());
+    assertEquals(matrixRoomId, session.getGroupId());
+    assertEquals(matrixRoomId, session.getMatrixRoomId());
+    assertEquals(SessionStatus.NEW, session.getStatus());
+    assertNotNull(session.getEnquiryMessageDate());
     resetRequestAttributes();
   }
 
