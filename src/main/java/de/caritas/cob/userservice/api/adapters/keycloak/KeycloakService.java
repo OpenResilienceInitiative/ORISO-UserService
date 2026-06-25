@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.Response;
@@ -875,7 +876,9 @@ public class KeycloakService implements IdentityClient {
   @Override
   public List<String> getRealmRoles(String userId) {
     try {
-      return getUserRoles(userId).stream().map(RoleRepresentation::getName).toList();
+      return getUserRoles(userId).stream()
+          .map(RoleRepresentation::getName)
+          .collect(Collectors.toList());
     } catch (Exception ex) {
       var error = String.format("Could not get roles for user id %s", userId);
       log.error("Keycloak error: " + error, ex);
