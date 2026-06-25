@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
@@ -139,14 +140,7 @@ public class AgencyPreAssignmentRoomService {
   }
 
   private String extractLocalPart(String matrixUserId) {
-    if (isBlank(matrixUserId)) {
-      return matrixUserId;
-    }
-    if (matrixUserId.startsWith("@")) {
-      matrixUserId = matrixUserId.substring(1);
-    }
-    int colonIndex = matrixUserId.indexOf(':');
-    return colonIndex > 0 ? matrixUserId.substring(0, colonIndex) : matrixUserId;
+    return MatrixIds.localpartLenient(matrixUserId);
   }
 
   private String buildRoomAlias(Long sessionId) {

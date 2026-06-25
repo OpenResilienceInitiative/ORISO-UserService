@@ -44,6 +44,36 @@ class MatrixIdsTest {
   }
 
   @Test
+  void localpartLenient_should_extract_username_from_valid_user_id() {
+    assertThat(MatrixIds.localpartLenient("@alice:matrix.oriso.org")).isEqualTo("alice");
+  }
+
+  @Test
+  void localpartLenient_should_strip_sigil_when_no_colon_present() {
+    assertThat(MatrixIds.localpartLenient("@alice")).isEqualTo("alice");
+  }
+
+  @Test
+  void localpartLenient_should_return_input_when_no_sigil_and_no_colon() {
+    assertThat(MatrixIds.localpartLenient("alice")).isEqualTo("alice");
+  }
+
+  @Test
+  void localpartLenient_should_split_on_colon_even_without_sigil() {
+    assertThat(MatrixIds.localpartLenient("alice:matrix.oriso.org")).isEqualTo("alice");
+  }
+
+  @Test
+  void localpartLenient_should_return_null_unchanged() {
+    assertThat(MatrixIds.localpartLenient(null)).isNull();
+  }
+
+  @Test
+  void localpartLenient_should_return_blank_unchanged() {
+    assertThat(MatrixIds.localpartLenient("   ")).isEqualTo("   ");
+  }
+
+  @Test
   void isRoomId_should_return_true_for_room_id() {
     assertThat(MatrixIds.isRoomId("!abc123:matrix.oriso.org")).isTrue();
   }
@@ -77,6 +107,8 @@ class MatrixIdsTest {
   void constructor_should_throw() throws Exception {
     var c = MatrixIds.class.getDeclaredConstructor();
     c.setAccessible(true);
-    assertThatThrownBy(c::newInstance).isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(c::newInstance)
+        .isInstanceOf(java.lang.reflect.InvocationTargetException.class)
+        .hasCauseInstanceOf(UnsupportedOperationException.class);
   }
 }

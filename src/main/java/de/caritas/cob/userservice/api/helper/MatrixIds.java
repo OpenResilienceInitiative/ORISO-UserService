@@ -39,6 +39,27 @@ public final class MatrixIds {
     return matrixId.substring(1, colon);
   }
 
+  /**
+   * Lenient variant of {@link #localpart(String)} for call sites that must tolerate partially
+   * formed input instead of failing fast.
+   *
+   * <p>Unlike {@link #localpart(String)} this method never throws: blank input is returned
+   * unchanged, a leading {@code @} sigil is stripped only when present, and an ID without a colon
+   * separator yields the remaining string instead of an exception.
+   *
+   * @param matrixId a Matrix user ID, possibly missing the sigil or server part
+   * @return the local part, or the (sigil-stripped) input when no colon is present, or the original
+   *     value when blank
+   */
+  public static String localpartLenient(String matrixId) {
+    if (matrixId == null || matrixId.isBlank()) {
+      return matrixId;
+    }
+    var id = matrixId.startsWith("@") ? matrixId.substring(1) : matrixId;
+    int colon = id.indexOf(':');
+    return colon > 0 ? id.substring(0, colon) : id;
+  }
+
   /** Returns {@code true} if the given ID starts with {@code !} (room ID sigil). */
   public static boolean isRoomId(String id) {
     return id != null && id.startsWith("!");
