@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -65,6 +66,7 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull UserService userService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull EventNotificationService eventNotificationService;
   private final RocketChatRoomNameGenerator rocketChatRoomNameGenerator =
       new RocketChatRoomNameGenerator();
 
@@ -142,6 +144,7 @@ public class CreateEnquiryMessageFacade {
       }
 
       notifyEligibleConsultantsAboutLiveChatEnquiry(session);
+      persistNewClientRequestNotifications(session, agencyList);
 
       return new CreateEnquiryMessageResponseDTO()
           .rcGroupId(rcGroupId)
@@ -174,6 +177,26 @@ public class CreateEnquiryMessageFacade {
     }
 
     return consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId());
+  }
+
+  /**
+   * WP-06 Slice 2 (Tier 1): persist a "New client request" Activity Timeline event for every
+   * eligible consultant of this enquiry (the same population the email notification targets).
+   * Best-effort — a notification failure must never break enquiry creation, so any error is
+   * swallowed and logged.
+   */
+  private void persistNewClientRequestNotifications(
+      Session session, List<ConsultantAgency> agencyList) {
+    try {
+      List<String> consultantIds =
+          agencyList.stream()
+              .map(agency -> agency.getConsultant() != null ? agency.getConsultant().getId() : null)
+              .filter(id -> id != null && !id.isBlank())
+              .collect(Collectors.toList());
+      eventNotificationService.createNewClientRequestNotifications(session, consultantIds);
+    } catch (RuntimeException ex) {
+      log.warn("Could not persist request.new notifications for session {}", session.getId(), ex);
+    }
   }
 
   private void notifyEligibleConsultantsAboutLiveChatEnquiry(Session session) {
