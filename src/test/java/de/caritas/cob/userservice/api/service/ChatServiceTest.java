@@ -40,6 +40,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -63,6 +64,36 @@ class ChatServiceTest {
 
   @Mock private AgencyService agencyService;
 
+  private static final long LOCAL_CHAT_AGENCY_ID = 1L;
+
+  /**
+   * Returns a fresh {@link Chat} that mirrors the shared {@code ACTIVE_CHAT} fixture but, unlike
+   * it, carries a non-null {@code chatAgencies} set. Production {@code ChatService#createUserChat}
+   * dereferences {@code chat.getChatAgencies()}; the shared {@code ACTIVE_CHAT} constant is built
+   * without agencies (so it would NPE) and is referenced by 13 test classes, hence it must not be
+   * mutated. Building a local copy keeps the change scoped to this test.
+   */
+  private Chat activeChatWithAgency() {
+    return Chat.builder()
+        .id(ACTIVE_CHAT.getId())
+        .topic(ACTIVE_CHAT.getTopic())
+        .consultingTypeId(ACTIVE_CHAT.getConsultingTypeId())
+        .initialStartDate(ACTIVE_CHAT.getInitialStartDate())
+        .startDate(ACTIVE_CHAT.getStartDate())
+        .duration(ACTIVE_CHAT.getDuration())
+        .repetitive(ACTIVE_CHAT.isRepetitive())
+        .chatInterval(ACTIVE_CHAT.getChatInterval())
+        .active(ACTIVE_CHAT.isActive())
+        .maxParticipants(ACTIVE_CHAT.getMaxParticipants())
+        .groupId(ACTIVE_CHAT.getGroupId())
+        .chatOwner(ACTIVE_CHAT.getChatOwner())
+        .chatUsers(ACTIVE_CHAT.getChatUsers())
+        .chatAgencies(Set.of(new ChatAgency(null, LOCAL_CHAT_AGENCY_ID)))
+        .updateDate(ACTIVE_CHAT.getUpdateDate())
+        .createDate(ACTIVE_CHAT.getCreateDate())
+        .build();
+  }
+
   @Test
   void getChatsForUserId_Should_CallFindByUserIdAndFindAssignedByUserIdOnChatRepository() {
     chatService.getChatsForUserId(USER_ID);
@@ -73,7 +104,7 @@ class ChatServiceTest {
 
   @Test
   void getChatsForUserId_Should_ConcatChatsAndAssignedChats() {
-    when(chatRepository.findByUserId(USER_ID)).thenReturn(singletonList(ACTIVE_CHAT));
+    when(chatRepository.findByUserId(USER_ID)).thenReturn(singletonList(activeChatWithAgency()));
     when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(singletonList(CHAT_V2));
 
     List<UserSessionResponseDTO> resultList = chatService.getChatsForUserId(USER_ID);
@@ -83,7 +114,7 @@ class ChatServiceTest {
 
   @Test
   void getChatsForUserId_Should_ReturnListOfUserSessionResponseDTOWithChats() {
-    when(chatRepository.findByUserId(USER_ID)).thenReturn(singletonList(ACTIVE_CHAT));
+    when(chatRepository.findByUserId(USER_ID)).thenReturn(singletonList(activeChatWithAgency()));
     when(consultantService.findConsultantsByAgencyIds(Mockito.any()))
         .thenReturn(singletonList(CONSULTANT));
 
@@ -166,7 +197,8 @@ class ChatServiceTest {
   void getChatsForConsultant_Should_ReturnListOfConsultantSessionResponseDTOWithChats() {
     Consultant consultant = Mockito.mock(Consultant.class);
 
-    when(chatRepository.findByAgencyIds(Mockito.any())).thenReturn(singletonList(ACTIVE_CHAT));
+    when(chatRepository.findByAgencyIds(Mockito.any()))
+        .thenReturn(singletonList(activeChatWithAgency()));
     when(consultantService.findConsultantsByAgencyIds(Mockito.any()))
         .thenReturn(singletonList(CONSULTANT));
 
