@@ -172,7 +172,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/askers/session/new",
             "/users/account",
             "/users/mobiletoken",
-            "/users/sessions/{sessionId:[0-9]+}/data")
+            "/users/sessions/{sessionId:[0-9]+}/data",
+            "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
+            "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent")
         .hasAuthority(USER_DEFAULT)
         .regexMatchers(HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+")
         .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
@@ -192,6 +194,12 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
             "/users/sessions/teams",
             "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
             "/conversations/consultants/**",
+            "/users/case-handover/reasons",
+            "/service/users/case-handover/reasons",
+            "/users/case-handover/batch",
+            "/service/users/case-handover/batch",
+            "/users/sessions/{sessionId:[0-9]+}/case-handover",
+            "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
             "/users/sessions/{sessionId:[0-9]+}/supervisors",
             "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
             "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
@@ -261,6 +269,11 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .antMatchers("/users/consultants/search")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
         .antMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
+        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+        .antMatchers(
+            "/users/case-handover/reason-policies", "/service/users/case-handover/reason-policies")
+        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+        .antMatchers("/users/case-handover/logs", "/service/users/case-handover/logs")
         .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
         .antMatchers(
             "/users/inactive-accounts/audit-logs", "/service/users/inactive-accounts/audit-logs")

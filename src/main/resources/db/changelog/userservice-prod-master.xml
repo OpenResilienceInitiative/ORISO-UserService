@@ -59,4 +59,5 @@
   <include file="db/changelog/changeset/0052_invite_links_topic/0052_changeSet.xml"/>
   <include file="db/changelog/changeset/0053_consultant_topic/0053_changeSet.xml"/>
   <include file="db/changelog/changeset/0054_event_notification_params/0054_changeSet.xml"/>
+  <include file="db/changelog/changeset/0055_case_handover_request/0055_changeSet.xml"/>
 </databaseChangeLog>
