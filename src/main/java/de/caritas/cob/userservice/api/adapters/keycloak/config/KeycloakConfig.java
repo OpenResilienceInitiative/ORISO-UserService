@@ -37,6 +37,9 @@ import org.springframework.web.context.WebApplicationContext;
 @ConfigurationProperties(prefix = "keycloak")
 public class KeycloakConfig {
 
+  private static final String USERNAME_CLAIM = "username";
+  private static final String TENANT_ID_CLAIM = "tenantId";
+
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
@@ -57,16 +60,18 @@ public class KeycloakConfig {
         if (userPrincipal instanceof JwtAuthenticationToken authToken) {
           Jwt jwt = authToken.getToken();
           Map<String, Object> claimMap = jwt.getClaims();
-          Object usernameClaim =
-              claimMap.getOrDefault(
-                  "username", claimMap.getOrDefault(principalAttribute, authToken.getName()));
+          String usernameClaim =
+              resolveUsernameClaim(
+                  claimMap,
+                  resolveClaimValue(claimMap.getOrDefault(principalAttribute, authToken.getName())));
           authenticatedUser.setUsername(
-              usernameTranscoder.decodeUsername(usernameClaim.toString()));
+              usernameTranscoder.decodeUsername(usernameClaim));
           authenticatedUser.setUserId(jwt.getSubject());
           authenticatedUser.setAccessToken(jwt.getTokenValue());
           authenticatedUser.setRoles(extractRealmRoles(jwt));
-          if (claimMap.containsKey("tenantId")) {
-            authenticatedUser.setTenantId(Long.valueOf(claimMap.get("tenantId").toString()));
+          var tenantIdClaim = resolveTenantIdClaim(claimMap);
+          if (nonNull(tenantIdClaim)) {
+            authenticatedUser.setTenantId(Long.valueOf(tenantIdClaim));
           }
         }
       } catch (Exception exception) {
@@ -93,6 +98,27 @@ public class KeycloakConfig {
       }
     }
     return new HashSet<>();
+  }
+
+  String resolveUsernameClaim(Map<String, Object> claimMap, String preferredUsername) {
+    var username = resolveClaimValue(claimMap.get(USERNAME_CLAIM));
+    return hasText(username) ? username : resolveClaimValue(preferredUsername);
+  }
+
+  String resolveTenantIdClaim(Map<String, Object> claimMap) {
+    return resolveClaimValue(claimMap.get(TENANT_ID_CLAIM));
+  }
+
+  private String resolveClaimValue(Object claimValue) {
+    if (claimValue instanceof Collection<?>) {
+      return ((Collection<?>) claimValue)
+          .stream().map(this::resolveClaimValue).filter(this::hasText).findFirst().orElse(null);
+    }
+    return claimValue == null ? null : claimValue.toString();
+  }
+
+  private boolean hasText(String value) {
+    return value != null && !value.isBlank();
   }
 
   @Bean
