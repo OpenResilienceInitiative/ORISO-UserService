@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS case_handover_request (
-  id BIGINT NOT NULL AUTO_INCREMENT,
+  id BIGINT(21) UNSIGNED NOT NULL AUTO_INCREMENT,
   session_id BIGINT(21) UNSIGNED NOT NULL,
   requester_consultant_id VARCHAR(36) NOT NULL,
   previous_consultant_id VARCHAR(36) NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS case_handover_request (
     FOREIGN KEY (requester_consultant_id) REFERENCES consultant (consultant_id) ON UPDATE CASCADE,
   CONSTRAINT case_handover_request_previous_fk
     FOREIGN KEY (previous_consultant_id) REFERENCES consultant (consultant_id) ON UPDATE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS case_handover_reason_policy (
   code VARCHAR(100) NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS case_handover_reason_policy (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (code),
   INDEX idx_case_handover_reason_enabled_order (enabled, display_order, code)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 INSERT INTO case_handover_reason_policy (
   code,
