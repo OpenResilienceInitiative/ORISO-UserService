@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.facade;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static java.util.Objects.nonNull;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
@@ -35,6 +37,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.message.RocketChatData;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -56,8 +59,11 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CreateEnquiryMessageFacade {
 
+  private static final String MATRIX_MIGRATION_DUMMY_RC_USER_ID = "matrix-migration-dummy-user";
+
   private final @NonNull SessionService sessionService;
   private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull MessageServiceProvider messageServiceProvider;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
@@ -67,6 +73,7 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   private final RocketChatRoomNameGenerator rocketChatRoomNameGenerator =
       new RocketChatRoomNameGenerator();
 
@@ -81,8 +88,11 @@ public class CreateEnquiryMessageFacade {
    */
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
-      checkIfKeycloakAndRocketChatUsernamesMatch(
-          enquiryData.getRocketChatCredentials().getRocketChatUserId(), enquiryData.getUser());
+      var hasRocketChatCredentials = hasUsableRocketChatCredentials(enquiryData);
+      if (hasRocketChatCredentials) {
+        checkIfKeycloakAndRocketChatUsernamesMatch(
+            enquiryData.getRocketChatCredentials().getRocketChatUserId(), enquiryData.getUser());
+      }
 
       var session =
           fetchSessionForEnquiryMessage(enquiryData.getSessionId(), enquiryData.getUser());
@@ -92,6 +102,11 @@ public class CreateEnquiryMessageFacade {
       var extendedConsultingTypeResponseDTO =
           consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId());
       List<ConsultantAgency> agencyList = resolveConsultantAgenciesForEnquiry(session);
+
+      if (!hasRocketChatCredentials) {
+        return createMatrixEnquiryMessage(enquiryData, session, agencyList);
+      }
+
       String rcGroupId =
           createRocketChatRoomAndAddUsers(
               session, agencyList, enquiryData.getRocketChatCredentials());
@@ -132,19 +147,7 @@ public class CreateEnquiryMessageFacade {
       updateSession(
           session, enquiryData.getLanguage(), rcGroupId, createEnquiryExceptionInformation);
 
-      if (session.getIsConsultantDirectlySet()) {
-        emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-            session.getConsultant().getId(),
-            session.getAgencyId(),
-            session.getPostcode(),
-            TenantContext.getCurrentTenantData());
-      } else {
-        emailNotificationFacade.sendNewEnquiryEmailNotification(
-            session, TenantContext.getCurrentTenantData());
-      }
-
-      notifyEligibleConsultantsAboutLiveChatEnquiry(session);
-      persistNewClientRequestNotifications(session, agencyList);
+      sendEnquiryNotifications(session, agencyList);
 
       return new CreateEnquiryMessageResponseDTO()
           .rcGroupId(rcGroupId)
@@ -156,6 +159,94 @@ public class CreateEnquiryMessageFacade {
       log.error("CreateEnquiryMessageFacade error: ", exception);
       throw new InternalServerErrorException(exception.getMessage(), exception);
     }
+  }
+
+  private boolean hasUsableRocketChatCredentials(EnquiryData enquiryData) {
+    var credentials = enquiryData.getRocketChatCredentials();
+    if (credentials == null) {
+      return false;
+    }
+    var rcUserId = credentials.getRocketChatUserId();
+    return !isBlank(rcUserId) && !MATRIX_MIGRATION_DUMMY_RC_USER_ID.equals(rcUserId);
+  }
+
+  private CreateEnquiryMessageResponseDTO createMatrixEnquiryMessage(
+      EnquiryData enquiryData, Session session, List<ConsultantAgency> agencyList)
+      throws CreateEnquiryException {
+
+    String matrixRoomId = ensureMatrixRoomForEnquiry(session, enquiryData.getUser());
+    if (isBlank(enquiryData.getUser().getMatrixUserId())) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Enquiry user %s has no Matrix account", enquiryData.getUser().getUserId()));
+    }
+    var matrixMessageEventId = "";
+    if (!isAppointmentEnquiryMessage(enquiryData)) {
+      String matrixAccessToken =
+          matrixSynapseService.loginAsUserAccessToken(enquiryData.getUser().getMatrixUserId());
+      if (isBlank(matrixAccessToken)) {
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not create Matrix token for enquiry user %s",
+                enquiryData.getUser().getUserId()));
+      }
+
+      var matrixResponse =
+          matrixSynapseService.sendMessage(
+              matrixRoomId, enquiryData.getMessage(), matrixAccessToken);
+      if (matrixResponse == null || matrixResponse.containsKey("error")) {
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not post Matrix enquiry message to room %s for session %s",
+                matrixRoomId, session.getId()));
+      }
+      matrixMessageEventId = String.valueOf(matrixResponse.getOrDefault("event_id", ""));
+    }
+
+    var createEnquiryExceptionInformation =
+        CreateEnquiryExceptionInformation.builder()
+            .session(session)
+            .rcGroupId(matrixRoomId)
+            .build();
+    updateMatrixSession(
+        session, enquiryData.getLanguage(), matrixRoomId, createEnquiryExceptionInformation);
+
+    sendEnquiryNotifications(session, agencyList);
+
+    return new CreateEnquiryMessageResponseDTO()
+        .rcGroupId(matrixRoomId)
+        .sessionId(enquiryData.getSessionId())
+        .t(matrixMessageEventId);
+  }
+
+  private String ensureMatrixRoomForEnquiry(Session session, User user) {
+    if (!isBlank(session.getMatrixRoomId())) {
+      return session.getMatrixRoomId();
+    }
+
+    agencyPreAssignmentRoomService.ensureHoldingRoom(session, user);
+    if (!isBlank(session.getMatrixRoomId())) {
+      return session.getMatrixRoomId();
+    }
+
+    throw new InternalServerErrorException(
+        String.format("Could not create Matrix room for enquiry session %s", session.getId()));
+  }
+
+  private void sendEnquiryNotifications(Session session, List<ConsultantAgency> agencyList) {
+    if (session.getIsConsultantDirectlySet()) {
+      emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
+          session.getConsultant().getId(),
+          session.getAgencyId(),
+          session.getPostcode(),
+          TenantContext.getCurrentTenantData());
+    } else {
+      emailNotificationFacade.sendNewEnquiryEmailNotification(
+          session, TenantContext.getCurrentTenantData());
+    }
+
+    notifyEligibleConsultantsAboutLiveChatEnquiry(session);
+    persistNewClientRequestNotifications(session, agencyList);
   }
 
   private boolean isAppointmentEnquiryMessage(EnquiryData enquiryData) {
@@ -391,6 +482,32 @@ public class CreateEnquiryMessageFacade {
     } catch (InternalServerErrorException exception) {
       throw new CreateEnquiryException(
           String.format("Could not update session %s with groupId %s", session.getId(), rcGroupId),
+          exception,
+          createEnquiryExceptionInformation);
+    }
+  }
+
+  private void updateMatrixSession(
+      Session session,
+      String language,
+      String matrixRoomId,
+      CreateEnquiryExceptionInformation createEnquiryExceptionInformation)
+      throws CreateEnquiryException {
+
+    try {
+      session.setGroupId(matrixRoomId);
+      session.setMatrixRoomId(matrixRoomId);
+      session.setStatus(SessionStatus.NEW);
+      session.setEnquiryMessageDate(nowInUtc());
+      if (nonNull(language)) {
+        session.setLanguageCode(LanguageCode.getByCode(language));
+      }
+      setSessionStatusInProgressIfConsultantIsAlreadyAssigned(session);
+      sessionService.saveSession(session);
+    } catch (InternalServerErrorException exception) {
+      throw new CreateEnquiryException(
+          String.format(
+              "Could not update session %s with Matrix room %s", session.getId(), matrixRoomId),
           exception,
           createEnquiryExceptionInformation);
     }
