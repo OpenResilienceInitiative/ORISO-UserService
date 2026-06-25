@@ -11,7 +11,8 @@ class KeycloakConfigTest {
 
   @Test
   void resolveUsernameClaim_ShouldPreferMappedUsernameClaim_WhenPresent() {
-    var usernameClaim = keycloakConfig.resolveUsernameClaim(Map.of("username", "mapped"), "preferred");
+    var usernameClaim =
+        keycloakConfig.resolveUsernameClaim(Map.of("username", "mapped"), "preferred");
 
     assertThat(usernameClaim).isEqualTo("mapped");
   }

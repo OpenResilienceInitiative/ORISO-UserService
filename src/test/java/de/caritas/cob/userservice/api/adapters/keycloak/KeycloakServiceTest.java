@@ -115,7 +115,8 @@ public class KeycloakServiceTest {
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
     setInternalState(KeycloakService.class, "log", logger);
-    when(usernameTranscoder.decodeUsername(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(usernameTranscoder.decodeUsername(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
