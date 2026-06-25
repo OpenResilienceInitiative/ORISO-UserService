@@ -12,6 +12,8 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -25,6 +27,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.Collections;
@@ -61,6 +64,8 @@ class AskerDataProviderTest {
   @Mock EmailNotificationMapper emailNotificationMapper;
 
   @Mock SessionService sessionService;
+
+  @Mock UserAgencyService userAgencyService;
 
   @Test
   void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
@@ -174,6 +179,8 @@ class AskerDataProviderTest {
     when(agencyService.getAgencies(any())).thenReturn(Collections.singletonList(AGENCY_DTO_SUCHT));
     LinkedHashMap<String, Object> sessionData = new LinkedHashMap<>();
     when(sessionDataProvider.getSessionDataMapFromSession(any())).thenReturn(sessionData);
+    when(sessionService.findSessionsByUser(USER_WITH_SESSIONS))
+        .thenReturn(sessionsWithLanguageCode(USER_WITH_SESSIONS));
 
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(asSet(GRANTED_AUTHORIZATION_USER));
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.toString()));
@@ -208,6 +215,24 @@ class AskerDataProviderTest {
   }
 
   @Test
+  void retrieveData_Should_LoadSessionsAndUserAgenciesViaServices_When_UserProxyIsDetached() {
+    givenAnEmailDummySuffixConfig();
+    var user = Mockito.spy(USER_WITH_SESSIONS);
+    var sessions = sessionsWithLanguageCode(USER_WITH_SESSIONS);
+    when(sessionService.findSessionsByUser(user)).thenReturn(sessions);
+    when(userAgencyService.getUserAgenciesByUser(user)).thenReturn(Collections.emptyList());
+    when(agencyService.getAgencies(any())).thenReturn(Collections.singletonList(AGENCY_DTO_SUCHT));
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.toString()));
+    when(consultingTypeManager.getAllConsultingTypeIds())
+        .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
+
+    askerDataProvider.retrieveData(user);
+
+    verify(user, never()).getSessions();
+    verify(user, never()).getUserAgencies();
+  }
+
+  @Test
   void retrieveData_Should_ReturnUserDataWithoutAgency_When_userHasNotAgencyInSession() {
     givenAnEmailDummySuffixConfig();
 
@@ -230,5 +255,11 @@ class AskerDataProviderTest {
 
   private void givenAnEmailDummySuffixConfig() {
     when(identityClientConfig.getEmailDummySuffix()).thenReturn("@dummysuffix.de");
+  }
+
+  private List<Session> sessionsWithLanguageCode(User user) {
+    var sessions = List.copyOf(user.getSessions());
+    sessions.forEach(session -> session.setLanguageCode(LanguageCode.de));
+    return sessions;
   }
 }

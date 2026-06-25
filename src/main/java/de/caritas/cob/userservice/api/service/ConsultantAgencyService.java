@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -105,6 +106,7 @@ public class ConsultantAgencyService {
     return isNull(consultantAgency.getConsultant().getDeleteDate());
   }
 
+  @Transactional(readOnly = true)
   public Set<String> getLanguageCodesOfAgency(long agencyId) {
     var consultantAgencies = findConsultantsByAgencyId(agencyId);
 

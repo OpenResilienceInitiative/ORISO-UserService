@@ -34,6 +34,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(SpringExtension.class)
 public class ConsultantAgencyServiceTest {
@@ -96,6 +97,15 @@ public class ConsultantAgencyServiceTest {
     assertThat(
         consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID),
         everyItem(instanceOf(ConsultantAgency.class)));
+  }
+
+  @Test
+  public void getLanguageCodesOfAgency_Should_BeReadOnlyTransactional() throws Exception {
+    var method = ConsultantAgencyService.class.getMethod("getLanguageCodesOfAgency", long.class);
+    var transactional = method.getAnnotation(Transactional.class);
+
+    assertNotNull(transactional);
+    assertTrue(transactional.readOnly());
   }
 
   /** Method: getConsultantsOfAgency */

@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -27,7 +28,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.SetUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -44,6 +44,7 @@ public class AskerDataProvider {
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull UserAgencyService userAgencyService;
 
   private final @NonNull EmailNotificationMapper emailNotificationMapper;
 
@@ -54,6 +55,7 @@ public class AskerDataProvider {
    * @return the user data
    */
   public UserDataResponseDTO retrieveData(User user) {
+    var sessionsByUser = sessionsByUser(user);
     var userDataResponseDTOBuilder =
         UserDataResponseDTO.builder()
             .userId(user.getUserId())
@@ -67,20 +69,19 @@ public class AskerDataProvider {
             .isInTeamAgency(false)
             .userRoles(authenticatedUser.getRoles())
             .grantedAuthorities(authenticatedUser.getGrantedAuthorities())
-            .consultingTypes(getConsultingTypes(user))
+            .consultingTypes(getConsultingTypes(user, sessionsByUser))
             .hasAnonymousConversations(false)
             .hasArchive(false)
             .dataPrivacyConfirmation(user.getDataPrivacyConfirmation())
             .termsAndConditionsConfirmation(user.getTermsAndConditionsConfirmation())
             .emailNotifications(emailNotificationMapper.toEmailNotificationsDTO(user));
 
-    enrichWithUserSessions(user, userDataResponseDTOBuilder);
+    enrichWithUserSessions(sessionsByUser, userDataResponseDTOBuilder);
     return userDataResponseDTOBuilder.build();
   }
 
   private void enrichWithUserSessions(
-      User user, UserDataResponseDTOBuilder userDataResponseDTOBuilder) {
-    List<Session> sessionsByUser = sessionService.findSessionsByUser(user);
+      List<Session> sessionsByUser, UserDataResponseDTOBuilder userDataResponseDTOBuilder) {
     if (CollectionUtils.isNotEmpty(sessionsByUser)) {
       SessionMapper sessionMapper = new SessionMapper();
       userDataResponseDTOBuilder.sessions(
@@ -96,8 +97,9 @@ public class AskerDataProvider {
         : user.getEmail();
   }
 
-  private LinkedHashMap<String, Object> getConsultingTypes(User user) {
-    Set<Session> sessionList = SetUtils.emptyIfNull(user.getSessions());
+  private LinkedHashMap<String, Object> getConsultingTypes(
+      User user, List<Session> sessionsByUser) {
+    Set<Session> sessionList = Set.copyOf(sessionsByUser);
     List<AgencyDTO> agencyDTOs = agencyDTOsOf(user, sessionList);
     LinkedHashMap<String, Object> consultingTypes = new LinkedHashMap<>();
     for (int type : consultingTypeManager.getAllConsultingTypeIds()) {
@@ -171,11 +173,17 @@ public class AskerDataProvider {
   }
 
   private List<Long> collectAgencyIdsFromUser(User user) {
-    return CollectionUtils.isNotEmpty(user.getUserAgencies())
-        ? user.getUserAgencies().stream()
+    var userAgencies = userAgencyService.getUserAgenciesByUser(user);
+    return CollectionUtils.isNotEmpty(userAgencies)
+        ? userAgencies.stream()
             .map(UserAgency::getAgencyId)
             .filter(Objects::nonNull)
             .collect(Collectors.toList())
         : Collections.emptyList();
+  }
+
+  private List<Session> sessionsByUser(User user) {
+    var sessionsByUser = sessionService.findSessionsByUser(user);
+    return sessionsByUser == null ? Collections.emptyList() : sessionsByUser;
   }
 }
