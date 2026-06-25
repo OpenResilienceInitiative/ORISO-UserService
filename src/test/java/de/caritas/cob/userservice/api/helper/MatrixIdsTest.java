@@ -74,7 +74,9 @@ class MatrixIdsTest {
   }
 
   @Test
-  void constructor_should_throw() {
-    assertThatThrownBy(MatrixIds::new).isInstanceOf(UnsupportedOperationException.class);
+  void constructor_should_throw() throws Exception {
+    var c = MatrixIds.class.getDeclaredConstructor();
+    c.setAccessible(true);
+    assertThatThrownBy(c::newInstance).isInstanceOf(UnsupportedOperationException.class);
   }
 }
