@@ -1799,6 +1799,8 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - role from the request has no two factor auth enabled
         412:
           description: PRECONDITION FAILED - already set up
         429:

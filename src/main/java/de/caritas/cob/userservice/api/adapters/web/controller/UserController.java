@@ -1387,6 +1387,8 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
+    assertTwoFactorAuthAllowed();
+
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 

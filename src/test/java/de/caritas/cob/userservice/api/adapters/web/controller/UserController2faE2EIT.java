@@ -373,6 +373,24 @@ class UserController2faE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void finishTwoFactorAuthByEmailSetupShouldRespondWithConflictIfOtpIsDisabledForConsultant()
+      throws Exception {
+    givenAValidConsultant();
+    identityConfig.setOtpAllowedForConsultants(false);
+    givenABearerToken();
+    givenACorrectlyFormattedTan();
+
+    mockMvc
+        .perform(
+            post("/users/2fa/email/validate/{tan}", tan)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void finishTwoFactorAuthByEmailSetupForAUserShouldRespondWithNoContent() throws Exception {
     givenAValidUser();
