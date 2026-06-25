@@ -414,13 +414,12 @@ public class KeycloakService implements IdentityClient {
 
     String combinedError = rawResponse.toLowerCase();
 
-    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedEmail().toLowerCase())
+    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedEmail())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    if (combinedError.contains(
-            identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
+    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedUsername())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
@@ -432,6 +431,15 @@ public class KeycloakService implements IdentityClient {
             : String.format("Keycloak create-user failed with status %s", status);
 
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+  }
+
+  /**
+   * Null-safe check whether the (lower-cased) Keycloak error response contains the configured
+   * duplicate-account marker. A missing/blank marker simply does not match (the status-based
+   * fallback still applies) instead of throwing an NPE that would mask a 409 CONFLICT as a 500.
+   */
+  private boolean errorMatchesMarker(String combinedError, String marker) {
+    return marker != null && !marker.isBlank() && combinedError.contains(marker.toLowerCase());
   }
 
   /**
@@ -772,16 +780,11 @@ public class KeycloakService implements IdentityClient {
    * @param emailAddress the email address to set
    */
   public void updateEmail(String userId, String emailAddress) {
-    // Temporarily bypass Keycloak email update for testing
-    log.info("Bypassing Keycloak email update for user: {} with email: {}", userId, emailAddress);
-    return;
-
-    // Original code (commented out):
-    // var userResource = keycloakClient.getUsersResource().get(userId);
-    // verifyEmail(userResource, emailAddress);
-    // UserRepresentation representation = userResource.toRepresentation();
-    // representation.setEmail(emailAddress);
-    // userResource.update(representation);
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    verifyEmail(userResource, emailAddress);
+    UserRepresentation representation = userResource.toRepresentation();
+    representation.setEmail(emailAddress);
+    userResource.update(representation);
   }
 
   /**
