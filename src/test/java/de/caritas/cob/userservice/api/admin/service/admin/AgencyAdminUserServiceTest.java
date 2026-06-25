@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminServ
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -51,6 +53,89 @@ class AgencyAdminUserServiceTest {
   @Mock private TenantService tenantService;
 
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
+  @Mock private AuthenticatedUser authenticatedUser;
+
+  @Test
+  void findAgencyAdminsByInfix_Should_ScopeToCallerAgencies_WhenRestrictedAgencyAdmin() {
+    // given
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    List<Long> callerAgencyIds = Arrays.asList(5L, 6L);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
+    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin")).thenReturn(callerAgencyIds);
+    when(retrieveAdminService.findAllByInfixScopedToAgencies(
+            "*", Admin.AdminType.AGENCY, callerAgencyIds, pageRequest))
+        .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(Collections.emptyList());
+    when(retrieveAdminService.agenciesOfAdmin(Mockito.anySet()))
+        .thenReturn(Collections.emptyList());
+    when(agencyService.getAgenciesWithoutCaching(Collections.emptyList()))
+        .thenReturn(Collections.emptyList());
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    // when
+    agencyAdminUserService.findAgencyAdminsByInfix("*", pageRequest);
+
+    // then: scoped query is used, the unscoped one is never called
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToAgencies("*", Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.any(), Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  void deleteAgencyAdmin_Should_ThrowForbidden_WhenRestrictedAgencyAdminTargetsForeignAgency() {
+    // given
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
+    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin"))
+        .thenReturn(Collections.singletonList(5L));
+    when(retrieveAdminService.findAgencyIdsOfAdmin("foreign-admin"))
+        .thenReturn(Collections.singletonList(9L));
+
+    // when / then
+    Assertions.assertThrows(
+        ForbiddenException.class, () -> agencyAdminUserService.deleteAgencyAdmin("foreign-admin"));
+    Mockito.verify(deleteAdminService, Mockito.never()).deleteAgencyAdmin(Mockito.any());
+  }
+
+  @Test
+  void deleteAgencyAdmin_Should_Delete_WhenRestrictedAgencyAdminSharesAgency() {
+    // given
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
+    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin"))
+        .thenReturn(Arrays.asList(5L, 7L));
+    when(retrieveAdminService.findAgencyIdsOfAdmin("peer-admin"))
+        .thenReturn(Collections.singletonList(7L));
+
+    // when
+    agencyAdminUserService.deleteAgencyAdmin("peer-admin");
+
+    // then
+    Mockito.verify(deleteAdminService).deleteAgencyAdmin("peer-admin");
+  }
+
+  @Test
+  void deleteAgencyAdmin_Should_NotScope_WhenCallerIsPlatformAdmin() {
+    // given a platform/user admin without restricted-agency privileges
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+
+    // when
+    agencyAdminUserService.deleteAgencyAdmin("any-admin");
+
+    // then no agency lookup happens and deletion proceeds
+    Mockito.verify(retrieveAdminService, Mockito.never()).findAgencyIdsOfAdmin(Mockito.any());
+    Mockito.verify(deleteAdminService).deleteAgencyAdmin("any-admin");
+  }
 
   @Test
   void findAgencyAdminsByInfix_Should_NotFail_WhenTenantServiceReturnsNotFound() {

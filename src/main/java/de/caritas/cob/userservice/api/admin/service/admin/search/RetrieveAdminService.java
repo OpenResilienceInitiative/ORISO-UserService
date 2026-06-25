@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -48,6 +49,22 @@ public class RetrieveAdminService {
   public Page<AdminBase> findAllByInfix(
       String infix, Admin.AdminType adminType, PageRequest pageRequest) {
     return adminRepository.findAllByInfix(infix, adminType, pageRequest);
+  }
+
+  /**
+   * Infix search scoped to the given agencies. Returns an empty page when the caller manages no
+   * agencies, so a restricted agency admin without agency assignments sees nothing instead of
+   * falling back to the unscoped list.
+   */
+  public Page<AdminBase> findAllByInfixScopedToAgencies(
+      String infix,
+      Admin.AdminType adminType,
+      Collection<Long> agencyIds,
+      PageRequest pageRequest) {
+    if (agencyIds == null || agencyIds.isEmpty()) {
+      return Page.empty(pageRequest);
+    }
+    return adminRepository.findAllByInfixAndAgencyIds(infix, adminType, agencyIds, pageRequest);
   }
 
   public List<Admin> findAllById(Set<String> adminIds) {
