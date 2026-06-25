@@ -356,9 +356,17 @@ public class CaseHandoverService {
             nullable(session.getMainTopicId()),
             nullable(session.getUser() != null ? session.getUser().getUsername() : null),
             nullable(
+                session.getUser() != null ? decodeUsername(session.getUser().getUsername()) : null),
+            nullable(
                 session.getConsultant() != null ? session.getConsultant().getUsername() : null),
             nullable(
-                session.getConsultant() != null ? session.getConsultant().getDisplayName() : null),
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getUsername())
+                    : null),
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getDisplayName())
+                    : null),
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
@@ -386,7 +394,7 @@ public class CaseHandoverService {
     if (user != null) {
       SessionUserDTO userDto = new SessionUserDTO();
       userDto.setId(user.getUserId());
-      userDto.setUsername(new UsernameTranscoder().decodeUsername(user.getUsername()));
+      userDto.setUsername(decodeUsername(user.getUsername()));
       userDto.setDeleted(user.getDeleteDate() != null);
       dto.user(userDto);
     }
@@ -398,11 +406,15 @@ public class CaseHandoverService {
               .id(consultant.getId())
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
-              .username(consultant.getUsername())
-              .displayName(consultant.getDisplayName()));
+              .username(decodeUsername(consultant.getUsername()))
+              .displayName(decodeUsername(consultant.getDisplayName())));
     }
 
     return dto;
+  }
+
+  private String decodeUsername(String username) {
+    return username == null ? null : new UsernameTranscoder().decodeUsername(username);
   }
 
   private void verifyEligibleSameAgency(Session session, Consultant consultant) {

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -186,6 +187,28 @@ class CaseHandoverServiceTest {
     assertEquals("asker", candidate.getUser().getUsername());
     assertNull(candidate.getUser().getSessionData());
     assertEquals("previous", candidate.getConsultant().getId());
+  }
+
+  @Test
+  void searchCandidates_matchesDecodedUsernames() {
+    UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
+    asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));
+    previous.setUsername(usernameTranscoder.encodeUsername("codexcounselor20260625023940"));
+    previous.setDisplayName(usernameTranscoder.encodeUsername("Codex Counselor"));
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+        .thenReturn(List.of(session));
+
+    var askerResponse = caseHandoverService.searchCandidates("codexasker", 0, 15, false);
+    var consultantResponse = caseHandoverService.searchCandidates("codexcounselor", 0, 15, false);
+
+    assertEquals(1, askerResponse.getTotal());
+    assertEquals(1, consultantResponse.getTotal());
+    var candidate = askerResponse.getSessions().get(0);
+    assertEquals("codexasker1782348153159", candidate.getUser().getUsername());
+    assertEquals("codexcounselor20260625023940", candidate.getConsultant().getUsername());
+    assertEquals("Codex Counselor", candidate.getConsultant().getDisplayName());
   }
 
   @Test
