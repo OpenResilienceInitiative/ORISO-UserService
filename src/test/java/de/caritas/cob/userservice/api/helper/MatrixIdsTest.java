@@ -75,7 +75,6 @@ class MatrixIdsTest {
 
   @Test
   void constructor_should_throw() {
-    assertThatThrownBy(MatrixIds::new)
-        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(MatrixIds::new).isInstanceOf(UnsupportedOperationException.class);
   }
 }

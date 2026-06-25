@@ -1,45 +1,26 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.ChatService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.service.user.UserService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.Map;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.util.Optional;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.NonNull;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.RequiredArgsConstructor;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import lombok.extern.slf4j.Slf4j;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.http.HttpStatus;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.http.ResponseEntity;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.web.bind.annotation.*;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import org.springframework.web.multipart.MultipartFile;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 
 /** Controller for Matrix messaging endpoints. */
 @RestController
