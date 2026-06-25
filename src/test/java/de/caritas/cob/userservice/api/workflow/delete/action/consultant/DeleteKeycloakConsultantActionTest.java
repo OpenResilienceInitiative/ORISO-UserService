@@ -3,31 +3,32 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK;
 import static java.util.Collections.emptyList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 
@@ -38,12 +39,19 @@ public class DeleteKeycloakConsultantActionTest {
 
   @Mock private KeycloakService keycloakService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor consultantActionLogCaptor;
+  private LogbackCaptor userActionLogCaptor;
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteKeycloakConsultantAction.class, "log", logger);
-    setInternalState(DeleteKeycloakUserAction.class, "log", logger);
+    consultantActionLogCaptor = LogbackCaptor.forClass(DeleteKeycloakConsultantAction.class);
+    userActionLogCaptor = LogbackCaptor.forClass(DeleteKeycloakUserAction.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    consultantActionLogCaptor.detach();
+    userActionLogCaptor.detach();
   }
 
   @Test
@@ -77,7 +85,8 @@ public class DeleteKeycloakConsultantActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete keycloak user account"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(consultantActionLogCaptor.contains(Level.ERROR, "UserService delete workflow error"))
+        .isTrue();
   }
 
   @Test
@@ -94,9 +103,10 @@ public class DeleteKeycloakConsultantActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(logger)
-        .warn(
-            "No user with id {} could be found in keycloak, but proceeding with further actions.",
-            "consultantId");
+    assertThat(
+            userActionLogCaptor.contains(
+                Level.WARN,
+                "No user with id consultantId could be found in keycloak, but proceeding with further actions."))
+        .isTrue();
   }
 }

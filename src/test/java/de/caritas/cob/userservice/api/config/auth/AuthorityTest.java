@@ -2,6 +2,10 @@ package de.caritas.cob.userservice.api.config.auth;
 
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CREATE_NEW_CHAT;
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.START_CHAT;
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.STOP_CHAT;
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.UPDATE_CHAT;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.USER_DEFAULT;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.VIEW_AGENCY_CONSULTANTS;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -27,8 +31,14 @@ class AuthorityTest {
     assertThat(
         result,
         containsInAnyOrder(
-            CONSULTANT_DEFAULT, ASSIGN_CONSULTANT_TO_SESSION, VIEW_AGENCY_CONSULTANTS));
-    assertEquals(3, result.size());
+            CONSULTANT_DEFAULT,
+            ASSIGN_CONSULTANT_TO_SESSION,
+            VIEW_AGENCY_CONSULTANTS,
+            CREATE_NEW_CHAT,
+            START_CHAT,
+            STOP_CHAT,
+            UPDATE_CHAT));
+    assertEquals(7, result.size());
   }
 
   @Test

@@ -6,16 +6,16 @@ import static de.caritas.cob.userservice.liveservice.generated.web.model.EventTy
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.LiveServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.liveservice.generated.web.model.EventType;
 import de.caritas.cob.userservice.liveservice.generated.web.model.LiveEventMessage;
 import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource;
 import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -57,13 +57,10 @@ public class LiveEventNotificationServiceTest {
 
   @Mock private MobilePushNotificationService mobilePushNotificationService;
 
-  @Mock private Logger logger;
-
   @Mock private LiveServiceApiControllerFactory liveServiceApiControllerFactory;
 
   @BeforeEach
   public void setup() {
-    setInternalState(LiveEventNotificationService.class, "log", logger);
     when(liveServiceApiControllerFactory.createControllerApi()).thenReturn(liveControllerApi);
   }
 
@@ -103,9 +100,11 @@ public class LiveEventNotificationServiceTest {
     when(this.bySessionProvider.collectUserIds(any())).thenReturn(singletonList("test"));
     doThrow(new ApiException("")).when(this.liveControllerApi).sendLiveEvent(any());
 
-    this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
+    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
+      this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
-    verify(logger).error(anyString(), anyString(), any(ApiException.class));
+      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
+    }
   }
 
   @Test

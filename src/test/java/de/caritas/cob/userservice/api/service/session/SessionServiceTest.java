@@ -46,7 +46,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
@@ -66,9 +65,10 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testHelper.TestConstants;
@@ -87,7 +87,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -187,8 +186,9 @@ class SessionServiceTest {
   @InjectMocks private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
+  @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private AgencyService agencyService;
-  @Mock private Logger logger;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock UserService userService;
@@ -198,7 +198,6 @@ class SessionServiceTest {
   @BeforeEach
   public void setUp() {
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
-    setInternalState(LogService.class, "LOGGER", logger);
   }
 
   @Test

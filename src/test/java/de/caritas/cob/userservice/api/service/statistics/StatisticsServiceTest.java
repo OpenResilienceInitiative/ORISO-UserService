@@ -1,15 +1,17 @@
 package de.caritas.cob.userservice.api.service.statistics;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.EventType;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +23,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.MessageProperties;
@@ -40,14 +41,12 @@ class StatisticsServiceTest {
 
   @InjectMocks private StatisticsService statisticsService;
   @Mock private AmqpTemplate amqpTemplate;
-  @Mock Logger logger;
 
   @BeforeEach
   void setup() {
     assignSessionStatisticsEvent = Mockito.mock(AssignSessionStatisticsEvent.class);
     when(assignSessionStatisticsEvent.getEventType()).thenReturn(eventType);
     when(assignSessionStatisticsEvent.getPayload()).thenReturn(Optional.of(PAYLOAD));
-    setInternalState(StatisticsService.class, "log", logger);
     setField(statisticsService, FIELD_NAME_RABBIT_EXCHANGE_NAME, RABBIT_EXCHANGE_NAME);
   }
 
@@ -77,8 +76,10 @@ class StatisticsServiceTest {
 
     setField(statisticsService, FIELD_NAME_STATISTICS_ENABLED, true);
     when(assignSessionStatisticsEvent.getPayload()).thenReturn(Optional.empty());
-    statisticsService.fireEvent(assignSessionStatisticsEvent);
-    verify(logger).warn(anyString(), anyString());
+    try (var logCaptor = LogbackCaptor.forClass(StatisticsService.class)) {
+      statisticsService.fireEvent(assignSessionStatisticsEvent);
+      assertThat(logCaptor.contains(Level.WARN, "Empty statistics event message payload")).isTrue();
+    }
   }
 
   @Test

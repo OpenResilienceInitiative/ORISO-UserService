@@ -6,33 +6,33 @@ import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupsListAllException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collections;
 import java.util.List;
 import org.apache.commons.collections4.IterableUtils;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class InactivePrivateGroupsProviderTest {
@@ -41,11 +41,17 @@ public class InactivePrivateGroupsProviderTest {
 
   @Mock private RocketChatService rocketChatService;
   @Mock private ChatRepository chatRepository;
-  @Mock private Logger logger;
+
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    logCaptor = LogbackCaptor.forClass(LogService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -98,7 +104,10 @@ public class InactivePrivateGroupsProviderTest {
 
     inactivePrivateGroupsProvider.retrieveUserWithInactiveGroupsMap();
 
-    verify(this.logger, times(1)).error(anyString(), anyString(), anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(logCaptor.count(Level.ERROR)).isEqualTo(1);
+    org.assertj.core.api.Assertions.assertThat(
+            logCaptor.contains(Level.ERROR, "Rocket.Chat Error:"))
+        .isTrue();
   }
 
   @Test

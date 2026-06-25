@@ -23,16 +23,14 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
@@ -72,6 +70,7 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Team
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.WelcomeMessageDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -89,7 +88,6 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -311,7 +309,6 @@ class EmailNotificationFacadeTest {
   @Mock private MailService mailService;
   @Mock SessionService sessionService;
   @Mock ConsultantAgencyService consultantAgencyService;
-  @Mock Logger logger;
   @Mock ConsultantService consultantService;
   @Mock ConsultingTypeManager consultingTypeManager;
   @Mock IdentityClientConfig identityClientConfig;
@@ -322,6 +319,10 @@ class EmailNotificationFacadeTest {
   @Mock
   @SuppressWarnings("unused")
   KeycloakService keycloakService;
+
+  private LogbackCaptor facadeLogCaptor;
+  private LogbackCaptor assignEnquiryLogCaptor;
+  private LogbackCaptor newMessageLogCaptor;
 
   @BeforeEach
   void setup() throws SecurityException {
@@ -334,11 +335,18 @@ class EmailNotificationFacadeTest {
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
-    setInternalState(EmailNotificationFacade.class, "log", logger);
-    setInternalState(AssignEnquiryEmailSupplier.class, "log", logger);
-    setInternalState(NewMessageEmailSupplier.class, "log", logger);
+    facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
+    assignEnquiryLogCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
+    newMessageLogCaptor = LogbackCaptor.forClass(NewMessageEmailSupplier.class);
     when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
         .thenReturn(false);
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void tearDown() {
+    facadeLogCaptor.detach();
+    assignEnquiryLogCaptor.detach();
+    newMessageLogCaptor.detach();
   }
 
   @Test
@@ -407,7 +415,10 @@ class EmailNotificationFacadeTest {
 
     emailNotificationFacade.sendNewEnquiryEmailNotification(session, null);
 
-    verify(logger).error(anyString(), any(), any(Exception.class));
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(
+                Level.ERROR, "Failed to send new enquiry notification for session"))
+        .isTrue();
   }
 
   /** Method: sendNewMessageNotification */
@@ -464,8 +475,10 @@ class EmailNotificationFacadeTest {
     when(sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, USER_ROLES))
         .thenThrow(serviceException);
     emailNotificationFacade.sendNewMessageNotification(RC_GROUP_ID, USER_ROLES, USER_ID, null);
-    verify(logger)
-        .error(anyString(), anyString(), anyString(), any(InternalServerErrorException.class));
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(
+                Level.ERROR, "Failed to send new message notification with Rocket.Chat group ID"))
+        .isTrue();
   }
 
   @Test
@@ -478,7 +491,10 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendNewMessageNotification(RC_GROUP_ID, USER_ROLES, USER_ID, null);
 
     verify(mailService, times(0)).sendEmailNotification(Mockito.any(MailsDTO.class));
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            newMessageLogCaptor.contains(
+                Level.ERROR, "No currently running (SessionStatus = IN_PROGRESS) session found"))
+        .isTrue();
   }
 
   @Test
@@ -491,7 +507,10 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendNewMessageNotification(RC_GROUP_ID, USER_ROLES, USER_ID, null);
 
     verify(mailService, times(0)).sendEmailNotification(Mockito.any(MailsDTO.class));
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            newMessageLogCaptor.contains(
+                Level.ERROR, "No currently running (SessionStatus = IN_PROGRESS) session found"))
+        .isTrue();
   }
 
   @Test
@@ -529,7 +548,10 @@ class EmailNotificationFacadeTest {
         RC_GROUP_ID, CONSULTANT_ROLES, CONSULTANT_ID, null);
 
     verify(mailService, times(0)).sendEmailNotification(Mockito.any(MailsDTO.class));
-    verify(logger, atLeastOnce()).warn(anyString(), anyString(), anyString(), any(Exception.class));
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(
+                Level.WARN, "Failed to get session for new message notification"))
+        .isTrue();
   }
 
   @Test
@@ -543,8 +565,10 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendNewMessageNotification(
         RC_GROUP_ID, CONSULTANT_ROLES, CONSULTANT_ID, null);
 
-    verify(logger, atLeastOnce())
-        .error(anyString(), anyString(), anyString(), any(NullPointerException.class));
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(
+                Level.ERROR, "Failed to send new message notification with Rocket.Chat group ID"))
+        .isTrue();
   }
 
   @Test
@@ -617,7 +641,9 @@ class EmailNotificationFacadeTest {
       sendAssignEnquiryEmailNotification_Should_LogErrorAndSendNoMails_WhenReceiverConsultantIsNull() {
     emailNotificationFacade.sendAssignEnquiryEmailNotification(
         null, CONSULTANT_ID_2, USERNAME, null);
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            assignEnquiryLogCaptor.contains(Level.ERROR, "Receiver consultant with id"))
+        .isTrue();
   }
 
   @Test
@@ -626,7 +652,9 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendAssignEnquiryEmailNotification(
         CONSULTANT_WITHOUT_MAIL, CONSULTANT_ID_2, USERNAME, null);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            assignEnquiryLogCaptor.contains(Level.ERROR, "Receiver consultant with id"))
+        .isTrue();
   }
 
   @Test
@@ -637,7 +665,9 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendAssignEnquiryEmailNotification(
         CONSULTANT, CONSULTANT_ID_2, USERNAME, null);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            assignEnquiryLogCaptor.contains(Level.ERROR, "Sender consultant with id"))
+        .isTrue();
   }
 
   @Test
@@ -650,7 +680,9 @@ class EmailNotificationFacadeTest {
 
     emailNotificationFacade.sendNewMessageNotification(RC_GROUP_ID, USER_ROLES, USER_ID, null);
 
-    verifyNoInteractions(logger);
+    org.assertj.core.api.Assertions.assertThat(facadeLogCaptor.events()).isEmpty();
+    org.assertj.core.api.Assertions.assertThat(newMessageLogCaptor.events()).isEmpty();
+    org.assertj.core.api.Assertions.assertThat(assignEnquiryLogCaptor.events()).isEmpty();
   }
 
   @Test
@@ -658,7 +690,9 @@ class EmailNotificationFacadeTest {
     doThrow(new RuntimeException("unexpected")).when(mailService).sendEmailNotification(any());
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(CONSULTANT));
     emailNotificationFacade.sendAssignEnquiryEmailNotification(CONSULTANT, USER_ID, NAME, null);
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(Level.ERROR, "EmailNotificationFacade error:"))
+        .isTrue();
   }
 
   @Test

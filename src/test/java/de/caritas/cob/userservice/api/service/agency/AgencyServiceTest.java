@@ -54,7 +54,7 @@ class AgencyServiceTest {
     ReflectionTestUtils.setField(tenantHeaderSupplier, "multitenancy", true);
     ReflectionTestUtils.setField(agencyService, "tenantHeaderSupplier", tenantHeaderSupplier);
     HttpHeaders headers = new HttpHeaders();
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(headers);
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
     when(this.agencyControllerApi.getApiClient()).thenReturn(apiClient);
     var agencyDTOS =
         Lists.newArrayList(

@@ -8,7 +8,10 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -38,6 +41,17 @@ class AccountManagerTest {
   @Mock TenantService tenantService;
 
   @Mock Page<Consultant.ConsultantBase> page;
+
+  // AccountManager#resolveEffectiveTenantId falls back to the thread-bound TenantContext when the
+  // access token carries no tenant (the mocked AuthenticatedUser returns a null token here). These
+  // tests stub the repository for the no-tenant case (effectiveTenantId == null), so any tenant
+  // leaked by an earlier test in the suite would make the stubbed call mismatch under strict
+  // stubbing. Clear the context around every test to keep them hermetic regardless of run order.
+  @BeforeEach
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
 
   @Test
   void findConsultantsByInfix_Should_NotFilterByAgenciesIfAgencyListIsEmpty() {

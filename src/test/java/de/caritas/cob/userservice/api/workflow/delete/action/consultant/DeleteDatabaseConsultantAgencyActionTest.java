@@ -3,30 +3,29 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
 import static java.util.Collections.emptyList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteDatabaseConsultantAgencyActionTest {
@@ -35,11 +34,16 @@ public class DeleteDatabaseConsultantAgencyActionTest {
 
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteDatabaseConsultantAgencyAction.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(DeleteDatabaseConsultantAgencyAction.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -50,7 +54,7 @@ public class DeleteDatabaseConsultantAgencyActionTest {
     this.deleteDatabaseConsultantAgencyAction.execute(workflowDTO);
 
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
-    verifyNoMoreInteractions(this.logger);
+    assertThat(logCaptor.events()).isEmpty();
   }
 
   @Test
@@ -71,6 +75,6 @@ public class DeleteDatabaseConsultantAgencyActionTest {
     assertThat(
         workflowErrors.get(0).getReason(), is("Could not delete consultant agency relations"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
   }
 }

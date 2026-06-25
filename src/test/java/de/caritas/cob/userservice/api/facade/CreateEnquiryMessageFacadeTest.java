@@ -43,7 +43,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -73,7 +72,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
@@ -99,7 +97,6 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
-import org.slf4j.Logger;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -177,8 +174,6 @@ class CreateEnquiryMessageFacadeTest {
 
   @Mock private ConsultantAgencyService consultantAgencyService;
 
-  @Mock private Logger logger;
-
   @Mock private ConsultingTypeManager consultingTypeManager;
 
   @Mock private UserHelper userHelper;
@@ -210,7 +205,6 @@ class CreateEnquiryMessageFacadeTest {
         ROCKET_CHAT_SYSTEM_USER_ID);
     setField(
         createEnquiryMessageFacade, "rocketChatRoomNameGenerator", rocketChatRoomNameGenerator);
-    setInternalState(LogService.class, "LOGGER", logger);
 
     this.session = new Session();
     session.setId(SESSION_ID);

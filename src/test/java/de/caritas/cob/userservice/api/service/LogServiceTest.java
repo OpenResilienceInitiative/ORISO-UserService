@@ -3,22 +3,21 @@ package de.caritas.cob.userservice.api.service;
 import static de.caritas.cob.userservice.api.service.LogService.ASSIGN_SESSION_FACADE_ERROR_TEXT;
 import static de.caritas.cob.userservice.api.service.LogService.ASSIGN_SESSION_FACADE_WARNING_TEXT;
 import static de.caritas.cob.userservice.api.service.LogService.FORBIDDEN_WARNING_TEXT;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.io.PrintWriter;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class LogServiceTest {
@@ -27,11 +26,16 @@ public class LogServiceTest {
 
   @Mock Exception exception;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    logCaptor = LogbackCaptor.forClass(LogService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -45,22 +49,22 @@ public class LogServiceTest {
   public void logForbidden_Should_LogWarningMessage() {
 
     LogService.logForbidden(ERROR_MESSAGE);
-    verify(logger, times(1)).warn(anyString(), eq(FORBIDDEN_WARNING_TEXT), eq(ERROR_MESSAGE));
+    assertThat(logCaptor.contains(Level.WARN, FORBIDDEN_WARNING_TEXT + ERROR_MESSAGE)).isTrue();
   }
 
   @Test
   public void logAssignSessionFacadeWarning_should_LogErrorMessage() {
 
     LogService.logAssignSessionFacadeWarning(new Exception(ERROR_MESSAGE));
-    verify(logger, times(1))
-        .warn(anyString(), eq(ASSIGN_SESSION_FACADE_WARNING_TEXT), eq(ERROR_MESSAGE));
+    assertThat(logCaptor.contains(Level.WARN, ASSIGN_SESSION_FACADE_WARNING_TEXT + ERROR_MESSAGE))
+        .isTrue();
   }
 
   @Test
   public void logInfo_Should_LogMessage() {
 
     LogService.logInfo(ERROR_MESSAGE);
-    verify(logger, times(1)).info(ERROR_MESSAGE);
+    assertThat(logCaptor.contains(Level.INFO, ERROR_MESSAGE)).isTrue();
   }
 
   @Test
@@ -82,8 +86,8 @@ public class LogServiceTest {
     when(exception.getMessage()).thenReturn(ERROR_MESSAGE);
     LogService.logAssignSessionFacadeError(exception);
     verify(exception, atLeastOnce()).printStackTrace(any(PrintWriter.class));
-    verify(logger, times(1))
-        .error(anyString(), eq(ASSIGN_SESSION_FACADE_ERROR_TEXT), eq(ERROR_MESSAGE));
+    assertThat(logCaptor.contains(Level.ERROR, ASSIGN_SESSION_FACADE_ERROR_TEXT + ERROR_MESSAGE))
+        .isTrue();
   }
 
   @Test

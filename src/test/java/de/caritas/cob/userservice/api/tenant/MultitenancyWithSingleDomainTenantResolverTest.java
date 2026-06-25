@@ -5,11 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import java.util.Optional;
 import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
@@ -27,7 +30,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 @ExtendWith(MockitoExtension.class)
 class MultitenancyWithSingleDomainTenantResolverTest {
 
-  private static final String CONSULTANT_ID = "cid-1234";
+  private static final String CONSULTANT_ID = "12345678-1234-1234-1234-123456789012";
   private static final long ANOTHER_TENANT = 2L;
 
   @InjectMocks
@@ -40,6 +43,10 @@ class MultitenancyWithSingleDomainTenantResolverTest {
   @Mock HttpHeadersResolver headersResolver;
 
   @Mock ConsultantService consultantService;
+
+  @Mock TenantService tenantService;
+
+  @Mock ApplicationSettingsService applicationSettingsService;
 
   @Mock private ServletRequestAttributes requestAttributes;
 
@@ -106,6 +113,8 @@ class MultitenancyWithSingleDomainTenantResolverTest {
 
     when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.empty());
     when(request.getRequestURI()).thenReturn("/users/sessions/1");
+    when(applicationSettingsService.getApplicationSettings())
+        .thenReturn(new ApplicationSettingsDTO());
 
     EasyRandom random = new EasyRandom();
     Consultant consultant = random.nextObject(Consultant.class);

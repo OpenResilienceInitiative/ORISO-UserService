@@ -34,15 +34,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.FindIterable;
@@ -84,6 +82,7 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginExcept
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveSystemMessagesException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserFromGroupException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -94,6 +93,7 @@ import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
 import org.bson.conversions.Bson;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -105,7 +105,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -178,7 +177,7 @@ class RocketChatServiceTest {
   private final RocketChatConfig rocketChatConfig =
       new RocketChatConfig(new MockHttpServletRequest());
   private final ObjectMapper objectMapper = new ObjectMapper();
-  @Mock Logger logger;
+  private LogbackCaptor logCaptor;
   @Mock RocketChatCredentialsProvider rcCredentialsHelper;
   @InjectMocks private RocketChatService rocketChatService;
   @Mock private RestTemplate restTemplate;
@@ -197,7 +196,12 @@ class RocketChatServiceTest {
     rocketChatConfig.setBaseUrl("http://localhost/api/v1");
     setField(rocketChatService, "rocketChatConfig", rocketChatConfig);
 
-    setInternalState(RocketChatService.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(RocketChatService.class);
+  }
+
+  @AfterEach
+  void tearDown() {
+    logCaptor.detach();
   }
 
   /** Method: createPrivateGroup */
@@ -267,7 +271,7 @@ class RocketChatServiceTest {
 
     assertFalse(result);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString());
+    assertTrue(logCaptor.contains(Level.ERROR, "Error during rollback: Rocket.Chat group with id"));
   }
 
   @Test
@@ -281,7 +285,7 @@ class RocketChatServiceTest {
 
     rocketChatService.rollbackGroup(GROUP_ID, RC_CREDENTIALS);
 
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), any(Exception.class));
+    assertTrue(logCaptor.contains(Level.ERROR, "Error during rollback: Rocket.Chat group with id"));
   }
 
   /** Method: addUserToGroup */
@@ -431,8 +435,6 @@ class RocketChatServiceTest {
           when(rcCredentialsHelper.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
 
           rocketChatService.removeSystemMessages(GROUP_ID, DATETIME_OLDEST, DATETIME_LATEST);
-
-          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
         });
   }
 
@@ -1001,7 +1003,7 @@ class RocketChatServiceTest {
 
     this.rocketChatService.setRoomReadOnly("");
 
-    verify(logger).error(anyString(), anyString(), nullable(String.class));
+    assertTrue(logCaptor.contains(Level.ERROR, "Mark group with id"));
   }
 
   @Test
@@ -1045,7 +1047,7 @@ class RocketChatServiceTest {
 
     this.rocketChatService.setRoomWriteable("");
 
-    verify(logger).error(anyString(), anyString(), nullable(String.class));
+    assertTrue(logCaptor.contains(Level.ERROR, "Mark group with id"));
   }
 
   @Test

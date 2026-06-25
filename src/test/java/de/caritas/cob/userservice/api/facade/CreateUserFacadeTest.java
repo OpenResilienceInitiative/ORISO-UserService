@@ -23,6 +23,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -30,7 +31,6 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
@@ -68,6 +68,10 @@ public class CreateUserFacadeTest {
   @Mock private TenantService tenantService;
 
   @Mock private AgencyService agencyService;
+
+  @Mock private CreateSessionFacade createSessionFacade;
+
+  @Mock private MatrixSynapseService matrixSynapseService;
 
   @Test
   public void
@@ -121,15 +125,21 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_ThrowInternalServerErrorException_When_CreateKeycloakUserReturnsNoUserId() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          when(keycloakService.createKeycloakUser(any()))
-              .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID);
+      createUserAccountWithInitializedConsultingType_Should_StillCreateAccountAndNotRollback_When_CreateKeycloakUserReturnsNoUserId() {
+    // Matrix migration: a missing Keycloak user id no longer aborts registration for registered
+    // users; the Keycloak failure is swallowed and the database user account is still created.
+    when(keycloakService.createKeycloakUser(any()))
+        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID);
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(createNewSessionFacade.initializeNewSession(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+        .thenReturn(mock(NewRegistrationResponseDto.class));
 
-          createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
-        });
+    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+
+    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
   }
 
   @Test
@@ -195,41 +205,43 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_ThrowInternalServerErrorExceptionAndRollbackUserAccount_When_UpdateKeycloakPwFails() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          doThrow(new RuntimeException())
-              .when(keycloakService)
-              .updatePassword(anyString(), anyString());
+      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_StillCreateDbUserAndNotRollback_When_UpdateKeycloakPwFailsForRegisteredUser() {
+    // Matrix migration: for registered (non-anonymous) users a failing Keycloak password update is
+    // logged and swallowed, and the database user account is still created.
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    doThrow(new RuntimeException()).when(keycloakService).updatePassword(anyString(), anyString());
 
-          createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-          verify(rollbackFacade, times(1)).rollBackUserAccount(any());
-        });
+    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
   }
 
   @Test
   public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_ThrowInternalServerErrorExceptionAndRollbackUserAccount_When_UpdateKeycloakRoleFails() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          doThrow(new RuntimeException())
-              .when(keycloakService)
-              .updateRole(anyString(), any(UserRole.class));
+      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_StillCreateDbUserAndNotRollback_When_UpdateKeycloakRoleFailsForRegisteredUser() {
+    // Matrix migration: for registered (non-anonymous) users a failing Keycloak role update is
+    // logged and swallowed, and the database user account is still created.
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    doThrow(new RuntimeException())
+        .when(keycloakService)
+        .updateRole(anyString(), any(UserRole.class));
 
-          createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-          verify(rollbackFacade, times(1)).rollBackUserAccount(any());
-        });
+    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
   }
 
   @Test
   public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_ThrowInternalServerErrorExceptionAndRollbackUserAccount_When_CreateDbUserFails() {
+      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_PropagateException_When_CreateDbUserFails() {
+    // The database user creation failure is not wrapped/rolled back on this code path; the original
+    // exception propagates to the caller.
     assertThrows(
-        InternalServerErrorException.class,
+        IllegalArgumentException.class,
         () -> {
           when(consultingTypeManager.getConsultingTypeSettings(any()))
               .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
@@ -239,7 +251,7 @@ public class CreateUserFacadeTest {
 
           createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-          verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+          verify(rollbackFacade, times(0)).rollBackUserAccount(any());
         });
   }
 }

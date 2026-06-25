@@ -60,7 +60,8 @@ class AgencySecurityHeaderSupplierTest {
     when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
     this.agencyResponseDTOS =
         AGENCY_DTO_LIST.stream().map(this::toAgencyResponseDTO).collect(Collectors.toList());
-    when(this.securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    when(this.securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
+        .thenReturn(new HttpHeaders());
   }
 
   private void resetRequestAttributes() {

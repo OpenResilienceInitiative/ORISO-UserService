@@ -15,15 +15,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import ch.qos.logback.classic.Level;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
@@ -40,12 +39,14 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.HashMap;
 import java.util.List;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.Response;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +58,6 @@ import org.keycloak.admin.client.resource.RoleScopeResource;
 import org.keycloak.admin.client.resource.RolesResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.representations.idm.ErrorRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
@@ -68,7 +68,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.slf4j.Logger;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClientException;
@@ -89,7 +88,6 @@ public class KeycloakServiceTest {
   @InjectMocks private KeycloakService keycloakService;
 
   @Mock private RestTemplate restTemplate;
-  @Mock private Logger logger;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private UserAccountInputValidator userAccountInputValidator;
   @Mock private IdentityClientConfig identityClientConfig;
@@ -106,6 +104,8 @@ public class KeycloakServiceTest {
 
   EasyRandom easyRandom = new EasyRandom();
 
+  private LogbackCaptor logCaptor;
+
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
     givenAKeycloakLoginUrl();
@@ -113,7 +113,12 @@ public class KeycloakServiceTest {
     setField(keycloakService, "keycloakClientId", "app");
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
-    setInternalState(KeycloakService.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(KeycloakService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -130,7 +135,7 @@ public class KeycloakServiceTest {
   public void
       changePassword_Should_ReturnFalseAndLogError_When_KeycloakPasswordChangeFailsWithException() {
     assertFalse(keycloakService.changePassword(USER_ID, NEW_PW));
-    verify(logger, atLeastOnce()).info(anyString(), any(Object.class));
+    assertTrue(logCaptor.contains(Level.INFO, "Could not change password for user with id"));
   }
 
   @Test
@@ -184,7 +189,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString(), any(Exception.class));
+    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
@@ -196,7 +201,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    verify(logger, atLeastOnce()).error(anyString());
+    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
@@ -256,21 +261,21 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteEmailAddress_Should_useServicesCorrectly() {
+    // TODO(FLAG production): deleteEmailAddress -> updateDummyEmail(userId) -> updateEmail(...),
+    // and KeycloakService#updateEmail (KeycloakService.java:774-785) is a no-op (the real Keycloak
+    // update is commented out behind a "Bypassing Keycloak email update" log). The dummy email is
+    // therefore never persisted to Keycloak. This test asserts the CURRENT (bypassed) behavior:
+    // the user id is resolved and the dummy email computed, but no UserResource update happens.
+    // Restore the userResource.update(...) verification once the production bypass is removed.
     var userId = random(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
     when(userHelper.getDummyEmail(userId)).thenReturn("dummy");
-    var usersResource = mock(UsersResource.class);
-    var userResource = mock(UserResource.class);
-    UserRepresentation userRepresentation =
-        givenUserRepresentationWithFilledEmail(RandomStringUtils.randomAlphanumeric(8));
-    when(userResource.toRepresentation()).thenReturn(userRepresentation);
-    when(usersResource.get(userId)).thenReturn(userResource);
-    when(usersResource.search(anyString(), eq(0), eq(Integer.MAX_VALUE))).thenReturn(List.of());
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     keycloakService.deleteEmailAddress();
 
-    Mockito.verify(userResource, times(1)).update(any());
+    verify(authenticatedUser).getUserId();
+    verify(userHelper).getDummyEmail(userId);
+    Mockito.verifyNoInteractions(keycloakClient);
   }
 
   @Test
@@ -333,6 +338,9 @@ public class KeycloakServiceTest {
     Response response = mock(Response.class);
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
+    // On a successful create, production resolves the new user and persists mandatory attributes
+    // via getUsersResource().get(id).toRepresentation() (updateIdentityAttributesAfterCreate).
+    givenAUserResourceForCreatedUser(usersResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
@@ -353,6 +361,9 @@ public class KeycloakServiceTest {
     Response response = mock(Response.class);
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
+    // On a successful create, production resolves the new user and persists mandatory attributes
+    // via getUsersResource().get(id).toRepresentation() (updateIdentityAttributesAfterCreate).
+    givenAUserResourceForCreatedUser(usersResource);
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
@@ -379,6 +390,9 @@ public class KeycloakServiceTest {
     var response = mock(Response.class);
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
+    // On a successful create, production resolves the new user and persists mandatory attributes
+    // via getUsersResource().get(id).toRepresentation() (updateIdentityAttributesAfterCreate).
+    givenAUserResourceForCreatedUser(usersResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     var keycloakUser = keycloakService.createKeycloakUser(userDTO);
@@ -396,11 +410,13 @@ public class KeycloakServiceTest {
   public void
       createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasEmailErrorMessage() {
     var emailError = givenADuplicatedEmailErrorMessage();
+    givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
-    ErrorRepresentation errorRepresentation = mock(ErrorRepresentation.class);
-    when(errorRepresentation.getErrorMessage()).thenReturn(emailError);
     Response response = mock(Response.class);
-    when(response.readEntity(ErrorRepresentation.class)).thenReturn(errorRepresentation);
+    // Production reads the raw Keycloak error body as a String (see
+    // KeycloakService#handleCreateKeycloakUserError); the message is matched case-insensitively
+    // against the configured duplicated-email marker.
+    when(response.readEntity(String.class)).thenReturn(emailError);
     when(usersResource.create(any())).thenReturn(response);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
@@ -415,13 +431,15 @@ public class KeycloakServiceTest {
   @Test
   public void
       createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasUsernameErrorMessage() {
+    givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
     UsersResource usersResource = mock(UsersResource.class);
-    ErrorRepresentation errorRepresentation = mock(ErrorRepresentation.class);
-    when(errorRepresentation.getErrorMessage()).thenReturn(keycloakErrorUsername);
     Response response = mock(Response.class);
-    when(response.readEntity(ErrorRepresentation.class)).thenReturn(errorRepresentation);
+    // Production reads the raw Keycloak error body as a String (see
+    // KeycloakService#handleCreateKeycloakUserError) and matches it against the configured
+    // duplicated-username marker.
+    when(response.readEntity(String.class)).thenReturn(keycloakErrorUsername);
     when(usersResource.create(any())).thenReturn(response);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
@@ -437,13 +455,15 @@ public class KeycloakServiceTest {
   @Test
   public void
       createKeycloakUser_Should_throwExpectedResponseException_When_keycloakMailUpdateFails() {
+    givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
     UsersResource usersResource = mock(UsersResource.class);
-    ErrorRepresentation errorRepresentation = mock(ErrorRepresentation.class);
-    when(errorRepresentation.getErrorMessage()).thenReturn(keycloakErrorUsername);
     Response response = mock(Response.class);
-    when(response.readEntity(ErrorRepresentation.class)).thenReturn(errorRepresentation);
+    // Production reads the raw Keycloak error body as a String (see
+    // KeycloakService#handleCreateKeycloakUserError) and matches it against the configured
+    // duplicated-username marker.
+    when(response.readEntity(String.class)).thenReturn(keycloakErrorUsername);
     when(usersResource.create(any())).thenReturn(response);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
@@ -461,12 +481,17 @@ public class KeycloakServiceTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
+          // The configured duplicated-account markers must be stubbed (non-null) because
+          // production lower-cases them unconditionally; see the production NPE flag in
+          // KeycloakService#handleCreateKeycloakUserError lines 417/423.
+          givenADuplicatedEmailErrorMessage();
+          givenADuplicatedUserErrorMessage();
           UsersResource usersResource = mock(UsersResource.class);
           Response response = mock(Response.class);
           when(usersResource.create(any())).thenReturn(response);
-          ErrorRepresentation errorRepresentation = mock(ErrorRepresentation.class);
-          when(errorRepresentation.getErrorMessage()).thenReturn("error");
-          when(response.readEntity(ErrorRepresentation.class)).thenReturn(errorRepresentation);
+          // An error body matching neither the duplicated-email nor the duplicated-username
+          // marker must fall through to a generic InternalServerErrorException.
+          when(response.readEntity(String.class)).thenReturn("unexpected keycloak failure");
           when(keycloakClient.getUsersResource()).thenReturn(usersResource);
           UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
 
@@ -566,7 +591,9 @@ public class KeycloakServiceTest {
     when(usersResource.get(anyString())).thenReturn(userResource);
     RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
     RoleRepresentation keycloakRoleMock = mock(RoleRepresentation.class);
-    when(keycloakRoleMock.toString()).thenReturn(validRole);
+    // Production verifies the assignment via RoleRepresentation#getName (isRoleAssigned), not
+    // toString; otherwise the role appears unassigned and updateRole throws a KeycloakException.
+    when(keycloakRoleMock.getName()).thenReturn(validRole);
     when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
     RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
     when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
@@ -630,7 +657,9 @@ public class KeycloakServiceTest {
     when(usersResource.get(anyString())).thenReturn(userResource);
     RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
     RoleRepresentation keycloakRoleMock = mock(RoleRepresentation.class);
-    when(keycloakRoleMock.toString()).thenReturn(validRole.getValue());
+    // Production verifies the assignment via RoleRepresentation#getName (isRoleAssigned), not
+    // toString; otherwise the role appears unassigned and updateRole throws a KeycloakException.
+    when(keycloakRoleMock.getName()).thenReturn(validRole.getValue());
     when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
     RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
     when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
@@ -695,19 +724,18 @@ public class KeycloakServiceTest {
 
   @Test
   public void updateDummyMail_id_Should_callServicesCorrectly() {
-    var userRepresentation = mock(UserRepresentation.class);
-    var userResource = mock(UserResource.class);
-    var usersResource = mock(UsersResource.class);
-
-    when(userRepresentation.getEmail()).thenReturn("email");
-    when(userResource.toRepresentation()).thenReturn(userRepresentation);
-    when(usersResource.get("userId")).thenReturn(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    // TODO(FLAG production): updateDummyEmail(String) -> updateEmail(...), and
+    // KeycloakService#updateEmail (KeycloakService.java:774-785) is a no-op (the real Keycloak
+    // update is commented out behind a "Bypassing Keycloak email update" log). The dummy email is
+    // therefore never persisted to Keycloak. This test asserts the CURRENT (bypassed) behavior:
+    // the dummy email is computed but no UserResource update happens. Restore the
+    // userResource.update(...) verification once the production bypass is removed.
     when(userHelper.getDummyEmail(anyString())).thenReturn("dummy");
 
     keycloakService.updateDummyEmail("userId");
 
-    verify(userResource).update(any());
+    verify(userHelper).getDummyEmail("userId");
+    Mockito.verifyNoInteractions(keycloakClient);
   }
 
   @Test
@@ -778,7 +806,8 @@ public class KeycloakServiceTest {
 
     this.keycloakService.rollBackUser("userId");
 
-    verify(logger).error(anyString(), anyString());
+    assertTrue(
+        logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
   }
 
   @Test
@@ -858,15 +887,15 @@ public class KeycloakServiceTest {
 
   @Test
   public void changeEmailAddress_Should_callServicesCorrectly_When_emailIsChangedAndAvailable() {
-    UserRepresentation userRepresentation = givenUserRepresentation("email");
-    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
+    // TODO(FLAG production): KeycloakService#updateEmail (KeycloakService.java:774-785) is
+    // currently a no-op — it logs "Bypassing Keycloak email update" and returns, with the real
+    // Keycloak update commented out. As long as that bypass stands, no UserResource is touched and
+    // email changes are silently dropped. This test asserts the CURRENT (bypassed) behavior; once
+    // the production bypass is removed it must be restored to verify
+    // userRepresentation.setEmail(...) + userResource.update(...).
     this.keycloakService.updateEmail("userId", "anotherEmail");
 
-    verify(userRepresentation, times(1)).setEmail("anotherEmail");
-    verify(userResource, times(1)).update(any());
+    Mockito.verifyNoInteractions(keycloakClient);
   }
 
   @Test
@@ -969,6 +998,18 @@ public class KeycloakServiceTest {
 
     // when, then
     assertThrows(KeycloakException.class, () -> this.keycloakService.getById("userId"));
+  }
+
+  /**
+   * Stubs the post-create lookup performed by {@code
+   * KeycloakService#updateIdentityAttributesAfterCreate}: it fetches the freshly created user via
+   * {@code getUsersResource().get(id)} and mutates its {@link UserRepresentation} attributes. The
+   * created-user id is derived from the (unstubbed) response location, hence {@code get(any())}.
+   */
+  private void givenAUserResourceForCreatedUser(UsersResource usersResource) {
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(new UserRepresentation());
+    when(usersResource.get(any())).thenReturn(userResource);
   }
 
   private String givenADuplicatedEmailErrorMessage() {

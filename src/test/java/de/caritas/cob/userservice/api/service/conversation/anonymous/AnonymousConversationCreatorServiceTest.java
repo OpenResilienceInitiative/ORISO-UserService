@@ -120,7 +120,10 @@ class AnonymousConversationCreatorServiceTest {
                   any(RegistrationType.class),
                   any(SessionStatus.class)))
               .thenReturn(SESSION);
-          CreateEnquiryException exception = easyRandom.nextObject(CreateEnquiryException.class);
+          // EasyRandom cannot instantiate Throwable subclasses on JDK 17 (it fails to access
+          // Throwable's private transient fields via reflection), so build the exception directly.
+          CreateEnquiryException exception =
+              new CreateEnquiryException("error while creating enquiry", new Exception(), null);
           when(createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(any(), any(), any()))
               .thenThrow(exception);
           AnonymousUserCredentials credentials =

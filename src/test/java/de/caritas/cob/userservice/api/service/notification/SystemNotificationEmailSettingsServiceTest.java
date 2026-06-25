@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
@@ -10,9 +12,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class SystemNotificationEmailSettingsServiceTest {
 
   @Mock private TenantAdminService tenantAdminService;
@@ -24,7 +29,7 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnTrueWhenToggleAndValidSmtpAreEnabled() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    doReturn(validTenantSettings()).when(tenantAdminService).getTenantById(1L);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(validTenantSettings());
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 
@@ -35,7 +40,8 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnFalseWhenSmtpConfigIsIncomplete() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    doReturn(invalidTenantSettingsMissingHost()).when(tenantAdminService).getTenantById(1L);
+    when(restTemplate.getForObject(anyString(), eq(Map.class)))
+        .thenReturn(invalidTenantSettingsMissingHost());
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 
@@ -46,7 +52,8 @@ class SystemNotificationEmailSettingsServiceTest {
   void isSupervisorAddedEmailEnabledShouldReturnFalseWhenSystemEmailToggleIsDisabled() {
     var service =
         new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
-    doReturn(systemEmailDisabledTenantSettings()).when(tenantAdminService).getTenantById(1L);
+    when(restTemplate.getForObject(anyString(), eq(Map.class)))
+        .thenReturn(systemEmailDisabledTenantSettings());
 
     boolean enabled = service.isSupervisorAddedEmailEnabled(1L);
 

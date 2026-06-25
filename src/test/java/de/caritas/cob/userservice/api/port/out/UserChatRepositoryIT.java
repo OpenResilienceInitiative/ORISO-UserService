@@ -20,7 +20,7 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.ANY)
-class UserChatRepositoryTest {
+class UserChatRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
 

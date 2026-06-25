@@ -4,7 +4,6 @@ import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deser
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -31,8 +30,10 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -61,6 +62,10 @@ public class UserAccountServiceTest {
   @Mock private IdentityClientConfig identityClientConfig;
 
   @Mock private StatisticsService statisticsService;
+
+  @Mock private SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
+
+  @Mock private DeletionLifecycleService deletionLifecycleService;
 
   @Test
   public void findUserByEmail_Should_CallUserService() {
@@ -186,7 +191,7 @@ public class UserAccountServiceTest {
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
     verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.userService, times(1)).getUser(any());
+    verify(this.userService, times(2)).getUser(any());
     verifyNoMoreInteractions(this.userService);
     verifyNoInteractions(userHelper);
   }
@@ -209,7 +214,7 @@ public class UserAccountServiceTest {
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.consultantService, times(1)).getConsultant(any());
+    verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
@@ -233,7 +238,7 @@ public class UserAccountServiceTest {
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.consultantService, times(1)).getConsultant(any());
+    verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
@@ -259,7 +264,7 @@ public class UserAccountServiceTest {
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verifyNoMoreInteractions(rocketChatService);
-    verify(userService).getUser(any());
+    verify(userService, times(2)).getUser(any());
     verifyNoMoreInteractions(userService);
   }
 
@@ -287,7 +292,7 @@ public class UserAccountServiceTest {
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);
     verifyNoMoreInteractions(rocketChatService);
-    verify(consultantService).getConsultant(any());
+    verify(consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(consultantService);
   }
 
@@ -309,9 +314,8 @@ public class UserAccountServiceTest {
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     verify(keycloakService, times(1)).deactivateUser(USER.getUserId());
-    ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-    verify(userService, times(1)).saveUser(captor.capture());
-    assertNotNull(captor.getValue().getDeleteDate());
+    verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
+    verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));
   }
 

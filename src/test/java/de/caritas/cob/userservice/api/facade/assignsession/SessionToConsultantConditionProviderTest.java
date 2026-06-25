@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ class SessionToConsultantConditionProviderTest {
 
   @InjectMocks private SessionToConsultantConditionProvider sessionToConsultantConditionProvider;
   @Mock private AgencyService agencyService;
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
 
   @BeforeEach
   public void setup() {
