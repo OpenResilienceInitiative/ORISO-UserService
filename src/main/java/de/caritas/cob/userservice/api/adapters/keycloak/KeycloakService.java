@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.core.Response;
@@ -82,6 +83,8 @@ public class KeycloakService implements IdentityClient {
   private static final String LOCALE = "locale";
   private static final String TENANT_ID_ATTRIBUTE = "tenantId";
   private static final String USER_ID_ATTRIBUTE = "userId";
+  private static final String USERNAME_ATTRIBUTE = "username";
+  private static final String LEGACY_USERNAME_ATTRIBUTE = "userName";
 
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -495,9 +498,19 @@ public class KeycloakService implements IdentityClient {
     }
     kcUser.setEnabled(true);
 
+    putUsernameAttributes(user, kcUser);
     updateTenantId(user, kcUser);
 
     return kcUser;
+  }
+
+  private void putUsernameAttributes(UserDTO userDTO, UserRepresentation kcUser) {
+    Map<String, List<String>> attributes =
+        kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
+    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    kcUser.setAttributes(attributes);
   }
 
   private void updateTenantId(UserDTO userDTO, UserRepresentation kcUser) {
@@ -521,6 +534,9 @@ public class KeycloakService implements IdentityClient {
             : new LinkedHashMap<>(representation.getAttributes());
 
     attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
+    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     var tenantId = resolveTenantId(userDTO);
     if (tenantId != null) {
       attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
@@ -860,7 +876,9 @@ public class KeycloakService implements IdentityClient {
   @Override
   public List<String> getRealmRoles(String userId) {
     try {
-      return getUserRoles(userId).stream().map(RoleRepresentation::getName).toList();
+      return getUserRoles(userId).stream()
+          .map(RoleRepresentation::getName)
+          .collect(Collectors.toList());
     } catch (Exception ex) {
       var error = String.format("Could not get roles for user id %s", userId);
       log.error("Keycloak error: " + error, ex);

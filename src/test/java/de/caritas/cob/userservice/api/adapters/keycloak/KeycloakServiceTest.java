@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
 import javax.ws.rs.BadRequestException;
@@ -114,6 +115,8 @@ public class KeycloakServiceTest {
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
     setInternalState(KeycloakService.class, "log", logger);
+    when(usernameTranscoder.decodeUsername(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   @Test
@@ -334,11 +337,13 @@ public class KeycloakServiceTest {
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
     KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
 
     assertThat(keycloakUser, notNullValue());
     assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(keycloakUser.getUserId(), is(USER_ID));
   }
 
   @Test
@@ -354,6 +359,7 @@ public class KeycloakServiceTest {
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
+    givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
     KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
 
@@ -372,6 +378,44 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void createKeycloakUser_Should_updateIdentityAttributes_When_keycloakReturnsCreated() {
+    TenantContext.setCurrentTenant(7L);
+    setField(keycloakService, "multiTenancyEnabled", true);
+
+    var userDTO = new UserDTO();
+    userDTO.setUsername("encoded-user");
+    userDTO.setEmail("user@example.org");
+    userDTO.setTenantId(7L);
+    when(usernameTranscoder.decodeUsername("encoded-user")).thenReturn("decoded-user");
+
+    var usersResource = mock(UsersResource.class);
+    var userResource = mock(UserResource.class);
+    var response = mock(Response.class);
+    var storedRepresentation = new UserRepresentation();
+    storedRepresentation.setAttributes(new HashMap<>());
+    when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(response.getLocation()).thenReturn(createdUserLocation(USER_ID));
+    when(usersResource.create(any())).thenReturn(response);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenReturn(storedRepresentation);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    var keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+
+    assertThat(keycloakUser.getUserId(), is(USER_ID));
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId").get(0), is(USER_ID));
+    assertThat(attributes.get("tenantId").get(0), is("7"));
+    assertThat(attributes.get("username").get(0), is("decoded-user"));
+    assertThat(attributes.get("userName").get(0), is("decoded-user"));
+
+    TenantContext.clear();
+  }
+
+  @Test
   public void createKeycloakUser_Should_createUserWithDefaultLocale() {
     var userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setPreferredLanguage(null);
@@ -380,6 +424,7 @@ public class KeycloakServiceTest {
     when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(response);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
     var keycloakUser = keycloakService.createKeycloakUser(userDTO);
 
@@ -390,6 +435,21 @@ public class KeycloakServiceTest {
 
     var locales = argumentCaptor.getValue().getAttributes().get("locale");
     assertEquals("de", locales.get(0));
+  }
+
+  private UserResource givenPostCreateAttributeUpdate(
+      UsersResource usersResource, Response response, String userId) {
+    var userResource = mock(UserResource.class);
+    var storedRepresentation = new UserRepresentation();
+    storedRepresentation.setAttributes(new HashMap<>());
+    when(response.getLocation()).thenReturn(createdUserLocation(userId));
+    when(usersResource.get(userId)).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenReturn(storedRepresentation);
+    return userResource;
+  }
+
+  private URI createdUserLocation(String userId) {
+    return URI.create("http://keycloak/admin/realms/online-beratung/users/" + userId);
   }
 
   @Test

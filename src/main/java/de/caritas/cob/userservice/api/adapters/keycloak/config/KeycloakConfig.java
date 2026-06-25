@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import java.util.Map;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.constraints.NotBlank;
@@ -34,6 +35,9 @@ import org.springframework.web.context.WebApplicationContext;
 @Validated
 @ConfigurationProperties(prefix = "keycloak")
 public class KeycloakConfig {
+
+  private static final String USERNAME_CLAIM = "username";
+  private static final String TENANT_ID_CLAIM = "tenantId";
 
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
@@ -68,16 +72,18 @@ public class KeycloakConfig {
       var claimMap = securityContext.getToken().getOtherClaims();
 
       try {
-        if (claimMap.containsKey("username")) {
+        var usernameClaim =
+            resolveUsernameClaim(claimMap, securityContext.getToken().getPreferredUsername());
+        if (nonNull(usernameClaim)) {
           authenticatedUser.setUsername(
-              usernameTranscoder.decodeUsername(claimMap.get("username").toString()));
+              usernameTranscoder.decodeUsername(usernameClaim.toString()));
         }
         // Use the subject (sub) field for userId instead of otherClaims
         authenticatedUser.setUserId(securityContext.getToken().getSubject());
         authenticatedUser.setAccessToken(securityContext.getTokenString());
         authenticatedUser.setRoles(securityContext.getToken().getRealmAccess().getRoles());
-        if (claimMap.containsKey("tenantId")) {
-          authenticatedUser.setTenantId(Long.valueOf(claimMap.get("tenantId").toString()));
+        if (claimMap.containsKey(TENANT_ID_CLAIM)) {
+          authenticatedUser.setTenantId(Long.valueOf(claimMap.get(TENANT_ID_CLAIM).toString()));
         }
       } catch (Exception exception) {
         throw new KeycloakException("Keycloak data missing.", exception);
@@ -91,6 +97,10 @@ public class KeycloakConfig {
     }
 
     return authenticatedUser;
+  }
+
+  Object resolveUsernameClaim(Map<String, Object> claimMap, String preferredUsername) {
+    return claimMap.containsKey(USERNAME_CLAIM) ? claimMap.get(USERNAME_CLAIM) : preferredUsername;
   }
 
   @Bean
