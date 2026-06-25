@@ -208,6 +208,8 @@ public class SecurityConfig {
                     "/conversations/consultants/**",
                     "/users/case-handover/reasons",
                     "/service/users/case-handover/reasons",
+                    "/users/case-handover/candidates",
+                    "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
