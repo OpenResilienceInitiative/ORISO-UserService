@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 import javax.ws.rs.BadRequestException;
+import javax.ws.rs.NotFoundException;
 import javax.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -807,7 +808,11 @@ public class KeycloakService implements IdentityClient {
    * @param userId the userId
    */
   public void deleteUser(String userId) {
-    keycloakClient.getUsersResource().get(userId).remove();
+    try {
+      keycloakClient.getUsersResource().get(userId).remove();
+    } catch (NotFoundException e) {
+      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+    }
   }
 
   /**
