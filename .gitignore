@@ -44,6 +44,9 @@ consultants-import.txt*
 *localdev*
 *.jar
 run-local-remote-db.sh
+config.env
+dev-local-ca.pem
+dev-truststore.jks
 .env.local
 application-local.properties
 src/main/resources/application-local.properties
