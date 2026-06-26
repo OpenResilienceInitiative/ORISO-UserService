@@ -42,12 +42,22 @@ ROCKET_SYSTEMUSER_ID=rocket-chat-system-user
 ROCKET_SYSTEMUSER_USERNAME=rocket-chat-system-user
 ROCKET_SYSTEMUSER_PASSWORD=CHANGE_ME
 AGENCY_SERVICE_API_URL=https://api.oriso-dev.site/service/agencies
+TENANT_SERVICE_API_URL=https://api.oriso-dev.site/service
 REGISTRATION_CORS_ALLOWED_ORIGINS=http://localhost:9001,http://127.0.0.1:9001
 REGISTRATION_CORS_ALLOWED_PATHS=/**
 ```
 
 `AGENCY_SERVICE_API_URL` must include `/service/agencies` for the agency Matrix service-account
 endpoint used while creating an initial enquiry chat room.
+
+If TenantService is running locally on `localhost:8081`, override TenantService calls with:
+
+```env
+TENANT_SERVICE_API_URL=http://localhost:8081/service
+```
+
+The `/service` suffix is required because the local TenantService uses
+`SERVER_SERVLET_CONTEXT_PATH=/service`.
 
 If login or tenant lookup fails with a Java `PKIX path building failed` /
 `unable to find valid certification path to requested target` error, create/import the dev CA into
@@ -85,6 +95,8 @@ Use the frontend local setup with:
 
 ```env
 REACT_APP_USER_SERVICE_ORIGIN=http://localhost:8082
+REACT_APP_TENANT_SERVICE_ORIGIN=http://localhost:8081
+REACT_APP_LOCAL_TENANT_ID=1
 ```
 
 If that frontend variable is removed or commented, the frontend falls back to the broad remote API

@@ -16,6 +16,7 @@ export SPRING_DATASOURCE_PASSWORD='CHANGE_ME'
 
 export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export AGENCY_SERVICE_API_URL="https://api.oriso-dev.site/service/agencies"
+# Use "http://localhost:8081/service" when TenantService is running locally.
 export TENANT_SERVICE_API_URL="https://api.oriso-dev.site/service"
 export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso-dev.site"
 export IDENTITY_TECHNICAL_USER_USERNAME="technical"
