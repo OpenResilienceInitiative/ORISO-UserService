@@ -11,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -49,21 +48,6 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
     registry
         .addResourceHandler(docuPath + "/**")
         .addResourceLocations("classpath:/META-INF/resources/");
-  }
-
-  @Override
-  public void addCorsMappings(@NonNull CorsRegistry registry) {
-    allowedPaths.forEach(path -> addCorsMapping(registry, path));
-  }
-
-  private void addCorsMapping(CorsRegistry registry, String path) {
-    registry
-        .addMapping(path)
-        .allowCredentials(true)
-        .allowedMethods("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE")
-        .allowedOrigins(allowedOrigins)
-        .allowedHeaders("*")
-        .exposedHeaders("X-Reason");
   }
 
   @Bean
