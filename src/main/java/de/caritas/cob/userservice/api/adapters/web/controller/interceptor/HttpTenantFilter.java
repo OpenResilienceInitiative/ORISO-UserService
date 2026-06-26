@@ -14,6 +14,7 @@ import javax.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
@@ -77,6 +78,9 @@ public class HttpTenantFilter extends OncePerRequestFilter {
   class DefaultRequiresTenantFilterMatcher implements RequestMatcher {
     @Override
     public boolean matches(HttpServletRequest request) {
+      if (HttpMethod.OPTIONS.matches(request.getMethod())) {
+        return false;
+      }
 
       List<String> tenantWhitelist = new ArrayList<>(Arrays.asList(TENANCY_FILTER_WHITELIST));
       return !belongsToWhitelist(request, tenantWhitelist);

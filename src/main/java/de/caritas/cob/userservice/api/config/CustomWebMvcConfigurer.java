@@ -4,8 +4,13 @@ import java.util.List;
 import lombok.NonNull;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -45,18 +50,20 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
         .addResourceLocations("classpath:/META-INF/resources/");
   }
 
-  @Override
-  public void addCorsMappings(@NonNull CorsRegistry registry) {
-    allowedPaths.forEach(path -> addCorsMapping(registry, path));
-  }
+  @Bean
+  public FilterRegistrationBean<CorsFilter> corsFilterRegistrationBean() {
+    var configuration = new CorsConfiguration();
+    configuration.setAllowCredentials(true);
+    configuration.setAllowedOrigins(List.of(allowedOrigins));
+    configuration.setAllowedMethods(List.of("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE"));
+    configuration.setAllowedHeaders(List.of("*"));
+    configuration.setExposedHeaders(List.of("X-Reason"));
 
-  private void addCorsMapping(CorsRegistry registry, String path) {
-    registry
-        .addMapping(path)
-        .allowCredentials(true)
-        .allowedMethods("OPTIONS", "GET", "POST", "PUT", "PATCH", "DELETE")
-        .allowedOrigins(allowedOrigins)
-        .allowedHeaders("*")
-        .exposedHeaders("X-Reason");
+    var source = new UrlBasedCorsConfigurationSource();
+    allowedPaths.forEach(path -> source.registerCorsConfiguration(path, configuration));
+
+    var registrationBean = new FilterRegistrationBean<>(new CorsFilter(source));
+    registrationBean.setOrder(Ordered.HIGHEST_PRECEDENCE);
+    return registrationBean;
   }
 }
