@@ -1752,7 +1752,7 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Starts 2FA activation process by email [authorities: consultant or user]'
+      summary: 'Starts 2FA activation process by email [authorities: OTP-enabled user roles]'
       operationId: startTwoFactorAuthByEmailSetup
       requestBody:
         content:
@@ -1769,6 +1769,8 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - role from the request has no two factor auth enabled
         412:
           description: PRECONDITION FAILED - another user owns this email
         500:
@@ -1779,7 +1781,7 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Finishes 2FA activation process by email [authorities: consultant or user]'
+      summary: 'Finishes 2FA activation process by email [authorities: OTP-enabled user roles]'
       operationId: finishTwoFactorAuthByEmailSetup
       parameters:
         - name: tan
@@ -1797,6 +1799,8 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - role from the request has no two factor auth enabled
         412:
           description: PRECONDITION FAILED - already set up
         429:
@@ -1809,7 +1813,7 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Activates 2FA by mobile app [authorities: consultant or user]'
+      summary: 'Activates 2FA by mobile app [authorities: OTP-enabled user roles]'
       operationId: activateTwoFactorAuthByApp
       requestBody:
         content:
@@ -1836,7 +1840,7 @@ paths:
     delete:
       tags:
         - user-controller
-      summary: 'Deactivates 2FA by mobile app [authorities: consultant or user]'
+      summary: 'Deactivates 2FA by mobile app [authorities: OTP-enabled user roles]'
       operationId: deactivateTwoFactorAuthByApp
       responses:
         200:

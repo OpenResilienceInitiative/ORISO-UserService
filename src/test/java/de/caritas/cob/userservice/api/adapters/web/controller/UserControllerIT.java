@@ -480,8 +480,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_NotActivateIfSingleTenantAdminButNotConfiguredToUse2Fa()
       throws Exception {
-    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForSingleTenantAdmins()).thenReturn(false);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -495,8 +495,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_NotActivateIfTenantSuperAdminButNotConfiguredToUse2Fa()
       throws Exception {
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForTenantSuperAdmins()).thenReturn(false);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -510,6 +510,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_Activate() throws Exception {
     when(authenticatedUser.getUsername()).thenReturn("username");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
     when(identityManager.setUpOneTimePassword(anyString(), anyString(), anyString()))
         .thenReturn(true);
 
