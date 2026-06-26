@@ -38,6 +38,9 @@ Important values for the mixed local setup:
 
 ```env
 SERVER_SERVLET_CONTEXT_PATH=/service
+ROCKET_SYSTEMUSER_ID=rocket-chat-system-user
+ROCKET_SYSTEMUSER_USERNAME=rocket-chat-system-user
+ROCKET_SYSTEMUSER_PASSWORD=CHANGE_ME
 AGENCY_SERVICE_API_URL=https://api.oriso-dev.site/service/agencies
 REGISTRATION_CORS_ALLOWED_ORIGINS=http://localhost:9001,http://127.0.0.1:9001
 REGISTRATION_CORS_ALLOWED_PATHS=/**
