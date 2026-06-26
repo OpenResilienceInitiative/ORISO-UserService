@@ -49,6 +49,14 @@ REGISTRATION_CORS_ALLOWED_PATHS=/**
 `AGENCY_SERVICE_API_URL` must include `/service/agencies` for the agency Matrix service-account
 endpoint used while creating an initial enquiry chat room.
 
+If login or tenant lookup fails with a Java `PKIX path building failed` /
+`unable to find valid certification path to requested target` error, create/import the dev CA into
+a local truststore and uncomment the `JAVA_TOOL_OPTIONS` line in `config.env`:
+
+```env
+JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=$HOME/.oriso/dev-truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"
+```
+
 ## 4. Run
 
 ```bash
