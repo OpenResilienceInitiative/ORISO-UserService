@@ -84,6 +84,11 @@ public class ConsultantAdminFilterServiceTenantAwareIT extends ConsultantAdminFi
   }
 
   @Test
+  public void findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion() {
+    super.findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion();
+  }
+
+  @Test
   public void findFilteredConsultants_Should_returnResultWithSelfLink() {
     super.findFilteredConsultants_Should_returnResultWithSelfLink();
   }

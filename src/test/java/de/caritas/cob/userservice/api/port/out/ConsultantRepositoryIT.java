@@ -12,6 +12,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -239,6 +240,20 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findAllByInfixShouldNotReturnConsultantsMarkedForDeletion() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var consultant = givenConsultantMatchingEmail(infix);
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    consultant.setDeleteDate(LocalDateTime.now());
+    consultant = underTest.save(consultant);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
+
+    assertEquals(0, consultantPage.getTotalElements());
+  }
+
+  @Test
   void findAllByInfixShouldBePagedIfPageSizeGiven() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
     var pageSize = easyRandom.nextInt(100) + 1;
@@ -265,6 +280,23 @@ class ConsultantRepositoryIT {
         underTest.findAllByInfixAndAgencyIds(infix, Lists.newArrayList(), null, pageRequest);
 
     assertEquals(0, consultantPage.getNumberOfElements());
+  }
+
+  @Test
+  void findAllByInfixAndAgencyIdShouldNotReturnConsultantsMarkedForDeletion() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var agencyId = givenANewAgencyId();
+    var consultant = givenConsultantMatchingEmail(infix);
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    consultant.setDeleteDate(LocalDateTime.now());
+    consultant = underTest.save(consultant);
+    saveConsultantAgency(consultant, agencyId);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage =
+        underTest.findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged());
+
+    assertEquals(0, consultantPage.getTotalElements());
   }
 
   @Test
