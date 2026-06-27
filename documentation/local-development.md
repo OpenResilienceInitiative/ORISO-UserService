@@ -41,14 +41,14 @@ SERVER_SERVLET_CONTEXT_PATH=/service
 ROCKET_SYSTEMUSER_ID=rocket-chat-system-user
 ROCKET_SYSTEMUSER_USERNAME=rocket-chat-system-user
 ROCKET_SYSTEMUSER_PASSWORD=CHANGE_ME
-AGENCY_SERVICE_API_URL=https://api.oriso-dev.site/service/agencies
+AGENCY_SERVICE_API_URL=https://api.oriso-dev.site/service
 TENANT_SERVICE_API_URL=https://api.oriso-dev.site/service
 REGISTRATION_CORS_ALLOWED_ORIGINS=http://localhost:9001,http://127.0.0.1:9001
 REGISTRATION_CORS_ALLOWED_PATHS=/**
 ```
 
-`AGENCY_SERVICE_API_URL` must include `/service/agencies` for the agency Matrix service-account
-endpoint used while creating an initial enquiry chat room.
+`AGENCY_SERVICE_API_URL` must point at the AgencyService base path. The generated client appends
+`/agencies`, `/agencies/{agencyIds}`, and `/internal/agencies/{id}/matrix-service-account` itself.
 
 If TenantService is running locally on `localhost:8081`, override TenantService calls with:
 
