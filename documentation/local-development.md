@@ -48,7 +48,7 @@ REGISTRATION_CORS_ALLOWED_PATHS=/**
 ```
 
 `AGENCY_SERVICE_API_URL` must point at the AgencyService base path. The generated client appends
-`/agencies`, `/agencies/{ids}`, and `/internal/agencies/{id}/matrix-service-account` itself.
+`/agencies`, `/agencies/{agencyIds}`, and `/internal/agencies/{id}/matrix-service-account` itself.
 
 If TenantService is running locally on `localhost:8081`, override TenantService calls with:
 
