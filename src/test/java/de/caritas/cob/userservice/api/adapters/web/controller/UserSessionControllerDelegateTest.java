@@ -146,6 +146,29 @@ class UserSessionControllerDelegateTest {
   }
 
   @Test
+  void getSessionsForGroupIdsShouldFallbackUserRocketChatCredentialsWhenMissing() {
+    var responseDto =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    var roles = Set.of(UserRole.USER.getValue());
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithoutRocketChatId());
+    when(sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+            eq("user-id"), eq(List.of("group-id")), any(), eq(roles)))
+        .thenReturn(responseDto);
+
+    var response = delegate.getSessionsForGroupIds(List.of("group-id"), null);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    var credentialsCaptor = ArgumentCaptor.forClass(RocketChatCredentials.class);
+    verify(sessionListFacade)
+        .retrieveSessionsForAuthenticatedUserByGroupIds(
+            eq("user-id"), eq(List.of("group-id")), credentialsCaptor.capture(), eq(roles));
+    assertThat(credentialsCaptor.getValue().getRocketChatUserId()).isEqualTo("dummy-rc-user");
+    assertThat(credentialsCaptor.getValue().getRocketChatToken()).isEqualTo("dummy-rc-token");
+  }
+
+  @Test
   void getSessionsForAuthenticatedConsultantShouldPassSessionQueryParameters() {
     var responseDto =
         new ConsultantSessionListResponseDTO()
@@ -286,6 +309,25 @@ class UserSessionControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(consultantDataFacade).addConsultantDisplayNameToSessionList(responseDto);
+  }
+
+  @Test
+  void getChatByIdShouldFallbackUserRocketChatCredentialsWhenMissing() {
+    var responseDto =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithoutRocketChatId());
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+        .thenReturn(responseDto);
+
+    var response = delegate.getChatById(null, 1L);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    var credentialsCaptor = ArgumentCaptor.forClass(RocketChatCredentials.class);
+    verify(sessionListFacade)
+        .retrieveChatsForUserByChatIds(eq(List.of(1L)), credentialsCaptor.capture());
+    assertThat(credentialsCaptor.getValue().getRocketChatUserId()).isEqualTo("dummy-rc-user");
+    assertThat(credentialsCaptor.getValue().getRocketChatToken()).isEqualTo("dummy-rc-token");
   }
 
   @Test

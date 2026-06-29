@@ -92,6 +92,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.InternalServerErrorException;
 import java.net.URLDecoder;
@@ -364,7 +365,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(
-      @RequestHeader(required = false) String rcToken) {
+      @RequestHeader String rcToken) {
     return userSessionControllerDelegate.getSessionsForAuthenticatedUser(rcToken);
   }
 

@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -42,6 +43,9 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 class UserSessionControllerDelegate {
 
+  private static final String DUMMY_ROCKET_CHAT_TOKEN = "dummy-rc-token";
+  private static final String DUMMY_ROCKET_CHAT_USER_ID = "dummy-rc-user";
+
   private final @NonNull UserAccountService userAccountProvider;
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -57,12 +61,7 @@ class UserSessionControllerDelegate {
 
   ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(String rcToken) {
     var user = this.userAccountProvider.retrieveValidatedUser();
-
-    var token = rcToken != null ? rcToken : "dummy-rc-token";
-    var rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
-
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
+    var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
 
     var userSessionsDTO =
         sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(
@@ -85,11 +84,7 @@ class UserSessionControllerDelegate {
               consultant, rcGroupIds, authenticatedUser.getRoles());
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
-      var rocketChatCredentials =
-          RocketChatCredentials.builder()
-              .rocketChatUserId(user.getRcUserId())
-              .rocketChatToken(rcToken != null ? rcToken : "")
-              .build();
+      var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
               user.getUserId(), rcGroupIds, rocketChatCredentials, authenticatedUser.getRoles());
@@ -142,11 +137,7 @@ class UserSessionControllerDelegate {
               consultant, singletonList(chatId), rocketChatCredentials);
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
-      var rocketChatCredentials =
-          RocketChatCredentials.builder()
-              .rocketChatUserId(user.getRcUserId())
-              .rocketChatToken(rcToken)
-              .build();
+      var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
               singletonList(chatId), rocketChatCredentials);
@@ -314,10 +305,7 @@ class UserSessionControllerDelegate {
     var user = userAccountProvider.retrieveValidatedUser();
     log.info("User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
 
-    var token = rcToken != null ? rcToken : "dummy-rc-token";
-    var rcUserId = user.getRcUserId() != null ? user.getRcUserId() : "dummy-rc-user";
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatUserId(rcUserId).rocketChatToken(token).build();
+    var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
 
     log.info("Step 1: Trying to find as SESSION with ID: {}", sessionId);
     var groupSessionList =
@@ -342,5 +330,14 @@ class UserSessionControllerDelegate {
           groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
     }
     return groupSessionList;
+  }
+
+  private RocketChatCredentials buildUserRocketChatCredentials(User user, String rcToken) {
+    var token = rcToken != null ? rcToken : DUMMY_ROCKET_CHAT_TOKEN;
+    var rcUserId = user.getRcUserId() != null ? user.getRcUserId() : DUMMY_ROCKET_CHAT_USER_ID;
+    return RocketChatCredentials.builder()
+        .rocketChatUserId(rcUserId)
+        .rocketChatToken(token)
+        .build();
   }
 }
