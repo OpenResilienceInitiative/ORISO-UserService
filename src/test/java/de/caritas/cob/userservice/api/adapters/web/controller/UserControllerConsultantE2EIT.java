@@ -728,14 +728,10 @@ class UserControllerConsultantE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
-  void searchConsultantsShouldContainAgenciesMarkedForDeletionIfConsultantDeleted()
-      throws Exception {
+  void searchConsultantsShouldNotContainConsultantsMarkedForDeletion() throws Exception {
     givenAnInfix();
     givenConsultantsMatching(1, infix, true, true, Lists.newArrayList());
     givenAgencyServiceReturningDummyAgencies();
-    var consultantsMarkedAsDeleted = consultantRepository.findAllByDeleteDateNotNull();
-    assertEquals(1, consultantsMarkedAsDeleted.size());
-    var onlyConsultant = consultantsMarkedAsDeleted.get(0);
 
     mockMvc
         .perform(
@@ -746,16 +742,8 @@ class UserControllerConsultantE2EIT {
                 .param("query", infix)
                 .param("perPage", "1"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("total", is(1)))
-        .andExpect(jsonPath("_embedded", hasSize(1)))
-        .andExpect(jsonPath("_embedded[0]._embedded.id", is(onlyConsultant.getId())))
-        .andExpect(
-            jsonPath("_embedded[0]._embedded.status", is(onlyConsultant.getStatus().toString())))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies", hasSize(1)))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies[0].name", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.deleteDate", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.email", is(onlyConsultant.getEmail())));
+        .andExpect(jsonPath("total", is(0)))
+        .andExpect(jsonPath("_embedded", hasSize(0)));
   }
 
   @Test
