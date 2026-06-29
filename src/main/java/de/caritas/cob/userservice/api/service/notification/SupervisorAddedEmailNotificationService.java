@@ -195,13 +195,13 @@ public class SupervisorAddedEmailNotificationService {
   private boolean hasValidUserEmail(User user) {
     return user != null
         && isNotBlank(user.getEmail())
-        && !user.getEmail().endsWith(emailDummySuffix);
+        && (emailDummySuffix == null || !user.getEmail().endsWith(emailDummySuffix));
   }
 
   private boolean hasValidConsultantEmail(Consultant consultant) {
     return consultant != null
         && isNotBlank(consultant.getEmail())
-        && !consultant.getEmail().endsWith(emailDummySuffix);
+        && (emailDummySuffix == null || !consultant.getEmail().endsWith(emailDummySuffix));
   }
 
   private void sendEmailSafely(
