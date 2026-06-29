@@ -135,7 +135,8 @@ public class TopicConsultantRoutingService {
             .filter(
                 consultant ->
                     onlineConsultantIds.contains(consultant.getId())
-                        || onlineConsultantIds.contains(consultant.getRocketChatId()))
+                        || (consultant.getRocketChatId() != null
+                            && onlineConsultantIds.contains(consultant.getRocketChatId())))
             .map(Consultant::getId)
             .collect(Collectors.toList());
 
