@@ -90,7 +90,7 @@ public class TopicConsultantRoutingService {
     // Primary signal: real-time Matrix presence of the topic's (non-absent) consultants.
     List<String> candidateMatrixUserIds =
         consultants.stream()
-            .filter(consultant -> !consultant.isAbsent())
+            .filter(consultant -> consultant != null && !consultant.isAbsent())
             .map(Consultant::getMatrixUserId)
             .filter(matrixUserId -> matrixUserId != null && !matrixUserId.isBlank())
             .collect(Collectors.toList());
@@ -104,7 +104,7 @@ public class TopicConsultantRoutingService {
       // Authoritative answer from Matrix — trust it even when empty (genuinely nobody online).
       Set<String> online = onlineMatrixUserIds.get();
       return consultants.stream()
-          .filter(consultant -> !consultant.isAbsent())
+          .filter(consultant -> consultant != null && !consultant.isAbsent())
           .filter(
               consultant ->
                   consultant.getMatrixUserId() != null
@@ -131,7 +131,7 @@ public class TopicConsultantRoutingService {
 
     List<String> onlineTopicConsultantIds =
         consultants.stream()
-            .filter(consultant -> !consultant.isAbsent())
+            .filter(consultant -> consultant != null && !consultant.isAbsent())
             .filter(
                 consultant ->
                     onlineConsultantIds.contains(consultant.getId())

@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.service.availability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,13 +97,18 @@ class ConsultantActivityRegistryTest {
   }
 
   @Test
-  void filterActive_Should_ReturnOnlyActiveWithinWindow() throws InterruptedException {
-    registry.markAvailable("consultant-1");
-    Thread.sleep(100);
-    registry.markAvailable("consultant-2");
+  void filterActive_Should_ReturnOnlyActiveWithinWindow() {
+    Clock clock = mock(Clock.class);
+    ConsultantActivityRegistry timedRegistry = new ConsultantActivityRegistry(clock);
 
-    // window of 50ms — only consultant-2 is within window
-    Set<String> active = registry.filterActive(List.of("consultant-1", "consultant-2"), 50);
+    when(clock.millis()).thenReturn(1000L);
+    timedRegistry.markAvailable("consultant-1");
+
+    when(clock.millis()).thenReturn(1200L);
+    timedRegistry.markAvailable("consultant-2");
+
+    // cutoff = 1200 - 150 = 1050; consultant-1 (1000) excluded, consultant-2 (1200) included
+    Set<String> active = timedRegistry.filterActive(List.of("consultant-1", "consultant-2"), 150);
     assertThat(active).containsExactly("consultant-2");
   }
 

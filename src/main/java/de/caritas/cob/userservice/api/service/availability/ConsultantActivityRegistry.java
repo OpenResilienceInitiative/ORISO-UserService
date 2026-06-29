@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.availability;
 
+import java.time.Clock;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,11 +20,20 @@ import org.springframework.stereotype.Component;
 public class ConsultantActivityRegistry {
 
   private final ConcurrentHashMap<String, Long> availableSince = new ConcurrentHashMap<>();
+  private final Clock clock;
+
+  public ConsultantActivityRegistry() {
+    this.clock = Clock.systemUTC();
+  }
+
+  ConsultantActivityRegistry(Clock clock) {
+    this.clock = clock;
+  }
 
   /** Marks the consultant available now (Live Chat enabled). Adds them if not present. */
   public void markAvailable(String consultantId) {
     if (consultantId != null && !consultantId.isBlank()) {
-      availableSince.put(consultantId, System.currentTimeMillis());
+      availableSince.put(consultantId, clock.millis());
     }
   }
 
@@ -40,13 +50,13 @@ public class ConsultantActivityRegistry {
    */
   public void refreshIfAvailable(String consultantId) {
     if (consultantId != null) {
-      availableSince.computeIfPresent(consultantId, (id, ts) -> System.currentTimeMillis());
+      availableSince.computeIfPresent(consultantId, (id, ts) -> clock.millis());
     }
   }
 
   /** Returns the subset of the given consultant IDs marked available within the window (in ms). */
   public Set<String> filterActive(Collection<String> consultantIds, long windowMs) {
-    long cutoff = System.currentTimeMillis() - windowMs;
+    long cutoff = clock.millis() - windowMs;
     return consultantIds.stream()
         .filter(
             consultantId -> {
