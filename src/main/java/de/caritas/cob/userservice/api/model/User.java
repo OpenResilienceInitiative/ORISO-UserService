@@ -4,20 +4,20 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EntityListeners;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Transient;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -45,7 +45,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @EntityListeners(AuditingEntityListener.class)
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class User implements TenantAware, NotificationsAware {
 

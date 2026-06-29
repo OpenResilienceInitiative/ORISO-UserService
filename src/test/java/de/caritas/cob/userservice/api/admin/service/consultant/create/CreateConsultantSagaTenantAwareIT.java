@@ -34,11 +34,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,11 +58,11 @@ public class CreateConsultantSagaTenantAwareIT {
 
   @Autowired private ConsultantRepository consultantRepository;
 
-  @MockBean private TenantAdminService tenantAdminService;
+  @MockitoBean private TenantAdminService tenantAdminService;
 
-  @MockBean private RocketChatService rocketChatService;
+  @MockitoBean private RocketChatService rocketChatService;
 
-  @MockBean private KeycloakService keycloakService;
+  @MockitoBean private KeycloakService keycloakService;
 
   private final EasyRandom easyRandom = new EasyRandom();
 

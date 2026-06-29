@@ -6,25 +6,29 @@ import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
-import org.keycloak.KeycloakSecurityContext;
 import org.keycloak.adapters.KeycloakConfigResolver;
 import org.keycloak.adapters.springboot.KeycloakSpringBootConfigResolver;
-import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 import org.springframework.context.annotation.ScopedProxyMode;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.context.WebApplicationContext;
@@ -38,21 +42,9 @@ public class KeycloakConfig {
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
-        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .build();
-  }
-
-  @Bean
-  @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
-  public KeycloakAuthenticationToken keycloakAuthenticationToken(HttpServletRequest request) {
-    return (KeycloakAuthenticationToken) request.getUserPrincipal();
-  }
-
-  @Bean
-  @Scope(scopeName = WebApplicationContext.SCOPE_REQUEST, proxyMode = ScopedProxyMode.TARGET_CLASS)
-  public KeycloakSecurityContext keycloakSecurityContext(KeycloakAuthenticationToken token) {
-    return token.getAccount().getKeycloakSecurityContext();
   }
 
   @Bean
@@ -63,21 +55,21 @@ public class KeycloakConfig {
     var authenticatedUser = new AuthenticatedUser();
 
     if (nonNull(userPrincipal)) {
-      var authToken = (KeycloakAuthenticationToken) userPrincipal;
-      var securityContext = authToken.getAccount().getKeycloakSecurityContext();
-      var claimMap = securityContext.getToken().getOtherClaims();
-
       try {
-        if (claimMap.containsKey("username")) {
+        if (userPrincipal instanceof JwtAuthenticationToken authToken) {
+          Jwt jwt = authToken.getToken();
+          Map<String, Object> claimMap = jwt.getClaims();
+          Object usernameClaim =
+              claimMap.getOrDefault(
+                  "username", claimMap.getOrDefault(principalAttribute, authToken.getName()));
           authenticatedUser.setUsername(
-              usernameTranscoder.decodeUsername(claimMap.get("username").toString()));
-        }
-        // Use the subject (sub) field for userId instead of otherClaims
-        authenticatedUser.setUserId(securityContext.getToken().getSubject());
-        authenticatedUser.setAccessToken(securityContext.getTokenString());
-        authenticatedUser.setRoles(securityContext.getToken().getRealmAccess().getRoles());
-        if (claimMap.containsKey("tenantId")) {
-          authenticatedUser.setTenantId(Long.valueOf(claimMap.get("tenantId").toString()));
+              usernameTranscoder.decodeUsername(usernameClaim.toString()));
+          authenticatedUser.setUserId(jwt.getSubject());
+          authenticatedUser.setAccessToken(jwt.getTokenValue());
+          authenticatedUser.setRoles(extractRealmRoles(jwt));
+          if (claimMap.containsKey("tenantId")) {
+            authenticatedUser.setTenantId(Long.valueOf(claimMap.get("tenantId").toString()));
+          }
         }
       } catch (Exception exception) {
         throw new KeycloakException("Keycloak data missing.", exception);
@@ -91,6 +83,18 @@ public class KeycloakConfig {
     }
 
     return authenticatedUser;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Set<String> extractRealmRoles(Jwt jwt) {
+    Object realmAccess = jwt.getClaims().get("realm_access");
+    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
+      Object rolesClaim = realmAccessMap.get("roles");
+      if (rolesClaim instanceof Collection<?> roles) {
+        return roles.stream().map(Object::toString).collect(Collectors.toSet());
+      }
+    }
+    return new HashSet<>();
   }
 
   @Bean

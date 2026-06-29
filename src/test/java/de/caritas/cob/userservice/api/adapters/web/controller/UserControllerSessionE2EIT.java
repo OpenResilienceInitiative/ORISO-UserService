@@ -79,6 +79,7 @@ import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import jakarta.servlet.http.Cookie;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.time.LocalDateTime;
@@ -91,7 +92,6 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -115,9 +115,8 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.ParameterizedTypeReference;
@@ -128,10 +127,12 @@ import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
@@ -174,14 +175,14 @@ class UserControllerSessionE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private ConsultantDataFacade consultantDataFacade;
 
   @Autowired private MongoClient mockedMongoClient;
@@ -194,17 +195,17 @@ class UserControllerSessionE2EIT {
 
   @Mock private FindIterable<Document> findIterable;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @Captor private ArgumentCaptor<RequestEntity<Object>> requestCaptor;
 
@@ -279,7 +280,9 @@ class UserControllerSessionE2EIT {
         new ExceptionHandlerExceptionResolver() {
           @Override
           protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
-              final HandlerMethod handlerMethod, final Exception exception) {
+              final HandlerMethod handlerMethod,
+              final Exception exception,
+              final ServletWebRequest webRequest) {
             Method method =
                 new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
                     .resolveMethod(exception);
@@ -287,7 +290,7 @@ class UserControllerSessionE2EIT {
               return new ServletInvocableHandlerMethod(
                   new ApiResponseEntityExceptionHandler(), method);
             }
-            return super.getExceptionHandlerMethod(handlerMethod, exception);
+            return super.getExceptionHandlerMethod(handlerMethod, exception, webRequest);
           }
         };
     exceptionResolver.afterPropertiesSet();
@@ -420,7 +423,7 @@ class UserControllerSessionE2EIT {
     givenAValidUser();
     givenAValidConsultant(true);
     givenASessionInProgress();
-    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2EE_ACTIVATED, null);
+    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2_EE_ACTIVATED, null);
     givenAnEmptyRocketChatGetSubscriptionsResponse();
 
     mockMvc
@@ -449,7 +452,7 @@ class UserControllerSessionE2EIT {
     givenADeletedUser(false);
     givenAValidConsultant(true);
     givenASessionInProgress();
-    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2EE_ACTIVATED, null);
+    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2_EE_ACTIVATED, null);
     givenAnEmptyRocketChatGetSubscriptionsResponse();
 
     mockMvc
@@ -533,7 +536,7 @@ class UserControllerSessionE2EIT {
     givenAValidConsultant();
     givenASessionInProgress();
     givenAValidRocketChatSystemUser();
-    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2EE_ACTIVATED, null);
+    givenAValidRocketChatGetRoomsResponse(session.getGroupId(), MessageType.E2_EE_ACTIVATED, null);
     givenAnEmptyRocketChatGetSubscriptionsResponse();
     user.getSessions()
         .forEach(session -> givenAValidRocketChatInfoUserResponse(session.getConsultant()));

@@ -6,44 +6,57 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
-import org.keycloak.adapters.springsecurity.KeycloakConfiguration;
-import org.keycloak.adapters.springsecurity.client.KeycloakClientRequestFactory;
-import org.keycloak.adapters.springsecurity.config.KeycloakWebSecurityConfigurerAdapter;
-import org.keycloak.adapters.springsecurity.filter.KeycloakAuthenticatedActionsFilter;
-import org.keycloak.adapters.springsecurity.filter.KeycloakAuthenticationProcessingFilter;
-import org.keycloak.adapters.springsecurity.filter.KeycloakPreAuthActionsFilter;
-import org.keycloak.adapters.springsecurity.filter.KeycloakSecurityContextRequestFilter;
-import org.springframework.beans.factory.annotation.Autowired;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
-import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.builders.WebSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.web.authentication.session.NullAuthenticatedSessionStrategy;
-import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 /** Provides the Keycloak/Spring Security configuration. */
-@KeycloakConfiguration
-public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
 
   private static final String UUID_PATTERN =
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
-  @SuppressWarnings({"unused", "FieldCanBeLocal"})
-  private final KeycloakClientRequestFactory keycloakClientRequestFactory;
+  private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
+      new JwtGrantedAuthoritiesConverter();
 
   private final CsrfSecurityProperties csrfSecurityProperties;
 
   @Value("${multitenancy.enabled}")
   private boolean multitenancy;
 
-  private HttpTenantFilter tenantFilter;
+  @Value("${keycloak.principal-attribute:preferred_username}")
+  private String principalAttribute;
+
+  private final @Nullable HttpTenantFilter tenantFilter;
   private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
   /**
@@ -51,12 +64,9 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
    * (Keycloak) principal (authorization header).
    */
   public SecurityConfig(
-      @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-          KeycloakClientRequestFactory keycloakClientRequestFactory,
       CsrfSecurityProperties csrfSecurityProperties,
       @Nullable HttpTenantFilter tenantFilter,
       @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter) {
-    this.keycloakClientRequestFactory = keycloakClientRequestFactory;
     this.csrfSecurityProperties = csrfSecurityProperties;
     this.tenantFilter = tenantFilter;
     this.ipPrivacyHeaderFilter = ipPrivacyHeaderFilter;
@@ -65,345 +75,335 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
   /**
    * Configure spring security filter chain: disable default Spring Boot CSRF token behavior and add
    * custom {@link StatelessCsrfFilter}, set all sessions to be fully stateless, define necessary
-   * Keycloak roles for specific REST API paths
+   * Keycloak roles for specific REST API paths.
    */
-  @Override
+  @Bean
   @SuppressWarnings("java:S4502") // Disabling CSRF protections is security-sensitive
-  protected void configure(HttpSecurity http) throws Exception {
-    super.configure(http);
-    var httpSecurity =
-        http.csrf()
-            .disable()
-            .addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
+  public SecurityFilterChain filterChain(
+      HttpSecurity http, Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter)
+      throws Exception {
+    http.csrf(AbstractHttpConfigurer::disable);
+    http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
     if (ipPrivacyHeaderFilter != null) {
-      httpSecurity = httpSecurity.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
+      http.addFilterBefore(ipPrivacyHeaderFilter, StatelessCsrfFilter.class);
     }
+    enableTenantFilterIfMultitenancyEnabled(http);
 
-    httpSecurity = enableTenantFilterIfMultitenancyEnabled(httpSecurity);
+    http.sessionManagement(
+        session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
-    httpSecurity
-        .sessionManagement()
-        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-        .sessionAuthenticationStrategy(sessionAuthenticationStrategy())
-        .and()
-        .authorizeRequests()
-        .antMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
-        .permitAll()
-        .antMatchers(
-            "/users/askers/new",
-            "/conversations/askers/anonymous/new",
-            "/conversations/anonymous/availability",
-            "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
-            "/users/consultants/languages",
-            "/users/magic-link/request",
-            "/users/magic-link/consume",
-            "/users/invitelinks/*/redeem")
-        .permitAll()
-        .antMatchers(
-            HttpMethod.POST,
-            "/users/magic-link/request",
-            "/service/users/magic-link/request",
-            "/users/magic-link/consume",
-            "/service/users/magic-link/consume")
-        .permitAll()
-        .antMatchers(HttpMethod.OPTIONS, "/**")
-        .permitAll()
-        .regexMatchers(HttpMethod.POST, ".*/users/magic-link/(request|consume)$")
-        .permitAll()
-        .antMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
-        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-        .antMatchers("/users/notifications")
-        .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
-        .antMatchers("/users/data")
-        .hasAnyAuthority(
-            ANONYMOUS_DEFAULT,
-            USER_DEFAULT,
-            CONSULTANT_DEFAULT,
-            SINGLE_TENANT_ADMIN,
-            TENANT_ADMIN,
-            RESTRICTED_AGENCY_ADMIN)
-        .antMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-        .permitAll()
-        .antMatchers("/users/sessions/askers")
-        .permitAll()
-        .antMatchers("/matrix/sync/**", "/service/matrix/sync/**")
-        .permitAll()
-        .antMatchers(
-            "/users/email",
-            "/users/mails/messages/new",
-            "/users/drafts",
-            "/users/drafts/**",
-            "/users/event-notifications",
-            "/users/event-notifications/**",
-            "/users/chat/{chatId:[0-9]+}",
-            "/users/chat/e2e",
-            "/users/chat/{chatId:[0-9]+}/join",
-            "/users/chat/{chatId:[0-9]+}/members",
-            "/users/chat/{chatId:[0-9]+}/leave",
-            "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
-            "/users/consultants/toggleWalkThrough",
-            "/matrix/**",
-            "/service/matrix/**")
-        .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers("/users/system-notification-emails/test")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
-        .antMatchers("/users/chat/{chatId:[0-9]+}/verify")
-        .hasAnyAuthority(CONSULTANT_DEFAULT)
-        .antMatchers("/users/password/change")
-        .hasAnyAuthority(
-            USER_DEFAULT,
-            CONSULTANT_DEFAULT,
-            SINGLE_TENANT_ADMIN,
-            TENANT_ADMIN,
-            RESTRICTED_AGENCY_ADMIN)
-        .antMatchers("/users/twoFactorAuth", "/users/2fa/**", "/users/mobile/app/token")
-        .hasAnyAuthority(
-            SINGLE_TENANT_ADMIN,
-            TENANT_ADMIN,
-            USER_DEFAULT,
-            CONSULTANT_DEFAULT,
-            RESTRICTED_AGENCY_ADMIN)
-        .antMatchers("/users/statistics/registration")
-        .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
-        .antMatchers(
-            "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
-            "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
-            "/users/askers/consultingType/new",
-            "/users/askers/session/new",
-            "/users/account",
-            "/users/mobiletoken",
-            "/users/sessions/{sessionId:[0-9]+}/data")
-        .hasAuthority(USER_DEFAULT)
-        .regexMatchers(HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+")
-        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers(
-            HttpMethod.GET,
-            "/users/sessions/room/{sessionId:[0-9]+}",
-            "/service/users/sessions/room/{sessionId:[0-9]+}")
-        .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
-        .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers(
-            "/users/sessions/open",
-            "/users/sessions/consultants/new",
-            "/users/sessions/new/{sessionId:[0-9]+}",
-            "/users/consultants/absences",
-            "/users/sessions/consultants",
-            "/users/sessions/teams",
-            "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
-            "/conversations/consultants/**",
-            "/users/sessions/{sessionId:[0-9]+}/supervisors",
-            "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
-            "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
-            "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
-        .hasAuthority(CONSULTANT_DEFAULT)
-        .antMatchers(
-            "/conversations/anonymous/{sessionId:[0-9]+}/finish",
-            "/service/conversations/anonymous/{sessionId:[0-9]+}/finish")
-        .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT, USER_DEFAULT)
-        .antMatchers("/users/sessions/{sessionId:[0-9]+}/consultant/{consultantId:[0-9A-Za-z-]+}")
-        .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
-        .antMatchers("/users/consultants")
-        .hasAuthority(VIEW_AGENCY_CONSULTANTS)
-        .antMatchers(
-            "/users/consultants/import",
-            "/users/askers/import",
-            "/users/askersWithoutSession/import",
-            "/users/sessions/rocketChatGroupId")
-        .hasAuthority(TECHNICAL_DEFAULT)
-        .antMatchers("/liveproxy/send")
-        .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
-        .antMatchers("/users/messages/key")
-        .hasAuthority(TECHNICAL_DEFAULT)
-        .antMatchers("/users/chat/new", "/users/chat/v2/new")
-        .hasAuthority(CREATE_NEW_CHAT)
-        .antMatchers("/users/chat/{chatId:[0-9]+}/start")
-        .hasAuthority(START_CHAT)
-        .antMatchers("/users/chat/{chatId:[0-9]+}/stop")
-        .hasAuthority(STOP_CHAT)
-        .antMatchers(
-            "/users/chat/{chatId:[0-9]+}/update",
-            "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
-        .hasAuthority(UPDATE_CHAT)
-        .antMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
-        .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
-        .antMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
-        .hasAuthority(TENANT_ADMIN)
-        .antMatchers("/useradmin/data/*")
-        .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-        .antMatchers(HttpMethod.POST, "/useradmin/consultants/")
-        .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
-        .antMatchers(
-            HttpMethod.PUT,
-            "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
-            "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
-        .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
-        .antMatchers(
-            HttpMethod.PUT, "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
-        .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
-        .antMatchers(
-            HttpMethod.POST,
-            "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
-            "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause",
-            "/service/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
-            "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause")
-        .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
-        .antMatchers(
-            HttpMethod.POST,
-            "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",
-            "/service/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
-        .antMatchers(
-            HttpMethod.GET,
-            "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
-            "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
-        .antMatchers("/useradmin", "/useradmin/**")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
-        .antMatchers("/users/consultants/search")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
-        .antMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
-        .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
-        .antMatchers(
-            "/users/inactive-accounts/audit-logs", "/service/users/inactive-accounts/audit-logs")
-        .hasAuthority(TECHNICAL_DEFAULT)
-        .antMatchers(
-            "/users/consultants/sessions/{sessionId:[0-9]+}",
-            "/users/sessions/{sessionId:[0-9]+}/archive",
-            "/users/sessions/{sessionId:[0-9]+}")
-        .hasAnyAuthority(CONSULTANT_DEFAULT)
-        .antMatchers("/appointments")
-        .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-        .antMatchers("/appointments/booking/{id:[0-9]+}")
-        .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-        .antMatchers(HttpMethod.PUT, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-        .hasAuthority(CONSULTANT_DEFAULT)
-        .antMatchers(HttpMethod.DELETE, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-        .hasAuthority(CONSULTANT_DEFAULT)
-        .antMatchers("/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
-        .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
-        .antMatchers("/userstatistics", "/userstatistics/**")
-        .hasAuthority(TECHNICAL_DEFAULT)
-        .antMatchers(HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
-        .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
-        .antMatchers(HttpMethod.GET, "/actuator/health")
-        .permitAll()
-        .antMatchers(HttpMethod.GET, "/actuator/health/*")
-        .permitAll()
-        .antMatchers(HttpMethod.POST, "/actuator/loggers")
-        .permitAll()
-        .antMatchers(HttpMethod.POST, "/actuator/loggers/*")
-        .permitAll()
-        .mvcMatchers(HttpMethod.GET, "/users/availability/{username}")
-        .permitAll()
-        .mvcMatchers(HttpMethod.GET, "/users/{username}")
-        .hasAuthority(TECHNICAL_DEFAULT)
-        .anyRequest()
-        .denyAll();
+    http.authorizeHttpRequests(
+        authorize ->
+            authorize
+                .requestMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
+                .permitAll()
+                .requestMatchers(
+                    "/users/askers/new",
+                    "/conversations/askers/anonymous/new",
+                    "/conversations/anonymous/availability",
+                    "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/users/consultants/languages",
+                    "/users/magic-link/request",
+                    "/users/magic-link/consume",
+                    "/users/invitelinks/*/redeem")
+                .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/magic-link/request",
+                    "/service/users/magic-link/request",
+                    "/users/magic-link/consume",
+                    "/service/users/magic-link/consume")
+                .permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/**")
+                .permitAll()
+                .requestMatchers(
+                    RegexRequestMatcher.regexMatcher(
+                        HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
+                .permitAll()
+                .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
+                .requestMatchers("/users/notifications")
+                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
+                .requestMatchers("/users/data")
+                .hasAnyAuthority(
+                    ANONYMOUS_DEFAULT,
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
+                .permitAll()
+                .requestMatchers("/users/sessions/askers")
+                .permitAll()
+                .requestMatchers("/matrix/sync/**", "/service/matrix/sync/**")
+                .permitAll()
+                .requestMatchers(
+                    "/users/email",
+                    "/users/mails/messages/new",
+                    "/users/drafts",
+                    "/users/drafts/**",
+                    "/users/event-notifications",
+                    "/users/event-notifications/**",
+                    "/users/chat/{chatId:[0-9]+}",
+                    "/users/chat/e2e",
+                    "/users/chat/{chatId:[0-9]+}/join",
+                    "/users/chat/{chatId:[0-9]+}/members",
+                    "/users/chat/{chatId:[0-9]+}/leave",
+                    "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
+                    "/users/consultants/toggleWalkThrough",
+                    "/matrix/**",
+                    "/service/matrix/**")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers("/users/system-notification-emails/test")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
+                .hasAnyAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers("/users/password/change")
+                .hasAnyAuthority(
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers("/users/twoFactorAuth", "/users/2fa/**", "/users/mobile/app/token")
+                .hasAnyAuthority(
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers("/users/statistics/registration")
+                .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
+                    "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
+                    "/users/askers/consultingType/new",
+                    "/users/askers/session/new",
+                    "/users/account",
+                    "/users/mobiletoken",
+                    "/users/sessions/{sessionId:[0-9]+}/data")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    RegexRequestMatcher.regexMatcher(
+                        HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+"))
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/sessions/room/{sessionId:[0-9]+}",
+                    "/service/users/sessions/room/{sessionId:[0-9]+}")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/sessions/open",
+                    "/users/sessions/consultants/new",
+                    "/users/sessions/new/{sessionId:[0-9]+}",
+                    "/users/consultants/absences",
+                    "/users/sessions/consultants",
+                    "/users/sessions/teams",
+                    "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
+                    "/conversations/consultants/**",
+                    "/users/sessions/{sessionId:[0-9]+}/supervisors",
+                    "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/conversations/anonymous/{sessionId:[0-9]+}/finish",
+                    "/service/conversations/anonymous/{sessionId:[0-9]+}/finish")
+                .hasAnyAuthority(CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT, USER_DEFAULT)
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/consultant/{consultantId:[0-9A-Za-z-]+}")
+                .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
+                .requestMatchers("/users/consultants")
+                .hasAuthority(VIEW_AGENCY_CONSULTANTS)
+                .requestMatchers(
+                    "/users/consultants/import",
+                    "/users/askers/import",
+                    "/users/askersWithoutSession/import",
+                    "/users/sessions/rocketChatGroupId")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers("/liveproxy/send")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
+                .requestMatchers("/users/messages/key")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers("/users/chat/new", "/users/chat/v2/new")
+                .hasAuthority(CREATE_NEW_CHAT)
+                .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
+                .hasAuthority(START_CHAT)
+                .requestMatchers("/users/chat/{chatId:[0-9]+}/stop")
+                .hasAuthority(STOP_CHAT)
+                .requestMatchers(
+                    "/users/chat/{chatId:[0-9]+}/update",
+                    "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
+                .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
+                .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
+                .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
+                .hasAuthority(TENANT_ADMIN)
+                .requestMatchers("/useradmin/data/*")
+                .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(HttpMethod.POST, "/useradmin/consultants/")
+                .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/pause",
+                    "/service/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/deletion/pause")
+                .hasAnyAuthority(
+                    USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",
+                    "/service/useradmin/admins/{adminId:"
+                        + UUID_PATTERN
+                        + "}/grant-consultant-identity")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
+                    "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers("/useradmin", "/useradmin/**")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers("/users/consultants/search")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    "/users/inactive-accounts/audit-logs",
+                    "/service/users/inactive-accounts/audit-logs")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    "/users/consultants/sessions/{sessionId:[0-9]+}",
+                    "/users/sessions/{sessionId:[0-9]+}/archive",
+                    "/users/sessions/{sessionId:[0-9]+}")
+                .hasAnyAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers("/appointments")
+                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
+                .requestMatchers("/appointments/booking/{id:[0-9]+}")
+                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
+                .requestMatchers(HttpMethod.PUT, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.DELETE, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers("/userstatistics", "/userstatistics/**")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
+                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(HttpMethod.GET, "/actuator/health")
+                .permitAll()
+                .requestMatchers(HttpMethod.GET, "/actuator/health/*")
+                .permitAll()
+                .requestMatchers(HttpMethod.POST, "/actuator/loggers")
+                .permitAll()
+                .requestMatchers(HttpMethod.POST, "/actuator/loggers/*")
+                .permitAll()
+                .requestMatchers(HttpMethod.GET, "/users/availability/{username}")
+                .permitAll()
+                .requestMatchers(HttpMethod.GET, "/users/{username}")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .anyRequest()
+                .denyAll());
+
+    http.oauth2ResourceServer(
+        oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)));
+    return http.build();
   }
 
-  @Override
-  public void configure(WebSecurity web) throws Exception {
-    // Completely ignore actuator endpoints and registration endpoint from Spring Security to avoid
-    // Keycloak challenges
-    web.ignoring()
-        .antMatchers(
-            "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
+  @Bean
+  public WebSecurityCustomizer webSecurityCustomizer() {
+    return web ->
+        web.ignoring()
+            .requestMatchers(
+                "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
+  }
+
+  @Bean
+  public JwtDecoder jwtDecoder(IdentityConfig identityConfig) {
+    return NimbusJwtDecoder.withJwkSetUri(identityConfig.getOpenIdConnectUrl("certs")).build();
+  }
+
+  @Bean
+  public Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
+      RoleAuthorizationAuthorityMapper authorityMapper) {
+    return jwt -> {
+      Collection<GrantedAuthority> authorities = grantedAuthorities(jwt, authorityMapper);
+      return new JwtAuthenticationToken(jwt, authorities, principalName(jwt));
+    };
   }
 
   /**
    * Adds additional filter for tenant feature if enabled that sets tenant_id into current thread.
    *
-   * @param httpSecurity - httpSecurity
-   * @return httpSecurity
+   * @param http - http security
    */
-  private HttpSecurity enableTenantFilterIfMultitenancyEnabled(HttpSecurity httpSecurity) {
-    if (multitenancy) {
-      httpSecurity =
-          httpSecurity.addFilterAfter(this.tenantFilter, KeycloakAuthenticatedActionsFilter.class);
+  private void enableTenantFilterIfMultitenancyEnabled(HttpSecurity http) {
+    if (multitenancy && tenantFilter != null) {
+      http.addFilterAfter(tenantFilter, BearerTokenAuthenticationFilter.class);
     }
-    return httpSecurity;
   }
 
-  /** Change springs authentication strategy to be stateless (no session is being created). */
-  @Bean
-  @Override
-  protected SessionAuthenticationStrategy sessionAuthenticationStrategy() {
-    return new NullAuthenticatedSessionStrategy();
+  private Collection<GrantedAuthority> grantedAuthorities(
+      Jwt jwt, RoleAuthorizationAuthorityMapper authorityMapper) {
+    var authorities = new HashSet<GrantedAuthority>();
+    Collection<GrantedAuthority> jwtAuthorities = jwtGrantedAuthoritiesConverter.convert(jwt);
+    if (jwtAuthorities != null) {
+      authorities.addAll(jwtAuthorities);
+    }
+
+    Set<GrantedAuthority> roleAuthorities =
+        extractKeycloakRoles(jwt).stream()
+            .map(SimpleGrantedAuthority::new)
+            .collect(Collectors.toSet());
+    authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
+    return authorities;
   }
 
-  /**
-   * Change the default AuthenticationProvider to KeycloakAuthenticationProvider and register it in
-   * the spring security context. Set the GrantedAuthoritiesMapper to map the Keycloak roles to the
-   * granted authorities.
-   */
-  @Autowired
-  public void configureGlobal(
-      final AuthenticationManagerBuilder auth, RoleAuthorizationAuthorityMapper authorityMapper) {
-    var keyCloakAuthProvider = keycloakAuthenticationProvider();
-    keyCloakAuthProvider.setGrantedAuthoritiesMapper(authorityMapper);
-    auth.authenticationProvider(keyCloakAuthProvider);
+  @SuppressWarnings("unchecked")
+  private Set<String> extractKeycloakRoles(Jwt jwt) {
+    var roles = new HashSet<String>();
+    Object realmAccess = jwt.getClaims().get("realm_access");
+    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
+      addRoles(roles, realmAccessMap.get("roles"));
+    }
+
+    Object resourceAccess = jwt.getClaims().get("resource_access");
+    if (resourceAccess instanceof Map<?, ?> resourceAccessMap) {
+      resourceAccessMap.values().stream()
+          .filter(Map.class::isInstance)
+          .map(Map.class::cast)
+          .forEach(clientAccess -> addRoles(roles, clientAccess.get("roles")));
+    }
+    return roles;
   }
 
-  /**
-   * From the Keycloak documentation: "Spring Boot attempts to eagerly register filter beans with
-   * the web application context. Therefore, when running the Keycloak Spring Security adapter in a
-   * Spring Boot environment, it may be necessary to add FilterRegistrationBeans to your security
-   * configuration to prevent the Keycloak filters from being registered twice."
-   *
-   * <p>https://github.com/keycloak/keycloak-documentation/blob/master/securing_apps/topics/oidc/java/spring-security-adapter.adoc
-   *
-   * @param filter {@link KeycloakAuthenticationProcessingFilter}
-   * @return {@link FilterRegistrationBean}
-   */
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  @Bean
-  public FilterRegistrationBean keycloakAuthenticationProcessingFilterRegistrationBean(
-      KeycloakAuthenticationProcessingFilter filter) {
-    var registrationBean = new FilterRegistrationBean(filter);
-    registrationBean.setEnabled(false);
-    return registrationBean;
+  private void addRoles(Set<String> roles, Object rolesClaim) {
+    if (rolesClaim instanceof Collection<?> roleCollection) {
+      roleCollection.stream().filter(Objects::nonNull).map(Object::toString).forEach(roles::add);
+    }
   }
 
-  /**
-   * see above:
-   * {@link
-   * SecurityConfig#keycloakAuthenticationProcessingFilterRegistrationBean(KeycloakAuthenticationProcessingFilter)
-   */
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  @Bean
-  public FilterRegistrationBean keycloakPreAuthActionsFilterRegistrationBean(
-      KeycloakPreAuthActionsFilter filter) {
-    var registrationBean = new FilterRegistrationBean(filter);
-    registrationBean.setEnabled(false);
-    return registrationBean;
-  }
-
-  /**
-   * see above:
-   * {@link
-   * SecurityConfig#keycloakAuthenticationProcessingFilterRegistrationBean(KeycloakAuthenticationProcessingFilter)
-   */
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  @Bean
-  public FilterRegistrationBean keycloakAuthenticatedActionsFilterBean(
-      KeycloakAuthenticatedActionsFilter filter) {
-    var registrationBean = new FilterRegistrationBean(filter);
-    registrationBean.setEnabled(false);
-    return registrationBean;
-  }
-
-  /**
-   * see above:
-   * {@link
-   * SecurityConfig#keycloakAuthenticationProcessingFilterRegistrationBean(KeycloakAuthenticationProcessingFilter)
-   */
-  @SuppressWarnings({"rawtypes", "unchecked"})
-  @Bean
-  public FilterRegistrationBean keycloakSecurityContextRequestFilterBean(
-      KeycloakSecurityContextRequestFilter filter) {
-    var registrationBean = new FilterRegistrationBean(filter);
-    registrationBean.setEnabled(false);
-    return registrationBean;
+  private String principalName(Jwt jwt) {
+    String principal = jwt.getClaimAsString(principalAttribute);
+    return principal == null ? jwt.getSubject() : principal;
   }
 }

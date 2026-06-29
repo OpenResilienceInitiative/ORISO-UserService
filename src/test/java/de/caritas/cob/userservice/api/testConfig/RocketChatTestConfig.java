@@ -16,9 +16,9 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -28,7 +28,7 @@ public class RocketChatTestConfig {
   public static final String AUTH_TOKEN =
       "auth-token configured in " + RocketChatTestConfig.class.getName();
 
-  @MockBean MongoClient mongoClient;
+  @MockitoBean MongoClient mongoClient;
 
   @Bean
   public RocketChatService rocketChatService(

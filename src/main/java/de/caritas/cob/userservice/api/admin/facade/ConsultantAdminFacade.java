@@ -95,7 +95,7 @@ public class ConsultantAdminFacade {
     if (sort == null
         || Stream.of(FieldEnum.values()).noneMatch(providedSortFieldIgnoringCase(sort))) {
       sort = new Sort();
-      sort.setField(FieldEnum.LASTNAME);
+      sort.setField(FieldEnum.LAST_NAME);
       sort.setOrder(OrderEnum.ASC);
     }
     return sort;

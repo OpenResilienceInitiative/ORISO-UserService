@@ -11,14 +11,14 @@ import de.caritas.cob.userservice.api.service.statistics.SessionStatisticsServic
 import de.caritas.cob.userservice.api.statistics.model.SessionStatisticsResultDTO;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(
@@ -52,9 +52,9 @@ class UserStatisticsControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private SessionStatisticsService sessionStatisticsService;
+  @MockitoBean private SessionStatisticsService sessionStatisticsService;
 
-  @MockBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @Test
   void getSessionStatistics_Should_ReturnUnauthorized_WhenNoKeycloakAuthorization()

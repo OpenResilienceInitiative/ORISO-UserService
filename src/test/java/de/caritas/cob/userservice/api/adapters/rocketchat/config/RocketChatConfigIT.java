@@ -4,14 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
 @ActiveProfiles("testing")
 class RocketChatConfigIT {
 
-  @SpyBean private RocketChatConfig underTest;
+  @MockitoSpyBean private RocketChatConfig underTest;
 
   @Test
   void configurationShouldLoadProperties() {

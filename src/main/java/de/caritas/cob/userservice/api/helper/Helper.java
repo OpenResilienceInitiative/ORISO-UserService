@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.helper;
 
+import jakarta.ws.rs.InternalServerErrorException;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
-import javax.ws.rs.InternalServerErrorException;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document.OutputSettings;

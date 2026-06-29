@@ -20,13 +20,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 public class ConsultantAdminFilterServiceBase {
 
   @Autowired private ConsultantAdminFilterService consultantAdminFilterService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private Organizer organizer;
 
@@ -205,7 +205,7 @@ public class ConsultantAdminFilterServiceBase {
 
   public void
       findFilteredConsultants_Should_orderResultByFirstNameDESC_When_sortParameterIsGiven() {
-    var sort = new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.DESC);
+    var sort = new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.DESC);
 
     var result =
         this.consultantAdminFilterService.findFilteredConsultants(

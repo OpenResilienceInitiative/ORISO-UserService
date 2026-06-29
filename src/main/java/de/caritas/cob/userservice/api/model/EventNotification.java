@@ -1,13 +1,13 @@
 package de.caritas.cob.userservice.api.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.Objects;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -29,7 +29,7 @@ import org.hibernate.annotations.ParamDef;
 @ToString
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(
     name = "tenantFilter",
     condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")

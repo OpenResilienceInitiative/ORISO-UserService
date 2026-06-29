@@ -44,11 +44,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import jakarta.servlet.http.Cookie;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -64,10 +64,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -75,6 +74,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
@@ -111,15 +111,15 @@ class UserController2faE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
   @Captor private ArgumentCaptor<HttpEntity<OtpSetupDTO>> otpSetupCaptor;
 

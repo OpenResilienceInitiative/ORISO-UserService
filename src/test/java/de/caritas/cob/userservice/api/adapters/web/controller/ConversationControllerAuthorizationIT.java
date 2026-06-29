@@ -35,16 +35,16 @@ import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConvers
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
@@ -60,17 +60,17 @@ class ConversationControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private ConversationListResolver conversationListResolver;
+  @MockitoBean private ConversationListResolver conversationListResolver;
 
-  @MockBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
+  @MockitoBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
 
-  @MockBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  @MockitoBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
-  @MockBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
+  @MockitoBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private UsernameTranscoder usernameTranscoder;
 

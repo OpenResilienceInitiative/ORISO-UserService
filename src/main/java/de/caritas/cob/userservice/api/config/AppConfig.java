@@ -1,11 +1,8 @@
 package de.caritas.cob.userservice.api.config;
 
-import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantReindexer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
-import javax.persistence.EntityManagerFactory;
-import org.hibernate.search.jpa.FullTextEntityManager;
-import org.hibernate.search.jpa.Search;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -40,34 +37,26 @@ public class AppConfig {
   @Primary
   public RestTemplate restTemplate(RestTemplateBuilder builder) {
     return builder
-        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .build();
   }
 
   @Bean("matrixLongPollRestTemplate")
   public RestTemplate matrixLongPollRestTemplate(RestTemplateBuilder builder) {
     return builder
-        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .setReadTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
+        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .readTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
         .build();
-  }
-
-  /**
-   * Builds an indexer for hibernate search.
-   *
-   * @param entityManagerFactory the manager factory bean
-   * @return an {@link AgencyReindexer} used to reindex entities
-   */
-  @Bean
-  public ConsultantReindexer consultantReindexer(EntityManagerFactory entityManagerFactory) {
-    FullTextEntityManager manager =
-        Search.getFullTextEntityManager(entityManagerFactory.createEntityManager());
-    return new ConsultantReindexer(manager);
   }
 
   @Bean
   public Clock clock() {
     return Clock.systemUTC();
+  }
+
+  @Bean
+  public ObjectMapper objectMapper() {
+    return new ObjectMapper().findAndRegisterModules();
   }
 }

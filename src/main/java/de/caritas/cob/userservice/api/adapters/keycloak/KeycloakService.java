@@ -694,7 +694,7 @@ public class KeycloakService implements IdentityClient {
       if (current instanceof RestClientResponseException) {
         RestClientResponseException restClientResponseException =
             (RestClientResponseException) current;
-        if (restClientResponseException.getRawStatusCode() == HttpStatus.BAD_REQUEST.value()
+        if (restClientResponseException.getStatusCode().value() == HttpStatus.BAD_REQUEST.value()
             && isPasswordPolicyMessage(restClientResponseException.getResponseBodyAsString())) {
           return true;
         }

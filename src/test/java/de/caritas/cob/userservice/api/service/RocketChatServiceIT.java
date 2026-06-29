@@ -35,12 +35,12 @@ import org.mockito.stubbing.OngoingStubbing;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
@@ -52,11 +52,11 @@ class RocketChatServiceIT {
 
   @Autowired private ObjectMapper objectMapper;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean private RocketChatCredentialsProvider rcCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rcCredentialsProvider;
 
   @Autowired private MongoClient mockedMongoClient;
 

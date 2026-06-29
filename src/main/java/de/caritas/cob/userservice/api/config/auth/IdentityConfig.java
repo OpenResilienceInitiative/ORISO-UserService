@@ -1,11 +1,11 @@
 package de.caritas.cob.userservice.api.config.auth;
 
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import java.util.Arrays;
 import java.util.Set;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
-import javax.validation.constraints.Pattern;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
 import org.springframework.beans.factory.annotation.Value;

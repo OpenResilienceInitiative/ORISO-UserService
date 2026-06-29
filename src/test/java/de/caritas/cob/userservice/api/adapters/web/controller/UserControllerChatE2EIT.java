@@ -75,6 +75,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import jakarta.servlet.http.Cookie;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -84,7 +85,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
 import javax.transaction.Transactional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
@@ -97,12 +97,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
@@ -111,6 +110,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
@@ -150,21 +150,21 @@ class UserControllerChatE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @Autowired private CacheManager cacheManager;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 

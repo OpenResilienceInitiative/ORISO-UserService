@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import jakarta.ws.rs.BadRequestException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -52,7 +53,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import javax.ws.rs.BadRequestException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -826,6 +826,8 @@ public class SessionService {
                   .collect(Collectors.toList()));
       sessionTopicEnrichmentService.enrichSessionWithMainTopicData(consultantSessionDTO);
       sessionTopicEnrichmentService.enrichSessionWithTopicsData(consultantSessionDTO);
+    } else {
+      consultantSessionDTO.topics(null);
     }
 
     return consultantSessionDTO;

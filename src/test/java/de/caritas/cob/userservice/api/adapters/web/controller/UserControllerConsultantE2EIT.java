@@ -59,6 +59,9 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.servlet.http.Cookie;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -68,9 +71,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.servlet.http.Cookie;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.PositiveOrZero;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.assertj.core.util.Lists;
@@ -82,11 +82,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -94,6 +92,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.RestTemplate;
 
@@ -131,25 +131,25 @@ class UserControllerConsultantE2EIT {
 
   @Autowired private UsernameTranscoder usernameTranscoder;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @SpyBean private AgencyService agencyService;
+  @MockitoSpyBean private AgencyService agencyService;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean private AdminUserFacade adminUserFacade;
+  @MockitoBean private AdminUserFacade adminUserFacade;
 
   private User user;
   private Consultant consultant;

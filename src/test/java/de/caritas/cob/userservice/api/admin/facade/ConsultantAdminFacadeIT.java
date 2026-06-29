@@ -40,11 +40,11 @@ import org.jeasy.random.EasyRandomParameters;
 import org.jeasy.random.FieldPredicates;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -57,11 +57,11 @@ class ConsultantAdminFacadeIT {
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockBean private AgencyAdminService agencyAdminService;
+  @MockitoBean private AgencyAdminService agencyAdminService;
 
-  @MockBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @Autowired private EntityManager entityManager;
 
@@ -74,7 +74,7 @@ class ConsultantAdminFacadeIT {
             1,
             100,
             new ConsultantFilter(),
-            new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
     var resultConsultant =
         searchResult.getEmbedded().stream()
             .filter(
@@ -98,7 +98,7 @@ class ConsultantAdminFacadeIT {
             1,
             100,
             new ConsultantFilter(),
-            new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
     var resultConsultant =
         searchResult.getEmbedded().stream()
             .filter(
@@ -197,7 +197,7 @@ class ConsultantAdminFacadeIT {
 
     var searchResult =
         this.consultantAdminFacade.findFilteredConsultants(
-            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
 
     assertThat(searchResult.getEmbedded(), hasSize(0));
 
@@ -205,7 +205,7 @@ class ConsultantAdminFacadeIT {
 
     searchResult =
         this.consultantAdminFacade.findFilteredConsultants(
-            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
     assertThat(searchResult.getEmbedded(), hasSize(greaterThanOrEqualTo(1)));
   }
 

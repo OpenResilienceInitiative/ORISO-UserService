@@ -114,7 +114,7 @@ public class ConsultantDataProvider {
       log.warn(
           "Could not load agencies for consultant {}: status={}, body={}",
           consultant.getId(),
-          e.getRawStatusCode(),
+          e.getStatusCode().value(),
           e.getResponseBodyAsString());
       return List.of();
     }

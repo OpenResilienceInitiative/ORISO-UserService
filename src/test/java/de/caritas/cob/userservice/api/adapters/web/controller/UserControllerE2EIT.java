@@ -95,6 +95,7 @@ import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import jakarta.servlet.http.Cookie;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -105,7 +106,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.StreamSupport;
-import javax.servlet.http.Cookie;
 import lombok.NonNull;
 import lombok.SneakyThrows;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -125,10 +125,9 @@ import org.mockito.Captor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
@@ -139,6 +138,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.HttpClientErrorException;
@@ -189,42 +189,42 @@ class UserControllerE2EIT {
 
   @Autowired private UserVerifier userVerifier;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @MockBean
+  @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
-  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
+  @MockitoBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
-  @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
 
-  @MockBean private ApplicationSettingsService applicationSettingsService;
+  @MockitoBean private ApplicationSettingsService applicationSettingsService;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
   @Captor private ArgumentCaptor<HttpEntity<UpdateUser>> updateUserCaptor;
 
