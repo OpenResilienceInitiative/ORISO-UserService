@@ -167,6 +167,7 @@ public class Session implements TenantAware {
   private List<SessionData> sessionData;
 
   @Column(name = "is_team_session", columnDefinition = "tinyint(4) default '0'")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamSession;
 
   @Column(nullable = false, columnDefinition = "bit default false")

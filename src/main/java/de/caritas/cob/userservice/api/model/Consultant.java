@@ -122,13 +122,16 @@ public class Consultant implements TenantAware, NotificationsAware {
   private String email;
 
   @Column(name = "is_absent", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   @Field
   private boolean absent;
 
   @Column(name = "is_team_consultant", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamConsultant;
 
   @Column(name = "is_supervisor", nullable = false, columnDefinition = "tinyint default 0")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean supervisor;
 
   @Column(name = "display_name")
@@ -139,6 +142,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private String absenceMessage;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
 
   @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -225,6 +229,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private ConsultantStatus status = ConsultantStatus.IN_PROGRESS;
 
   @Column(name = "walk_through_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Boolean walkThroughEnabled;
 
   @Enumerated(EnumType.STRING)
@@ -238,6 +243,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private LocalDateTime dataPrivacyConfirmation;
 
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
   @Column(name = "notifications_settings")

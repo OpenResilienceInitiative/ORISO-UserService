@@ -19,7 +19,9 @@ import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 
 /** Auditable record for Security-06 inactivity alerts. */
 @Entity
@@ -69,6 +71,7 @@ public class InactiveAccountNotificationAuditLog implements TenantAware {
   private String recipientEmail;
 
   @Column(name = "email_dispatched", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean emailDispatched;
 
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")

@@ -76,6 +76,7 @@ public class User implements TenantAware, NotificationsAware {
   private String matrixUserId;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
 
   @OneToMany(mappedBy = "user")
@@ -147,6 +148,7 @@ public class User implements TenantAware, NotificationsAware {
   private LocalDateTime dataPrivacyConfirmation;
 
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
   @Column(name = "notifications_settings")

@@ -16,6 +16,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Represents a consultant supervising a session. Supervisors can observe the chat but cannot send
@@ -55,6 +57,7 @@ public class SessionSupervisor {
   private LocalDateTime removedDate;
 
   @Column(name = "is_active", nullable = false, columnDefinition = "tinyint(4) default 1")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Boolean isActive;
 
   @Column(name = "matrix_room_id")
