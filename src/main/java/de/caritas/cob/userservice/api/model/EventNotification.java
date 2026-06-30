@@ -16,7 +16,9 @@ import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 
 /** Persistent in-app notification event for a concrete recipient user. */
 @Entity
@@ -53,6 +55,7 @@ public class EventNotification implements TenantAware {
   private String title;
 
   @Column(name = "text", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String text;
 
   /**
@@ -62,6 +65,7 @@ public class EventNotification implements TenantAware {
    * display-text columns are dropped.
    */
   @Column(name = "params", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String params;
 
   @Column(name = "action_path", length = 512)

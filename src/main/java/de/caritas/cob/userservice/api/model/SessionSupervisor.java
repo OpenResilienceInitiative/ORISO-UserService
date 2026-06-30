@@ -64,6 +64,7 @@ public class SessionSupervisor {
   private String matrixRoomId;
 
   @Column(name = "notes", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String notes;
 
   @Override

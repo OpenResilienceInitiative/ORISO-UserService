@@ -16,7 +16,9 @@ import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "draft_message")
@@ -46,6 +48,7 @@ public class DraftMessage implements TenantAware {
   private String scopeKey;
 
   @Column(name = "text", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String text;
 
   @Column(name = "action_path", length = 512)
