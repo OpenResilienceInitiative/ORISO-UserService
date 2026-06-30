@@ -7,11 +7,13 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
 
   @Override
@@ -21,13 +23,23 @@ public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
 
   private boolean isTechnicalOrGlobalTenantAdmin(HttpServletRequest request) {
     Jwt token = getAccessToken(request);
+    if (token == null) {
+      return false;
+    }
     // Only technical role should force global tenant context.
     // Super-admin is still resolved as tenant 0 through AccessTokenTenantResolver claim parsing.
     return containsRole(token, TECHNICAL.getValue());
   }
 
   private Jwt getAccessToken(HttpServletRequest request) {
-    return ((JwtAuthenticationToken) request.getUserPrincipal()).getToken();
+    var principal = request.getUserPrincipal();
+    if (!(principal instanceof JwtAuthenticationToken jwtToken)) {
+      log.debug(
+          "UserPrincipal is not a JwtAuthenticationToken (was: {}), treating as non-technical user",
+          principal == null ? "null" : principal.getClass().getName());
+      return null;
+    }
+    return jwtToken.getToken();
   }
 
   private boolean containsRole(Jwt token, String expectedRole) {
