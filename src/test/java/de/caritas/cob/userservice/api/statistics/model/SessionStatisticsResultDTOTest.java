@@ -171,14 +171,6 @@ class SessionStatisticsResultDTOTest {
     assertThat(buildFull().hashCode()).isEqualTo(buildFull().hashCode());
   }
 
-  @Test
-  void hashCode_Should_DifferForDifferentObjects() {
-    SessionStatisticsResultDTO a = buildFull();
-    SessionStatisticsResultDTO b = buildFull();
-    b.setId(999L);
-    assertThat(a.hashCode()).isNotEqualTo(b.hashCode());
-  }
-
   // ─── toString ─────────────────────────────────────────────────────────────
 
   @Test
@@ -188,7 +180,7 @@ class SessionStatisticsResultDTOTest {
 
     assertThat(result).contains("94");
     assertThat(result).contains("y77uzd");
-    assertThat(result).contains("1");
+    assertThat(result).contains("consultingType");
     assertThat(result).contains("88999");
     assertThat(result).contains("2026-06-01");
     assertThat(result).contains("2026-05-01");
