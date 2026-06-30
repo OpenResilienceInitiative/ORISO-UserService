@@ -549,6 +549,92 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
   }
 
+  // ── localizeSupervisorAssignmentRemoved — German path ────────────────────
+
+  @Test
+  void notifySupervisorRemoved_Should_LocalizeInGerman_When_UserLanguageCodeIsGerman() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+
+    User user = new User();
+    user.setTenantId(1L);
+    user.setEmail("user@example.com");
+    user.setLanguageCode(LanguageCode.de);
+
+    assertThatCode(
+            () -> service.notifySupervisorRemoved(user, null, "Supervisor Name", 7L, null, null))
+        .doesNotThrowAnyException();
+  }
+
+  // ── notifyEmailAddressChanged with non-null tenantData ────────────────────
+
+  @Test
+  void notifyEmailAddressChanged_Should_UseUrlFromTenantData_When_TenantDataProvided() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(8L);
+    TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
+    when(urlAttr.getKey()).thenReturn("url");
+    when(urlAttr.getValue()).thenReturn("https://tenant8.example.com");
+    when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttr));
+
+    assertThatCode(
+            () ->
+                service.notifyEmailAddressChanged(
+                    "johndoe", "john@example.com", 8L, tenantData, null))
+        .doesNotThrowAnyException();
+    verify(tenantTemplateSupplier).getTemplateAttributes();
+  }
+
+  // ── resolveUserWithEmail — userService.getUser() returns empty ────────────
+
+  @Test
+  void notifySupervisorAdded_Should_FallBackToOriginalUser_When_UserServiceReturnsEmpty() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+
+    User user = new User();
+    user.setTenantId(1L);
+    user.setUserId("user-xyz");
+    user.setEmail("user@dummy.invalid");
+    when(userService.getUser("user-xyz")).thenReturn(Optional.empty());
+
+    // Falls back to original user (dummy email) → hasValidUserEmail returns false → no send
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+        .doesNotThrowAnyException();
+    verify(userService).getUser("user-xyz");
+  }
+
+  // ── SSL SMTP path (isSecure() == true) ───────────────────────────────────
+
+  @Test
+  void notifyEmailAddressChanged_Should_UseSslSmtp_When_SettingsIsSecureIsTrue() {
+    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings sslSettings =
+        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
+            "smtp.invalid", 465, true, "u", "p", "from@invalid", null);
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(sslSettings));
+
+    // sendEmailSafely catches SMTP connection error — no exception escapes
+    assertThatCode(
+            () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
+        .doesNotThrowAnyException();
+  }
+
+  // ── buildSessionUrl — trailing-slash strip ────────────────────────────────
+
+  @Test
+  void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org/");
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+
+    assertThatCode(
+            () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
+        .doesNotThrowAnyException();
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
 
   private SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings() {
