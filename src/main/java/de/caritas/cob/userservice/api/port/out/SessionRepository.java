@@ -85,6 +85,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       boolean isTeamSession);
 
   /**
+   * Find metadata-only case handover candidates in the requester's agencies. These sessions are
+   * already owned by another consultant and are therefore not part of the normal "my sessions"
+   * list.
+   */
+  List<Session> findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+      List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
+
+  /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
    * consultant ordered by creation date descending.
    *
