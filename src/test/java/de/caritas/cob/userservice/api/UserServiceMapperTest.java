@@ -1,24 +1,32 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Admin.AdminBase;
+import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.Test;
@@ -28,6 +36,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -402,5 +412,242 @@ class UserServiceMapperTest {
   void userIdOf_Should_ReturnUserId() {
     assertThat(userServiceMapper.userIdOf(Map.of("userId", "@user:matrix.org")))
         .isEqualTo("@user:matrix.org");
+  }
+
+  // ── mapOf(Page<ConsultantBase>, ...) ─────────────────────────────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOf_ConsultantPage_Should_ReturnPaginationMetadata() {
+    var page = new PageImpl<>(Collections.<ConsultantBase>emptyList(), Pageable.ofSize(10), 0);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOf(page, List.of(), List.of(), List.of(), Map.of(), null);
+
+    assertThat(result.get("totalElements")).isEqualTo(0);
+    assertThat(result.get("isFirstPage")).isEqualTo(true);
+    assertThat(result.get("isLastPage")).isEqualTo(true);
+    assertThat(result.get("consultants")).isEqualTo(List.of());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOf_ConsultantPage_Should_MapConsultant_When_FullConsultantExists() {
+    ConsultantBase consultantBase = mock(ConsultantBase.class);
+    when(consultantBase.getId()).thenReturn("c-1");
+    when(consultantBase.getEmail()).thenReturn("c@example.com");
+    when(consultantBase.getFirstName()).thenReturn("John");
+    when(consultantBase.getLastName()).thenReturn("Doe");
+
+    Consultant fullConsultant = new Consultant();
+    fullConsultant.setId("c-1");
+    fullConsultant.setStatus(ConsultantStatus.CREATED);
+    fullConsultant.setUsername("johndoe");
+    fullConsultant.setTenantId(1L);
+
+    var page = new PageImpl<>(List.of(consultantBase), Pageable.ofSize(10), 1);
+
+    Map<Long, String> tenantMap = new HashMap<>();
+    tenantMap.put(1L, "Tenant A");
+    Map<String, Object> result =
+        userServiceMapper.mapOf(
+            page, List.of(fullConsultant), List.of(), List.of(), tenantMap, null);
+
+    var consultants = (List<Map<String, Object>>) result.get("consultants");
+    assertThat(consultants).hasSize(1);
+    assertThat(consultants.get(0).get("id")).isEqualTo("c-1");
+    assertThat(consultants.get(0).get("status")).isEqualTo("CREATED");
+    assertThat(consultants.get(0).get("username")).isEqualTo("johndoe");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOf_ConsultantPage_Should_UseErrorStatus_When_FullConsultantNotFound() {
+    ConsultantBase consultantBase = mock(ConsultantBase.class);
+    when(consultantBase.getId()).thenReturn("c-unknown");
+    when(consultantBase.getEmail()).thenReturn("x@example.com");
+    when(consultantBase.getFirstName()).thenReturn("X");
+    when(consultantBase.getLastName()).thenReturn("Y");
+
+    var page = new PageImpl<>(List.of(consultantBase), Pageable.ofSize(10), 1);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOf(
+            page, List.of(), List.of(), List.of(), Collections.emptyMap(), null);
+
+    var consultants = (List<Map<String, Object>>) result.get("consultants");
+    assertThat(consultants).hasSize(1);
+    assertThat(consultants.get(0).get("status")).isEqualTo("ERROR");
+    assertThat(consultants.get(0).get("username")).isNull();
+  }
+
+  // ── mapOf(ConsultantBase, Consultant, agencies, tenantMap, hasOtherIdentity) ─
+
+  @Test
+  void mapOf_ConsultantBase_Should_MapAllFields_When_FullConsultantProvided() {
+    ConsultantBase base = mock(ConsultantBase.class);
+    when(base.getId()).thenReturn("c-2");
+    when(base.getEmail()).thenReturn("c2@example.com");
+    when(base.getFirstName()).thenReturn("Alice");
+    when(base.getLastName()).thenReturn("Smith");
+
+    Consultant full = new Consultant();
+    full.setId("c-2");
+    full.setStatus(ConsultantStatus.CREATED);
+    full.setUsername("alicesmith");
+    full.setTenantId(10L);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOf(base, full, List.of(), Map.of(10L, "My Tenant"), true);
+
+    assertThat(result.get("id")).isEqualTo("c-2");
+    assertThat(result.get("email")).isEqualTo("c2@example.com");
+    assertThat(result.get("status")).isEqualTo("CREATED");
+    assertThat(result.get("tenantName")).isEqualTo("My Tenant");
+    assertThat(result.get("hasOtherIdentity")).isEqualTo(true);
+  }
+
+  @Test
+  void mapOf_ConsultantBase_Should_UseErrorStatus_When_FullConsultantNull() {
+    ConsultantBase base = mock(ConsultantBase.class);
+    when(base.getId()).thenReturn("c-3");
+    when(base.getEmail()).thenReturn("c3@example.com");
+    when(base.getFirstName()).thenReturn("Bob");
+    when(base.getLastName()).thenReturn("Jones");
+
+    Map<String, Object> result =
+        userServiceMapper.mapOf(base, null, List.of(), Collections.emptyMap(), false);
+
+    assertThat(result.get("status")).isEqualTo("ERROR");
+    assertThat(result.get("username")).isNull();
+    assertThat(result.get("hasOtherIdentity")).isEqualTo(false);
+  }
+
+  // ── mapOfAdmin(Page<AdminBase>, ...) ─────────────────────────────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOfAdmin_AdminPage_Should_ReturnPaginationMetadata() {
+    var page = new PageImpl<>(Collections.<AdminBase>emptyList(), Pageable.ofSize(10), 0);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOfAdmin(page, List.of(), List.of(), List.of(), Map.of(), null);
+
+    assertThat(result.get("totalElements")).isEqualTo(0);
+    assertThat(result.get("isFirstPage")).isEqualTo(true);
+    assertThat(result.get("isLastPage")).isEqualTo(true);
+    assertThat(result.get("admins")).isEqualTo(List.of());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOfAdmin_AdminPage_Should_MapAdmin_When_FullAdminExists() {
+    AdminBase adminBase = mock(AdminBase.class);
+    when(adminBase.getId()).thenReturn("a-1");
+    when(adminBase.getEmail()).thenReturn("admin@example.com");
+    when(adminBase.getFirstName()).thenReturn("Admin");
+    when(adminBase.getLastName()).thenReturn("User");
+
+    Admin fullAdmin =
+        Admin.builder()
+            .id("a-1")
+            .username("adminuser")
+            .firstName("Admin")
+            .lastName("User")
+            .email("admin@example.com")
+            .type(AdminType.AGENCY)
+            .build();
+
+    var page = new PageImpl<>(List.of(adminBase), Pageable.ofSize(10), 1);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOfAdmin(
+            page, List.of(fullAdmin), List.of(), List.of(), Collections.emptyMap(), null);
+
+    var admins = (List<Map<String, Object>>) result.get("admins");
+    assertThat(admins).hasSize(1);
+    assertThat(admins.get(0).get("id")).isEqualTo("a-1");
+    assertThat(admins.get(0).get("username")).isEqualTo("adminuser");
+    assertThat(admins.get(0).get("type")).isEqualTo(AdminType.AGENCY);
+  }
+
+  // ── mapOfAdmin(AdminBase, Admin, agencies, tenantMap, hasOtherIdentity) ───
+
+  @Test
+  void mapOfAdmin_AdminBase_Should_MapAllFields() {
+    AdminBase base = mock(AdminBase.class);
+    when(base.getId()).thenReturn("a-2");
+    when(base.getEmail()).thenReturn("admin2@example.com");
+    when(base.getFirstName()).thenReturn("Super");
+    when(base.getLastName()).thenReturn("Admin");
+
+    Admin fullAdmin =
+        Admin.builder()
+            .id("a-2")
+            .username("superadmin")
+            .firstName("Super")
+            .lastName("Admin")
+            .email("admin2@example.com")
+            .type(AdminType.TENANT)
+            .tenantId(5L)
+            .build();
+
+    Map<Long, String> tenantMap = new HashMap<>();
+    tenantMap.put(5L, "Tenant Five");
+    Map<String, Object> result =
+        userServiceMapper.mapOfAdmin(base, fullAdmin, List.of(), tenantMap, false);
+
+    assertThat(result.get("id")).isEqualTo("a-2");
+    assertThat(result.get("username")).isEqualTo("superadmin");
+    assertThat(result.get("type")).isEqualTo(AdminType.TENANT);
+    assertThat(result.get("tenantName")).isEqualTo("Tenant Five");
+    assertThat(result.get("hasOtherIdentity")).isEqualTo(false);
+  }
+
+  @Test
+  void mapOfAdmin_AdminBase_Should_ReturnEmptyTenantName_When_TenantNotInMap() {
+    AdminBase base = mock(AdminBase.class);
+    when(base.getId()).thenReturn("a-3");
+    when(base.getEmail()).thenReturn("admin3@example.com");
+    when(base.getFirstName()).thenReturn("Tenant");
+    when(base.getLastName()).thenReturn("Admin");
+
+    Admin fullAdmin =
+        Admin.builder()
+            .id("a-3")
+            .username("tenantadmin")
+            .firstName("Tenant")
+            .lastName("Admin")
+            .email("admin3@example.com")
+            .type(AdminType.AGENCY)
+            .tenantId(99L)
+            .build();
+
+    Map<String, Object> result =
+        userServiceMapper.mapOfAdmin(base, fullAdmin, List.of(), Map.of(), true);
+
+    assertThat(result.get("tenantName")).isEqualTo("");
+    assertThat(result.get("hasOtherIdentity")).isEqualTo(true);
+  }
+
+  // ── mapOf(Page<ConsultantBase>...) with idsWithOtherIdentity ─────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void mapOf_ConsultantPage_Should_SetHasOtherIdentity_When_IdInSet() {
+    ConsultantBase consultantBase = mock(ConsultantBase.class);
+    when(consultantBase.getId()).thenReturn("c-special");
+    when(consultantBase.getEmail()).thenReturn("s@example.com");
+    when(consultantBase.getFirstName()).thenReturn("Special");
+    when(consultantBase.getLastName()).thenReturn("User");
+
+    var page = new PageImpl<>(List.of(consultantBase), Pageable.ofSize(10), 1);
+
+    Map<String, Object> result =
+        userServiceMapper.mapOf(
+            page, List.of(), List.of(), List.of(), Collections.emptyMap(), Set.of("c-special"));
+
+    var consultants = (List<Map<String, Object>>) result.get("consultants");
+    assertThat(consultants.get(0).get("hasOtherIdentity")).isEqualTo(true);
   }
 }
