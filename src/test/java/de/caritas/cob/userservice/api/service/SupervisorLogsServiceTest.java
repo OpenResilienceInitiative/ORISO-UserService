@@ -16,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -228,6 +229,43 @@ class SupervisorLogsServiceTest {
 
     assertThat(result.getPage()).isEqualTo(3);
     assertThat(result.getTotal()).isEqualTo(100L);
+  }
+
+  // ─── tenantId bound into SQL params ───────────────────────────────────────
+
+  @Test
+  void listSupervisorLogs_Should_BindJwtTenantId_Into_SqlParams() {
+    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":55}"));
+    ArgumentCaptor<SqlParameterSource> paramsCaptor =
+        ArgumentCaptor.forClass(SqlParameterSource.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            anyString(), paramsCaptor.capture(), eq(Long.class)))
+        .thenReturn(0L);
+    when(namedParameterJdbcTemplate.query(
+            anyString(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(55L);
+  }
+
+  @Test
+  void listSupervisorLogs_Should_BindTenantContextId_Into_SqlParams_When_NoToken() {
+    when(authenticatedUser.getAccessToken()).thenReturn(null);
+    TenantContext.setCurrentTenant(77L);
+    ArgumentCaptor<SqlParameterSource> paramsCaptor =
+        ArgumentCaptor.forClass(SqlParameterSource.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            anyString(), paramsCaptor.capture(), eq(Long.class)))
+        .thenReturn(0L);
+    when(namedParameterJdbcTemplate.query(
+            anyString(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(77L);
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
