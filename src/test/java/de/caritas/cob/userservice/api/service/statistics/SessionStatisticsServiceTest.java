@@ -137,8 +137,8 @@ class SessionStatisticsServiceTest {
 
     SessionStatisticsResultDTO result = service.retrieveSession(1L, null);
 
-    assertThat(result.getCreateDate()).isEqualTo("null");
-    assertThat(result.getMessageDate()).isEqualTo("null");
+    assertThat(result.getCreateDate()).isNull();
+    assertThat(result.getMessageDate()).isNull();
     assertThat(result.getPostcode()).isEqualTo("00000");
   }
 
