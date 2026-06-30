@@ -584,6 +584,206 @@ class MagicLinkLoginServiceTest {
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
   }
 
+  // ── sendMagicLinkEmailSafely — happy path entered ────────────────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void requestMagicLink_Should_AttemptSmtpSend_When_ValidSmtpSettingsReturned() {
+    // resolveGlobalSmtpSettings returns present → sendMagicLinkEmailSafely entered
+    // Transport.send fails (smtp.invalid) but exception is caught → no rethrow
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    User user = validUserWithMagicLinkEnabled();
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(
+            Map.of(
+                "globalFeatureSystemNotificationEmailsEnabled", true,
+                "globalSmtpEnabled", true,
+                "globalSmtpHost", "smtp.invalid",
+                "globalSmtpPort", 587,
+                "globalSmtpUsername", "user",
+                "globalSmtpPassword", "pass",
+                "globalSmtpFrom", "noreply@example.com"));
+
+    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
+        .doesNotThrowAnyException();
+  }
+
+  // ── consumeMagicLink — happy path returns KeycloakLoginResponseDTO ────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void consumeMagicLink_Should_ReturnDto_When_TokenValidAndExchangeSucceeds() {
+    ConcurrentHashMap<String, Object> tokens =
+        (ConcurrentHashMap<String, Object>)
+            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
+    for (Class<?> cls : MagicLinkLoginService.class.getDeclaredClasses()) {
+      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
+        try {
+          cls.getDeclaredConstructors()[0].setAccessible(true);
+          tokens.put(
+              "happy-token",
+              cls.getDeclaredConstructors()[0].newInstance(
+                  "user-kc-id", Instant.now().plusSeconds(900)));
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
+      }
+    }
+
+    Map<String, Object> adminBody = new HashMap<>();
+    adminBody.put("access_token", "admin-access-token");
+    KeycloakLoginResponseDTO responseDTO = new KeycloakLoginResponseDTO();
+
+    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
+    when(restTemplate.postForEntity(anyString(), any(), org.mockito.ArgumentMatchers.eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(adminBody));
+    when(restTemplate.postForEntity(
+            anyString(), any(), org.mockito.ArgumentMatchers.eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseDTO));
+
+    Optional<KeycloakLoginResponseDTO> result =
+        magicLinkLoginService.consumeMagicLink("happy-token");
+
+    assertThat(result).isPresent();
+  }
+
+  // ── exchangeTokenForUser catch block — admin succeeds, exchange throws ────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void consumeMagicLink_Should_RestoreToken_When_AdminSucceedsButExchangeThrows() {
+    ConcurrentHashMap<String, Object> tokens =
+        (ConcurrentHashMap<String, Object>)
+            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
+    for (Class<?> cls : MagicLinkLoginService.class.getDeclaredClasses()) {
+      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
+        try {
+          cls.getDeclaredConstructors()[0].setAccessible(true);
+          tokens.put(
+              "exchange-fail-token",
+              cls.getDeclaredConstructors()[0].newInstance(
+                  "user-id", Instant.now().plusSeconds(900)));
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
+      }
+    }
+
+    Map<String, Object> adminBody = new HashMap<>();
+    adminBody.put("access_token", "admin-token");
+    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
+    when(restTemplate.postForEntity(anyString(), any(), org.mockito.ArgumentMatchers.eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(adminBody));
+    when(restTemplate.postForEntity(
+            anyString(), any(), org.mockito.ArgumentMatchers.eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(new RuntimeException("exchange failed"));
+
+    Optional<KeycloakLoginResponseDTO> result =
+        magicLinkLoginService.consumeMagicLink("exchange-fail-token");
+
+    // exchangeTokenForUser catch → returns null → token restored
+    assertThat(result).isEmpty();
+    assertThat(tokens).containsKey("exchange-fail-token");
+  }
+
+  // ── asIntSettingValue — valid port string "587" ───────────────────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void requestMagicLink_Should_ParseValidPortString_When_PortIs587AsString() {
+    // asIntSettingValue("587") → Integer 587 (valid) → SMTP settings resolved
+    // Transport.send fails (caught) but no exception escapes
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    User user = validUserWithMagicLinkEnabled();
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(
+            Map.of(
+                "globalFeatureSystemNotificationEmailsEnabled", true,
+                "globalSmtpEnabled", true,
+                "globalSmtpHost", "smtp.invalid",
+                "globalSmtpPort", "587",
+                "globalSmtpUsername", "user",
+                "globalSmtpPassword", "pass",
+                "globalSmtpFrom", "noreply@example.com"));
+
+    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
+        .doesNotThrowAnyException();
+  }
+
+  // ── resolveAccount — decoded username fallback (lines 128-130) ───────────
+
+  @Test
+  void requestMagicLink_Should_ReturnNotEnabled_When_UserFoundByDecodedUsername() {
+    // resolveAccount: decodeUsername(encoded) = original; encoded != original
+    // → first lookup (encoded) fails → second lookup (decoded = original) succeeds
+    de.caritas.cob.userservice.api.helper.UsernameTranscoder transcoder =
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
+    String original = "testuser";
+    String encoded = transcoder.encodeUsername(original);
+
+    User user = new User();
+    user.setUserId("u-1");
+    user.setUsername(original);
+    user.setEmail("testuser@example.com");
+    user.setMagicLinkLoginEnabled(Boolean.FALSE);
+
+    when(userService.findUserByUsername(encoded)).thenReturn(Optional.empty());
+    when(userService.findUserByUsername(original)).thenReturn(Optional.of(user));
+
+    assertThat(magicLinkLoginService.requestMagicLink(encoded))
+        .isEqualTo(MagicLinkRequestResult.NOT_ENABLED);
+  }
+
+  // ── SMTP blank username guard ─────────────────────────────────────────────
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void requestMagicLink_Should_ReturnAccepted_When_SmtpUsernameIsBlank() {
+    // Line 337: isBlank(username) → returns Optional.empty()
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    User user = validUserWithMagicLinkEnabled();
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    Map<String, Object> settings = new HashMap<>();
+    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
+    settings.put("globalSmtpEnabled", true);
+    settings.put("globalSmtpHost", "smtp.example.com");
+    settings.put("globalSmtpPort", 587);
+    settings.put("globalSmtpUsername", "  ");
+    settings.put("globalSmtpPassword", "pass");
+    settings.put("globalSmtpFrom", "noreply@example.com");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(settings);
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void requestMagicLink_Should_ReturnAccepted_When_SmtpPasswordIsBlank() {
+    // Line 338: isBlank(password) → returns Optional.empty()
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    User user = validUserWithMagicLinkEnabled();
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    Map<String, Object> settings = new HashMap<>();
+    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
+    settings.put("globalSmtpEnabled", true);
+    settings.put("globalSmtpHost", "smtp.example.com");
+    settings.put("globalSmtpPort", 587);
+    settings.put("globalSmtpUsername", "user");
+    settings.put("globalSmtpPassword", "");
+    settings.put("globalSmtpFrom", "noreply@example.com");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(settings);
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+  }
+
   private User validUserWithMagicLinkEnabled() {
     User user = new User();
     user.setUserId("u-1");
