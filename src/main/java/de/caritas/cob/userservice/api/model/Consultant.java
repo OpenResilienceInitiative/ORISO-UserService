@@ -14,7 +14,6 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
-import jakarta.persistence.Lob;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
@@ -35,6 +34,7 @@ import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Where;
 import org.hibernate.search.annotations.Analyzer;
@@ -45,6 +45,7 @@ import org.hibernate.search.annotations.IndexedEmbedded;
 import org.hibernate.search.annotations.SortableField;
 import org.hibernate.search.annotations.TokenFilterDef;
 import org.hibernate.search.annotations.TokenizerDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
@@ -133,8 +134,8 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "display_name")
   private String displayName;
 
-  @Column(name = "absence_message")
-  @Lob
+  @Column(name = "absence_message", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String absenceMessage;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")

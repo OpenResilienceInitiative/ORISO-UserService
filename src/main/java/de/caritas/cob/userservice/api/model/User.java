@@ -10,7 +10,6 @@ import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
@@ -28,7 +27,9 @@ import lombok.ToString;
 import lombok.ToString.Exclude;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -85,8 +86,8 @@ public class User implements TenantAware, NotificationsAware {
   @Exclude
   private Set<UserAgency> userAgencies;
 
-  @Column(name = "mobile_token")
-  @Lob
+  @Column(name = "mobile_token", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String mobileToken;
 
   @OneToMany(mappedBy = "user")

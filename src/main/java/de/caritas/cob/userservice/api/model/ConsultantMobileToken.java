@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
@@ -15,6 +14,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** Represents the relation between consultant and mobile token. */
 @Entity
@@ -38,8 +39,8 @@ public class ConsultantMobileToken {
   @JoinColumn(name = "consultant_id", nullable = false)
   private Consultant consultant;
 
-  @Column(name = "mobile_app_token", nullable = false)
-  @Lob
+  @Column(name = "mobile_app_token", nullable = false, columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String mobileAppToken;
 
   @Override
