@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.tenant;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import lombok.AllArgsConstructor;
@@ -51,7 +52,13 @@ public class AccessTokenTenantResolver implements TenantResolver {
   }
 
   private Map<String, Object> getClaimMap(HttpServletRequest request) {
-    return ((JwtAuthenticationToken) request.getUserPrincipal()).getToken().getClaims();
+    var principal = request.getUserPrincipal();
+    if (!(principal instanceof JwtAuthenticationToken jwtToken)) {
+      log.debug("UserPrincipal is not a JwtAuthenticationToken (was: {}), returning empty claim map",
+          principal == null ? "null" : principal.getClass().getName());
+      return Collections.emptyMap();
+    }
+    return jwtToken.getToken().getClaims();
   }
 
   @Override
