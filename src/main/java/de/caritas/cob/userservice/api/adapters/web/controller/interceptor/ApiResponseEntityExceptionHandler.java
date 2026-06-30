@@ -143,7 +143,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final HttpHeaders headers,
       final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getStackTrace());
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
