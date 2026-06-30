@@ -28,6 +28,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 /** Provider for consultant information. */
@@ -117,6 +118,12 @@ public class ConsultantDataProvider {
           e.getStatusCode().value(),
           e.getResponseBodyAsString());
       return List.of();
+    } catch (RestClientException e) {
+      log.warn(
+          "Could not load agencies for consultant {}; returning user data without agencies",
+          consultant.getId(),
+          e);
+      return List.of();
     }
   }
 
@@ -134,10 +141,18 @@ public class ConsultantDataProvider {
   }
 
   private boolean hasAtLeastOneTypeWithAllowedAnonymousConversations(List<AgencyDTO> agencyDTOS) {
-    return agencyDTOS.stream()
-        .map(AgencyDTO::getConsultingType)
-        .map(this.consultingTypeManager::getConsultingTypeSettings)
-        .anyMatch(this::hasAnonymousConversationAllowed);
+    try {
+      return agencyDTOS.stream()
+          .map(AgencyDTO::getConsultingType)
+          .map(this.consultingTypeManager::getConsultingTypeSettings)
+          .anyMatch(this::hasAnonymousConversationAllowed);
+    } catch (Exception e) {
+      log.warn(
+          "Could not resolve consulting type settings for consultant user data; "
+              + "returning user data without anonymous conversation capability",
+          e);
+      return false;
+    }
   }
 
   private boolean hasAnonymousConversationAllowed(
