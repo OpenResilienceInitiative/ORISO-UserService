@@ -73,7 +73,6 @@ public class Chat {
   private int duration;
 
   @Column(name = "is_repetitive", nullable = false)
-  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean repetitive;
 
   @Enumerated(EnumType.STRING)
@@ -81,7 +80,6 @@ public class Chat {
   private ChatInterval chatInterval;
 
   @Column(name = "is_active", nullable = false)
-  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean active;
 
   @Column(name = "max_participants", columnDefinition = "tinyint(4) unsigned NULL")
