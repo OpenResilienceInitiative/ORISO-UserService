@@ -54,7 +54,8 @@ public class AccessTokenTenantResolver implements TenantResolver {
   private Map<String, Object> getClaimMap(HttpServletRequest request) {
     var principal = request.getUserPrincipal();
     if (!(principal instanceof JwtAuthenticationToken jwtToken)) {
-      log.debug("UserPrincipal is not a JwtAuthenticationToken (was: {}), returning empty claim map",
+      log.debug(
+          "UserPrincipal is not a JwtAuthenticationToken (was: {}), returning empty claim map",
           principal == null ? "null" : principal.getClass().getName());
       return Collections.emptyMap();
     }

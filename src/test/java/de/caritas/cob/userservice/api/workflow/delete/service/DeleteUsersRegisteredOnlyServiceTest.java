@@ -95,7 +95,8 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     setField(
         deleteUsersRegisteredOnlyService, "userRegisteredOnlyDeleteWorkflowCheckDays", thirtyDays);
-    LocalDateTime dateToCheck = CustomLocalDateTime.nowInUtc().with(LocalTime.MIDNIGHT).minusDays(thirtyDays);
+    LocalDateTime dateToCheck =
+        CustomLocalDateTime.nowInUtc().with(LocalTime.MIDNIGHT).minusDays(thirtyDays);
 
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
 

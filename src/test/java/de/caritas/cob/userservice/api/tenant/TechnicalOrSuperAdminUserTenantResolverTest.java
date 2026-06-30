@@ -97,4 +97,3 @@ class TechnicalOrSuperAdminUserTenantResolverTest {
     return new JwtAuthenticationToken(jwt);
   }
 }
-
