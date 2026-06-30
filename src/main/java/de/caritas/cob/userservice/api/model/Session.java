@@ -37,7 +37,9 @@ import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 @Entity
@@ -121,6 +123,7 @@ public class Session implements TenantAware {
       updatable = false,
       nullable = false,
       columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private int consultingTypeId;
 
   @Column(
@@ -146,6 +149,7 @@ public class Session implements TenantAware {
 
   @NonNull
   @Column(columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private SessionStatus status;
 
   @Column(name = "message_date")

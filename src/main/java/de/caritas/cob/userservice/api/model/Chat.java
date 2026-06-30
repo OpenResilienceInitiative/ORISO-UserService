@@ -28,6 +28,8 @@ import lombok.ToString;
 import lombok.ToString.Exclude;
 import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "chat")
@@ -55,6 +57,7 @@ public class Chat {
   private String topic;
 
   @Column(name = "consulting_type", updatable = false, columnDefinition = "tinyint(4) unsigned")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer consultingTypeId;
 
   @Column(name = "initial_start_date", nullable = false)
@@ -66,6 +69,7 @@ public class Chat {
   private LocalDateTime startDate;
 
   @Column(name = "duration", nullable = false, columnDefinition = "smallint")
+  @JdbcTypeCode(SqlTypes.SMALLINT)
   private int duration;
 
   @Column(name = "is_repetitive", nullable = false)
@@ -79,6 +83,7 @@ public class Chat {
   private boolean active;
 
   @Column(name = "max_participants", columnDefinition = "tinyint(4) unsigned NULL")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer maxParticipants;
 
   @Column(name = "rc_group_id")

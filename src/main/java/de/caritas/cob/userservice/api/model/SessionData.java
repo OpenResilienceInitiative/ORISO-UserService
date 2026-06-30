@@ -17,6 +17,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "session_data")
@@ -56,6 +58,7 @@ public class SessionData {
   private Session session;
 
   @Column(name = "type", updatable = false, nullable = false, columnDefinition = "tinyint(4)")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   @NonNull
   private SessionDataType sessionDataType;
 
