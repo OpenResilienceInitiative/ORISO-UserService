@@ -406,7 +406,8 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @NotNull @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
+      @NotNull @RequestParam List<String> rcGroupIds,
+      @RequestHeader(required = false) String rcToken) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -529,7 +530,8 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(@NotNull String rcToken, @NotNull Long chatId) {
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(
+      @NotNull String rcToken, @NotNull Long chatId) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -945,7 +947,8 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link List} of {@link ConsultantResponseDTO}
    */
   @Override
-  public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(@NotNull @RequestParam Long agencyId) {
+  public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(
+      @NotNull @RequestParam Long agencyId) {
 
     var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
 
@@ -1055,7 +1058,8 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> removeFromSession(@NotNull Long sessionId, @NotNull UUID consultantId) {
+  public ResponseEntity<Void> removeFromSession(
+      @NotNull Long sessionId, @NotNull UUID consultantId) {
     var consultantMap =
         accountManager
             .findConsultant(consultantId.toString())
@@ -1279,7 +1283,10 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> banFromChat(@NotNull String token, @NotNull @Size(min = 17, max = 17) String chatUserId, @NotNull @Min(value = 0L) Long chatId) {
+  public ResponseEntity<Void> banFromChat(
+      @NotNull String token,
+      @NotNull @Size(min = 17, max = 17) String chatUserId,
+      @NotNull @Min(value = 0L) Long chatId) {
     return userChatControllerDelegate.banFromChat(chatUserId, chatId);
   }
 
@@ -1428,7 +1435,8 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(@NotNull @Pattern(regexp = "[0-9]{6}") String tan) {
+  public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(
+      @NotNull @Pattern(regexp = "[0-9]{6}") String tan) {
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 
