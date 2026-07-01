@@ -42,7 +42,6 @@ import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -52,16 +51,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Controller to handle all session admin requests. */
 @RestController
+@Validated
 @RequiredArgsConstructor
 @Slf4j
 @Api(tags = "admin-user-controller")
@@ -99,9 +99,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<SessionAdminResultDTO> getSessions(
-      @NotNull @Valid Integer page,
-      @NotNull @Valid Integer perPage,
-      @Valid SessionFilter sessionFilter) {
+      Integer page, Integer perPage, SessionFilter sessionFilter) {
     SessionAdminResultDTO sessionAdminResultDTO =
         this.sessionAdminService.findSessions(page, perPage, sessionFilter);
     return ResponseEntity.ok(sessionAdminResultDTO);
@@ -115,7 +113,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
-      @Valid CreateConsultantDTO createConsultantDTO) {
+      CreateConsultantDTO createConsultantDTO) {
 
     // MATRIX MIGRATION: Capture plain username for Matrix user creation
     // CreateConsultantDTO doesn't use EncodeUsernameJsonDeserializer, so username is plain
@@ -195,8 +193,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> createConsultantAgency(
-      @PathVariable String consultantId,
-      @Valid CreateConsultantAgencyDTO createConsultantAgencyDTO) {
+      @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
     consultantAdminFacade.checkPermissionsToAssignedAgencies(
         Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
@@ -245,8 +242,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> markConsultantForDeletion(
-      @PathVariable String consultantId,
-      @Valid @RequestParam(required = false) Boolean forceDeleteSessions) {
+      String consultantId, Boolean forceDeleteSessions) {
     this.consultantAdminFacade.markConsultantForDeletion(consultantId, forceDeleteSessions);
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -289,7 +285,7 @@ public class UserAdminController implements UseradminApi {
       consumes = "application/json")
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
-      @PathVariable String consultantId, @Valid UpdateAdminConsultantDTO updateConsultantDTO) {
+      @PathVariable String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     return ResponseEntity.ok(performUpdate(consultantId, updateConsultantDTO));
   }
 
@@ -326,10 +322,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> getConsultants(
-      @NotNull @Valid Integer page,
-      @NotNull @Valid Integer perPage,
-      @Valid ConsultantFilter consultantFilter,
-      @Valid Sort sort) {
+      Integer page, Integer perPage, ConsultantFilter consultantFilter, Sort sort) {
     var resultDTO =
         this.consultantAdminFacade.findFilteredConsultants(page, perPage, consultantFilter, sort);
     return ResponseEntity.ok(resultDTO);
@@ -368,7 +361,7 @@ public class UserAdminController implements UseradminApi {
    * @param agencyTypeDTO contains the target type
    */
   @Override
-  public ResponseEntity<Void> changeAgencyType(Long agencyId, @Valid AgencyTypeDTO agencyTypeDTO) {
+  public ResponseEntity<Void> changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
     this.consultantAdminFacade.changeAgencyType(agencyId, agencyTypeDTO);
     return new ResponseEntity<>(HttpStatus.OK);
   }
