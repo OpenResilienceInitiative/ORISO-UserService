@@ -67,4 +67,64 @@ class AgencyServiceTest {
     assertThat(headers.get("tenantId").get(0)).isEqualTo("1");
     TenantContext.clear();
   }
+
+  @Test
+  void getAgencyWithoutCaching_Should_returnAgency() {
+    HttpHeaders headers = new HttpHeaders();
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    var agencyDTOS =
+        Lists.newArrayList(
+            new de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO());
+    when(agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L))).thenReturn(agencyDTOS);
+
+    AgencyDTO result = agencyService.getAgencyWithoutCaching(1L);
+
+    assertThat(result).isNotNull();
+  }
+
+  @Test
+  void getAgenciesNotCached_Should_returnEmptyList_When_emptyIdsProvided() {
+    List<AgencyDTO> result = agencyService.getAgenciesNotCached(List.of());
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getAgenciesNotCached_Should_returnAgencies_When_idsProvided() {
+    HttpHeaders headers = new HttpHeaders();
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    var agencyDTOS =
+        Lists.newArrayList(
+            new de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO());
+    when(agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L))).thenReturn(agencyDTOS);
+
+    List<AgencyDTO> result = agencyService.getAgenciesNotCached(Lists.newArrayList(1L));
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getAgenciesWithoutCaching_Should_returnEmptyList_When_emptyIdsProvided() {
+    List<AgencyDTO> result = agencyService.getAgenciesWithoutCaching(List.of());
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getAgenciesByConsultingType_Should_returnMappedAgencies() {
+    HttpHeaders headers = new HttpHeaders();
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    var agencyDTOS =
+        Lists.newArrayList(
+            new de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO());
+    when(agencyControllerApi.getAgenciesByConsultingType(1)).thenReturn(agencyDTOS);
+
+    List<AgencyDTO> result = agencyService.getAgenciesByConsultingType(1);
+
+    assertThat(result).hasSize(1);
+  }
 }
