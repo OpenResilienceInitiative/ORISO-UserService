@@ -11,45 +11,43 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import java.util.Collections;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.hateoas.client.LinkDiscoverers;
-import org.springframework.test.context.TestPropertySource;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 /**
  * Verifies the self-availability READ endpoint (ADR-007): the indicator must read the authoritative
  * {@link ConsultantActivityRegistry}, not mirror a client flag. The endpoint reports whether the
  * calling consultant is currently within the live-chat availability window.
  */
-@WebMvcTest(ConsultantLiveAvailabilityController.class)
-@AutoConfigureMockMvc(addFilters = false)
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@ExtendWith(MockitoExtension.class)
 class ConsultantLiveAvailabilityControllerIT {
 
   private static final String AVAILABILITY_PATH = "/conversations/consultants/availability";
   private static final String CONSULTANT_ID = "consultant-1";
 
-  @Autowired private MockMvc mockMvc;
+  private MockMvc mockMvc;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @Mock private AuthenticatedUser authenticatedUser;
 
-  @MockBean private ConsultantActivityRegistry consultantActivityRegistry;
+  @Mock private ConsultantActivityRegistry consultantActivityRegistry;
 
-  @MockBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
-
-  @MockBean private LinkDiscoverers linkDiscoverers;
-
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
+  @BeforeEach
+  void setUp() {
+    var controller =
+        new ConsultantLiveAvailabilityController(authenticatedUser, consultantActivityRegistry);
+    ReflectionTestUtils.setField(controller, "activeWindowMs", 120000L);
+    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+  }
 
   @Test
   void getLiveChatAvailability_Should_returnAvailableTrue_When_consultantIsInActiveSet()
