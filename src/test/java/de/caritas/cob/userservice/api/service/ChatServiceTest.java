@@ -341,4 +341,69 @@ class ChatServiceTest {
 
     verify(chatRepository).delete(chat);
   }
+
+  @Test
+  void saveUserChatRelation_Should_ThrowConflictException_WhenUserAlreadyAssigned() {
+    UserChat userChat = new UserChat();
+    when(chatUserRepository.findByChatAndUser(Mockito.any(), Mockito.any()))
+        .thenReturn(Optional.of(userChat));
+
+    assertThrows(ConflictException.class, () -> chatService.saveUserChatRelation(userChat));
+  }
+
+  @Test
+  void saveChat_Should_saveChatInRepository() {
+    Chat chat = new Chat();
+    when(chatRepository.save(chat)).thenReturn(chat);
+
+    Chat result = chatService.saveChat(chat);
+
+    verify(chatRepository).save(chat);
+    assertEquals(chat, result);
+  }
+
+  @Test
+  void getChatSessionsByIds_Should_returnUserSessionsForGivenIds() {
+    when(chatRepository.findAllById(Set.of(CHAT_ID))).thenReturn(List.of(activeChatWithAgency()));
+
+    List<UserSessionResponseDTO> result = chatService.getChatSessionsByIds(Set.of(CHAT_ID));
+
+    assertThat(result, hasSize(1));
+    assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsForConsultantByIds_Should_returnConsultantSessionsForGivenIds() {
+    when(chatRepository.findAllById(Set.of(CHAT_ID))).thenReturn(List.of(activeChatWithAgency()));
+
+    List<ConsultantSessionResponseDTO> result =
+        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID));
+
+    assertThat(result, hasSize(1));
+    assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsByGroupIds_Should_returnUserSessionsForGivenGroupIds() {
+    when(chatRepository.findByGroupIds(Set.of(RC_GROUP_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+
+    List<UserSessionResponseDTO> result =
+        chatService.getChatSessionsByGroupIds(Set.of(RC_GROUP_ID));
+
+    assertThat(result, hasSize(1));
+    assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsForConsultantByGroupIds_Should_returnConsultantSessionsForGivenGroupIds() {
+    when(chatRepository.findByGroupIds(Set.of(RC_GROUP_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+
+    List<ConsultantSessionResponseDTO> result =
+        chatService.getChatSessionsForConsultantByGroupIds(Set.of(RC_GROUP_ID));
+
+    assertThat(result, hasSize(1));
+    assertNotNull(result.get(0).getChat());
+  }
 }
