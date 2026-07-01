@@ -92,6 +92,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({
   UserChatControllerDelegate.class,
   UserSessionControllerDelegate.class,
+  UserAccountControllerDelegate.class,
   ApiResponseEntityExceptionHandler.class,
   EncodeUsernameJsonDeserializer.class,
   UrlDecodePasswordJsonDeserializer.class,
@@ -472,6 +473,12 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
     when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(
@@ -532,6 +539,12 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
     when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(

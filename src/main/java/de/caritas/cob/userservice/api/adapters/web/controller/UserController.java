@@ -1,8 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
-import static java.util.Objects.isNull;
-import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
@@ -50,8 +48,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDT
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
-import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
-import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -60,16 +56,11 @@ import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
-import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
-import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
-import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EnquiryData;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -79,8 +70,6 @@ import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.DecryptionService;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
@@ -92,15 +81,12 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.InternalServerErrorException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -137,9 +123,9 @@ public class UserController implements UsersApi {
   private final @NotNull AskerImportService askerImportService;
   private final @NotNull ConsultantAgencyService consultantAgencyService;
   private final @NotNull AssignEnquiryFacade assignEnquiryFacade;
-  private final @NotNull DecryptionService decryptionService;
   private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
+  private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
   private final @NotNull CreateUserFacade createUserFacade;
   private final @NotNull CreateNewSessionFacade createNewSessionFacade;
   private final @NotNull ConsultantDataFacade consultantDataFacade;
@@ -151,11 +137,7 @@ public class UserController implements UsersApi {
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull ConsultantUpdateService consultantUpdateService;
-  private final @NonNull ConsultantDataProvider consultantDataProvider;
-  private final @NonNull AskerDataProvider askerDataProvider;
-  private final @NonNull VideoChatConfig videoChatConfig;
-  private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NonNull UserHelper userHelper;
   private final @NotNull IdentityClient identityClient;
   private final @NonNull MagicLinkLoginService magicLinkLoginService;
 
@@ -215,6 +197,10 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> registerUser(@RequestBody UserDTO user) {
     validateUserHasChosenTopicIfTopicsFeatureIsEnabled(user);
+    if (!userHelper.isUsernameValid(user.getUsername())) {
+      throw new BadRequestException("Username is invalid");
+    }
+    decodePassword(user);
     user.setNewUserAccount(true);
     var sessionId = createUserFacade.createUserAccountWithInitializedConsultingType(user);
 
@@ -226,6 +212,12 @@ public class UserController implements UsersApi {
     }
 
     return ResponseEntity.status(status).build();
+  }
+
+  private void decodePassword(UserDTO user) {
+    if (user.getPassword() != null) {
+      user.setPassword(URLDecoder.decode(user.getPassword(), StandardCharsets.UTF_8));
+    }
   }
 
   private void validateUserHasChosenTopicIfTopicsFeatureIsEnabled(UserDTO user) {
@@ -365,7 +357,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(
-      @RequestHeader String rcToken) {
+      @RequestHeader(required = false) String rcToken) {
     return userSessionControllerDelegate.getSessionsForAuthenticatedUser(rcToken);
   }
 
@@ -378,8 +370,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @NotNull @RequestParam List<String> rcGroupIds,
-      @RequestHeader(required = false) String rcToken) {
+      @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
     return userSessionControllerDelegate.getSessionsForGroupIds(rcGroupIds, rcToken);
   }
 
@@ -395,8 +386,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(
-      @NotNull String rcToken, @NotNull Long chatId) {
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(String rcToken, Long chatId) {
     return userSessionControllerDelegate.getChatById(rcToken, chatId);
   }
 
@@ -408,36 +398,12 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateAbsence(@RequestBody AbsenceDTO absence) {
-    var consultant = userAccountProvider.retrieveValidatedConsultant();
-    this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.updateAbsence(absence);
   }
 
   @Override
   public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-
-    Optional<Consultant> consultantByEmail = userAccountProvider.findConsultantByEmail(email);
-    if (consultantByEmail.isPresent()) {
-      return new ResponseEntity<>(getEmailNotifications(consultantByEmail.get()), HttpStatus.OK);
-    } else {
-      Optional<User> userByEmail = userAccountProvider.findUserByEmail(email);
-      if (userByEmail.isPresent()) {
-        return new ResponseEntity<>(getEmailNotifications(userByEmail.get()), HttpStatus.OK);
-      } else {
-        throw new NotFoundException("No adviceseeker nor consultant with given email found.");
-      }
-    }
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(Consultant consultant) {
-    var consultantDTO = consultantDataProvider.retrieveData(consultant);
-    return consultantDTO.getEmailNotifications();
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(User user) {
-    var userDTO = askerDataProvider.retrieveData(user);
-    return userDTO.getEmailNotifications();
+    return userAccountControllerDelegate.getUserEmailNotifications(email);
   }
 
   /**
@@ -447,137 +413,12 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<UserDataResponseDTO> getUserData() {
-    UserDataResponseDTO partialUserData;
-    if (authenticatedUser.isConsultant()) {
-      var consultant = userAccountProvider.retrieveValidatedConsultant();
-      partialUserData = consultantDataProvider.retrieveData(consultant);
-      enrichConsultantDisplayName(partialUserData);
-      enrichConsultantAvailability(partialUserData);
-    } else if (isTenantAdmin() || isAgencyAdmin()) {
-      partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
-    } else {
-      var user = userAccountProvider.retrieveValidatedUser();
-      partialUserData = askerDataProvider.retrieveData(user);
-    }
-    var otpInfoDTO = retrieveOtpCredentialIfAllowed();
-
-    var fullUserData =
-        userDtoMapper.userDataOf(
-            partialUserData,
-            otpInfoDTO,
-            videoChatConfig.getE2eEncryptionEnabled(),
-            identityClientConfig.getDisplayNameAllowedForConsultants());
-
-    return new ResponseEntity<>(fullUserData, HttpStatus.OK);
-  }
-
-  private void enrichConsultantDisplayName(UserDataResponseDTO userData) {
-    try {
-      accountManager
-          .findConsultant(authenticatedUser.getUserId())
-          .ifPresent(
-              consultantMap -> userData.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
-    } catch (Exception ex) {
-      log.warn(
-          "Could not enrich display name for consultant {}; returning user data without display name",
-          authenticatedUser.getUserId(),
-          ex);
-    }
-  }
-
-  private void enrichConsultantAvailability(UserDataResponseDTO userData) {
-    try {
-      userData.setAvailable(messenger.getAvailability(authenticatedUser.getUserId()));
-    } catch (Exception ex) {
-      log.warn(
-          "Could not enrich availability for consultant {}; returning user data without availability",
-          authenticatedUser.getUserId(),
-          ex);
-    }
-  }
-
-  private OtpInfoDTO retrieveOtpCredentialIfAllowed() {
-    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
-      return null;
-    }
-    try {
-      return identityManager.getOtpCredential(
-          usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
-    } catch (Exception ex) {
-      log.warn(
-          "Could not retrieve OTP credential for authenticated user {}; returning user data without OTP state",
-          authenticatedUser.getUserId(),
-          ex);
-      return null;
-    }
-  }
-
-  private boolean isAgencyAdmin() {
-    return authenticatedUser.isAgencySuperAdmin() || authenticatedUser.isRestrictedAgencyAdmin();
-  }
-
-  private boolean isTenantAdmin() {
-    return authenticatedUser.isSingleTenantAdmin() || authenticatedUser.isTenantSuperAdmin();
+    return userAccountControllerDelegate.getUserData();
   }
 
   @Override
   public ResponseEntity<Void> patchUser(PatchUserDTO patchUserDTO) {
-    validateMagicLinkTogglePrerequisites(patchUserDTO);
-
-    var userId = authenticatedUser.getUserId();
-    var patchMap =
-        userDtoMapper
-            .mapOf(patchUserDTO, authenticatedUser)
-            .orElseThrow(
-                () -> new BadRequestException("Invalid payload: at least one property expected"));
-
-    Optional<Map<String, Object>> patchResponse = accountManager.patchUser(patchMap);
-    if (patchResponse.isEmpty()) {
-      throw new IllegalStateException("patch response not valid");
-    }
-
-    userDtoMapper
-        .preferredLanguageOf(patchUserDTO)
-        .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
-
-    // MATRIX MIGRATION: Gracefully handle RocketChat unavailability
-    userDtoMapper
-        .availableOf(patchUserDTO)
-        .filter(available -> authenticatedUser.isConsultant())
-        .ifPresent(
-            available -> {
-              try {
-                messenger.setAvailability(userId, available);
-              } catch (Exception e) {
-                log.warn(
-                    "RocketChat is not available (expected during Matrix migration), skipping setAvailability: {}",
-                    e.getMessage());
-              }
-            });
-
-    return ResponseEntity.noContent().build();
-  }
-
-  private void validateMagicLinkTogglePrerequisites(PatchUserDTO patchUserDTO) {
-    if (!Boolean.TRUE.equals(patchUserDTO.getMagicLinkLoginEnabled())) {
-      return;
-    }
-
-    String email = null;
-    if (authenticatedUser.isConsultant()) {
-      email = userAccountProvider.retrieveValidatedConsultant().getEmail();
-    } else if (authenticatedUser.isAdviceSeeker()) {
-      email = userAccountProvider.retrieveValidatedUser().getEmail();
-    }
-
-    boolean hasRealEmail =
-        nonNull(email)
-            && !email.isBlank()
-            && !email.endsWith(identityClientConfig.getEmailDummySuffix());
-    if (!hasRealEmail) {
-      throw new BadRequestException(
-          "Magic link login can only be enabled when a profile email is set.");
-    }
+    return userAccountControllerDelegate.patchUser(patchUserDTO);
   }
 
   /**
@@ -588,18 +429,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateConsultantData(UpdateConsultantDTO updateConsultantDTO) {
-    var consultantId = authenticatedUser.getUserId();
-    var consultant =
-        consultantService
-            .getConsultant(consultantId)
-            .orElseThrow(
-                () -> new NotFoundException("Consultant with id %s not found", consultantId));
-
-    var updateAdminConsultantDTO =
-        consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.updateConsultantData(updateConsultantDTO);
   }
 
   @Override
@@ -643,10 +473,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      @NotNull @RequestHeader String rcToken,
-      @NotNull @Min(value = 0) Integer offset,
-      @NotNull @Min(value = 1) Integer count,
-      @NotNull @RequestParam String filter) {
+      @RequestHeader String rcToken, Integer offset, Integer count, @RequestParam String filter) {
     return userSessionControllerDelegate.getTeamSessionsForAuthenticatedConsultant(
         rcToken, offset, count, filter);
   }
@@ -818,13 +645,12 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> assignSession(
-      @NotNull @PathVariable Long sessionId, @NotNull @PathVariable String consultantId) {
+      @PathVariable Long sessionId, @PathVariable String consultantId) {
     return userSessionControllerDelegate.assignSession(sessionId, consultantId);
   }
 
   @Override
-  public ResponseEntity<Void> removeFromSession(
-      @NotNull Long sessionId, @NotNull UUID consultantId) {
+  public ResponseEntity<Void> removeFromSession(Long sessionId, UUID consultantId) {
     return userSessionControllerDelegate.removeFromSession(sessionId, consultantId);
   }
 
@@ -836,21 +662,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updatePassword(@RequestBody PasswordDTO passwordDTO) {
-    var username = authenticatedUser.getUsername();
-    var encodedUsername = usernameTranscoder.encodeUsername(username);
-    if (!identityManager.validatePasswordIgnoring2fa(
-        encodedUsername, passwordDTO.getOldPassword())) {
-      var message = String.format("Could not log in user %s into Keycloak", username);
-      throw new BadRequestException(message);
-    }
-
-    var userId = authenticatedUser.getUserId();
-    if (!identityManager.changePassword(userId, passwordDTO.getNewPassword())) {
-      var message = String.format("Could not update password of user %s", userId);
-      throw new InternalServerErrorException(message);
-    }
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.updatePassword(passwordDTO);
   }
 
   /**
@@ -861,47 +673,12 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateKey(@RequestBody MasterKeyDTO masterKey) {
-    if (!decryptionService.getMasterKey().equals(masterKey.getMasterKey())) {
-      decryptionService.updateMasterKey(masterKey.getMasterKey());
-      LogService.logInfo("MasterKey updated");
-      return new ResponseEntity<>(HttpStatus.OK);
-    }
-
-    return new ResponseEntity<>(HttpStatus.CONFLICT);
+    return userAccountControllerDelegate.updateKey(masterKey);
   }
 
   @Override
   public ResponseEntity<Void> updateE2eInChats(E2eKeyDTO e2eKeyDTO) {
-    var userId = authenticatedUser.getUserId();
-    var user =
-        authenticatedUser.isConsultant()
-            ? accountManager.findConsultant(userId).orElseThrow()
-            : accountManager.findAdviceSeeker(userId).orElseThrow();
-
-    var chatUserId = userDtoMapper.chatUserIdOf(user);
-    var username = authenticatedUser.getUsername();
-    if (isNull(chatUserId)) {
-      if (isAdviceSeekerWithoutEnquiryMessageWritten()) {
-        return ResponseEntity.accepted().build();
-      }
-      var message = String.format("Chat-user ID of user %s unknown", username);
-      throw new InternalServerErrorException(message);
-    }
-
-    if (isFalse(messenger.updateE2eKeys(chatUserId, e2eKeyDTO.getPublicKey()))) {
-      var message = String.format("Setting E2E keys in user %s's chats failed", username);
-      throw new InternalServerErrorException(message);
-    }
-
-    return ResponseEntity.noContent().build();
-  }
-
-  private boolean isAdviceSeekerWithoutEnquiryMessageWritten() {
-    if (authenticatedUser.isAdviceSeeker()) {
-      var adviceSeeker = userAccountProvider.retrieveValidatedUser();
-      return adviceSeeker.getCreateDate().isEqual(adviceSeeker.getUpdateDate());
-    }
-    return false;
+    return userAccountControllerDelegate.updateE2eInChats(e2eKeyDTO);
   }
 
   /**
@@ -1040,7 +817,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(
-      @NotNull @PathVariable Long sessionId) {
+      @PathVariable Long sessionId) {
     return userSessionControllerDelegate.fetchSessionForConsultant(sessionId);
   }
 
@@ -1052,10 +829,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateEmailAddress(String emailAddress) {
-    var lowerCaseEmail = Optional.of(emailAddress.toLowerCase());
-    userAccountProvider.changeUserAccountEmailAddress(lowerCaseEmail);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.updateEmailAddress(emailAddress);
   }
 
   /**
@@ -1065,9 +839,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> deleteEmailAddress() {
-    userAccountProvider.changeUserAccountEmailAddress(Optional.empty());
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.deleteEmailAddress();
   }
 
   /**
@@ -1079,17 +851,8 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> deactivateAndFlagUserAccountForDeletion(
       DeleteUserAccountDTO deleteUserAccountDTO) {
-    var username = authenticatedUser.getUsername();
-    var password = deleteUserAccountDTO.getPassword();
-    var encodedUsername = usernameTranscoder.encodeUsername(username);
-    if (!identityManager.validatePasswordIgnoring2fa(encodedUsername, password)) {
-      var message = String.format("Could not log in user %s into Keycloak", username);
-      throw new BadRequestException(message);
-    }
-
-    userAccountProvider.deactivateAndFlagUserAccountForDeletion();
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.deactivateAndFlagUserAccountForDeletion(
+        deleteUserAccountDTO);
   }
 
   /**
@@ -1100,8 +863,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateMobileToken(MobileTokenDTO mobileTokenDTO) {
-    this.userAccountProvider.updateUserMobileToken(mobileTokenDTO.getToken());
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.updateMobileToken(mobileTokenDTO);
   }
 
   /**
@@ -1112,8 +874,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> addMobileAppToken(MobileTokenDTO mobileTokenDTO) {
-    this.userAccountProvider.addMobileAppToken(mobileTokenDTO.getToken());
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userAccountControllerDelegate.addMobileAppToken(mobileTokenDTO);
   }
 
   /**
@@ -1137,7 +898,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> archiveSession(@NotNull @PathVariable Long sessionId) {
+  public ResponseEntity<Void> archiveSession(@PathVariable Long sessionId) {
     return userSessionControllerDelegate.archiveSession(sessionId);
   }
 
@@ -1148,7 +909,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> dearchiveSession(@NotNull @PathVariable Long sessionId) {
+  public ResponseEntity<Void> dearchiveSession(@PathVariable Long sessionId) {
     return userSessionControllerDelegate.dearchiveSession(sessionId);
   }
 
