@@ -281,6 +281,18 @@ class EventNotificationServiceTest {
     assertEquals("Sam Supervisor", params.get("supervisorName").asText());
   }
 
+  @Test
+  void createSupervisorRemovedNotification_doesNothingForNullSession() {
+    eventNotificationService.createSupervisorRemovedNotification(null, "user-1", "Sam");
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void createSupervisorRemovedNotification_doesNothingForNullRecipient() {
+    eventNotificationService.createSupervisorRemovedNotification(sessionMock(), null, "Sam");
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
   // ---------------------------------------------------------------------------
   // createCounselorRenamedNotification
   // ---------------------------------------------------------------------------
