@@ -45,7 +45,7 @@ class ConsultantLiveAvailabilityControllerIT {
   void setUp() {
     var controller =
         new ConsultantLiveAvailabilityController(authenticatedUser, consultantActivityRegistry);
-    ReflectionTestUtils.setField(controller, "activeWindowMs", 120000L);
+    ReflectionTestUtils.setField(controller, "activeWindowMs", 120_000L);
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }
 
