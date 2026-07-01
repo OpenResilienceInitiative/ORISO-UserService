@@ -92,6 +92,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc(addFilters = false)
 @Import({
   UserChatControllerDelegate.class,
+  UserAccountControllerDelegate.class,
   ApiResponseEntityExceptionHandler.class,
   EncodeUsernameJsonDeserializer.class,
   UrlDecodePasswordJsonDeserializer.class,
