@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -87,5 +90,27 @@ class ConsultantLiveAvailabilityControllerIT {
         .andExpect(jsonPath("$.available").value(false));
 
     verifyNoInteractions(consultantActivityRegistry);
+  }
+
+  @Test
+  void getLiveChatAvailability_Should_notRefreshTtl_When_pollingAvailability() throws Exception {
+    // Documents the pure-read contract at the controller level.
+    // Note: @WebMvcTest does not load ConsultantActivityInterceptor, so this test only verifies
+    // the controller itself does not mutate the registry. The interceptor's TTL-skip behavior
+    // for GET requests is verified in ConsultantActivityInterceptorTest.
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantActivityRegistry.filterActive(anyCollection(), anyLong()))
+        .thenReturn(Set.of(CONSULTANT_ID));
+
+    this.mockMvc
+        .perform(get(AVAILABILITY_PATH))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.available").value(true));
+
+    // Registry was queried (filterActive) but never mutated (no markAvailable/refreshIfAvailable)
+    verify(consultantActivityRegistry).filterActive(anyCollection(), anyLong());
+    verify(consultantActivityRegistry, never()).refreshIfAvailable(any());
+    verify(consultantActivityRegistry, never()).markAvailable(any());
   }
 }
