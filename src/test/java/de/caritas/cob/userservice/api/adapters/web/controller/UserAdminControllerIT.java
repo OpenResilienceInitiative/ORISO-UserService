@@ -41,7 +41,6 @@ import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.hateoas.autoconfigure.HypermediaAutoConfiguration;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -286,9 +285,7 @@ class UserAdminControllerIT {
   }
 
   @Test
-  void
-      setConsultantAgencies_Should_ReturnOkIfAgencyAssignmentFails()
-          throws Exception {
+  void setConsultantAgencies_Should_ReturnOkIfAgencyAssignmentFails() throws Exception {
     var consultantId = UUID.randomUUID().toString();
     var agencies = givenAgenciesToSet();
     doThrow(new ForbiddenException(""))

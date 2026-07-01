@@ -193,8 +193,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> createConsultantAgency(
-      @PathVariable String consultantId,
-      CreateConsultantAgencyDTO createConsultantAgencyDTO) {
+      @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
     consultantAdminFacade.checkPermissionsToAssignedAgencies(
         Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);

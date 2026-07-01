@@ -405,8 +405,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @RequestParam List<String> rcGroupIds,
-      @RequestHeader(required = false) String rcToken) {
+      @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -529,8 +528,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(
-      String rcToken, Long chatId) {
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(String rcToken, Long chatId) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -943,8 +941,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link List} of {@link ConsultantResponseDTO}
    */
   @Override
-  public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(
-      @RequestParam Long agencyId) {
+  public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(@RequestParam Long agencyId) {
 
     var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
 
@@ -1274,8 +1271,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> banFromChat(
-      String token, String chatUserId, Long chatId) {
+  public ResponseEntity<Void> banFromChat(String token, String chatUserId, Long chatId) {
     return userChatControllerDelegate.banFromChat(chatUserId, chatId);
   }
 
