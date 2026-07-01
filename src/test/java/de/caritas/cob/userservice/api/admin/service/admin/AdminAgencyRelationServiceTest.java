@@ -115,6 +115,7 @@ class AdminAgencyRelationServiceTest {
 
     assertThat(admin.getAgencies()).hasSize(1);
     assertThat(admin.getAgencies().get(0).getId()).isEqualTo(10L);
+    assertThat(admin.getAgencies().get(0).getName()).isEqualTo("Test Agency");
   }
 
   @Test
