@@ -51,7 +51,7 @@
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
 		<testcontainers.version>1.17.6</testcontainers.version>
-		<sentry.version>8.43.2</sentry.version>
+		<sentry.version>8.46.0</sentry.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 
@@ -111,7 +111,7 @@
 		</dependency>
 		<dependency>
 			<groupId>io.sentry</groupId>
-			<artifactId>sentry-spring-boot-starter</artifactId>
+			<artifactId>sentry-spring-boot-4-starter</artifactId>
 			<version>${sentry.version}</version>
 		</dependency>
 		<dependency>
