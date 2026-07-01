@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -34,6 +35,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -396,5 +398,22 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV1(chatDto, consultant);
 
     verify(userRepository).save(any());
+  }
+
+  @Test
+  void createSimplifiedGroupChat_Should_PersistCreatorWithSessionId_NotChatId() throws Exception {
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+    doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
+
+    createChatFacade.createChatV1(chatDto, consultant);
+
+    ArgumentCaptor<GroupChatParticipant> captor =
+        ArgumentCaptor.forClass(GroupChatParticipant.class);
+    verify(groupChatParticipantRepository, times(1)).save(captor.capture());
+    // creator participant must use sessionId (200L), not chatId (CHAT_ID=1L)
+    assertThat(captor.getValue().getChatId()).isEqualTo(200L);
   }
 }
