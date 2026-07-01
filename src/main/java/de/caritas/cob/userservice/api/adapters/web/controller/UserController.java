@@ -960,10 +960,10 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
       @NotNull @Size(min = 1) String query,
-      @Min(value = 1) Integer page,
-      @Min(value = 1) Integer perPage,
-      @Pattern(regexp = "^(FIRSTNAME|LASTNAME|EMAIL|UPDATE_DATE)$") String field,
-      @Pattern(regexp = "^(ASC|DESC)$") String order) {
+      @NotNull @Min(value = 1) Integer page,
+      @NotNull @Min(value = 1) Integer perPage,
+      @NotNull @Pattern(regexp = "(?i)^(FIRSTNAME|LASTNAME|EMAIL|UPDATE_DATE)$") String field,
+      @NotNull @Pattern(regexp = "(?i)^(ASC|DESC)$") String order) {
     var decodedInfix = determineDecodedInfix(query).trim();
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = consultantDtoMapper.mappedFieldOf(field);
