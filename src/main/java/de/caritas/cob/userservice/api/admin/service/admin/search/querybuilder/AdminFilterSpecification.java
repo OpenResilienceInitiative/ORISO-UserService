@@ -1,21 +1,21 @@
-package de.caritas.cob.userservice.api.admin.service.consultant.querybuilder;
+package de.caritas.cob.userservice.api.admin.service.admin.search.querybuilder;
 
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
-import de.caritas.cob.userservice.api.model.Consultant;
-import jakarta.persistence.criteria.JoinType;
+import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.AdminAgency;
 import jakarta.persistence.criteria.Predicate;
 import java.util.ArrayList;
 import org.springframework.data.jpa.domain.Specification;
 
-/** Builds a JPA {@link Specification} for filtering {@link Consultant} entities. */
-public class ConsultantFilterSpecification {
+/** Builds a JPA {@link Specification} for filtering {@link Admin} entities. */
+public class AdminFilterSpecification {
 
-  private ConsultantFilterSpecification() {}
+  private AdminFilterSpecification() {}
 
-  public static Specification<Consultant> of(ConsultantFilter filter) {
+  public static Specification<Admin> of(AdminFilter filter) {
     return (root, query, cb) -> {
       var predicates = new ArrayList<Predicate>();
       if (nonNull(filter)) {
@@ -30,14 +30,13 @@ public class ConsultantFilterSpecification {
         if (isNotBlank(filter.getEmail())) {
           predicates.add(cb.like(cb.lower(root.<String>get("email")), contains(filter.getEmail())));
         }
-        if (nonNull(filter.getAbsent())) {
-          predicates.add(cb.equal(root.get("absent"), filter.getAbsent()));
-        }
         if (nonNull(filter.getAgencyId())) {
-          var agencyJoin = root.join("consultantAgencies", JoinType.INNER);
-          predicates.add(cb.equal(agencyJoin.get("agencyId"), filter.getAgencyId()));
-          predicates.add(cb.isNull(agencyJoin.get("deleteDate")));
-          query.distinct(true);
+          var adminAgency = query.subquery(String.class);
+          var adminAgencyRoot = adminAgency.from(AdminAgency.class);
+          adminAgency
+              .select(adminAgencyRoot.get("admin").get("id"))
+              .where(cb.equal(adminAgencyRoot.get("agencyId"), filter.getAgencyId()));
+          predicates.add(root.get("id").in(adminAgency));
         }
       }
       return cb.and(predicates.toArray(new Predicate[0]));

@@ -41,13 +41,13 @@ import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(UserAdminController.class)
@@ -87,31 +87,31 @@ class UserAdminControllerIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private SessionAdminService sessionAdminService;
+  @MockitoBean private SessionAdminService sessionAdminService;
 
-  @MockBean private ConsultantAdminFacade consultantAdminFacade;
+  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
-  @MockBean private ViolationReportGenerator violationReportGenerator;
+  @MockitoBean private ViolationReportGenerator violationReportGenerator;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private LinkDiscoverers linkDiscoverers;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean private AskerUserAdminFacade askerUserAdminFacade;
+  @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
-  @MockBean private AppointmentService appointmentService;
+  @MockitoBean private AppointmentService appointmentService;
 
-  @MockBean private AdminUserFacade adminUserFacade;
+  @MockitoBean private AdminUserFacade adminUserFacade;
 
-  @MockBean private AdminDtoMapper adminDtoMapper;
+  @MockitoBean private AdminDtoMapper adminDtoMapper;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
+  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()

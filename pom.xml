@@ -15,21 +15,25 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>2.7.18</version>
+		<version>4.0.1</version>
 		<relativePath /> <!-- lookup parent from repository -->
 	</parent>
 
 	<properties> <!-- upper version is used to add the new features with the new versions of Java and spring boot, basic code changes are already made and as new features arrive they will use the upper version -->
 		<java.upper.version>21</java.upper.version>
 		<springboot.upper.version>4.0.1</springboot.upper.version>
-		<spring.upper.version>6.2.0</spring.upper.version>
+		<spring.upper.version>7.0.x</spring.upper.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<java.version>11</java.version>
+		<java.version>21</java.version>
+		<maven.compiler.source>21</maven.compiler.source>
+		<maven.compiler.target>21</maven.compiler.target>
 		<skip.unit-tests>false</skip.unit-tests>
 		<skip.integration-tests>false</skip.integration-tests>
 		<keycloak.version>17.0.0</keycloak.version>
 		<springfox.version>2.9.2</springfox.version>
+		<spring-plugin-core.version>2.0.0.RELEASE</spring-plugin-core.version>
+		<openapi.generator.maven.version>7.17.0</openapi.generator.maven.version>
 		<adapters.web.generated.path>
 			${project.groupId}.${project.artifactId}.generated.api.adapters.web
 		</adapters.web.generated.path>
@@ -41,47 +45,37 @@
 		<commons-text.version>1.10.0</commons-text.version>
 		<commons-validator.version>1.7</commons-validator.version>
 		<liquibase-maven-plugin.version>4.8.0</liquibase-maven-plugin.version>
+		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
-		<spring-boot-starter-web.version>2.7.18</spring-boot-starter-web.version>
-		<spring-security-core.version>5.7.12</spring-security-core.version>
-		<spring-beans.version>5.3.35</spring-beans.version>
-		<spring-webmvc.version>5.3.35</spring-webmvc.version>
-		<spring-core.version>5.3.35</spring-core.version>
 		<json-smart.version>2.4.7</json-smart.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
-		<spring-context-support.version>5.3.35</spring-context-support.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
 		<testcontainers.version>1.17.6</testcontainers.version>
 		<sentry.version>8.43.2</sentry.version>
+		<lombok.version>1.18.42</lombok.version>
 	</properties>
-
-	<dependencyManagement>
-		<dependencies>
-			<dependency>
-				<groupId>org.springframework.cloud</groupId>
-				<artifactId>spring-cloud-dependencies</artifactId>
-				<version>2021.0.8</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-		</dependencies>
-	</dependencyManagement>
 
 	<dependencies>
 		<!-- Spring Boot dependencies -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
-			<version>${spring-boot-starter-web.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-web</artifactId>
-			<version>5.3.35</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-restclient</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -101,7 +95,7 @@
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-aop</artifactId>
+			<artifactId>spring-boot-starter-aspectj</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -110,6 +104,10 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-amqp</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>io.sentry</groupId>
@@ -124,32 +122,26 @@
 		<dependency>
 			<groupId>org.springframework.security</groupId>
 			<artifactId>spring-security-core</artifactId>
-			<version>${spring-security-core.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-beans</artifactId>
-			<version>${spring-beans.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-webmvc</artifactId>
-			<version>${spring-webmvc.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-core</artifactId>
-			<version>${spring-core.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>org.springframework.cloud</groupId>
-			<artifactId>spring-cloud-starter-sleuth</artifactId>
-			<version>3.1.11</version>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-tracing-bridge-otel</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>org.springframework.cloud</groupId>
-			<artifactId>spring-cloud-starter-zipkin</artifactId>
-			<version>2.2.8.RELEASE</version>
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-exporter-zipkin</artifactId>
 		</dependency>
 
 		<!-- Spring actuator  -->
@@ -180,13 +172,18 @@
 		<dependency>
 			<groupId>org.openapitools</groupId>
 			<artifactId>openapi-generator-maven-plugin</artifactId>
-			<version>5.3.0</version>
+			<version>${openapi.generator.maven.version}</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.openapitools</groupId>
 			<artifactId>jackson-databind-nullable</artifactId>
 			<version>0.2.2</version>
+		</dependency>
+		<dependency>
+			<groupId>io.swagger.core.v3</groupId>
+			<artifactId>swagger-annotations</artifactId>
+			<version>2.2.15</version>
 		</dependency>
 		<dependency>
 			<groupId>com.fasterxml.jackson.datatype</groupId>
@@ -205,10 +202,10 @@
 			<version>${springfox.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>javax.validation</groupId>
-			<artifactId>validation-api</artifactId>
+			<groupId>org.springframework.plugin</groupId>
+			<artifactId>spring-plugin-core</artifactId>
+			<version>${spring-plugin-core.version}</version>
 		</dependency>
-
 		<!-- Keycloak dependencies -->
 		<dependency>
 			<groupId>org.keycloak</groupId>
@@ -226,6 +223,11 @@
 			<version>${keycloak.version}</version>
 		</dependency>
 		<dependency>
+			<groupId>jakarta.ws.rs</groupId>
+			<artifactId>jakarta.ws.rs-api</artifactId>
+			<version>${jakarta.ws.rs-api.version}</version>
+		</dependency>
+		<dependency>
 			<groupId>javax.ws.rs</groupId>
 			<artifactId>javax.ws.rs-api</artifactId>
 			<version>${javax.ws.rs-api.version}</version>
@@ -235,6 +237,7 @@
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
+			<version>${lombok.version}</version>
 			<optional>true</optional>
 		</dependency>
 
@@ -278,6 +281,10 @@
 		<dependency>
 			<groupId>org.liquibase</groupId>
 			<artifactId>liquibase-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-liquibase</artifactId>
 		</dependency>
 
 
@@ -350,7 +357,6 @@
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-context-support</artifactId>
-			<version>${spring-context-support.version}</version>
 		</dependency>
 
 		<!-- Push notification firebase dependency -->
@@ -376,6 +382,21 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-jdbc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-data-jpa-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
@@ -510,6 +531,23 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<forceJavacCompilerUse>true</forceJavacCompilerUse>
+					<annotationProcessors>
+						<annotationProcessor>lombok.launch.AnnotationProcessorHider$AnnotationProcessor</annotationProcessor>
+					</annotationProcessors>
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.projectlombok</groupId>
+							<artifactId>lombok</artifactId>
+							<version>${lombok.version}</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+			</plugin>
+			<plugin>
 				<groupId>org.openrewrite.maven</groupId>
 				<artifactId>rewrite-maven-plugin</artifactId>
 				<version>5.30.0</version>
@@ -548,11 +586,27 @@
 			</plugin>
 
 			<!-- OpenAPI codegen maven plugin: generates api stubs -->
-			<plugin>
-				<groupId>org.openapitools</groupId>
-				<artifactId>openapi-generator-maven-plugin</artifactId>
-				<version>5.1.1</version>
-				<executions>
+					<plugin>
+						<groupId>org.openapitools</groupId>
+						<artifactId>openapi-generator-maven-plugin</artifactId>
+						<version>${openapi.generator.maven.version}</version>
+					<configuration>
+						<skipValidateSpec>true</skipValidateSpec>
+						<schemaMappings>
+							<schemaMapping>UserDTO=${adapters.web.dto.path}.UserDTO</schemaMapping>
+							<schemaMapping>SessionUserDTO=${adapters.web.dto.path}.SessionUserDTO</schemaMapping>
+							<schemaMapping>SessionConsultantForUserDTO=${adapters.web.dto.path}.SessionConsultantForUserDTO</schemaMapping>
+							<schemaMapping>GroupSessionConsultantDTO=${adapters.web.dto.path}.GroupSessionConsultantDTO</schemaMapping>
+							<schemaMapping>UserChatDTO=${adapters.web.dto.path}.UserChatDTO</schemaMapping>
+							<schemaMapping>UserDataResponseDTO=${adapters.web.dto.path}.UserDataResponseDTO</schemaMapping>
+							<schemaMapping>MonitoringDTO=${adapters.web.dto.path}.MonitoringDTO</schemaMapping>
+							<schemaMapping>ChatDTO=${adapters.web.dto.path}.ChatDTO</schemaMapping>
+							<schemaMapping>NewRegistrationDto=${adapters.web.dto.path}.NewRegistrationDto</schemaMapping>
+							<schemaMapping>Date=java.util.Date</schemaMapping>
+							<schemaMapping>HttpStatus=org.springframework.http.HttpStatus</schemaMapping>
+						</schemaMappings>
+					</configuration>
+					<executions>
 					<execution>
 						<goals>
 							<goal>generate</goal>
@@ -563,10 +617,12 @@
 							<apiPackage>${adapters.web.generated.path}.controller</apiPackage>
 							<modelPackage>${adapters.web.dto.path}</modelPackage>
 							<generateSupportingFiles>true</generateSupportingFiles>
-							<configOptions>
-								<interfaceOnly>true</interfaceOnly>
-								<sourceFolder>/</sourceFolder>
-							</configOptions>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
 							<output>target/generated-sources</output>
 							<importMappings>
 								<importMapping>UserDTO=${adapters.web.dto.path}.UserDTO</importMapping>
@@ -618,11 +674,13 @@
 							<apiPackage>${adapters.web.generated.path}.controller</apiPackage>
 							<modelPackage>${adapters.web.dto.path}</modelPackage>
 							<generateSupportingFiles>true</generateSupportingFiles>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<interfaceOnly>true</interfaceOnly>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<interfaceOnly>true</interfaceOnly>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<output>target/generated-sources</output>
 							<typeMappings>
 								<typeMapping>OffsetDateTime=Instant</typeMapping>
@@ -639,11 +697,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/applicationsettingsservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -663,10 +723,12 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<interfaceOnly>true</interfaceOnly>
-								<sourceFolder>/</sourceFolder>
-							</configOptions>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
 							<inputSpec>${project.basedir}/api/useradminservice.yaml</inputSpec>
 							<generatorName>spring</generatorName>
 							<apiPackage>${adapters.web.generated.path}.controller</apiPackage>
@@ -686,10 +748,12 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<interfaceOnly>true</interfaceOnly>
-								<sourceFolder>/</sourceFolder>
-							</configOptions>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
 							<inputSpec>${project.basedir}/api/userstatisticsservice.yaml</inputSpec>
 							<generatorName>spring</generatorName>
 							<apiPackage>${project.groupId}.${project.artifactId}.generated.api.statistics.controller</apiPackage>
@@ -706,10 +770,12 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<interfaceOnly>true</interfaceOnly>
-								<sourceFolder>/</sourceFolder>
-							</configOptions>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
 							<inputSpec>${project.basedir}/api/conversationservice.yaml</inputSpec>
 							<generatorName>spring</generatorName>
 							<apiPackage>
@@ -757,11 +823,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>native</library>
-								<asyncNative>true</asyncNative>
-								<dateLibrary>java8</dateLibrary>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>native</library>
+									<asyncNative>true</asyncNative>
+									<dateLibrary>java8</dateLibrary>
 							</configOptions>
 							<inputSpec>${project.basedir}/services/liveservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
@@ -779,11 +847,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/consultingtypeservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -810,11 +880,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/agencyadminservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -836,11 +908,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/agencyservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -862,11 +936,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/messageservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -887,11 +963,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/mailservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -908,11 +986,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/statisticsservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -930,11 +1010,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/tenantservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -955,11 +1037,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/tenantadminservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -980,11 +1064,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/topicservice.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -1005,11 +1091,13 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<sourceFolder>/</sourceFolder>
-								<library>resttemplate</library>
-								<dateLibrary>java8</dateLibrary>
-							</configOptions>
+								<configOptions>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<library>resttemplate</library>
+									<dateLibrary>java8</dateLibrary>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/appointmentService.yaml</inputSpec>
 							<generatorName>java</generatorName>
 							<generateApis>true</generateApis>
@@ -1029,10 +1117,12 @@
 							<goal>generate</goal>
 						</goals>
 						<configuration>
-							<configOptions>
-								<interfaceOnly>true</interfaceOnly>
-								<sourceFolder>/</sourceFolder>
-							</configOptions>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
 							<inputSpec>${project.basedir}/services/keycloakextension.yaml</inputSpec>
 							<generateApis>false</generateApis>
 							<generateSupportingFiles>false</generateSupportingFiles>

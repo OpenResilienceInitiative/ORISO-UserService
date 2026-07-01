@@ -96,23 +96,23 @@ import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import jakarta.servlet.http.Cookie;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(
@@ -154,44 +154,44 @@ class UserControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private UserService userService;
-  @MockBean private SessionService sessionService;
-  @MockBean private SessionRepository sessionRepository;
-  @MockBean private UserRepository userRepository;
-  @MockBean private LogService logService;
-  @MockBean private AuthenticatedUser authenticatedUser;
-  @MockBean private ConsultantDataFacade consultantDataFacade;
-  @MockBean private EmailNotificationFacade emailNotificationFacade;
-  @MockBean private ConsultantImportService consultantImportService;
-  @MockBean private AskerImportService askerImportService;
-  @MockBean private ConsultantAgencyService consultantAgencyService;
-  @MockBean private IdentityClient identityClient;
-  @MockBean private IdentityManager identityManager;
-  @MockBean private DecryptionService encryptionService;
-  @MockBean private ChatService chatService;
-  @MockBean private StartChatFacade startChatFacade;
-  @MockBean private JoinAndLeaveChatFacade joinChatFacade;
-  @MockBean private GetChatFacade getChatFacade;
-  @MockBean private RocketChatService rocketChatService;
-  @MockBean private ChatPermissionVerifier chatPermissionVerifier;
-  @MockBean private StopChatFacade stopChatFacade;
-  @MockBean private GetChatMembersFacade getChatMembersFacade;
-  @MockBean private UserHelper userHelper;
-  @MockBean private CreateSessionFacade createSessionFacade;
-  @MockBean private UserAccountService userAccountService;
-  @MockBean private SessionDataService sessionDataService;
-  @MockBean private SessionArchiveService sessionArchiveService;
-  @MockBean private ConsultantUpdateService consultantUpdateService;
-  @MockBean private ConsultantService consultantService;
-  @MockBean private AskerDataProvider askerDataProvider;
+  @MockitoBean private UserService userService;
+  @MockitoBean private SessionService sessionService;
+  @MockitoBean private SessionRepository sessionRepository;
+  @MockitoBean private UserRepository userRepository;
+  @MockitoBean private LogService logService;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private ConsultantDataFacade consultantDataFacade;
+  @MockitoBean private EmailNotificationFacade emailNotificationFacade;
+  @MockitoBean private ConsultantImportService consultantImportService;
+  @MockitoBean private AskerImportService askerImportService;
+  @MockitoBean private ConsultantAgencyService consultantAgencyService;
+  @MockitoBean private IdentityClient identityClient;
+  @MockitoBean private IdentityManager identityManager;
+  @MockitoBean private DecryptionService encryptionService;
+  @MockitoBean private ChatService chatService;
+  @MockitoBean private StartChatFacade startChatFacade;
+  @MockitoBean private JoinAndLeaveChatFacade joinChatFacade;
+  @MockitoBean private GetChatFacade getChatFacade;
+  @MockitoBean private RocketChatService rocketChatService;
+  @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
+  @MockitoBean private StopChatFacade stopChatFacade;
+  @MockitoBean private GetChatMembersFacade getChatMembersFacade;
+  @MockitoBean private UserHelper userHelper;
+  @MockitoBean private CreateSessionFacade createSessionFacade;
+  @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private SessionDataService sessionDataService;
+  @MockitoBean private SessionArchiveService sessionArchiveService;
+  @MockitoBean private ConsultantUpdateService consultantUpdateService;
+  @MockitoBean private ConsultantService consultantService;
+  @MockitoBean private AskerDataProvider askerDataProvider;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private Messaging messenger;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private Messenger concreteMessenger;
 

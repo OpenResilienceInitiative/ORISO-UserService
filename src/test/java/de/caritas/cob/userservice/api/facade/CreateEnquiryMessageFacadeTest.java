@@ -86,11 +86,11 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Grou
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.SessionDataInitializingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.WelcomeMessageDTO;
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResponseDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

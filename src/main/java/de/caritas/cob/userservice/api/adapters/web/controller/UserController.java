@@ -99,6 +99,9 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.InternalServerErrorException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
@@ -107,9 +110,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.validation.Valid;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.InternalServerErrorException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -608,12 +608,8 @@ public class UserController implements UsersApi {
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       partialUserData = consultantDataProvider.retrieveData(consultant);
-      accountManager
-          .findConsultant(authenticatedUser.getUserId())
-          .ifPresent(
-              consultantMap ->
-                  partialUserData.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
-      partialUserData.setAvailable(messenger.getAvailability(authenticatedUser.getUserId()));
+      enrichConsultantDisplayName(partialUserData);
+      enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
     } else {
@@ -630,6 +626,31 @@ public class UserController implements UsersApi {
             identityClientConfig.getDisplayNameAllowedForConsultants());
 
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
+  }
+
+  private void enrichConsultantDisplayName(UserDataResponseDTO userData) {
+    try {
+      accountManager
+          .findConsultant(authenticatedUser.getUserId())
+          .ifPresent(
+              consultantMap -> userData.setDisplayName(userDtoMapper.displayNameOf(consultantMap)));
+    } catch (Exception ex) {
+      log.warn(
+          "Could not enrich display name for consultant {}; returning user data without display name",
+          authenticatedUser.getUserId(),
+          ex);
+    }
+  }
+
+  private void enrichConsultantAvailability(UserDataResponseDTO userData) {
+    try {
+      userData.setAvailable(messenger.getAvailability(authenticatedUser.getUserId()));
+    } catch (Exception ex) {
+      log.warn(
+          "Could not enrich availability for consultant {}; returning user data without availability",
+          authenticatedUser.getUserId(),
+          ex);
+    }
   }
 
   private OtpInfoDTO retrieveOtpCredentialIfAllowed() {

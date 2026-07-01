@@ -10,15 +10,15 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotBlank;
 import java.util.Arrays;
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.constraints.AssertTrue;
-import javax.validation.constraints.NotBlank;
 import lombok.Data;
 import org.apache.logging.log4j.core.util.CronExpression;
 import org.hibernate.validator.constraints.URL;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
@@ -51,8 +51,8 @@ public class RocketChatConfig {
   @Bean("rocketChatRestTemplate")
   public RestTemplate rocketChatRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
-        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .defaultHeader(CONTENT_TYPE, MediaType.APPLICATION_JSON.toString())
         .build();
   }

@@ -2,14 +2,18 @@ package de.caritas.cob.userservice.api.tenant;
 
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TECHNICAL;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.servlet.http.HttpServletRequest;
-import org.keycloak.adapters.springsecurity.token.KeycloakAuthenticationToken;
-import org.keycloak.representations.AccessToken;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
 
   @Override
@@ -18,30 +22,40 @@ public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
   }
 
   private boolean isTechnicalOrGlobalTenantAdmin(HttpServletRequest request) {
-    AccessToken token = getAccessToken(request);
+    Jwt token = getAccessToken(request);
+    if (token == null) {
+      return false;
+    }
     // Only technical role should force global tenant context.
     // Super-admin is still resolved as tenant 0 through AccessTokenTenantResolver claim parsing.
     return containsRole(token, TECHNICAL.getValue());
   }
 
-  private AccessToken getAccessToken(HttpServletRequest request) {
-    return ((KeycloakAuthenticationToken) request.getUserPrincipal())
-        .getAccount()
-        .getKeycloakSecurityContext()
-        .getToken();
-  }
-
-  private boolean containsRole(AccessToken token, String expectedRole) {
-    if (hasRoles(token)) {
-      Set<String> roles = token.getRealmAccess().getRoles();
-      return roles.contains(expectedRole);
-    } else {
-      return false;
+  private Jwt getAccessToken(HttpServletRequest request) {
+    var principal = request.getUserPrincipal();
+    if (!(principal instanceof JwtAuthenticationToken jwtToken)) {
+      log.debug(
+          "UserPrincipal is not a JwtAuthenticationToken (was: {}), treating as non-technical user",
+          principal == null ? "null" : principal.getClass().getName());
+      return null;
     }
+    return jwtToken.getToken();
   }
 
-  private boolean hasRoles(AccessToken accessToken) {
-    return accessToken.getRealmAccess() != null && accessToken.getRealmAccess().getRoles() != null;
+  private boolean containsRole(Jwt token, String expectedRole) {
+    return extractRealmRoles(token).contains(expectedRole);
+  }
+
+  @SuppressWarnings("unchecked")
+  private Set<String> extractRealmRoles(Jwt token) {
+    Object realmAccess = token.getClaims().get("realm_access");
+    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
+      Object rolesClaim = realmAccessMap.get("roles");
+      if (rolesClaim instanceof Collection<?> roles) {
+        return roles.stream().map(Object::toString).collect(java.util.stream.Collectors.toSet());
+      }
+    }
+    return Set.of();
   }
 
   @Override

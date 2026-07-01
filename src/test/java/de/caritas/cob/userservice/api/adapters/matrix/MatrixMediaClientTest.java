@@ -99,7 +99,7 @@ class MatrixMediaClientTest {
 
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
-        .thenReturn(new ResponseEntity<>(null, HttpStatus.OK));
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).build());
 
     assertThatThrownBy(() -> matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN))
         .isInstanceOf(RuntimeException.class)
@@ -292,7 +292,7 @@ class MatrixMediaClientTest {
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))
-        .thenReturn(new ResponseEntity<>(null, HttpStatus.OK));
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).build());
 
     assertThatThrownBy(
             () -> matrixMediaClient.downloadFile("matrix.local", "media-id", ACCESS_TOKEN))

@@ -57,6 +57,7 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserF
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.LogService;
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -65,7 +66,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -1041,7 +1041,7 @@ public class RocketChatService implements MessageClient {
           String.format(
               "Could not get Rocket.Chat user info of user id %s.%n Status: %s.%n error: %s.%n error type: %s",
               rcUserId,
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);
@@ -1081,7 +1081,7 @@ public class RocketChatService implements MessageClient {
           String.format(
               "Could not get Rocket.Chat user info of user id %s.%n Status: %s.%n error: %s.%n error type: %s",
               requestDTO.getUserId(),
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);
@@ -1127,7 +1127,7 @@ public class RocketChatService implements MessageClient {
               "Could not delete Rocket.Chat user with user id %s.%n Status: %s.%n error: %s.%n "
                   + "error type: %s",
               rcUserId,
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);

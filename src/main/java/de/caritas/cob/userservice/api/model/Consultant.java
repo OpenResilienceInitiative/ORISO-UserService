@@ -7,24 +7,23 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Index;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Transient;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -35,6 +34,7 @@ import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Where;
 import org.hibernate.search.annotations.Analyzer;
@@ -45,6 +45,7 @@ import org.hibernate.search.annotations.IndexedEmbedded;
 import org.hibernate.search.annotations.SortableField;
 import org.hibernate.search.annotations.TokenFilterDef;
 import org.hibernate.search.annotations.TokenizerDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
@@ -71,7 +72,7 @@ import org.springframework.lang.Nullable;
     })
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class Consultant implements TenantAware, NotificationsAware {
 
@@ -121,23 +122,27 @@ public class Consultant implements TenantAware, NotificationsAware {
   private String email;
 
   @Column(name = "is_absent", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   @Field
   private boolean absent;
 
   @Column(name = "is_team_consultant", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamConsultant;
 
   @Column(name = "is_supervisor", nullable = false, columnDefinition = "tinyint default 0")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean supervisor;
 
   @Column(name = "display_name")
   private String displayName;
 
-  @Column(name = "absence_message")
-  @Lob
+  @Column(name = "absence_message", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String absenceMessage;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
 
   @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -224,6 +229,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private ConsultantStatus status = ConsultantStatus.IN_PROGRESS;
 
   @Column(name = "walk_through_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Boolean walkThroughEnabled;
 
   @Enumerated(EnumType.STRING)
@@ -237,6 +243,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private LocalDateTime dataPrivacyConfirmation;
 
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
   @Column(name = "notifications_settings")

@@ -9,15 +9,15 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import jakarta.mail.Authenticator;
+import jakarta.mail.Message;
+import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
 import java.net.URI;
 import java.util.List;
 import java.util.Properties;
-import javax.mail.Authenticator;
-import javax.mail.Message;
-import javax.mail.PasswordAuthentication;
-import javax.mail.Transport;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeMessage;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -236,8 +236,8 @@ public class SupervisorAddedEmailNotificationService {
       props.put("mail.smtp.starttls.enable", "true");
     }
 
-    javax.mail.Session session =
-        javax.mail.Session.getInstance(
+    jakarta.mail.Session session =
+        jakarta.mail.Session.getInstance(
             props,
             new Authenticator() {
               @Override

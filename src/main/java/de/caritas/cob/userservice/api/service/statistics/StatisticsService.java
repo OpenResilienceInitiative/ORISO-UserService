@@ -3,8 +3,8 @@ package de.caritas.cob.userservice.api.service.statistics;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.service.statistics.event.StatisticsEvent;
+import jakarta.validation.constraints.NotNull;
 import java.nio.charset.StandardCharsets;
-import javax.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.AmqpTemplate;

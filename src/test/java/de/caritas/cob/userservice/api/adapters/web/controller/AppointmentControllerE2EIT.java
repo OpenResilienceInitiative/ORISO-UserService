@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import jakarta.servlet.http.Cookie;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -33,7 +34,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -45,15 +45,16 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
@@ -78,15 +79,15 @@ class AppointmentControllerE2EIT {
 
   @Autowired private AppointmentRepository appointmentRepository;
 
-  @MockBean private RabbitTemplate amqpTemplate;
+  @MockitoBean private RabbitTemplate amqpTemplate;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private Clock clock;
+  @MockitoBean private Clock clock;
 
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
+  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   private Appointment appointment;
 
@@ -111,7 +112,9 @@ class AppointmentControllerE2EIT {
         new ExceptionHandlerExceptionResolver() {
           @Override
           protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
-              final HandlerMethod handlerMethod, final Exception exception) {
+              final HandlerMethod handlerMethod,
+              final Exception exception,
+              final ServletWebRequest webRequest) {
             Method method =
                 new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
                     .resolveMethod(exception);
@@ -119,7 +122,7 @@ class AppointmentControllerE2EIT {
               return new ServletInvocableHandlerMethod(
                   new ApiResponseEntityExceptionHandler(), method);
             }
-            return super.getExceptionHandlerMethod(handlerMethod, exception);
+            return super.getExceptionHandlerMethod(handlerMethod, exception, webRequest);
           }
         };
     exceptionResolver.afterPropertiesSet();

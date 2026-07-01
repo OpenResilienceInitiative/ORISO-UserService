@@ -4,20 +4,19 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EntityListeners;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Transient;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -28,7 +27,9 @@ import lombok.ToString;
 import lombok.ToString.Exclude;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -45,7 +46,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @EntityListeners(AuditingEntityListener.class)
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class User implements TenantAware, NotificationsAware {
 
@@ -75,6 +76,7 @@ public class User implements TenantAware, NotificationsAware {
   private String matrixUserId;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
 
   @OneToMany(mappedBy = "user")
@@ -85,8 +87,8 @@ public class User implements TenantAware, NotificationsAware {
   @Exclude
   private Set<UserAgency> userAgencies;
 
-  @Column(name = "mobile_token")
-  @Lob
+  @Column(name = "mobile_token", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String mobileToken;
 
   @OneToMany(mappedBy = "user")
@@ -146,6 +148,7 @@ public class User implements TenantAware, NotificationsAware {
   private LocalDateTime dataPrivacyConfirmation;
 
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
   @Column(name = "notifications_settings")

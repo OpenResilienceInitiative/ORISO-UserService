@@ -14,11 +14,11 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -28,7 +28,7 @@ public class UpdateAdminServiceIT {
   private final String VALID_ADMIN_ID = "164be67d-4d1b-4d80-bb6b-0ee057a1c59e";
 
   @Autowired private UpdateAdminService updateAdminService;
-  @MockBean private IdentityClient identityClient;
+  @MockitoBean private IdentityClient identityClient;
   @Autowired private RetrieveAdminService retrieveAdminService;
 
   @Test

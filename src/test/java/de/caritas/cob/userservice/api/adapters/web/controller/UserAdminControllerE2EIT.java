@@ -43,8 +43,8 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.Consulting
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.servlet.http.Cookie;
 import java.util.LinkedHashMap;
-import javax.servlet.http.Cookie;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -54,14 +54,14 @@ import org.keycloak.admin.client.Keycloak;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,42 +93,42 @@ class UserAdminControllerE2EIT {
 
   @Autowired private AdminRepository adminRepository;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
-  @MockBean
+  @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
-  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
+  @MockitoBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
-  @MockBean IdentityClient identityClient;
+  @MockitoBean IdentityClient identityClient;
 
-  @MockBean TenantService tenantService;
+  @MockitoBean TenantService tenantService;
 
   private User user;
 

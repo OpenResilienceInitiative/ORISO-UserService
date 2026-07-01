@@ -59,8 +59,8 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.servlet.http.Cookie;
 import java.util.*;
-import javax.servlet.http.Cookie;
 import lombok.val;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -74,15 +74,15 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(UserController.class)
@@ -236,119 +236,119 @@ class UserControllerIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private UserAccountService userAccountService;
-  @MockBean private SessionService sessionService;
-  @MockBean private AuthenticatedUser authenticatedUser;
-  @MockBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
+  @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private SessionService sessionService;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantImportService consultantImportService;
 
-  @MockBean private EmailNotificationFacade emailNotificationFacade;
+  @MockitoBean private EmailNotificationFacade emailNotificationFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AskerImportService askerImportService;
 
-  @MockBean private SessionListFacade sessionListFacade;
-  @MockBean private ConsultantAgencyService consultantAgencyService;
-  @MockBean private AssignSessionFacade assignSessionFacade;
-  @MockBean private AssignEnquiryFacade assignEnquiryFacade;
-  @MockBean private IdentityClient identityClient;
-  @MockBean private DecryptionService encryptionService;
-  @MockBean private ConsultingTypeManager consultingTypeManager;
-  @MockBean private UserHelper userHelper;
-  @MockBean private ChatService chatService;
-  @MockBean private StartChatFacade startChatFacade;
-  @MockBean private GetChatFacade getChatFacade;
-  @MockBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
-  @MockBean private AssignChatFacade assignChatFacade;
-  @MockBean private CreateChatFacade createChatFacade;
-  @MockBean private RocketChatService rocketChatService;
-  @MockBean private ChatPermissionVerifier chatPermissionVerifier;
-  @MockBean private StopChatFacade stopChatFacade;
-  @MockBean private GetChatMembersFacade getChatMembersFacade;
-  @MockBean private CreateUserFacade createUserFacade;
+  @MockitoBean private SessionListFacade sessionListFacade;
+  @MockitoBean private ConsultantAgencyService consultantAgencyService;
+  @MockitoBean private AssignSessionFacade assignSessionFacade;
+  @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
+  @MockitoBean private IdentityClient identityClient;
+  @MockitoBean private DecryptionService encryptionService;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private UserHelper userHelper;
+  @MockitoBean private ChatService chatService;
+  @MockitoBean private StartChatFacade startChatFacade;
+  @MockitoBean private GetChatFacade getChatFacade;
+  @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
+  @MockitoBean private AssignChatFacade assignChatFacade;
+  @MockitoBean private CreateChatFacade createChatFacade;
+  @MockitoBean private RocketChatService rocketChatService;
+  @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
+  @MockitoBean private StopChatFacade stopChatFacade;
+  @MockitoBean private GetChatMembersFacade getChatMembersFacade;
+  @MockitoBean private CreateUserFacade createUserFacade;
 
-  @MockBean KeycloakConfigResolver resolver;
+  @MockitoBean KeycloakConfigResolver resolver;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private LinkDiscoverers linkDiscoverers;
 
-  @MockBean private CreateNewSessionFacade createNewSessionFacade;
-  @MockBean private MandatoryFieldsProvider mandatoryFieldsProvider;
-  @MockBean private ConsultantDataFacade consultantDataFacade;
-  @MockBean private SessionDataService sessionDataService;
-  @MockBean private SessionArchiveService sessionArchiveService;
+  @MockitoBean private CreateNewSessionFacade createNewSessionFacade;
+  @MockitoBean private MandatoryFieldsProvider mandatoryFieldsProvider;
+  @MockitoBean private ConsultantDataFacade consultantDataFacade;
+  @MockitoBean private SessionDataService sessionDataService;
+  @MockitoBean private SessionArchiveService sessionArchiveService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityClientConfig identityClientConfig;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityManaging identityManager;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AccountManaging accountManager;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private Messaging messenger;
 
-  @MockBean private ConsultantUpdateService consultantUpdateService;
+  @MockitoBean private ConsultantUpdateService consultantUpdateService;
 
-  @SpyBean
+  @MockitoSpyBean
   @SuppressWarnings("unused")
   private ConsultantDtoMapper consultantDtoMapper;
 
   // Required by the ConsultantDtoMapper spy bean when this WebMvcTest context is created.
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantTopicRepository consultantTopicRepository;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private TopicService topicService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private UserDtoMapper userDtoMapper;
 
-  @MockBean private ConsultantService consultantService;
+  @MockitoBean private ConsultantService consultantService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantDataProvider consultantDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AskerDataProvider askerDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private KeycloakUserDataProvider keycloakUserDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private VideoChatConfig videoChatConfig;
 
-  @MockBean private AdminUserFacade adminUserFacade;
+  @MockitoBean private AdminUserFacade adminUserFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private MagicLinkLoginService magicLinkLoginService;
 
-  @MockBean private SessionDeleteService sessionDeleteService;
+  @MockitoBean private SessionDeleteService sessionDeleteService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
 

@@ -8,11 +8,13 @@ import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 
-public interface AdminRepository extends CrudRepository<Admin, String> {
+public interface AdminRepository
+    extends JpaRepository<Admin, String>, JpaSpecificationExecutor<Admin> {
 
   @Query(
       value =
@@ -28,7 +30,7 @@ public interface AdminRepository extends CrudRepository<Admin, String> {
               + "    OR UPPER(a.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.email) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "    OR CONVERT(a.tenantId,char) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR CAST(a.tenantId AS string) LIKE CONCAT('%', UPPER(?1), '%')"
               + "  )"
               + " )")
   Page<AdminBase> findAllByInfix(String infix, Admin.AdminType type, Pageable pageable);
@@ -53,7 +55,7 @@ public interface AdminRepository extends CrudRepository<Admin, String> {
               + "    OR UPPER(a.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(a.email) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "    OR CONVERT(a.tenantId,char) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR CAST(a.tenantId AS string) LIKE CONCAT('%', UPPER(?1), '%')"
               + "  )"
               + " )")
   Page<AdminBase> findAllByInfixAndAgencyIds(

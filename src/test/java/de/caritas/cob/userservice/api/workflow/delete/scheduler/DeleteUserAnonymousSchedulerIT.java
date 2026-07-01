@@ -24,12 +24,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -55,7 +55,7 @@ class DeleteUserAnonymousSchedulerIT {
   @Value("${user.anonymous.deleteworkflow.periodMinutes}")
   private long deletionPeriodInMinutes;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   private Session currentSession;
 
