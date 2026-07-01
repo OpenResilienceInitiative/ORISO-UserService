@@ -22,6 +22,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @RequiredArgsConstructor
 public class ConsultantActivityInterceptor implements HandlerInterceptor {
 
+  static final String AVAILABILITY_PATH = "/conversations/consultants/availability";
+
   private final ObjectProvider<AuthenticatedUser> authenticatedUser;
   private final ObjectProvider<ConsultantActivityRegistry> consultantActivityRegistry;
 
@@ -29,6 +31,10 @@ public class ConsultantActivityInterceptor implements HandlerInterceptor {
   public boolean preHandle(
       HttpServletRequest request, HttpServletResponse response, Object handler) {
     try {
+      if ("GET".equalsIgnoreCase(request.getMethod())
+          && AVAILABILITY_PATH.equals(request.getRequestURI())) {
+        return true;
+      }
       AuthenticatedUser user = authenticatedUser.getIfAvailable();
       ConsultantActivityRegistry registry = consultantActivityRegistry.getIfAvailable();
       if (user != null && registry != null && user.isConsultant() && user.getUserId() != null) {
