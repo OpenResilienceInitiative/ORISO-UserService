@@ -100,10 +100,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import jakarta.ws.rs.InternalServerErrorException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -122,6 +119,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -132,6 +130,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** Controller for user api requests */
 @Slf4j
 @RestController
+@Validated
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
@@ -179,7 +178,7 @@ public class UserController implements UsersApi {
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   @Override
-  public ResponseEntity<Void> userExists(@NotNull String username) {
+  public ResponseEntity<Void> userExists(String username) {
     val usernameAvailable = identityClient.isUsernameAvailable(username);
     val userExists = !usernameAvailable;
     if (userExists) {
@@ -223,7 +222,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} with possible registration conflict information in header
    */
   @Override
-  public ResponseEntity<Void> registerUser(@Valid @RequestBody UserDTO user) {
+  public ResponseEntity<Void> registerUser(@RequestBody UserDTO user) {
     validateUserHasChosenTopicIfTopicsFeatureIsEnabled(user);
     user.setNewUserAccount(true);
     var sessionId = createUserFacade.createUserAccountWithInitializedConsultingType(user);
@@ -254,7 +253,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewConsultingType(
-      @Valid @RequestBody NewRegistrationDto newRegistrationDto,
+      @RequestBody NewRegistrationDto newRegistrationDto,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
@@ -282,7 +281,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewSession(
-      @Valid de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto newRegistrationDto,
+      de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto newRegistrationDto,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
     var user = this.userAccountProvider.retrieveValidatedUser();
@@ -313,7 +312,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> acceptEnquiry(
-      @NotNull @PathVariable Long sessionId, @RequestHeader(required = false) String rcUserId) {
+      @PathVariable Long sessionId, @RequestHeader(required = false) String rcUserId) {
     var session = sessionService.getSession(sessionId);
 
     // MATRIX MIGRATION: Removed groupId check - Matrix sessions don't have RocketChat groupId
@@ -337,8 +336,8 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
-      @NotNull @PathVariable Long sessionId,
-      @Valid @RequestBody EnquiryMessageDTO enquiryMessage,
+      @PathVariable Long sessionId,
+      @RequestBody EnquiryMessageDTO enquiryMessage,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
@@ -362,7 +361,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> deleteSessionAndInactiveUser(@NotNull @PathVariable Long sessionId) {
+  public ResponseEntity<Void> deleteSessionAndInactiveUser(@PathVariable Long sessionId) {
     sessionDeleteService.deleteSession(sessionId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -406,7 +405,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @NotNull @RequestParam List<String> rcGroupIds,
+      @RequestParam List<String> rcGroupIds,
       @RequestHeader(required = false) String rcToken) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
@@ -531,7 +530,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getChatById(
-      @NotNull String rcToken, @NotNull Long chatId) {
+      String rcToken, Long chatId) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -569,7 +568,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> updateAbsence(@Valid @RequestBody AbsenceDTO absence) {
+  public ResponseEntity<Void> updateAbsence(@RequestBody AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
 
@@ -577,7 +576,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(@NotNull String email) {
+  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
 
     Optional<Consultant> consultantByEmail = userAccountProvider.findConsultantByEmail(email);
     if (consultantByEmail.isPresent()) {
@@ -683,7 +682,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> patchUser(@Valid PatchUserDTO patchUserDTO) {
+  public ResponseEntity<Void> patchUser(PatchUserDTO patchUserDTO) {
     validateMagicLinkTogglePrerequisites(patchUserDTO);
 
     var userId = authenticatedUser.getUserId();
@@ -749,7 +748,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> updateConsultantData(@Valid UpdateConsultantDTO updateConsultantDTO) {
+  public ResponseEntity<Void> updateConsultantData(UpdateConsultantDTO updateConsultantDTO) {
     var consultantId = authenticatedUser.getUserId();
     var consultant =
         consultantService
@@ -765,7 +764,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<LanguageResponseDTO> getLanguages(@NotNull Long agencyId) {
+  public ResponseEntity<LanguageResponseDTO> getLanguages(Long agencyId) {
     var languageCodes = consultantAgencyService.getLanguageCodesOfAgency(agencyId);
     var languageResponseDTO = consultantDtoMapper.languageResponseDtoOf(languageCodes);
 
@@ -785,10 +784,10 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getSessionsForAuthenticatedConsultant(
-      @NotNull @RequestHeader String rcToken,
-      @NotNull @Min(value = 0) Integer offset,
-      @NotNull @Min(value = 1) Integer count,
-      @NotNull @RequestParam String filter,
+      @RequestHeader String rcToken,
+      Integer offset,
+      Integer count,
+      @RequestParam String filter,
       @RequestParam Integer status) {
 
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
@@ -827,10 +826,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      @NotNull @RequestHeader String rcToken,
-      @NotNull @Min(value = 0) Integer offset,
-      @NotNull @Min(value = 1) Integer count,
-      @NotNull @RequestParam String filter) {
+      String rcToken, Integer offset, Integer count, String filter) {
 
     var consultant = this.userAccountProvider.retrieveValidatedTeamConsultant();
 
@@ -904,7 +900,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> sendNewMessageNotification(
-      @Valid @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
+      @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
 
     emailNotificationFacade.sendNewMessageNotification(
         newMessageNotificationDTO.getRcGroupId(),
@@ -927,7 +923,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> sendReassignmentNotification(
-      @Valid @RequestBody ReassignmentNotificationDTO reassignmentNotificationDTO) {
+      @RequestBody ReassignmentNotificationDTO reassignmentNotificationDTO) {
 
     if (isTrue(reassignmentNotificationDTO.getIsConfirmed())) {
       emailNotificationFacade.sendReassignConfirmationNotification(
@@ -948,7 +944,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(
-      @NotNull @RequestParam Long agencyId) {
+      @RequestParam Long agencyId) {
 
     var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
 
@@ -959,11 +955,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
-      @NotNull @Size(min = 1) String query,
-      @NotNull @Min(value = 1) Integer page,
-      @NotNull @Min(value = 1) Integer perPage,
-      @NotNull @Pattern(regexp = "(?i)^(FIRSTNAME|LASTNAME|EMAIL|UPDATE_DATE)$") String field,
-      @NotNull @Pattern(regexp = "(?i)^(ASC|DESC)$") String order) {
+      String query, Integer page, Integer perPage, String field, String order) {
     var decodedInfix = determineDecodedInfix(query).trim();
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = consultantDtoMapper.mappedFieldOf(field);
@@ -1027,7 +1019,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> assignSession(
-      @NotNull @PathVariable Long sessionId, @NotNull @PathVariable String consultantId) {
+      @PathVariable Long sessionId, @PathVariable String consultantId) {
 
     var session = sessionService.getSession(sessionId);
     if (session.isEmpty()) {
@@ -1058,8 +1050,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> removeFromSession(
-      @NotNull Long sessionId, @NotNull UUID consultantId) {
+  public ResponseEntity<Void> removeFromSession(Long sessionId, UUID consultantId) {
     var consultantMap =
         accountManager
             .findConsultant(consultantId.toString())
@@ -1090,7 +1081,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> updatePassword(@Valid @RequestBody PasswordDTO passwordDTO) {
+  public ResponseEntity<Void> updatePassword(@RequestBody PasswordDTO passwordDTO) {
     var username = authenticatedUser.getUsername();
     var encodedUsername = usernameTranscoder.encodeUsername(username);
     if (!identityManager.validatePasswordIgnoring2fa(
@@ -1115,7 +1106,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> updateKey(@Valid @RequestBody MasterKeyDTO masterKey) {
+  public ResponseEntity<Void> updateKey(@RequestBody MasterKeyDTO masterKey) {
     if (!decryptionService.getMasterKey().equals(masterKey.getMasterKey())) {
       decryptionService.updateMasterKey(masterKey.getMasterKey());
       LogService.logInfo("MasterKey updated");
@@ -1126,7 +1117,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> updateE2eInChats(@Valid E2eKeyDTO e2eKeyDTO) {
+  public ResponseEntity<Void> updateE2eInChats(E2eKeyDTO e2eKeyDTO) {
     var userId = authenticatedUser.getUserId();
     var user =
         authenticatedUser.isConsultant()
@@ -1168,7 +1159,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link CreateChatResponseDTO}
    */
   @Override
-  public ResponseEntity<CreateChatResponseDTO> createChatV1(@Valid @RequestBody ChatDTO chatDTO) {
+  public ResponseEntity<CreateChatResponseDTO> createChatV1(@RequestBody ChatDTO chatDTO) {
     return userChatControllerDelegate.createChatV1(chatDTO);
   }
 
@@ -1182,7 +1173,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link CreateChatResponseDTO}
    */
   @Override
-  public ResponseEntity<CreateChatResponseDTO> createChatV2(@Valid @RequestBody ChatDTO chatDTO) {
+  public ResponseEntity<CreateChatResponseDTO> createChatV2(@RequestBody ChatDTO chatDTO) {
     return userChatControllerDelegate.createChatV2(chatDTO);
   }
 
@@ -1193,7 +1184,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> startChat(@NotNull @PathVariable Long chatId) {
+  public ResponseEntity<Void> startChat(@PathVariable Long chatId) {
     return userChatControllerDelegate.startChat(chatId);
   }
 
@@ -1204,7 +1195,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatInfoResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatInfoResponseDTO> getChat(@NotNull Long chatId) {
+  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
     return userChatControllerDelegate.getChat(chatId);
   }
 
@@ -1215,7 +1206,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(@NotNull String groupId) {
+  public ResponseEntity<Void> assignChat(String groupId) {
     return userChatControllerDelegate.assignChat(groupId);
   }
 
@@ -1226,12 +1217,12 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> joinChat(@NotNull @PathVariable Long chatId) {
+  public ResponseEntity<Void> joinChat(@PathVariable Long chatId) {
     return userChatControllerDelegate.joinChat(chatId);
   }
 
   @Override
-  public ResponseEntity<Void> verifyCanModerateChat(@NotNull @PathVariable Long chatId) {
+  public ResponseEntity<Void> verifyCanModerateChat(@PathVariable Long chatId) {
     return userChatControllerDelegate.verifyCanModerateChat(chatId);
   }
 
@@ -1243,7 +1234,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> stopChat(@NotNull Long chatId) {
+  public ResponseEntity<Void> stopChat(Long chatId) {
     return userChatControllerDelegate.stopChat(chatId);
   }
 
@@ -1254,7 +1245,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatMembersResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatMembersResponseDTO> getChatMembers(@NotNull @PathVariable Long chatId) {
+  public ResponseEntity<ChatMembersResponseDTO> getChatMembers(@PathVariable Long chatId) {
     return userChatControllerDelegate.getChatMembers(chatId);
   }
 
@@ -1265,7 +1256,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> leaveChat(@NotNull @PathVariable Long chatId) {
+  public ResponseEntity<Void> leaveChat(@PathVariable Long chatId) {
     return userChatControllerDelegate.leaveChat(chatId);
   }
 
@@ -1278,15 +1269,13 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<UpdateChatResponseDTO> updateChat(
-      @NotNull @PathVariable Long chatId, @Valid @RequestBody ChatDTO chatDTO) {
+      @PathVariable Long chatId, @RequestBody ChatDTO chatDTO) {
     return userChatControllerDelegate.updateChat(chatId, chatDTO);
   }
 
   @Override
   public ResponseEntity<Void> banFromChat(
-      @NotNull String token,
-      @NotNull @Size(min = 17, max = 17) String chatUserId,
-      @NotNull @Min(value = 0L) Long chatId) {
+      String token, String chatUserId, Long chatId) {
     return userChatControllerDelegate.banFromChat(chatUserId, chatId);
   }
 
@@ -1298,7 +1287,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(
-      @NotNull @PathVariable Long sessionId) {
+      @PathVariable Long sessionId) {
 
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
     var consultantSessionDTO = sessionService.fetchSessionForConsultant(sessionId, consultant);
@@ -1312,7 +1301,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> updateEmailAddress(@Valid String emailAddress) {
+  public ResponseEntity<Void> updateEmailAddress(String emailAddress) {
     var lowerCaseEmail = Optional.of(emailAddress.toLowerCase());
     userAccountProvider.changeUserAccountEmailAddress(lowerCaseEmail);
 
@@ -1339,7 +1328,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> deactivateAndFlagUserAccountForDeletion(
-      @Valid DeleteUserAccountDTO deleteUserAccountDTO) {
+      DeleteUserAccountDTO deleteUserAccountDTO) {
     var username = authenticatedUser.getUsername();
     var password = deleteUserAccountDTO.getPassword();
     var encodedUsername = usernameTranscoder.encodeUsername(username);
@@ -1360,7 +1349,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> updateMobileToken(@Valid MobileTokenDTO mobileTokenDTO) {
+  public ResponseEntity<Void> updateMobileToken(MobileTokenDTO mobileTokenDTO) {
     this.userAccountProvider.updateUserMobileToken(mobileTokenDTO.getToken());
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -1372,7 +1361,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> addMobileAppToken(@Valid MobileTokenDTO mobileTokenDTO) {
+  public ResponseEntity<Void> addMobileAppToken(MobileTokenDTO mobileTokenDTO) {
     this.userAccountProvider.addMobileAppToken(mobileTokenDTO.getToken());
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -1386,7 +1375,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> updateSessionData(
-      @NotNull @PathVariable Long sessionId, @Valid SessionDataDTO sessionDataDTO) {
+      @PathVariable Long sessionId, SessionDataDTO sessionDataDTO) {
     this.sessionDataService.saveSessionData(sessionId, sessionDataDTO);
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -1398,7 +1387,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> archiveSession(@NotNull @PathVariable Long sessionId) {
+  public ResponseEntity<Void> archiveSession(@PathVariable Long sessionId) {
     this.sessionArchiveService.archiveSession(sessionId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -1410,13 +1399,13 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity}
    */
   @Override
-  public ResponseEntity<Void> dearchiveSession(@NotNull @PathVariable Long sessionId) {
+  public ResponseEntity<Void> dearchiveSession(@PathVariable Long sessionId) {
     this.sessionArchiveService.dearchiveSession(sessionId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
   @Override
-  public ResponseEntity<Void> startTwoFactorAuthByEmailSetup(@Valid EmailDTO emailDTO) {
+  public ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase();
 
@@ -1435,8 +1424,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(
-      @NotNull @Pattern(regexp = "[0-9]{6}") String tan) {
+  public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 
@@ -1509,7 +1497,7 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing all agencies of consultant
    */
   @Override
-  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(@NotNull UUID consultantId) {
+  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(UUID consultantId) {
     var consultantIdString = consultantId.toString();
     var consultant =
         consultantService
@@ -1525,7 +1513,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<RocketChatGroupIdDTO> getRocketChatGroupId(
-      @NotNull @Valid String consultantId, @NotNull @Valid String askerId) {
+      String consultantId, String askerId) {
     String groupId = sessionService.findGroupIdByConsultantAndUser(consultantId, askerId);
     return new ResponseEntity<>(new RocketChatGroupIdDTO().groupId(groupId), HttpStatus.OK);
   }
