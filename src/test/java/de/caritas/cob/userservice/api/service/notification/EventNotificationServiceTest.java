@@ -818,4 +818,308 @@ class EventNotificationServiceTest {
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getParams()).contains("Someone");
   }
+
+  // ---------------------------------------------------------------------------
+  // getFeed — toItem mapping (hit previously uncovered toItem path)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void getFeed_mapsNotificationsToItemsWithReadAtAndCreatedAt() {
+    EventNotification n = new EventNotification();
+    n.setId(99L);
+    n.setEventType("message.new");
+    n.setCategory(EventNotificationService.CATEGORY_MESSAGE);
+    n.setTitle("New message");
+    n.setText("hello");
+    n.setParams("{\"sessionId\":1}");
+    n.setActionPath("/sessions/user/view/room/1");
+    n.setSourceSessionId(1L);
+    n.setReadDate(LocalDateTime.of(2026, 1, 1, 12, 0));
+    n.setCreateDate(LocalDateTime.of(2026, 1, 1, 11, 0));
+
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(any(), any()))
+        .thenReturn(List.of(n));
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(any())).thenReturn(0L);
+
+    var result = eventNotificationService.getFeed("user-1", 0, 10);
+
+    assertThat(result.getItems()).hasSize(1);
+    var item = result.getItems().get(0);
+    assertThat(item.getId()).isEqualTo(99L);
+    assertThat(item.getEventType()).isEqualTo("message.new");
+    assertThat(item.getReadAt()).isNotNull();
+    assertThat(item.getCreatedAt()).isNotNull();
+  }
+
+  @Test
+  void getFeed_setsReadAtNullWhenNotificationIsUnread() {
+    EventNotification n = new EventNotification();
+    n.setId(1L);
+    n.setEventType("request.new");
+    n.setCategory(EventNotificationService.CATEGORY_SYSTEM);
+    n.setTitle("T");
+    n.setText("B");
+    n.setCreateDate(LocalDateTime.now());
+    n.setReadDate(null);
+
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(any(), any()))
+        .thenReturn(List.of(n));
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(any())).thenReturn(1L);
+
+    var result = eventNotificationService.getFeed("user-1", 0, 10);
+
+    assertThat(result.getItems().get(0).getReadAt()).isNull();
+    assertThat(result.getUnreadCount()).isEqualTo(1L);
+  }
+
+  // ---------------------------------------------------------------------------
+  // buildThreadReplyNotificationText — MASKED + FULL modes
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createThreadReplyNotificationFromRoom_maskedModeShowsRedactedPlaceholder() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "MASKED");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "rc-group-1", "sender", "secret reply", "thread-1", false);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    String text = eventCaptor.getValue().getText();
+    assertThat(text).contains("replied in a thread");
+    assertThat(text).contains("[content hidden]");
+    assertThat(text).doesNotContain("secret reply");
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_fullModeIncludesPreviewAndParentPreview() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "rc-group-1", "sender", "my reply text", "thread-1", false, false, null, "parent message");
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    String text = eventCaptor.getValue().getText();
+    assertThat(text).contains("my reply text");
+    assertThat(text).contains("parent message");
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_fullModeEmptyPreviewFallsBackToMessageId() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "rc-group-1", "sender", null, "thread-1", false, false, null, null);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    String text = eventCaptor.getValue().getText();
+    assertThat(text).contains("replied in a thread");
+    assertThat(text).contains("n/a");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Untested delegator overloads — PrivacyEnvelope variants
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageNotificationFromRoom_envelopeOverloadDelegatesAndCreatesNotification() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("msg-1").contentClass("IMAGE").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", false, envelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getEventType()).isEqualTo("message.new");
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_envelopeOverloadDelegatesAndCreatesNotification() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("msg-2").contentClass("FILE").build();
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "rc-group-1", "sender", "thread-root-1", false, envelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getEventType()).isEqualTo("thread.reply.new");
+  }
+
+  // ---------------------------------------------------------------------------
+  // contentLabel — via NONE preview mode (shows contentLabel in text)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageNotificationFromRoom_noneMode_usesContentClassAsLabel() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope imageEnvelope =
+        PrivacyEnvelope.builder().messageId("m1").contentClass("IMAGE").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", null, false, false, null, imageEnvelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getText()).contains("image");
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_noneMode_fileContentClassLabelIsFile() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope fileEnvelope =
+        PrivacyEnvelope.builder().messageId("m2").contentClass("FILE").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", null, false, false, null, fileEnvelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getText()).contains("file");
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_noneMode_audioContentClassLabelIsAudioMessage() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope audioEnvelope =
+        PrivacyEnvelope.builder().messageId("m3").contentClass("AUDIO").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", null, false, false, null, audioEnvelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getText()).contains("audio message");
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_noneMode_videoContentClassLabelIsVideoMessage() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "NONE");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope videoEnvelope =
+        PrivacyEnvelope.builder().messageId("m4").contentClass("VIDEO").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", null, false, false, null, videoEnvelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getText()).contains("video message");
+  }
+
+  // ---------------------------------------------------------------------------
+  // normalizePreview — long message truncation
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageNotificationFromRoom_fullMode_truncatesLongPreviewAt117CharsWithEllipsis() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    String longMessage = "A".repeat(150);
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", longMessage, false);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    String text = eventCaptor.getValue().getText();
+    assertThat(text).contains("...");
+    assertThat(text).doesNotContain("A".repeat(118));
+  }
+
+  // ---------------------------------------------------------------------------
+  // buildMessageNotificationText FULL with empty preview (messageId fallback)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageNotificationFromRoom_fullMode_emptyPreviewFallsBackToMessageId() {
+    ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope envelope = PrivacyEnvelope.builder().messageId("evt-123").build();
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "sender", null, false, false, null, envelope);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    String text = eventCaptor.getValue().getText();
+    assertThat(text).contains("evt-123");
+  }
 }
