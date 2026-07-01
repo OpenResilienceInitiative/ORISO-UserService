@@ -2,12 +2,14 @@ package de.caritas.cob.userservice.api.admin.service.admin.create.agencyrelation
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.AdminAgency;
@@ -109,6 +111,7 @@ class CreateAdminAgencyRelationServiceTest {
 
     assertThatThrownBy(() -> service.create("admin-5", dto))
         .isInstanceOf(BadRequestException.class);
+    verify(adminAgencyRepository, never()).save(any());
   }
 
   // ─── Admin not found (delegated to RetrieveAdminService) ─────────────────
@@ -118,13 +121,11 @@ class CreateAdminAgencyRelationServiceTest {
     var dto = buildRelationDTO(5L);
 
     when(retrieveAdminService.findAdmin("missing-admin", AdminType.AGENCY))
-        .thenThrow(
-            new de.caritas.cob.userservice.api.exception.httpresponses.NoContentException(
-                "not found"));
+        .thenThrow(new NoContentException("not found"));
 
     assertThatThrownBy(() -> service.create("missing-admin", dto))
-        .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.httpresponses.NoContentException.class);
+        .isInstanceOf(NoContentException.class);
+    verify(adminAgencyRepository, never()).save(any());
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
