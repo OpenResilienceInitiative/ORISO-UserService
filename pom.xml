@@ -1147,6 +1147,22 @@
 			</plugin>
 			<!-- Code style check -->
 			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.10</version>
+				<executions>
+					<execution>
+						<id>jacoco-prepare</id>
+						<goals><goal>prepare-agent</goal></goals>
+					</execution>
+					<execution>
+						<id>jacoco-report</id>
+						<phase>test</phase>
+						<goals><goal>report</goal></goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
 				<groupId>com.diffplug.spotless</groupId>
 				<artifactId>spotless-maven-plugin</artifactId>
 				<version>2.43.0</version>
@@ -1171,6 +1187,9 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId> <!-- surefire plugin version managed by Spring Boot -->
+				<configuration>
+					<argLine>${argLine}</argLine>
+				</configuration>
 				<executions>
 					<execution>
 						<id>unit-tests</id>
@@ -1180,6 +1199,7 @@
 						</goals>
 							<configuration>
 								<skipTests>${skip.unit-tests}</skipTests>
+								<argLine>${argLine}</argLine>
 								<includes>
 									<include>**/*Test.java</include>
 								</includes>
