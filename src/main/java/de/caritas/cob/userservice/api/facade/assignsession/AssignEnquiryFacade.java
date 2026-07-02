@@ -7,17 +7,22 @@ import static java.util.concurrent.CompletableFuture.supplyAsync;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveFromGroupOperationService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
@@ -59,7 +64,11 @@ public class AssignEnquiryFacade {
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull HttpServletRequest httpServletRequest;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixConfig matrixConfig;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull UserRepository userRepository;
+  private final @NonNull UserHelper userHelper;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
@@ -144,38 +153,17 @@ public class AssignEnquiryFacade {
 
     // Create Matrix room and invite user
     try {
-      // First, ensure consultant has a Matrix account
-      if (consultant.getMatrixUserId() == null) {
-        try {
-          var consultantPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
-          var matrixUserResponse =
-              matrixSynapseService.createUser(
-                  consultant.getUsername(),
-                  consultantPassword,
-                  consultant.getFirstName() + " " + consultant.getLastName());
-
-          if (matrixUserResponse.getBody() != null
-              && matrixUserResponse.getBody().getUserId() != null) {
-            consultant.setMatrixUserId(matrixUserResponse.getBody().getUserId());
-            consultantRepository.save(consultant);
-            log.info(
-                "Created Matrix account for consultant: {} with ID: {}",
-                consultant.getUsername(),
-                matrixUserResponse.getBody().getUserId());
-          }
-        } catch (Exception e) {
-          log.error(
-              "Failed to create Matrix account for consultant: {}", consultant.getUsername(), e);
-        }
-      }
+      var user = session.getUser();
+      ensureUserMatrixAccount(user);
+      ensureConsultantMatrixAccount(consultant);
 
       log.info(
           "Matrix account status for session {}: user_matrix_id={}, consultant_matrix_id={}",
           session.getId(),
-          session.getUser().getMatrixUserId(),
+          user.getMatrixUserId(),
           consultant.getMatrixUserId());
 
-      if (session.getUser().getMatrixUserId() != null && consultant.getMatrixUserId() != null) {
+      if (!isBlank(user.getMatrixUserId()) && !isBlank(consultant.getMatrixUserId())) {
         String existingRoomId = session.getMatrixRoomId();
 
         if (existingRoomId != null && !existingRoomId.isBlank()) {
@@ -333,8 +321,8 @@ public class AssignEnquiryFacade {
       } else {
         throw new InternalServerErrorException(
             String.format(
-                "Matrix room creation failed for session %s: missing Matrix user id",
-                session.getId()));
+                "Matrix room creation failed for session %s: missing Matrix user id (user=%s, consultant=%s)",
+                session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
       rollbackSessionUpdate(session);
@@ -496,6 +484,64 @@ public class AssignEnquiryFacade {
           e);
       return false;
     }
+  }
+
+  private void ensureUserMatrixAccount(User user) {
+    if (user == null || !isBlank(user.getMatrixUserId())) {
+      return;
+    }
+
+    var matrixLocalpart = usernameTranscoder.decodeUsername(user.getUsername());
+    var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, matrixLocalpart);
+    if (!isBlank(matrixUserId)) {
+      user.setMatrixUserId(matrixUserId);
+      userRepository.save(user);
+      log.info(
+          "Ensured Matrix account for user {} with ID: {}", user.getUserId(), matrixUserId);
+    }
+  }
+
+  private void ensureConsultantMatrixAccount(Consultant consultant) {
+    if (consultant == null || !isBlank(consultant.getMatrixUserId())) {
+      return;
+    }
+
+    var matrixLocalpart = usernameTranscoder.decodeUsername(consultant.getUsername());
+    var displayName = consultant.getFirstName() + " " + consultant.getLastName();
+    var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, displayName);
+    if (!isBlank(matrixUserId)) {
+      consultant.setMatrixUserId(matrixUserId);
+      consultantRepository.save(consultant);
+      log.info(
+          "Ensured Matrix account for consultant {} with ID: {}",
+          consultant.getUsername(),
+          matrixUserId);
+    }
+  }
+
+  private String createOrResolveMatrixUserId(String matrixLocalpart, String displayName) {
+    try {
+      var matrixResponse =
+          matrixSynapseService.createUser(
+              matrixLocalpart, userHelper.getRandomPassword(), displayName);
+      if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
+        return matrixResponse.getBody().getUserId();
+      }
+    } catch (Exception e) {
+      log.warn(
+          "Failed to create Matrix user {}, attempting to resolve existing account: {}",
+          matrixLocalpart,
+          e.getMessage());
+    }
+
+    var candidateUserId = "@" + matrixLocalpart + ":" + matrixConfig.getServerName();
+    if (!isBlank(matrixSynapseService.loginAsUserAccessToken(candidateUserId))) {
+      log.info(
+          "Resolved existing Matrix account for localpart {}: {}", matrixLocalpart, candidateUserId);
+      return candidateUserId;
+    }
+
+    return null;
   }
 
   private String buildUniqueSessionRoomAlias(Long sessionId, String consultantId) {

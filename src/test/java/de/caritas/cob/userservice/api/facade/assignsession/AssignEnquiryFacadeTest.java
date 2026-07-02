@@ -11,6 +11,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKET_CHAT_SYSTEM_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
 import static java.util.Arrays.asList;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
@@ -20,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -31,19 +33,26 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
+import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
@@ -91,6 +100,10 @@ class AssignEnquiryFacadeTest {
   @Mock EmailNotificationFacade emailNotificationFacade;
   @Mock MatrixSynapseService matrixSynapseService;
   @Mock ConsultantRepository consultantRepository;
+  @Mock UserRepository userRepository;
+  @Mock UserHelper userHelper;
+  @Mock UsernameTranscoder usernameTranscoder;
+  @Mock MatrixConfig matrixConfig;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
@@ -115,6 +128,10 @@ class AssignEnquiryFacadeTest {
     // Anonymous enquiry constant has no user wired; assignEnquiry now dereferences it.
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_RC_ID);
 
+    lenient().when(usernameTranscoder.decodeUsername(anyString())).thenAnswer(i -> i.getArgument(0));
+    lenient().when(userHelper.getRandomPassword()).thenReturn("random-password");
+    lenient().when(matrixConfig.getServerName()).thenReturn("matrix.example.com");
+
     givenMatrixRoomCreationSucceeds();
   }
 
@@ -138,6 +155,7 @@ class AssignEnquiryFacadeTest {
   public void tearDown() {
     // Undo mutations of the shared TestConstants so other test classes are not affected.
     USER_WITH_RC_ID.setMatrixUserId(null);
+    USER_WITH_RC_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
@@ -159,6 +177,43 @@ class AssignEnquiryFacadeTest {
                     consultantSessionDTO.getConsultant().equals(consultant)
                         && consultantSessionDTO.getSession().equals(session)),
             Mockito.eq(false));
+  }
+
+  @Test
+  void assignEnquiry_Should_ProvisionMissingUserMatrixAccountBeforeRoomCreation()
+      throws MatrixCreateUserException {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    USER_WITH_RC_ID.setMatrixUserId(null);
+    when(rocketChatFacade.retrieveRocketChatMembers(anyString())).thenReturn(LIST_GROUP_MEMBER_DTO);
+
+    var matrixUserResponse = new MatrixCreateUserResponseDTO();
+    matrixUserResponse.setUserId(USER_MATRIX_ID);
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(matrixUserResponse));
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(userRepository).save(USER_WITH_RC_ID);
+    assertEquals(USER_MATRIX_ID, USER_WITH_RC_ID.getMatrixUserId());
+  }
+
+  @Test
+  void assignEnquiry_Should_ResolveExistingUserMatrixAccount_WhenCreateFails()
+      throws MatrixCreateUserException {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    USER_WITH_RC_ID.setMatrixUserId(null);
+    USER_WITH_RC_ID.setUsername("asker");
+    when(rocketChatFacade.retrieveRocketChatMembers(anyString())).thenReturn(LIST_GROUP_MEMBER_DTO);
+    when(matrixSynapseService.createUser(eq("asker"), anyString(), eq("asker")))
+        .thenThrow(new MatrixCreateUserException("User ID already taken"));
+    when(matrixSynapseService.loginAsUserAccessToken("@asker:matrix.example.com"))
+        .thenReturn(MATRIX_TOKEN);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(userRepository).save(USER_WITH_RC_ID);
+    assertEquals("@asker:matrix.example.com", USER_WITH_RC_ID.getMatrixUserId());
+    verify(matrixSynapseService, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
   }
 
   @Test
