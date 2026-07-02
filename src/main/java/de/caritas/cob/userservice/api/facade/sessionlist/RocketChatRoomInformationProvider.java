@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Slf4j
@@ -28,6 +29,10 @@ public class RocketChatRoomInformationProvider {
   private final RocketChatService rocketChatService;
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantRepository consultantRepository;
+
+  /** ADR-004: with Rocket.Chat disabled room information is always Matrix-derived. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   public RocketChatRoomInformationProvider(
       RocketChatService rocketChatService,
@@ -64,11 +69,14 @@ public class RocketChatRoomInformationProvider {
     List<RoomsUpdateDTO> roomsForUpdate = emptyList();
     List<String> userRooms = emptyList();
 
-    if (isMatrixMigrationCredential(rocketChatCredentials)) {
+    if (!rocketChatEnabled || isMatrixMigrationCredential(rocketChatCredentials)) {
       userRooms =
           consultant != null
               ? getMatrixRoomsForConsultant(consultant)
-              : getMatrixRoomsForUser(rocketChatCredentials.getRocketChatUserId());
+              : getMatrixRoomsForUser(
+                  rocketChatCredentials == null
+                      ? null
+                      : rocketChatCredentials.getRocketChatUserId());
       return buildRoomInformation(readMessages, roomsForUpdate, userRooms);
     }
 
