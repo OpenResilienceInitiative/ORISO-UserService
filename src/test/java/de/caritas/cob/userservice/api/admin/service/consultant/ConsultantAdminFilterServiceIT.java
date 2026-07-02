@@ -58,6 +58,11 @@ public class ConsultantAdminFilterServiceIT extends ConsultantAdminFilterService
   }
 
   @Test
+  public void findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion() {
+    super.findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion();
+  }
+
+  @Test
   public void findFilteredConsultants_Should_returnResultWithSelfLink() {
     super.findFilteredConsultants_Should_returnResultWithSelfLink();
   }

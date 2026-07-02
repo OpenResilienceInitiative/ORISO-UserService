@@ -285,7 +285,7 @@ public class CreateChatFacade {
 
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
-      creatorParticipant.setChatId(chatId); // Link to CHAT ID (not session ID!)
+      creatorParticipant.setChatId(sessionId); // consistent with other participants
       creatorParticipant.setConsultantId(consultant.getId());
       groupChatParticipantRepository.save(creatorParticipant);
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
