@@ -50,7 +50,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -128,7 +127,9 @@ class AssignEnquiryFacadeTest {
     // Anonymous enquiry constant has no user wired; assignEnquiry now dereferences it.
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_RC_ID);
 
-    lenient().when(usernameTranscoder.decodeUsername(anyString())).thenAnswer(i -> i.getArgument(0));
+    lenient()
+        .when(usernameTranscoder.decodeUsername(anyString()))
+        .thenAnswer(i -> i.getArgument(0));
     lenient().when(userHelper.getRandomPassword()).thenReturn("random-password");
     lenient().when(matrixConfig.getServerName()).thenReturn("matrix.example.com");
 

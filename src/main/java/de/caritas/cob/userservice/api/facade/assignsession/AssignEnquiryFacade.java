@@ -496,8 +496,7 @@ public class AssignEnquiryFacade {
     if (!isBlank(matrixUserId)) {
       user.setMatrixUserId(matrixUserId);
       userRepository.save(user);
-      log.info(
-          "Ensured Matrix account for user {} with ID: {}", user.getUserId(), matrixUserId);
+      log.info("Ensured Matrix account for user {} with ID: {}", user.getUserId(), matrixUserId);
     }
   }
 
@@ -537,7 +536,9 @@ public class AssignEnquiryFacade {
     var candidateUserId = "@" + matrixLocalpart + ":" + matrixConfig.getServerName();
     if (!isBlank(matrixSynapseService.loginAsUserAccessToken(candidateUserId))) {
       log.info(
-          "Resolved existing Matrix account for localpart {}: {}", matrixLocalpart, candidateUserId);
+          "Resolved existing Matrix account for localpart {}: {}",
+          matrixLocalpart,
+          candidateUserId);
       return candidateUserId;
     }
 
