@@ -733,7 +733,8 @@ public class CaseHandoverService {
           "Failed to invite case handover requester to Matrix room");
     }
 
-    String requesterToken = matrixSynapseService.loginAsUserAccessToken(requester.getMatrixUserId());
+    String requesterToken =
+        matrixSynapseService.loginAsUserAccessToken(requester.getMatrixUserId());
     if (isBlank(requesterToken)) {
       throw new InternalServerErrorException(
           "Failed to create requester Matrix token for case handover");
