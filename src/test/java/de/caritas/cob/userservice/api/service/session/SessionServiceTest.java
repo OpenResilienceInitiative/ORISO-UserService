@@ -1176,7 +1176,7 @@ class SessionServiceTest {
     when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.empty());
 
     assertThrows(
-        javax.ws.rs.BadRequestException.class,
+        jakarta.ws.rs.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
@@ -1186,7 +1186,7 @@ class SessionServiceTest {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
 
     assertThrows(
-        javax.ws.rs.BadRequestException.class,
+        jakarta.ws.rs.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
@@ -1198,7 +1198,7 @@ class SessionServiceTest {
         .thenReturn(List.of(SESSION, SESSION_2));
 
     assertThrows(
-        javax.ws.rs.BadRequestException.class,
+        jakarta.ws.rs.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
