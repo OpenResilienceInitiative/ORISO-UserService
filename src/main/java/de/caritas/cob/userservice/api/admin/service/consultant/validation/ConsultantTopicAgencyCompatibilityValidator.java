@@ -123,7 +123,10 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   private void assertAllSelectedAgenciesResolved(
       List<Long> selectedAgencyIds, List<AgencyDTO> agencies) {
     Set<Long> resolvedAgencyIds =
-        agencies.stream().map(AgencyDTO::getId).filter(Objects::nonNull).collect(Collectors.toSet());
+        agencies.stream()
+            .map(AgencyDTO::getId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
     var missingAgencyIds =
         selectedAgencyIds.stream()
             .filter(agencyId -> !resolvedAgencyIds.contains(agencyId))

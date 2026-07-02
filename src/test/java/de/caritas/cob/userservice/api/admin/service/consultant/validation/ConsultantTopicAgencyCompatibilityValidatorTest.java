@@ -34,9 +34,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   void validateGrantTopicsAgainstSelectedAgencies_AllowsTopicsCoveredAcrossActiveAgencies() {
     when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
         .thenReturn(
-            List.of(
-                agency(10L, 1L, false, List.of(3L)),
-                agency(20L, 1L, false, List.of(7L))));
+            List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
 
     assertDoesNotThrow(
         () ->
@@ -48,9 +46,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   void validateGrantTopicsAgainstSelectedAgencies_RejectsTopicsOnlyCoveredByOfflineAgency() {
     when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
         .thenReturn(
-            List.of(
-                agency(10L, 1L, false, List.of(3L)),
-                agency(20L, 1L, true, List.of(7L))));
+            List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, true, List.of(7L))));
 
     var exception =
         assertThrows(
@@ -85,9 +81,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
         .thenReturn(List.of(3L, 7L));
     when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
         .thenReturn(
-            List.of(
-                agency(10L, 1L, false, List.of(3L)),
-                agency(20L, 1L, false, List.of(7L))));
+            List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
 
     assertDoesNotThrow(
         () ->

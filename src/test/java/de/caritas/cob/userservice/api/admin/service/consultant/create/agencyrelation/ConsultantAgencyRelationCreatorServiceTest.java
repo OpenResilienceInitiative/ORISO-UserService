@@ -49,7 +49,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock private ConsultingTypeManager consultingTypeManager;
 
-  @Mock private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+  @Mock
+  private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
 
   @Test
   public void

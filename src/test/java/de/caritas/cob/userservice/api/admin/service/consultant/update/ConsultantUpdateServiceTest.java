@@ -57,7 +57,8 @@ public class ConsultantUpdateServiceTest {
 
   @Mock private EventNotificationService eventNotificationService;
 
-  @Mock private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+  @Mock
+  private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
 
   @Test
   public void
