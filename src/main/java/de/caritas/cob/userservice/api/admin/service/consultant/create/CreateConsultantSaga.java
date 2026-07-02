@@ -506,10 +506,12 @@ public class CreateConsultantSaga {
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
     if (multiTenancyEnabled) {
       TenantDTO tenantById = tenantAdminService.getTenantById(createConsultantDTO.getTenantId());
+      // Licenses are counted per tenant, so always scope the active-consultant count to the
+      // target tenant. Relying on the ambient tenant filter for the current context counts
+      // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
+      // tenant admin creates a consultant.
       long numberOfActiveConsultants =
-          isGlobalTenantContext()
-              ? consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId())
-              : consultantService.getNumberOfActiveConsultants();
+          consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
 
       assert nonNull(tenantById.getLicensing());
       Integer allowedNumberOfUsers = tenantById.getLicensing().getAllowedNumberOfUsers();
