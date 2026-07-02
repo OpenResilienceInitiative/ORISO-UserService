@@ -63,9 +63,9 @@ public class KeycloakConfig {
           String usernameClaim =
               resolveUsernameClaim(
                   claimMap,
-                  resolveClaimValue(claimMap.getOrDefault(principalAttribute, authToken.getName())));
-          authenticatedUser.setUsername(
-              usernameTranscoder.decodeUsername(usernameClaim));
+                  resolveClaimValue(
+                      claimMap.getOrDefault(principalAttribute, authToken.getName())));
+          authenticatedUser.setUsername(usernameTranscoder.decodeUsername(usernameClaim));
           authenticatedUser.setUserId(jwt.getSubject());
           authenticatedUser.setAccessToken(jwt.getTokenValue());
           authenticatedUser.setRoles(extractRealmRoles(jwt));
