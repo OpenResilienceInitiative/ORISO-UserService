@@ -177,9 +177,7 @@ class UserControllerE2EIT {
 
   @Autowired private UserAgencyRepository userAgencyRepository;
 
-  @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-  @Autowired
-  private ConsultingTypeControllerApi consultingTypeControllerApi;
+  @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
   @Autowired private VideoChatConfig videoChatConfig;
 
@@ -1165,6 +1163,26 @@ class UserControllerE2EIT {
                 .content(objectMapper.writeValueAsString(patchDtoMap))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldRespondWithNoContentOnEmptyEmailTogglesArray() throws Exception {
+    givenAValidConsultant();
+
+    var patchDto = new HashMap<String, Object>(1);
+    patchDto.put("emailToggles", List.of());
+
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .cookie(RC_TOKEN_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patchDto))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
   }
 
   @Test

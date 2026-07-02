@@ -2550,7 +2550,6 @@ components:
           description: "Is true if the walk through is enabled for the user"
         emailToggles:
           type: array
-          minItems: 1
           uniqueItems: true
           items:
             $ref: '#/components/schemas/EmailToggle'
@@ -2593,7 +2592,6 @@ components:
           description: indicates should the walkt hrough be enabled
         emailToggles:
           type: array
-          minItems: 1
           uniqueItems: true
           items:
             $ref: '#/components/schemas/EmailToggle'
