@@ -278,6 +278,12 @@ public class CreateConsultantSaga {
       Consultant consultant, List<ConsultantSessionResponseDTO> enquiries) {
     enquiries.forEach(
         session -> {
+          if (session.getSession().getGroupId() == null) {
+            log.debug(
+                "Skipping RocketChat group assignment for user with id {} - session has no group id",
+                consultant.getRocketChatId());
+            return;
+          }
           try {
             rocketChatService.addUserToGroup(
                 consultant.getRocketChatId(), session.getSession().getGroupId());
