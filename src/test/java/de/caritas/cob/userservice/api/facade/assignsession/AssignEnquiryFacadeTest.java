@@ -450,7 +450,7 @@ class AssignEnquiryFacadeTest {
 
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenThrow(new RuntimeException("Matrix registration failed"));
-    when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
+    lenient().when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
 
     // consultant ends up with null matrixUserId → ISE from missing credentials check, not from
     // createUser — which proves the exception was swallowed correctly
@@ -487,7 +487,7 @@ class AssignEnquiryFacadeTest {
     lenient()
         .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.status(HttpStatus.OK).body(null));
-    when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
+    lenient().when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
 
     assertThrows(
         InternalServerErrorException.class,
