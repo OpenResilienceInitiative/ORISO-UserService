@@ -25,9 +25,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -78,30 +76,20 @@ public class ChatService {
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-
     return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+        .map(this::convertChatToConsultantSessionResponseDTO)
         .collect(Collectors.toList());
   }
 
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
-      Chat chat, Set<ChatAgency> chatAgencies) {
+  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
     return new ConsultantSessionResponseDTO()
-        .chat(createUserChat(chat, chatAgencies))
+        .chat(createUserChat(chat))
         .consultant(
             new SessionConsultantForConsultantDTO()
                 .id(chat.getChatOwner().getId())
                 .firstName(chat.getChatOwner().getFirstName())
                 .lastName(chat.getChatOwner().getLastName())
                 .username(chat.getChatOwner().getUsername()));
-  }
-
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
-    return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
   }
 
   private String[] getChatModerators(Set<ChatAgency> chatAgencies) {
@@ -156,51 +144,29 @@ public class ChatService {
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
     List<Chat> chats = chatRepository.findByUserId(userId);
     List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
-    var allChats =
-        Stream.concat(chats.stream(), assignedChats.stream()).collect(Collectors.toList());
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(allChats);
-    return allChats.stream()
-        .map(
-            chat ->
-                convertChatToUserSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+    return Stream.concat(chats.stream(), assignedChats.stream())
+        .map(this::convertChatToUserSessionResponseDTO)
         .collect(Collectors.toList());
   }
 
   public List<UserSessionResponseDTO> getChatSessionsByIds(Set<Long> chatIds) {
-    var chats =
-        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-            .collect(Collectors.toList());
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToUserSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+    return StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
+        .map(this::convertChatToUserSessionResponseDTO)
         .collect(Collectors.toList());
   }
 
-  private UserSessionResponseDTO convertChatToUserSessionResponseDTO(
-      Chat chat, Set<ChatAgency> chatAgencies) {
-    return new UserSessionResponseDTO().chat(createUserChat(chat, chatAgencies));
-  }
-
   private UserSessionResponseDTO convertChatToUserSessionResponseDTO(Chat chat) {
-    return convertChatToUserSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
+    return new UserSessionResponseDTO().chat(createUserChat(chat));
   }
 
   private UserChatDTO createUserChat(Chat chat) {
-    return createUserChat(chat, loadChatAgencies(chat.getId()));
-  }
-
-  private UserChatDTO createUserChat(Chat chat, Set<ChatAgency> chatAgencies) {
-    if (chatAgencies.size() > 1) {
+    if (chat.getChatAgencies().size() > 1) {
       log.warn(
           "Chat with id {} has more than one agency assigned. " + "This should not be the case.",
           chat.getId());
     }
-    var agencies =
-        chatAgencies.stream()
+    var chatAgencies =
+        chat.getChatAgencies().stream()
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
@@ -225,28 +191,12 @@ public class ChatService {
         chat.getGroupId(),
         null,
         false,
-        getChatModerators(chatAgencies),
+        getChatModerators(chat.getChatAgencies()),
         chat.getStartDate(),
         null,
         chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
-        agencies,
+        chatAgencies,
         chat.getHintMessage());
-  }
-
-  private Set<ChatAgency> loadChatAgencies(Long chatId) {
-    return new HashSet<>(chatAgencyRepository.findByChat_Id(chatId));
-  }
-
-  private Map<Long, Set<ChatAgency>> loadChatAgenciesByChatId(List<Chat> chats) {
-    var chatIds = chats.stream().map(Chat::getId).collect(Collectors.toSet());
-    if (chatIds.isEmpty()) {
-      return Map.of();
-    }
-
-    return chatAgencyRepository.findByChat_IdIn(chatIds).stream()
-        .collect(
-            Collectors.groupingBy(
-                chatAgency -> chatAgency.getChat().getId(), Collectors.toCollection(HashSet::new)));
   }
 
   /**
@@ -295,14 +245,9 @@ public class ChatService {
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-
     var result =
         chats.stream()
-            .map(
-                chat ->
-                    convertChatToConsultantSessionResponseDTO(
-                        chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+            .map(this::convertChatToConsultantSessionResponseDTO)
             .collect(Collectors.toList());
 
     log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
@@ -317,25 +262,15 @@ public class ChatService {
    * @return {@link List<UserSessionResponseDTO>}
    */
   public List<UserSessionResponseDTO> getChatSessionsByGroupIds(Set<String> groupIds) {
-    var chats = chatRepository.findByGroupIds(groupIds);
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToUserSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+    return chatRepository.findByGroupIds(groupIds).stream()
+        .map(this::convertChatToUserSessionResponseDTO)
         .collect(Collectors.toList());
   }
 
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByGroupIds(
       Set<String> groupIds) {
-    var chats = chatRepository.findByGroupIds(groupIds);
-    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
+    return chatRepository.findByGroupIds(groupIds).stream()
+        .map(this::convertChatToConsultantSessionResponseDTO)
         .collect(Collectors.toList());
   }
 

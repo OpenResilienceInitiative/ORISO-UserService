@@ -7,7 +7,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICA
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_DTO;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_HINT_MESSAGE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID_3;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_V2;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.INACTIVE_CHAT;
@@ -19,7 +18,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,11 +38,9 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -69,44 +65,6 @@ class ChatServiceTest {
   @Mock private AgencyService agencyService;
 
   private static final long LOCAL_CHAT_AGENCY_ID = 1L;
-
-  @BeforeEach
-  void stubChatAgencyRepository() {
-    lenient()
-        .when(chatAgencyRepository.findByChat_IdIn(Mockito.anySet()))
-        .thenAnswer(
-            invocation -> {
-              @SuppressWarnings("unchecked")
-              Set<Long> chatIds = invocation.getArgument(0);
-              List<ChatAgency> agencies = new ArrayList<>();
-              if (chatIds.contains(ACTIVE_CHAT.getId())) {
-                agencies.add(chatAgencyFor(ACTIVE_CHAT.getId(), LOCAL_CHAT_AGENCY_ID));
-              }
-              if (chatIds.contains(CHAT_ID_3)) {
-                agencies.add(chatAgencyFor(CHAT_ID_3, LOCAL_CHAT_AGENCY_ID));
-              }
-              return agencies;
-            });
-    lenient()
-        .when(chatAgencyRepository.findByChat_Id(Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              Long chatId = invocation.getArgument(0);
-              if (ACTIVE_CHAT.getId().equals(chatId)) {
-                return List.of(chatAgencyFor(chatId, LOCAL_CHAT_AGENCY_ID));
-              }
-              if (CHAT_ID_3.equals(chatId)) {
-                return List.of(chatAgencyFor(chatId, LOCAL_CHAT_AGENCY_ID));
-              }
-              return List.of();
-            });
-  }
-
-  private ChatAgency chatAgencyFor(Long chatId, Long agencyId) {
-    Chat chat = Mockito.mock(Chat.class);
-    Mockito.when(chat.getId()).thenReturn(chatId);
-    return new ChatAgency(chat, agencyId);
-  }
 
   /**
    * Returns a fresh {@link Chat} that mirrors the shared {@code ACTIVE_CHAT} fixture but, unlike
