@@ -110,4 +110,85 @@ class SystemNotificationEmailSettingsServiceTest {
                 "from", "noreply@example.org",
                 "secure", true)));
   }
+
+  @Test
+  void resolveSupervisorAddedEmailSettings_Should_ReturnEmpty_When_TenantIdIsNull() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+
+    assertThat(service.resolveSupervisorAddedEmailSettings(null, null)).isEmpty();
+  }
+
+  @Test
+  void resolveSupervisorAddedEmailSettings_Should_ReturnEmpty_When_BothEndpointsReturnNull() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    when(tenantAdminService.getTenantById(1L)).thenReturn(null);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(null);
+
+    assertThat(service.resolveSupervisorAddedEmailSettings(1L, null)).isEmpty();
+  }
+
+  @Test
+  void resolveSupervisorAddedEmailSettings_Should_FallbackToPublicEndpoint_When_AdminReturnsNull() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    when(tenantAdminService.getTenantById(1L)).thenReturn(null);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(validTenantSettings());
+
+    assertThat(service.resolveSupervisorAddedEmailSettings(1L, null)).isPresent();
+  }
+
+  @Test
+  void
+      resolveSupervisorAddedEmailSettings_Should_ReturnSettings_When_PublicEndpointHasValidConfig() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    when(tenantAdminService.getTenantById(2L)).thenReturn(null);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(validTenantSettings());
+
+    var result = service.resolveSupervisorAddedEmailSettings(2L, "token");
+
+    assertThat(result).isPresent();
+    assertThat(result.get().getHost()).isEqualTo("smtp.example.org");
+    assertThat(result.get().getPort()).isEqualTo(587);
+    assertThat(result.get().isSecure()).isTrue();
+  }
+
+  @Test
+  void resolveSupervisorAddedEmailSettings_Should_ReturnEmpty_When_SmtpDisabled() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    Map<String, Object> settings =
+        Map.of(
+            "settings",
+            Map.of(
+                "featureSystemNotificationEmailsEnabled",
+                true,
+                "smtp",
+                Map.of("enabled", false, "host", "smtp.x.org")));
+    when(tenantAdminService.getTenantById(3L)).thenReturn(null);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(settings);
+
+    assertThat(service.resolveSupervisorAddedEmailSettings(3L, null)).isEmpty();
+  }
+
+  @Test
+  void resolveSupervisorAddedEmailSettings_Should_ReturnEmpty_When_TenantAdminThrows() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    when(tenantAdminService.getTenantById(4L)).thenThrow(new RuntimeException("unavailable"));
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(null);
+
+    assertThat(service.resolveSupervisorAddedEmailSettings(4L, null)).isEmpty();
+  }
+
+  @Test
+  void isSupervisorAddedEmailEnabledWithToken_Should_ReturnTrue_When_ValidConfig() {
+    var service =
+        new SystemNotificationEmailSettingsService(tenantAdminService, objectMapper, restTemplate);
+    when(restTemplate.getForObject(anyString(), eq(Map.class))).thenReturn(validTenantSettings());
+
+    assertThat(service.isSupervisorAddedEmailEnabled(1L, "token")).isTrue();
+  }
 }
