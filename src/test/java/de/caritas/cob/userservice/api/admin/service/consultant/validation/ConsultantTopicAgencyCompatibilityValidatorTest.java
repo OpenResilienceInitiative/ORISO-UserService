@@ -90,7 +90,8 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   }
 
   @Test
-  void validateCurrentTopicsAgainstAssignedAndAdditionalAgencies_AllowsTopicsCoveredByCombinedGrant() {
+  void
+      validateCurrentTopicsAgainstAssignedAndAdditionalAgencies_AllowsTopicsCoveredByCombinedGrant() {
     when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("consultant-id"))
         .thenReturn(List.of());
     when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
