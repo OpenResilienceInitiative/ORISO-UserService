@@ -67,8 +67,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     if (selectedAgencyIds.isEmpty()) {
       throw new BadRequestException(
           String.format(
-              "Consultant topic ids %s are not covered by any selected agency",
-              selectedTopicIds));
+              "Consultant topic ids %s are not covered by any selected agency", selectedTopicIds));
     }
 
     var agencies = agenciesFor(selectedAgencyIds);

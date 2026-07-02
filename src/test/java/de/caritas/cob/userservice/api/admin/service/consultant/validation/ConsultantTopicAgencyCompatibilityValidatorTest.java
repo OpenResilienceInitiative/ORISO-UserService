@@ -90,11 +90,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   }
 
   private AgencyDTO agency(Long agencyId, Long tenantId, boolean offline, List<Long> topicIds) {
-    return new AgencyDTO()
-        .id(agencyId)
-        .tenantId(tenantId)
-        .offline(offline)
-        .topicIds(topicIds);
+    return new AgencyDTO().id(agencyId).tenantId(tenantId).offline(offline).topicIds(topicIds);
   }
 
   private Consultant consultant(String consultantId, Long tenantId) {
