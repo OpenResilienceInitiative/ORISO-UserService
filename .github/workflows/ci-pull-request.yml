@@ -1,4 +1,4 @@
-name: CI - Pull Request
+name: UserService PR Validation
 
 on:
   pull_request:
@@ -8,19 +8,20 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
-  build:
+  validate:
+    name: test, build and Docker validation
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
 
-    - name: Create Docker image
+    - name: Docker build validation without publishing
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: false
