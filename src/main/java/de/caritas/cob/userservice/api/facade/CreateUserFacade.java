@@ -84,7 +84,10 @@ public class CreateUserFacade {
     var user = updateIdentityAndCreateAccount(response.getUserId(), userDTO, UserRole.USER);
 
     // Ensure user is fully persisted before creating session
-    user = userService.saveUser(user);
+    User savedUser = userService.saveUser(user);
+    if (savedUser != null) {
+      user = savedUser;
+    }
 
     // Create Matrix user with a random local Matrix password that is never persisted.
     // The plain username is needed for the Matrix localpart. Prefer the value captured during
@@ -92,10 +95,14 @@ public class CreateUserFacade {
     // ThreadLocal is populated by a Jackson deserializer and is not always available by the time
     // we get here; relying on it alone left some askers without a Matrix account, which later
     // makes their first enquiry fail with "Could not create Matrix room".
-    String plainUsername =
-        (plainCreds != null && plainCreds.getUsername() != null)
-            ? plainCreds.getUsername()
-            : new UsernameTranscoder().decodeUsername(user.getUsername());
+    String plainUsername;
+    if (plainCreds != null && plainCreds.getUsername() != null) {
+      plainUsername = plainCreds.getUsername();
+    } else if (user != null && user.getUsername() != null) {
+      plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
+    } else {
+      plainUsername = null;
+    }
     try {
       if (isNotBlank(plainUsername)) {
         String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
