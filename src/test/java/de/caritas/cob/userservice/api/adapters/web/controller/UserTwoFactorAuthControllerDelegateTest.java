@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
@@ -55,6 +56,21 @@ class UserTwoFactorAuthControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(identityManager).setUpOneTimePassword(ENCODED_USERNAME, "person@example.org");
+  }
+
+  @Test
+  void startTwoFactorAuthByEmailSetupShouldThrowProjectExceptionWhenOtpSetupFails() {
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
+    when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
+        .thenReturn(true);
+    when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, "person@example.org"))
+        .thenReturn(Optional.of("OTP setup failed"));
+
+    assertThatThrownBy(
+            () -> delegate.startTwoFactorAuthByEmailSetup(new EmailDTO("PERSON@EXAMPLE.ORG")))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessage("OTP setup failed");
   }
 
   @Test
