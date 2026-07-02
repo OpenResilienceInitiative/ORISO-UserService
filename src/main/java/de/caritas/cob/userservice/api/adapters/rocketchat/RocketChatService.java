@@ -71,6 +71,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
@@ -87,10 +88,15 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Service for Rocket.Chat functionalities. */
+/**
+ * Service for Rocket.Chat functionalities. Only registered when {@code rocket-chat.enabled=true}
+ * (ADR-004); with the default {@code false} the inert {@link DisabledRocketChatService} is bound
+ * instead and the service runs Matrix-only.
+ */
 @Slf4j
 @Getter
 @Service
+@ConditionalOnProperty(name = "rocket-chat.enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
 
