@@ -388,6 +388,93 @@ public class SessionListFacadeTest {
     assertEquals(COUNT_1, result.getSessions().size());
   }
 
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-02
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void retrieveSessionsForAuthenticatedUserByGroupIds_Should_ReturnGroupSessionList() {
+    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+            USER_ID, java.util.List.of(), RC_CREDENTIALS, java.util.Set.of());
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
+  @Test
+  public void retrieveSessionsForAuthenticatedUserBySessionIds_Should_ReturnGroupSessionList() {
+    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndSessionIds(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
+            USER_ID, java.util.List.of(), RC_CREDENTIALS, java.util.Set.of());
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
+  @Test
+  public void retrieveChatsForUserByChatIds_Should_ReturnGroupSessionList() {
+    when(userSessionListService.retrieveChatsForUserAndChatIds(Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveChatsForUserByChatIds(java.util.List.of(), RC_CREDENTIALS);
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
+  @Test
+  public void retrieveSessionsForAuthenticatedConsultantByGroupIds_Should_ReturnGroupSessionList() {
+    when(consultantSessionListService.retrieveSessionsForConsultantAndGroupIds(
+            Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+            CONSULTANT, java.util.List.of(), java.util.Set.of());
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
+  @Test
+  public void
+      retrieveSessionsForAuthenticatedConsultantBySessionIds_Should_ReturnGroupSessionList() {
+    when(consultantSessionListService.retrieveSessionsForConsultantAndSessionIds(
+            Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+            CONSULTANT, java.util.List.of(), java.util.Set.of());
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
+  @Test
+  public void retrieveChatsForConsultantByChatIds_Should_ReturnGroupSessionList() {
+    when(consultantSessionListService.retrieveChatsForConsultantAndChatIds(
+            Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(new java.util.ArrayList<>());
+
+    var result =
+        sessionListFacade.retrieveChatsForConsultantByChatIds(
+            CONSULTANT, java.util.List.of(), RC_CREDENTIALS);
+
+    assertNotNull(result);
+    assertEquals(0, result.getSessions().size());
+  }
+
   private SessionListQueryParameter createStandardSessionListQueryParameterObject(
       int offset, int count, SessionFilter sessionFilter) {
     return SessionListQueryParameter.builder()
