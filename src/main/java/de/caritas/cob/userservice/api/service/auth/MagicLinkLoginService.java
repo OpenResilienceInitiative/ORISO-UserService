@@ -159,7 +159,7 @@ public class MagicLinkLoginService {
   private boolean isMagicLinkAllowedForAccount(AccountLoginTarget target) {
     return Boolean.TRUE.equals(target.getMagicLinkLoginEnabled())
         && isNotBlank(target.getEmail())
-        && !target.getEmail().endsWith(emailDummySuffix)
+        && (emailDummySuffix == null || !target.getEmail().endsWith(emailDummySuffix))
         && resolveGlobalSmtpSettings().isPresent();
   }
 
