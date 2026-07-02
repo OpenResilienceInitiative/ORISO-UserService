@@ -6,6 +6,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -38,6 +39,8 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull RocketChatAsyncHelper rocketChatAsyncHelper;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -82,6 +85,10 @@ public class ConsultantAgencyRelationCreatorService {
     if (consultingTypeManager.isConsultantBoundedToAgency(agency.getConsultingType())) {
       this.verifyAllAssignedAgenciesHaveSameConsultingType(agency.getConsultingType(), consultant);
     }
+
+    consultantTopicAgencyCompatibilityValidator
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgency(
+            consultant.getId(), input.getAgencyId(), consultant.getTenantId());
 
     ensureConsultingTypeRoles(input, agency);
     consultantAgencyService.saveConsultantAgency(buildConsultantAgency(consultant, agency.getId()));

@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRespon
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
@@ -59,6 +61,7 @@ class GrantConsultantIdentityServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private UserHelper userHelper;
+  @Mock private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
 
   private GrantConsultantIdentityDTO dto;
 
@@ -163,6 +166,26 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
+  void throwBadRequestBeforeRoles_When_topicsAreNotCoveredBySelectedAgencies() throws Exception {
+    dto.setTopicIds(List.of(99L));
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    doThrow(new BadRequestException("topic not covered"))
+        .when(consultantTopicAgencyCompatibilityValidator)
+        .validateGrantTopicsAgainstSelectedAgencies(
+            eq(dto.getTopicIds()), eq(dto.getAgencyIds()), eq(1L));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verify(identityClient, never()).ensureRole(anyString(), anyString());
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
   void addGroupChatRole_When_flagSet() throws Exception {
     dto.setGroupchatConsultant(true);
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
@@ -248,5 +271,25 @@ class GrantConsultantIdentityServiceTest {
 
     verify(consultantAgencyRelationCreatorService, times(dto.getAgencyIds().size()))
         .createNewConsultantAgency(eq(ADMIN_ID), any());
+  }
+
+  @Test
+  void throwAndRollbackRoles_When_agencyAssignmentFails() throws Exception {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    doThrow(new BadRequestException("invalid agency assignment"))
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(ADMIN_ID), any());
+
+    assertThrows(
+        BadRequestException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
   }
 }

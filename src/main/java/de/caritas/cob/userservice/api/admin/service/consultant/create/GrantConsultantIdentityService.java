@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
@@ -66,6 +67,8 @@ public class GrantConsultantIdentityService {
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -98,6 +101,9 @@ public class GrantConsultantIdentityService {
           HttpStatusExceptionReason.CONSULTANT_IDENTITY_ALREADY_GRANTED, HttpStatus.CONFLICT);
     }
 
+    consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+        dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
+
     assignKeycloakRoles(adminId, dto);
 
     String matrixUserId = createMatrixAccount(admin);
@@ -106,7 +112,12 @@ public class GrantConsultantIdentityService {
     var consultant = buildConsultant(admin, encodedUsername, dto, rocketChatUserId, matrixUserId);
     saveConsultantOrRollback(adminId, dto, consultant);
 
-    assignAgencies(adminId, dto);
+    try {
+      assignAgencies(adminId, dto);
+    } catch (RuntimeException e) {
+      removeGrantedRoles(adminId, dto);
+      throw e;
+    }
 
     return ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO();
   }
@@ -218,10 +229,7 @@ public class GrantConsultantIdentityService {
           "Unable to persist consultant identity for admin with id {} in database. Rolling back keycloak roles.",
           adminId,
           e);
-      identityClient.removeRoleIfPresent(adminId, CONSULTANT.getValue());
-      if (dto.isGroupchatConsultant()) {
-        identityClient.removeRoleIfPresent(adminId, GROUP_CHAT_CONSULTANT.getValue());
-      }
+      removeGrantedRoles(adminId, dto);
       throw new DistributedTransactionException(
           e,
           DistributedTransactionInfo.builder()
@@ -234,24 +242,23 @@ public class GrantConsultantIdentityService {
   }
 
   /**
-   * Assigns the requested agencies to the new consultant identity. Mirrors existing precedent: each
-   * assignment is non-fatal — a failing agency is logged and does not roll back the grant.
+   * Assigns the requested agencies to the new consultant identity. Assignment failures are surfaced
+   * to the caller so the grant does not silently leave a partially usable consultant identity.
    */
   private void assignAgencies(String adminId, GrantConsultantIdentityDTO dto) {
     if (dto.getAgencyIds() == null) {
       return;
     }
     for (Long agencyId : dto.getAgencyIds()) {
-      try {
-        consultantAgencyRelationCreatorService.createNewConsultantAgency(
-            adminId, new CreateConsultantAgencyDTO().agencyId(agencyId));
-      } catch (Exception e) {
-        log.error(
-            "Unable to assign agency {} to granted consultant identity {}: {}",
-            agencyId,
-            adminId,
-            e.getMessage());
-      }
+      consultantAgencyRelationCreatorService.createNewConsultantAgency(
+          adminId, new CreateConsultantAgencyDTO().agencyId(agencyId));
+    }
+  }
+
+  private void removeGrantedRoles(String adminId, GrantConsultantIdentityDTO dto) {
+    identityClient.removeRoleIfPresent(adminId, CONSULTANT.getValue());
+    if (dto.isGroupchatConsultant()) {
+      identityClient.removeRoleIfPresent(adminId, GROUP_CHAT_CONSULTANT.getValue());
     }
   }
 
