@@ -267,7 +267,7 @@ paths:
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
       responses:
