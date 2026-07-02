@@ -1,4 +1,4 @@
-name: CI - Feature Branch
+name: UserService Branch Validation
 
 on:
   push:
@@ -7,14 +7,15 @@ on:
     - dev
 
 jobs:
-  build:
+  validate:
+    name: test and build UserService
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '17'
