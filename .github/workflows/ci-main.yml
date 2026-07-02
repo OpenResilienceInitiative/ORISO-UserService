@@ -1,4 +1,4 @@
-name: CI - Main
+name: UserService Build and Publish
 
 on:
   push:
@@ -11,7 +11,8 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
-  build:
+  publish:
+    name: test, build and publish image
     runs-on: ubuntu-latest
 
     permissions:
@@ -22,12 +23,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
 
-    - name: Create and Publish Docker image
+    - name: Publish UserService Docker image
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: true
