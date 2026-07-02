@@ -1176,7 +1176,7 @@ class SessionServiceTest {
     when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.empty());
 
     assertThrows(
-        jakarta.ws.rs.BadRequestException.class,
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
@@ -1186,7 +1186,7 @@ class SessionServiceTest {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
 
     assertThrows(
-        jakarta.ws.rs.BadRequestException.class,
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
@@ -1198,7 +1198,7 @@ class SessionServiceTest {
         .thenReturn(List.of(SESSION, SESSION_2));
 
     assertThrows(
-        jakarta.ws.rs.BadRequestException.class,
+        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
         () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
   }
 
