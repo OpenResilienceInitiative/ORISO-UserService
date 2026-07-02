@@ -185,7 +185,9 @@ class AssignEnquiryFacadeTest {
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     USER_WITH_RC_ID.setMatrixUserId(null);
-    when(rocketChatFacade.retrieveRocketChatMembers(anyString())).thenReturn(LIST_GROUP_MEMBER_DTO);
+    lenient()
+        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
+        .thenReturn(LIST_GROUP_MEMBER_DTO);
 
     var matrixUserResponse = new MatrixCreateUserResponseDTO();
     matrixUserResponse.setUserId(USER_MATRIX_ID);
@@ -204,7 +206,9 @@ class AssignEnquiryFacadeTest {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     USER_WITH_RC_ID.setMatrixUserId(null);
     USER_WITH_RC_ID.setUsername("asker");
-    when(rocketChatFacade.retrieveRocketChatMembers(anyString())).thenReturn(LIST_GROUP_MEMBER_DTO);
+    lenient()
+        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
+        .thenReturn(LIST_GROUP_MEMBER_DTO);
     when(matrixSynapseService.createUser(eq("asker"), anyString(), eq("asker")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
     when(matrixSynapseService.loginAsUserAccessToken("@asker:matrix.example.com"))
