@@ -519,6 +519,7 @@ public class AssignEnquiryFacade {
   }
 
   private String createOrResolveMatrixUserId(String matrixLocalpart, String displayName) {
+    boolean tryFallback = false;
     try {
       var matrixResponse =
           matrixSynapseService.createUser(
@@ -526,20 +527,38 @@ public class AssignEnquiryFacade {
       if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
         return matrixResponse.getBody().getUserId();
       }
-    } catch (Exception e) {
+      // Body is null or userId missing — creation silently failed, do not attempt resolution
       log.warn(
-          "Failed to create Matrix user {}, attempting to resolve existing account: {}",
+          "Matrix user creation returned no userId for localpart {}, skipping fallback",
+          matrixLocalpart);
+      return null;
+    } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException e) {
+      // The server rejected the registration, most likely because the account already exists.
+      // Try to verify and reuse it via a login probe.
+      log.warn(
+          "Failed to create Matrix user {} (may already exist), attempting to resolve: {}",
+          matrixLocalpart,
+          e.getMessage());
+      tryFallback = true;
+    } catch (Exception e) {
+      // Some other error (network, serialisation, …) — swallow and leave the caller to decide
+      // what to do with a missing Matrix ID.  Do NOT attempt the login probe here, because a
+      // generic failure does not imply the account exists.
+      log.warn(
+          "Failed to create Matrix user {}, skipping fallback: {}",
           matrixLocalpart,
           e.getMessage());
     }
 
-    var candidateUserId = "@" + matrixLocalpart + ":" + matrixConfig.getServerName();
-    if (!isBlank(matrixSynapseService.loginAsUserAccessToken(candidateUserId))) {
-      log.info(
-          "Resolved existing Matrix account for localpart {}: {}",
-          matrixLocalpart,
-          candidateUserId);
-      return candidateUserId;
+    if (tryFallback) {
+      var candidateUserId = "@" + matrixLocalpart + ":" + matrixConfig.getServerName();
+      if (!isBlank(matrixSynapseService.loginAsUserAccessToken(candidateUserId))) {
+        log.info(
+            "Resolved existing Matrix account for localpart {}: {}",
+            matrixLocalpart,
+            candidateUserId);
+        return candidateUserId;
+      }
     }
 
     return null;
