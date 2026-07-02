@@ -996,14 +996,22 @@ class UserControllerIT {
   }
 
   @Test
-  void getSessionsForAuthenticatedUser_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
+  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenRcTokenHeaderIsMissing()
       throws Exception {
+    List<UserSessionResponseDTO> session = new ArrayList<>();
+    UserSessionListResponseDTO response = new UserSessionListResponseDTO().sessions(session);
+
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
+
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+        .thenReturn(response);
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNoContent());
   }
 
   @Test
