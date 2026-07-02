@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.consultant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,8 +36,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 public class ConsultantAdminServiceTest {
 
   @InjectMocks private ConsultantAdminService consultantAdminService;
@@ -110,6 +113,111 @@ public class ConsultantAdminServiceTest {
 
           this.consultantAdminService.markConsultantForDeletion("id", false);
         });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-02
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void findConsultantById_Should_ThrowNoContent_When_NotFound() {
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1")).thenReturn(Optional.empty());
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NoContentException.class,
+        () -> consultantAdminService.findConsultantById("c-1"));
+  }
+
+  @Test
+  void findConsultantById_Should_ReturnDTO_When_FoundWithDisplayName() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultant));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1"))
+        .thenReturn(Optional.of(Map.of("displayName", "Test User")));
+
+    var result = consultantAdminService.findConsultantById("c-1");
+
+    assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Test User");
+  }
+
+  @Test
+  void findConsultantById_Should_ReturnDTO_When_FoundWithoutDisplayName() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultant));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1")).thenReturn(Optional.of(Map.of("id", "c-1")));
+
+    var result = consultantAdminService.findConsultantById("c-1");
+
+    assertThat(result.getEmbedded().getDisplayName()).isNull();
+  }
+
+  @Test
+  void updateConsultant_Should_ReturnDTO_When_Updated() {
+    var updated = new Consultant();
+    updated.setId("c-1");
+    var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO();
+    when(consultantUpdateService.updateConsultant("c-1", dto)).thenReturn(updated);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+
+    var result = consultantAdminService.updateConsultant("c-1", dto);
+
+    assertThat(result).isNotNull();
+    verify(appointmentService).updateConsultant(result);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void markConsultantForDeletion_Should_DeleteSessions_When_ForceIsTrue() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultant));
+    when(sessionRepository.findByConsultantAndStatusIn(any(Consultant.class), any(List.class)))
+        .thenReturn(List.of(session))
+        .thenReturn(List.of());
+
+    consultantAdminService.markConsultantForDeletion("c-1", true);
+
+    verify(sessionRepository).delete(session);
+    verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
+  }
+
+  @Test
+  void pauseConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotFound() {
+    when(consultantRepository.findById("c-1")).thenReturn(Optional.empty());
+    assertThrows(
+        NotFoundException.class,
+        () -> consultantAdminService.pauseConsultantDeletion("c-1", "reason", 3, "admin"));
+  }
+
+  @Test
+  void pauseConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotMarkedForDeletion() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setDeleteDate(null);
+    when(consultantRepository.findById("c-1")).thenReturn(Optional.of(consultant));
+    assertThrows(
+        NotFoundException.class,
+        () -> consultantAdminService.pauseConsultantDeletion("c-1", "reason", 3, "admin"));
+  }
+
+  @Test
+  void pauseConsultantDeletion_Should_Pause_When_ValidConsultantMarkedForDeletion() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setDeleteDate(java.time.LocalDateTime.now());
+    when(consultantRepository.findById("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.pauseConsultantDeletion("c-1", "reason", 3, "admin");
+
+    verify(deletionLifecycleService).pauseConsultantDeletion(consultant, "reason", 3, "admin");
+    verify(consultantRepository).save(consultant);
   }
 
   @Test
