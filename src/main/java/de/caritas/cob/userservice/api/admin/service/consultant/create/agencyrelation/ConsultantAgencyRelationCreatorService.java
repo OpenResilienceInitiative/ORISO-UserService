@@ -53,8 +53,16 @@ public class ConsultantAgencyRelationCreatorService {
   public void createConsultantAgencyRelations(
       String consultantId, Set<Long> agencyIds, Set<String> roles, Consumer<String> logMethod) {
     checkConsultantHasRoleSet(roles, consultantId);
+    var additionalAgencyIds = Set.copyOf(agencyIds);
     agencyIds.stream()
-        .map(agencyId -> new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles))
+        .map(
+            agencyId ->
+                new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                })
         .forEach(input -> createNewConsultantAgency(input, logMethod));
   }
 
@@ -87,8 +95,8 @@ public class ConsultantAgencyRelationCreatorService {
     }
 
     consultantTopicAgencyCompatibilityValidator
-        .validateCurrentTopicsAgainstAssignedAndAdditionalAgency(
-            consultant.getId(), input.getAgencyId(), consultant.getTenantId());
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+            consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
 
     ensureConsultingTypeRoles(input, agency);
     consultantAgencyService.saveConsultantAgency(buildConsultantAgency(consultant, agency.getId()));

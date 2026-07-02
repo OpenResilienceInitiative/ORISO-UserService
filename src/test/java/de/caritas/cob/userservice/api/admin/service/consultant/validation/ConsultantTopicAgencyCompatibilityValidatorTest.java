@@ -89,6 +89,22 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
                 "consultant-id", List.of(10L, 20L)));
   }
 
+  @Test
+  void validateCurrentTopicsAgainstAssignedAndAdditionalAgencies_AllowsTopicsCoveredByCombinedGrant() {
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull("consultant-id"))
+        .thenReturn(List.of());
+    when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
+        .thenReturn(List.of(3L, 7L));
+    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+        .thenReturn(
+            List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
+
+    assertDoesNotThrow(
+        () ->
+            validator.validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+                "consultant-id", List.of(10L, 20L), 1L));
+  }
+
   private AgencyDTO agency(Long agencyId, Long tenantId, boolean offline, List<Long> topicIds) {
     return new AgencyDTO().id(agencyId).tenantId(tenantId).offline(offline).topicIds(topicIds);
   }

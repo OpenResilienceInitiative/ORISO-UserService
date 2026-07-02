@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -237,10 +238,17 @@ public class ConsultantAdminFacade {
    */
   public void prepareConsultantAgencyRelation(
       String consultantId, List<CreateConsultantAgencyDTO> agencies) {
+    Set<Long> additionalAgencyIds =
+        agencies.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
     agencies.forEach(
         agency ->
             this.consultantAgencyRelationCreatorService.prepareConsultantAgencyRelation(
-                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency)));
+                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                }));
   }
 
   /**

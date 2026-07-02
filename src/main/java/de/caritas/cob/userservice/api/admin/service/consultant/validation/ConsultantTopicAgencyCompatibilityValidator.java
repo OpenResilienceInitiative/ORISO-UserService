@@ -50,10 +50,18 @@ public class ConsultantTopicAgencyCompatibilityValidator {
 
   public void validateCurrentTopicsAgainstAssignedAndAdditionalAgency(
       String consultantId, Long agencyId, Long tenantId) {
-    var agencyIds = new ArrayList<>(assignedAgencyIdsOf(consultantId));
-    agencyIds.add(agencyId);
+    validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+        consultantId, List.of(agencyId), tenantId);
+  }
+
+  public void validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+      String consultantId, Collection<Long> additionalAgencyIds, Long tenantId) {
+    var coveredAgencyIds = new ArrayList<>(assignedAgencyIdsOf(consultantId));
+    coveredAgencyIds.addAll(normalizedIds(additionalAgencyIds));
     validateTopicsCoveredByAgencies(
-        consultantTopicRepository.findTopicIdsByConsultantId(consultantId), agencyIds, tenantId);
+        consultantTopicRepository.findTopicIdsByConsultantId(consultantId),
+        coveredAgencyIds,
+        tenantId);
   }
 
   private void validateTopicsCoveredByAgencies(
