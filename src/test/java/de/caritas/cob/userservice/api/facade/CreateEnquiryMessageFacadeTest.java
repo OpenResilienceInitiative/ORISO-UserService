@@ -206,6 +206,8 @@ class CreateEnquiryMessageFacadeTest {
 
   @BeforeEach
   void setUp() throws SecurityException {
+    // Most cases cover the Rocket.Chat enquiry flow (ADR-004: disabled by default)
+    setField(createEnquiryMessageFacade, "rocketChatEnabled", true);
     setField(
         createEnquiryMessageFacade,
         FIELD_NAME_ROCKET_CHAT_SYSTEM_USER_ID,
@@ -285,6 +287,48 @@ class CreateEnquiryMessageFacadeTest {
     assertEquals(matrixRoomId, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());
     assertNotNull(session.getEnquiryMessageDate());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void createEnquiryMessage_Should_PostMatrixEnquiry_When_RocketChatIsDisabled()
+      throws Exception {
+    // ADR-004: even with usable Rocket.Chat credentials the Matrix path must be taken
+    setField(createEnquiryMessageFacade, "rocketChatEnabled", false);
+    var matrixRoomId = "!session-room:oriso.org";
+    var matrixUserId = "@asker:oriso.org";
+    var matrixToken = "matrix-token";
+    var matrixEventId = "$event";
+    user.setMatrixUserId(matrixUserId);
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setIsConsultantDirectlySet(false);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setMatrixRoomId(matrixRoomId);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId()))
+        .thenReturn(extendedConsultingTypeResponseDTO);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+    when(matrixSynapseService.loginAsUserAccessToken(matrixUserId)).thenReturn(matrixToken);
+    when(matrixSynapseService.sendMessage(matrixRoomId, MESSAGE, matrixToken))
+        .thenReturn(Map.of("event_id", matrixEventId));
+
+    final var response =
+        createEnquiryMessageFacade.createEnquiryMessage(
+            new EnquiryData(user, SESSION_ID, MESSAGE, null, RC_CREDENTIALS));
+
+    verify(rocketChatService, never()).getUserInfo(anyString());
+    verify(rocketChatService, never()).createPrivateGroup(anyString(), any());
+    verify(messageServiceProvider, never())
+        .postEnquiryMessage(
+            any(RocketChatData.class), any(CreateEnquiryExceptionInformation.class));
+    assertEquals(matrixRoomId, response.getRcGroupId());
+    assertEquals(matrixEventId, response.getT());
+    assertEquals(matrixRoomId, session.getGroupId());
     resetRequestAttributes();
   }
 
