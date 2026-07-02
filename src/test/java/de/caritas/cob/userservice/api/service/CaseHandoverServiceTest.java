@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -52,6 +53,7 @@ class CaseHandoverServiceTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private MatrixSynapseService matrixSynapseService;
 
   private Consultant requester;
   private Consultant previous;
@@ -115,6 +117,24 @@ class CaseHandoverServiceTest {
     verify(sessionRepository).save(session);
     verify(eventNotificationService, atLeastOnce())
         .createEvent(any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void requestAccess_invitesRequesterToExistingMatrixRoom_WhenGranted() throws Exception {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    verify(matrixSynapseService)
+        .inviteUserToRoom("!room:matrix", "@requester:matrix", "previous-token");
+    verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
   }
 
   @Test

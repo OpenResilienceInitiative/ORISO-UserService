@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api.service;
 
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
@@ -36,11 +40,13 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CaseHandoverService {
 
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
@@ -106,6 +112,7 @@ public class CaseHandoverService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
 
   public List<CaseHandoverReason> listReasons() {
     List<CaseHandoverReasonPolicy> policies =
@@ -265,6 +272,7 @@ public class CaseHandoverService {
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
 
     if (status == Status.GRANTED) {
+      ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant());
       session.setConsultant(requester);
       session.setUpdateDate(now);
       sessionRepository.save(session);
@@ -305,6 +313,8 @@ public class CaseHandoverService {
 
       request.setStatus(Status.GRANTED);
       request.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
+      ensureRequesterJoinedMatrixRoom(
+          session, request.getRequesterConsultant(), request.getPreviousConsultant());
       session.setConsultant(request.getRequesterConsultant());
       session.setUpdateDate(now);
       sessionRepository.save(session);
@@ -686,6 +696,54 @@ public class CaseHandoverService {
     return roomRef != null
         ? "/sessions/consultant/sessionView/" + roomRef + "/" + session.getId()
         : null;
+  }
+
+  private void ensureRequesterJoinedMatrixRoom(
+      Session session, Consultant requester, Consultant previousConsultant) {
+    if (session == null || isBlank(session.getMatrixRoomId())) {
+      return;
+    }
+    if (requester == null || isBlank(requester.getMatrixUserId())) {
+      throw new InternalServerErrorException(
+          "Case handover requester does not have Matrix credentials");
+    }
+    if (previousConsultant == null || isBlank(previousConsultant.getMatrixUserId())) {
+      throw new InternalServerErrorException(
+          "Previous consultant does not have Matrix credentials for case handover");
+    }
+
+    String roomId = session.getMatrixRoomId();
+    String previousConsultantToken =
+        matrixSynapseService.loginAsUserAccessToken(previousConsultant.getMatrixUserId());
+    if (isBlank(previousConsultantToken)) {
+      throw new InternalServerErrorException(
+          "Failed to create previous consultant Matrix token for case handover");
+    }
+
+    try {
+      matrixSynapseService.inviteUserToRoom(
+          roomId, requester.getMatrixUserId(), previousConsultantToken);
+    } catch (Exception exception) {
+      log.error(
+          "Failed to invite case handover requester {} to Matrix room {}: {}",
+          requester.getUsername(),
+          roomId,
+          exception.getMessage());
+      throw new InternalServerErrorException(
+          "Failed to invite case handover requester to Matrix room");
+    }
+
+    String requesterToken = matrixSynapseService.loginAsUserAccessToken(requester.getMatrixUserId());
+    if (isBlank(requesterToken)) {
+      throw new InternalServerErrorException(
+          "Failed to create requester Matrix token for case handover");
+    }
+
+    boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
+    if (!joined) {
+      throw new InternalServerErrorException(
+          "Failed to join case handover requester to Matrix room");
+    }
   }
 
   private String resolveConsultantName(Consultant consultant) {
