@@ -94,6 +94,7 @@ import org.springframework.test.web.servlet.MockMvc;
   UserSessionControllerDelegate.class,
   UserAccountControllerDelegate.class,
   UserTwoFactorAuthControllerDelegate.class,
+  UserRegistrationControllerDelegate.class,
   ApiResponseEntityExceptionHandler.class,
   EncodeUsernameJsonDeserializer.class,
   UrlDecodePasswordJsonDeserializer.class,
