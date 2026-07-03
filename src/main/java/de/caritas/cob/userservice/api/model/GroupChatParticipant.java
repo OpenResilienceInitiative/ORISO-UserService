@@ -32,11 +32,12 @@ public class GroupChatParticipant {
   private Long id;
 
   /**
-   * Identifier of the group chat this participation belongs to. Depending on the caller this holds
-   * either a {@code chat.id} (group chats) or a {@code session.id} (team sessions, where {@code
-   * is_team_session = true}). The two id spaces are distinct and are NOT interchangeable, so the
-   * owning context determines which one is stored. There is no DB-level foreign key, so callers are
-   * responsible for resolving it against the correct table.
+   * References {@code session.id} of the team session this participation belongs to (where {@code
+   * is_team_session = true}). The column is named {@code chat_id} for historical reasons; despite
+   * the name it does <b>not</b> reference {@code chat.id}. All current write paths (via {@link
+   * de.caritas.cob.userservice.api.facade.CreateChatFacade}) store the session ID, and readers
+   * (e.g. {@link de.caritas.cob.userservice.api.service.session.SessionService}) pass this value
+   * directly to {@code sessionRepository.findAllById}. There is no DB-level foreign key.
    */
   @Column(name = "chat_id", nullable = false)
   private Long chatId;
