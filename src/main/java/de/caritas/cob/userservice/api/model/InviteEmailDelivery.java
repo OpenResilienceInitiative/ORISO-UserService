@@ -51,7 +51,7 @@ public class InviteEmailDelivery {
   private String subjectSnapshot;
 
   @Lob
-  @Column(name = "body_snapshot", nullable = false)
+  @Column(name = "body_snapshot", nullable = false, columnDefinition = "LONGTEXT")
   private String bodySnapshot;
 
   @Column(name = "recipient_snapshot", nullable = false)

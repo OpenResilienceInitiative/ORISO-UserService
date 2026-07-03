@@ -50,7 +50,7 @@ public class InviteEmailTemplate {
   private String subject;
 
   @Lob
-  @Column(name = "body", nullable = false)
+  @Column(name = "body", nullable = false, columnDefinition = "LONGTEXT")
   private String body;
 
   @Column(name = "active", nullable = false)
