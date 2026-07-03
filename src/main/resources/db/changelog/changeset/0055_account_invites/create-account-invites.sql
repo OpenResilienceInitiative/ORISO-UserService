@@ -1,0 +1,66 @@
+CREATE TABLE IF NOT EXISTS account_invite (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  target_role VARCHAR(64) NOT NULL,
+  tenant_id BIGINT NULL,
+  recipient_email VARCHAR(255) NOT NULL,
+  first_name VARCHAR(255) NULL,
+  last_name VARCHAR(255) NULL,
+  agency_id BIGINT NULL,
+  department_id BIGINT NULL,
+  token_hash VARCHAR(64) NULL,
+  expires_at DATETIME NULL,
+  status VARCHAR(32) NOT NULL,
+  email_verification_status VARCHAR(32) NOT NULL,
+  two_factor_status VARCHAR(32) NOT NULL,
+  accepted_at DATETIME NULL,
+  accepted_by_user_id VARCHAR(36) NULL,
+  revoked_at DATETIME NULL,
+  revoked_by_user_id VARCHAR(36) NULL,
+  superseded_at DATETIME NULL,
+  superseded_by_user_id VARCHAR(36) NULL,
+  superseded_by_invite_id BIGINT NULL,
+  two_factor_waived_by VARCHAR(36) NULL,
+  two_factor_waived_at DATETIME NULL,
+  two_factor_waiver_reason VARCHAR(512) NULL,
+  created_by_user_id VARCHAR(36) NULL,
+  created_by_username VARCHAR(255) NULL,
+  create_date DATETIME NOT NULL,
+  update_date DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY idx_account_invite_token_hash (token_hash),
+  KEY idx_account_invite_tenant_status (tenant_id, status),
+  KEY idx_account_invite_target_role (target_role)
+);
+
+CREATE TABLE IF NOT EXISTS invite_email_template (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  kind VARCHAR(32) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  language VARCHAR(16) NULL,
+  subject VARCHAR(255) NOT NULL,
+  body LONGTEXT NOT NULL,
+  active BIT NOT NULL DEFAULT 1,
+  created_by_user_id VARCHAR(36) NULL,
+  create_date DATETIME NOT NULL,
+  update_date DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_invite_email_template_kind (kind, active)
+);
+
+CREATE TABLE IF NOT EXISTS invite_email_delivery (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  account_invite_id BIGINT NOT NULL,
+  template_id BIGINT NULL,
+  template_kind VARCHAR(32) NOT NULL,
+  subject_snapshot VARCHAR(255) NOT NULL,
+  body_snapshot LONGTEXT NOT NULL,
+  recipient_snapshot VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  sent_at DATETIME NULL,
+  failure_reason VARCHAR(1024) NULL,
+  create_date DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_invite_email_delivery_invite (account_invite_id),
+  CONSTRAINT fk_invite_email_delivery_account_invite FOREIGN KEY (account_invite_id)
+    REFERENCES account_invite (id)
+);
