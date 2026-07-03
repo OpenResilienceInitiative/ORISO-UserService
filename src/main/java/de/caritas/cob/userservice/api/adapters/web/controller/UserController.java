@@ -1,16 +1,12 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
@@ -42,20 +38,11 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
-import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
-import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.in.AccountManaging;
-import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.AskerImportService;
-import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
-import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
-import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -64,16 +51,11 @@ import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -99,20 +81,13 @@ public class UserController implements UsersApi {
   private final @NotNull ConsultantImportService consultantImportService;
   private final @NotNull EmailNotificationFacade emailNotificationFacade;
   private final @NotNull AskerImportService askerImportService;
-  private final @NotNull ConsultantAgencyService consultantAgencyService;
   private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
   private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
   private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
-  private final @NotNull ConsultantDataFacade consultantDataFacade;
+  private final @NotNull UserConsultantControllerDelegate userConsultantControllerDelegate;
   private final @NotNull SessionDataService sessionDataService;
-  private final @NonNull AccountManaging accountManager;
-  private final @NonNull Messaging messenger;
-  private final @NonNull ConsultantDtoMapper consultantDtoMapper;
-  private final @NonNull ConsultantService consultantService;
-
-  private final @NotNull AdminUserFacade adminUserFacade;
 
   private final @NonNull EventNotificationService eventNotificationService;
 
@@ -302,10 +277,7 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<LanguageResponseDTO> getLanguages(Long agencyId) {
-    var languageCodes = consultantAgencyService.getLanguageCodesOfAgency(agencyId);
-    var languageResponseDTO = consultantDtoMapper.languageResponseDtoOf(languageCodes);
-
-    return new ResponseEntity<>(languageResponseDTO, HttpStatus.OK);
+    return userConsultantControllerDelegate.getLanguages(agencyId);
   }
 
   /**
@@ -439,69 +411,13 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<List<ConsultantResponseDTO>> getConsultants(@RequestParam Long agencyId) {
-
-    var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
-
-    return isNotEmpty(consultants)
-        ? new ResponseEntity<>(consultants, HttpStatus.OK)
-        : new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    return userConsultantControllerDelegate.getConsultants(agencyId);
   }
 
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
       String query, Integer page, Integer perPage, String field, String order) {
-    var decodedInfix = determineDecodedInfix(query).trim();
-    var isAscending = order.equalsIgnoreCase("asc");
-    var mappedField = consultantDtoMapper.mappedFieldOf(field);
-    var resultMap =
-        accountManager.findConsultantsByInfix(
-            decodedInfix,
-            authenticatedUser.hasRestrictedAgencyPriviliges(),
-            getAgenciesToFilterConsultants(),
-            page - 1,
-            perPage,
-            mappedField,
-            isAscending);
-
-    var result =
-        consultantDtoMapper.consultantSearchResultOf(resultMap, query, page, perPage, field, order);
-
-    if (authenticatedUser.hasRestrictedAgencyPriviliges() && result.getEmbedded() != null) {
-      result
-          .getEmbedded()
-          .forEach(
-              response ->
-                  removeAgenciesWithoutAccessRight(response, getAgenciesToFilterConsultants()));
-    }
-
-    return ResponseEntity.ok(result);
-  }
-
-  private String determineDecodedInfix(String query) {
-    if (EmailValidator.getInstance().isValid(query)) {
-      return EmailUrlDecoder.decodeEmailQuery(query);
-    } else {
-      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
-    }
-  }
-
-  private void removeAgenciesWithoutAccessRight(
-      ConsultantAdminResponseDTO response, Collection<Long> agenciesToFilterConsultants) {
-    List<AgencyAdminResponseDTO> agencies = response.getEmbedded().getAgencies();
-    List<AgencyAdminResponseDTO> filteredAgencies =
-        agencies.stream()
-            .filter(agency -> agenciesToFilterConsultants.contains(agency.getId()))
-            .collect(Collectors.toList());
-    response.getEmbedded().setAgencies(filteredAgencies);
-  }
-
-  private Collection<Long> getAgenciesToFilterConsultants() {
-    Collection<Long> agenciesToFilterConsultants = Lists.newArrayList();
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      agenciesToFilterConsultants =
-          adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId());
-    }
-    return agenciesToFilterConsultants;
+    return userConsultantControllerDelegate.searchConsultants(query, page, perPage, field, order);
   }
 
   /**
@@ -820,17 +736,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(UUID consultantId) {
-    var consultantIdString = consultantId.toString();
-    var consultant =
-        consultantService
-            .getConsultant(consultantIdString)
-            .orElseThrow(
-                () -> new NotFoundException("Consultant with id %s not found", consultantIdString));
-    var onlineAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant(consultantIdString);
-    var consultantDto =
-        consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
-
-    return new ResponseEntity<>(consultantDto, HttpStatus.OK);
+    return userConsultantControllerDelegate.getConsultantPublicData(consultantId);
   }
 
   @Override
