@@ -271,6 +271,8 @@ public class CreateChatV1FacadeTest {
           when(rocketChatService.createPrivateGroupWithSystemUser(Mockito.any()))
               .thenReturn(Optional.of(groupResponseDTO));
           when(chatService.saveChat(Mockito.any())).thenReturn(chat);
+          when(groupResponseDTO.getGroup()).thenReturn(groupDTO);
+          when(groupDTO.getId()).thenReturn(RC_GROUP_ID);
           when(chatService.saveChatAgencyRelation(Mockito.any()))
               .thenThrow(new InternalServerErrorException(""));
 

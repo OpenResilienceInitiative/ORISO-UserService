@@ -77,7 +77,7 @@ public class CreateChatFacade {
       return createSimplifiedGroupChat(chatDTO, consultant);
     }
     // Otherwise, use the old Rocket.Chat flow
-    return createChat(chatDTO, consultant, this::saveChatV1);
+    return createChat(chatDTO, consultant, this::saveChatV1, this::resolveChatAgencyForV1);
   }
 
   /**
@@ -97,11 +97,14 @@ public class CreateChatFacade {
       return createSimplifiedGroupChat(chatDTO, consultant);
     }
     // Otherwise, use the old flow
-    return createChat(chatDTO, consultant, this::saveChatV2);
+    return createChat(chatDTO, consultant, this::saveChatV2, this::resolveChatAgencyForV2);
   }
 
   private CreateChatResponseDTO createChat(
-      ChatDTO chatDTO, Consultant consultant, BiFunction<Consultant, ChatDTO, Chat> saveChat) {
+      ChatDTO chatDTO,
+      Consultant consultant,
+      BiFunction<Consultant, ChatDTO, Chat> saveChat,
+      BiFunction<Consultant, ChatDTO, Long> resolveAgencyId) {
     Chat chat = null;
     String rcGroupId = null;
 
@@ -110,6 +113,7 @@ public class CreateChatFacade {
       rcGroupId = createRocketChatGroupWithTechnicalUser(chatDTO, chat);
       chat.setGroupId(rcGroupId);
       chatService.saveChat(chat);
+      createChatAgencyRelation(chat, resolveAgencyId.apply(consultant, chatDTO));
 
       return new CreateChatResponseDTO()
           .groupId(rcGroupId)
@@ -128,18 +132,26 @@ public class CreateChatFacade {
     Long agencyId = consultant.getConsultantAgencies().iterator().next().getAgencyId();
     AgencyDTO agency = this.agencyService.getAgency(agencyId);
 
-    Chat chat = chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant, agency));
-    createChatAgencyRelation(chat, agencyId);
-    return chat;
+    return chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant, agency));
   }
 
   private Chat saveChatV2(Consultant consultant, ChatDTO chatDTO) {
     assertAgencyIdIsNotNull(chatDTO);
-    Chat chat = chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant));
-    ConsultantAgency foundConsultantAgency =
-        findConsultantAgencyForGivenChatAgency(consultant, chatDTO);
-    createChatAgencyRelation(chat, foundConsultantAgency.getAgencyId());
-    return chat;
+    findConsultantAgencyForGivenChatAgency(consultant, chatDTO);
+    return chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant));
+  }
+
+  private Long resolveChatAgencyForV1(Consultant consultant, ChatDTO chatDTO) {
+    if (isEmpty(consultant.getConsultantAgencies())) {
+      throw new InternalServerErrorException(
+          String.format("Consultant with id %s is not assigned to any agency", consultant.getId()));
+    }
+    return consultant.getConsultantAgencies().iterator().next().getAgencyId();
+  }
+
+  private Long resolveChatAgencyForV2(Consultant consultant, ChatDTO chatDTO) {
+    assertAgencyIdIsNotNull(chatDTO);
+    return findConsultantAgencyForGivenChatAgency(consultant, chatDTO).getAgencyId();
   }
 
   private void assertAgencyIdIsNotNull(ChatDTO chatDTO) {
@@ -265,9 +277,6 @@ public class CreateChatFacade {
     Long chatId = chat.getId();
     log.info("Created chat {} for group chat", chatId);
 
-    // Create chat-agency relation
-    createChatAgencyRelation(chat, agencyId);
-
     String matrixRoomId = null;
 
     try {
@@ -294,6 +303,7 @@ public class CreateChatFacade {
       chat.setGroupId(matrixRoomId); // Set rc_group_id for backwards compatibility
       chat.setMatrixRoomId(matrixRoomId); // Set matrix_room_id for Matrix
       chatService.saveChat(chat);
+      createChatAgencyRelation(chat, agencyId);
 
       // Get consultant token for inviting others
       String consultantToken =

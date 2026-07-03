@@ -374,7 +374,8 @@ class ChatServiceTest {
 
   @Test
   void getChatSessionsForConsultantByIds_Should_returnConsultantSessionsForGivenIds() {
-    when(chatRepository.findAllById(Set.of(CHAT_ID))).thenReturn(List.of(activeChatWithAgency()));
+    when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
 
     List<ConsultantSessionResponseDTO> result =
         chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID));
