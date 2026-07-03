@@ -39,6 +39,13 @@ class RocketChatRoomInformationProviderTest {
 
   @Mock private ConsultantRepository consultantRepository;
 
+  @org.junit.jupiter.api.BeforeEach
+  void enableRocketChat() {
+    // These tests cover the Rocket.Chat-backed room info flow (ADR-004: disabled by default)
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        rocketChatRoomInformationProvider, "rocketChatEnabled", true);
+  }
+
   @Test
   void retrieveRocketChatInformation_Should_Return_CorrectMessagesReadMap() {
 

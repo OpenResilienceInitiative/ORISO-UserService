@@ -90,6 +90,9 @@ public class CreateChatV1FacadeTest {
 
   @BeforeEach
   public void setup() {
+    // These tests cover the legacy Rocket.Chat flow (ADR-004: disabled by default)
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createChatFacade, "rocketChatEnabled", true);
     when(chat.getId()).thenReturn(CHAT_ID);
     when(chat.getConsultingTypeId()).thenReturn(15);
     when(chat.getCreateDate()).thenReturn(LocalDateTime.now());

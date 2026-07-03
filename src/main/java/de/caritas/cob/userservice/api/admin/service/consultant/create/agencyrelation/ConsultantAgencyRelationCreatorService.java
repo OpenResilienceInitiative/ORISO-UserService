@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
@@ -38,6 +39,9 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull RocketChatAsyncHelper rocketChatAsyncHelper;
+
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -98,8 +102,14 @@ public class ConsultantAgencyRelationCreatorService {
       consultantRepository.save(consultant);
     }
 
-    rocketChatAsyncHelper.addConsultantToSessions(
-        consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    if (rocketChatEnabled) {
+      rocketChatAsyncHelper.addConsultantToSessions(
+          consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    } else {
+      // Matrix-only: no Rocket.Chat group assignments exist, so finalize synchronously in this
+      // transaction — the async variant cannot see the uncommitted consultant_agency row.
+      rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, agency);
+    }
 
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
       consultant.setTeamConsultant(true);
