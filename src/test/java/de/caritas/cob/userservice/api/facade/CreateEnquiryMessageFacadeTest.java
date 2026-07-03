@@ -291,8 +291,7 @@ class CreateEnquiryMessageFacadeTest {
   }
 
   @Test
-  void createEnquiryMessage_Should_PostMatrixEnquiry_When_RocketChatIsDisabled()
-      throws Exception {
+  void createEnquiryMessage_Should_PostMatrixEnquiry_When_RocketChatIsDisabled() throws Exception {
     // ADR-004: even with usable Rocket.Chat credentials the Matrix path must be taken
     setField(createEnquiryMessageFacade, "rocketChatEnabled", false);
     var matrixRoomId = "!session-room:oriso.org";

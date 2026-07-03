@@ -44,9 +44,9 @@ public class RocketChatConfig {
   private final HttpServletRequest httpServletRequest;
 
   /**
-   * Master switch for the Rocket.Chat integration (ADR-004). Defaults to {@code false}: the
-   * service runs Matrix-only and no Rocket.Chat REST call, MongoDB connection or credential cron
-   * is ever made. Only when {@code rocket-chat.enabled=true} are the Rocket.Chat beans created.
+   * Master switch for the Rocket.Chat integration (ADR-004). Defaults to {@code false}: the service
+   * runs Matrix-only and no Rocket.Chat REST call, MongoDB connection or credential cron is ever
+   * made. Only when {@code rocket-chat.enabled=true} are the Rocket.Chat beans created.
    */
   private boolean enabled;
 

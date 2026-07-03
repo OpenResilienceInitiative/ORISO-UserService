@@ -30,8 +30,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
-@TestPropertySource(
-    properties = {"spring.profiles.active=testing", "rocket-chat.enabled=true"})
+@TestPropertySource(properties = {"spring.profiles.active=testing", "rocket-chat.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 @Import({KeycloakTestConfig.class, RocketChatTestConfig.class, ApiControllerTestConfig.class})
 class DeactivateAnonymousUserSchedulerIT {

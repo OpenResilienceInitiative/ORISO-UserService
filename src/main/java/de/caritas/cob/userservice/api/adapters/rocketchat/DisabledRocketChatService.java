@@ -29,10 +29,10 @@ import org.springframework.web.client.RestTemplate;
 /**
  * Inert Rocket.Chat adapter bound when {@code rocket-chat.enabled=false} (the default, ADR-004).
  *
- * <p>Every operation is a no-op: read paths return empty results and never throw, write paths log
- * a warning once per operation (data that would have gone to Rocket.Chat is intentionally
- * dropped — Matrix is the only chat backend). Login-style operations that cannot fake a usable
- * result throw the declared {@link RocketChatLoginException}, which all callers already handle.
+ * <p>Every operation is a no-op: read paths return empty results and never throw, write paths log a
+ * warning once per operation (data that would have gone to Rocket.Chat is intentionally dropped —
+ * Matrix is the only chat backend). Login-style operations that cannot fake a usable result throw
+ * the declared {@link RocketChatLoginException}, which all callers already handle.
  *
  * <p>No Rocket.Chat REST call, MongoDB connection or credential cron ever happens: the overridden
  * {@link #updateCredentials()} carries neither {@code @PostConstruct} nor {@code @Scheduled}
@@ -61,7 +61,8 @@ public class DisabledRocketChatService extends RocketChatService {
 
   private void warnOnce(String operation) {
     if (warnedOperations.add(operation)) {
-      log.warn("{} - {} is a no-op; nothing is written to Rocket.Chat", DISABLED_MESSAGE, operation);
+      log.warn(
+          "{} - {} is a no-op; nothing is written to Rocket.Chat", DISABLED_MESSAGE, operation);
     } else {
       skip(operation);
     }

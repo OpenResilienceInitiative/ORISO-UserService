@@ -12,10 +12,10 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * ADR-004 proof: the service boots Matrix-only with {@code rocket-chat.enabled=false} (the
- * default) and WITHOUT any Rocket.Chat URL configured. The full application context must start,
- * the inert {@link DisabledRocketChatService} must be bound, and neither a Rocket.Chat MongoDB
- * client nor the credential cron may exist.
+ * ADR-004 proof: the service boots Matrix-only with {@code rocket-chat.enabled=false} (the default)
+ * and WITHOUT any Rocket.Chat URL configured. The full application context must start, the inert
+ * {@link DisabledRocketChatService} must be bound, and neither a Rocket.Chat MongoDB client nor the
+ * credential cron may exist.
  */
 @SpringBootTest(
     properties = {"rocket-chat.enabled=false", "rocket-chat.base-url=", "rocket-chat.mongo-url="})
