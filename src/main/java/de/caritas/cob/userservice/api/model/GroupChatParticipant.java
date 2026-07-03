@@ -31,8 +31,16 @@ public class GroupChatParticipant {
   @Column(name = "id", updatable = false, nullable = false)
   private Long id;
 
+  /**
+   * References {@code session.id} of the team session this participation belongs to (where {@code
+   * is_team_session = true}). The column is named {@code chat_id} for historical reasons; despite
+   * the name it does <b>not</b> reference {@code chat.id}. All current write paths (via {@link
+   * de.caritas.cob.userservice.api.facade.CreateChatFacade}) store the session ID, and readers
+   * (e.g. {@link de.caritas.cob.userservice.api.service.session.SessionService}) pass this value
+   * directly to {@code sessionRepository.findAllById}. There is no DB-level foreign key.
+   */
   @Column(name = "chat_id", nullable = false)
-  private Long chatId; // References chat.id or session.id
+  private Long chatId;
 
   @Column(name = "consultant_id", nullable = false, length = 36)
   private String consultantId;
