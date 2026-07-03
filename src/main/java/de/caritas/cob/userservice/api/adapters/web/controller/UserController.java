@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
-import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import com.google.common.collect.Lists;
@@ -46,10 +45,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
-import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
@@ -59,13 +56,10 @@ import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.EnquiryData;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
-import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
@@ -82,7 +76,6 @@ import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
-import jakarta.ws.rs.InternalServerErrorException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
@@ -126,16 +119,14 @@ public class UserController implements UsersApi {
   private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
   private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
+  private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
   private final @NotNull CreateUserFacade createUserFacade;
   private final @NotNull CreateNewSessionFacade createNewSessionFacade;
   private final @NotNull ConsultantDataFacade consultantDataFacade;
   private final @NotNull SessionDataService sessionDataService;
-  private final @NonNull IdentityClientConfig identityClientConfig;
-  private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull Messaging messenger;
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
-  private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull UserHelper userHelper;
   private final @NotNull IdentityClient identityClient;
@@ -148,7 +139,6 @@ public class UserController implements UsersApi {
 
   private final @NonNull SessionDeleteService sessionDeleteService;
   private final @NonNull EventNotificationService eventNotificationService;
-  private final @NonNull UsernameTranscoder usernameTranscoder;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -915,41 +905,12 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
-    var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
-    var email = emailDTO.getEmail().toLowerCase();
-
-    if (!identityManager.isEmailAvailableOrOwn(username, email)) {
-      return new ResponseEntity<>(HttpStatus.PRECONDITION_FAILED);
-    }
-
-    identityManager
-        .setUpOneTimePassword(username, email)
-        .ifPresent(
-            message -> {
-              throw new InternalServerErrorException(message);
-            });
-
-    return ResponseEntity.noContent().build();
+    return userTwoFactorAuthControllerDelegate.startTwoFactorAuthByEmailSetup(emailDTO);
   }
 
   @Override
   public ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
-    var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
-    var validationResult = identityManager.validateOneTimePassword(username, tan);
-
-    if (Boolean.parseBoolean(validationResult.get("created"))) {
-      var patchMap = userDtoMapper.mapOf(validationResult.get("email"), authenticatedUser);
-      accountManager.patchUser(patchMap);
-      return ResponseEntity.noContent().build();
-    }
-    if (Boolean.parseBoolean(validationResult.get("attemptsLeft"))) {
-      return ResponseEntity.badRequest().build();
-    }
-    if (Boolean.parseBoolean(validationResult.get("createdBefore"))) {
-      return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED).build();
-    }
-
-    return new ResponseEntity<>(HttpStatus.TOO_MANY_REQUESTS);
+    return userTwoFactorAuthControllerDelegate.finishTwoFactorAuthByEmailSetup(tan);
   }
 
   /**
@@ -960,30 +921,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> activateTwoFactorAuthByApp(OneTimePasswordDTO oneTimePasswordDTO) {
-    if (authenticatedUser.isAdviceSeeker()
-        && isFalse(identityClientConfig.getOtpAllowedForUsers())) {
-      throw new ConflictException("2FA is disabled for user role");
-    }
-    if (authenticatedUser.isConsultant()
-        && isFalse(identityClientConfig.getOtpAllowedForConsultants())) {
-      throw new ConflictException("2FA is disabled for consultant role");
-    }
-    if (authenticatedUser.isSingleTenantAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForSingleTenantAdmins())) {
-      throw new ConflictException("2FA is disabled for single tenant admin role");
-    }
-    if (authenticatedUser.isTenantSuperAdmin()
-        && isFalse(identityClientConfig.getOtpAllowedForTenantSuperAdmins())) {
-      throw new ConflictException("2FA is disabled for tenant admin role");
-    }
-
-    var isValid =
-        identityManager.setUpOneTimePassword(
-            usernameTranscoder.encodeUsername(authenticatedUser.getUsername()),
-            oneTimePasswordDTO.getOtp(),
-            oneTimePasswordDTO.getSecret());
-
-    return isValid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    return userTwoFactorAuthControllerDelegate.activateTwoFactorAuthByApp(oneTimePasswordDTO);
   }
 
   /**
@@ -993,10 +931,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> deactivateTwoFactorAuthByApp() {
-    identityManager.deleteOneTimePassword(
-        usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userTwoFactorAuthControllerDelegate.deactivateTwoFactorAuthByApp();
   }
 
   /**
