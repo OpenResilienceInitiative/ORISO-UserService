@@ -31,8 +31,15 @@ public class GroupChatParticipant {
   @Column(name = "id", updatable = false, nullable = false)
   private Long id;
 
+  /**
+   * Identifier of the group chat this participation belongs to. Depending on the caller this holds
+   * either a {@code chat.id} (group chats) or a {@code session.id} (team sessions, where {@code
+   * is_team_session = true}). The two id spaces are distinct and are NOT interchangeable, so the
+   * owning context determines which one is stored. There is no DB-level foreign key, so callers are
+   * responsible for resolving it against the correct table.
+   */
   @Column(name = "chat_id", nullable = false)
-  private Long chatId; // References chat.id or session.id
+  private Long chatId;
 
   @Column(name = "consultant_id", nullable = false, length = 36)
   private String consultantId;

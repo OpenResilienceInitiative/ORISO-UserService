@@ -37,6 +37,14 @@ import org.springframework.web.client.RestTemplate;
  * <p>No Rocket.Chat REST call, MongoDB connection or credential cron ever happens: the overridden
  * {@link #updateCredentials()} carries neither {@code @PostConstruct} nor {@code @Scheduled}
  * semantics at runtime because scheduling only considers the most specific method declaration.
+ *
+ * <p><b>Maintenance warning — the null-collaborator trap:</b> the constructor deliberately passes
+ * {@code null} for several {@link RocketChatService} collaborators (the REST/HTTP clients and the
+ * MongoDB client). Those nulls are only safe because every inherited method that would dereference
+ * one of them is overridden here with an inert no-op. If you add a new method to {@link
+ * RocketChatService} that touches a null collaborator — or remove an override below — this adapter
+ * will throw {@link NullPointerException} at runtime instead of no-opping. When extending the
+ * superclass, always add a matching inert override here.
  */
 @Slf4j
 @Service

@@ -1,15 +1,20 @@
 package de.caritas.cob.userservice.api.adapters.rocketchat.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.mongodb.client.MongoClient;
 import de.caritas.cob.userservice.api.adapters.rocketchat.DisabledRocketChatService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * ADR-004 proof: the service boots Matrix-only with {@code rocket-chat.enabled=false} (the default)
@@ -24,10 +29,22 @@ class RocketChatDisabledBootTest {
 
   @Autowired private ApplicationContext context;
 
+  @MockitoBean private RocketChatCredentialsProvider credentialsProvider;
+
   @Test
   void contextShouldBootWithInertRocketChatAdapterAndNoMongoClient() {
     assertThat(context.getBean(RocketChatService.class))
         .isInstanceOf(DisabledRocketChatService.class);
     assertThat(context.getBeanNamesForType(MongoClient.class)).isEmpty();
+  }
+
+  @Test
+  void updateCredentialsShouldBeInertAndNeverRotateRocketChatCredentials()
+      throws RocketChatLoginException {
+    var rocketChatService = context.getBean(RocketChatService.class);
+
+    rocketChatService.updateCredentials();
+
+    verify(credentialsProvider, never()).updateCredentials();
   }
 }
