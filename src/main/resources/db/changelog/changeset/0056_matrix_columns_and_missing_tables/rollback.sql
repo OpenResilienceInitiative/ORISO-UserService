@@ -1,0 +1,11 @@
+ALTER TABLE chat DROP COLUMN IF EXISTS matrix_room_id;
+ALTER TABLE session DROP COLUMN IF EXISTS matrix_room_id;
+ALTER TABLE user DROP COLUMN IF EXISTS matrix_user_id;
+ALTER TABLE user DROP COLUMN IF EXISTS magic_link_login_enabled;
+ALTER TABLE consultant DROP COLUMN IF EXISTS matrix_user_id;
+ALTER TABLE consultant DROP COLUMN IF EXISTS display_name;
+ALTER TABLE consultant DROP COLUMN IF EXISTS is_supervisor;
+ALTER TABLE consultant DROP COLUMN IF EXISTS magic_link_login_enabled;
+DROP TABLE IF EXISTS draft_message;
+DROP TABLE IF EXISTS group_chat_participant;
+DROP TABLE IF EXISTS session_supervisor;
