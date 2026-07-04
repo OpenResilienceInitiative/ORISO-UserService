@@ -136,8 +136,6 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers("/users/sessions/askers")
                 .permitAll()
-                .requestMatchers("/matrix/sync/**", "/service/matrix/sync/**")
-                .permitAll()
                 .requestMatchers(
                     "/users/email",
                     "/users/mails/messages/new",
@@ -331,10 +329,7 @@ public class SecurityConfig {
 
   @Bean
   public WebSecurityCustomizer webSecurityCustomizer() {
-    return web ->
-        web.ignoring()
-            .requestMatchers(
-                "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
+    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/askers/new");
   }
 
   @Bean
