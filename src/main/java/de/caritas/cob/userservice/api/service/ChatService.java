@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -131,6 +132,17 @@ public class ChatService {
     } else {
       throw new ConflictException("User is already assigned to chat");
     }
+  }
+
+  /**
+   * Deletes the {@link UserChat} relation between the given chat and user, if one exists. Used when
+   * a user leaves a group chat so the assignment does not linger after the leave.
+   *
+   * @param chat the {@link Chat} that was left
+   * @param user the {@link User} who left
+   */
+  public void deleteUserChatRelation(Chat chat, User user) {
+    userChatRepository.findByChatAndUser(chat, user).ifPresent(userChatRepository::delete);
   }
 
   /**
