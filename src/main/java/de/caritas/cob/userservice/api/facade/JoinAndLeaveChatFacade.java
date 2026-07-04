@@ -10,16 +10,18 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupMembersException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserFromGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,7 @@ public class JoinAndLeaveChatFacade {
   private final RocketChatService rocketChatService;
   private final ChatReCreator chatReCreator;
   private final MatrixChatShutdownService matrixChatShutdownService;
+  private final GroupChatMembershipService groupChatMembershipService;
 
   /**
    * Join a chat.
@@ -62,6 +65,11 @@ public class JoinAndLeaveChatFacade {
   /**
    * Leave a chat.
    *
+   * <p>The "was this the last member?" decision is answered from the Matrix room state via {@link
+   * GroupChatMembershipService}, NOT from Rocket.Chat: with Rocket.Chat disabled (the default,
+   * ADR-004) its member query always returns an empty list, which made every single leave delete
+   * the whole chat for everyone.
+   *
    * @param chatId the id of the chat
    * @param authenticatedUser the authenticated user
    */
@@ -71,20 +79,36 @@ public class JoinAndLeaveChatFacade {
 
     try {
       rocketChatService.removeUserFromGroup(rcUserId, chat.getGroupId());
-      if (rocketChatService.getStandardMembersOfGroup(chat.getGroupId()).isEmpty()) {
-        deleteMessengerChat(chat.getGroupId());
-        if (chat.isRepetitive()) {
-          var rcGroupId = chatReCreator.recreateMessengerChat(chat);
-          chatReCreator.updateAsNextChat(chat, rcGroupId);
-        } else {
-          chatService.deleteChat(chat);
-          matrixChatShutdownService.shutdownRoom(chat);
-        }
-      }
-    } catch (RocketChatRemoveUserFromGroupException
-        | RocketChatUserNotInitializedException
-        | RocketChatGetGroupMembersException e) {
+    } catch (RocketChatRemoveUserFromGroupException e) {
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
+    }
+
+    Optional<Consultant> leavingConsultant =
+        consultantService.getConsultantViaAuthenticatedUser(authenticatedUser);
+    Optional<User> leavingUser =
+        leavingConsultant.isPresent()
+            ? Optional.empty()
+            : userService.getUserViaAuthenticatedUser(authenticatedUser);
+    String leavingMatrixUserId =
+        leavingConsultant
+            .map(Consultant::getMatrixUserId)
+            .or(() -> leavingUser.map(User::getMatrixUserId))
+            .orElse(null);
+
+    groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
+    leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
+
+    if (groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)) {
+      return;
+    }
+
+    deleteMessengerChat(chat.getGroupId());
+    if (chat.isRepetitive()) {
+      var rcGroupId = chatReCreator.recreateMessengerChat(chat);
+      chatReCreator.updateAsNextChat(chat, rcGroupId);
+    } else {
+      chatService.deleteChat(chat);
+      matrixChatShutdownService.shutdownRoom(chat);
     }
   }
 
