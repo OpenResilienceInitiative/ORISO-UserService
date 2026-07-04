@@ -5,9 +5,12 @@ package de.caritas.cob.userservice.api.supervision;
  * may occur. Per ADR-008 the exact wording is <b>pending the data-protection officer</b> and is
  * surfaced via the agency's privacy policy + Impressum on chat entry.
  *
- * <p>This constant is a labelled PLACEHOLDER so the plumbing (recording which disclosure version a
- * supervisor add was made under) exists now; swap {@link #PLACEHOLDER_TEXT_KEY} for the approved
- * copy once the DPO signs off. Do NOT present this placeholder to real users as final legal text.
+ * <p>Confirmed 2026-07-04 (Frank): a clearly-marked draft template like this is the intended
+ * solution — keep the plumbing, mark it draft, and only the copy behind {@link
+ * #PLACEHOLDER_TEXT_KEY} is pending the DPO. This constant is a labelled PLACEHOLDER so the
+ * plumbing (recording which disclosure version a supervisor add was made under) exists now; swap
+ * {@link #PLACEHOLDER_TEXT_KEY} for the approved copy once the DPO signs off. Do NOT present this
+ * placeholder as final legal text.
  */
 public final class SupervisionDisclosure {
 

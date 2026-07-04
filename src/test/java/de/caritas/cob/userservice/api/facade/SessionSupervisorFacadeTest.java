@@ -64,6 +64,7 @@ class SessionSupervisorFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private de.caritas.cob.userservice.api.service.user.UserAccountService userAccountService;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
+  @Mock private de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
 
   private Session session;
   private Consultant addedBy;
@@ -292,6 +293,40 @@ class SessionSupervisorFacadeTest {
             SESSION_ID, SUPERVISOR_ID, otherSameAgency, "PEER_SUPPORT", "justified");
 
     assertThat(saved).isNotNull();
+  }
+
+  @Test
+  void addSupervisor_Should_allowAgencyAdmin_evenWhen_restrictionEnabled() {
+    // Frank 2026-07-04: a Berater-Admin (agency admin) may manage supervisors for their own
+    // agency's
+    // sessions, even with the assigned-only tightening on.
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", true);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
+    Consultant agencyAdmin = sameAgencyButNotAssignedConsultant();
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, agencyAdmin, "PEER_SUPPORT", "justified");
+
+    assertThat(saved).isNotNull();
+  }
+
+  @Test
+  void addSupervisor_Should_denyAgencyAdmin_forDifferentAgency_when_restrictionEnabled() {
+    // Agency-admin authority is scoped to the admin's OWN agency — a session in another agency is
+    // still denied (no cross-agency supervisor management).
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", true);
+    when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
+    Consultant adminOfOtherAgency = new Consultant();
+    adminOfOtherAgency.setId("con-3");
+    adminOfOtherAgency.setMatrixUserId("@con3:oriso");
+    adminOfOtherAgency.setConsultantAgencies(
+        Set.of(ConsultantAgency.builder().agencyId(9L).build()));
+
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, adminOfOtherAgency, "PEER_SUPPORT", "justified"))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   /**

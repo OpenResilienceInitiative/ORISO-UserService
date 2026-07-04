@@ -8,9 +8,11 @@ import java.util.Optional;
  * Case-Handover {@code CaseHandoverReason} pattern (code + label key + whether the ratsuchende's
  * consent is required).
  *
- * <p>DRAFT — the reason set and their {@code clientConsentRequired} flags are placeholders pending
- * the data-protection officer and Frank's final U25 requirements. They are intentionally
- * conservative: only the two clinically sensitive reasons require consent today.
+ * <p>Confirmed 2026-07-04 (Frank): this reason set is the intended one; only the two clinically
+ * sensitive reasons (CLINICAL_OVERSIGHT, SAFEGUARDING_U25) require the ratsuchende's consent. Which
+ * of these reasons a given agency offers, and whether the assigned-only tightening is on, are
+ * agency-admin ("Berater-Admin") settings configured in the Admin board — the FE reason picker is a
+ * simple select fed by {@code GET /users/sessions/supervision/reasons} (a documented follow-up).
  */
 public enum SupervisionReason {
 

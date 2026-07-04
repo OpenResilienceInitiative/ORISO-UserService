@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -48,10 +49,21 @@ public class SessionSupervisorFacade {
   private final @NonNull IdentityClient identityClient;
 
   /**
-   * ADR-008 item 4 (DRAFT): when true, only the assigned consultant may add supervisors. Defaults
-   * false → assigned OR same agency (current behaviour), so the draft is inert at runtime until
-   * flipped. Field-injected (not a constructor arg) so existing @RequiredArgsConstructor callers
-   * and unit tests are unaffected; tests set it via ReflectionTestUtils.
+   * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
+   * (agency-admin) role. Frank confirmed (2026-07-04) that attaching/detaching a supervisor is
+   * exactly the counsellor-admin's role, configured in the Admin board. Injected the same way
+   * {@code AssignSessionFacade} does (a request-scoped proxy resolved per request), so it boots
+   * fine.
+   */
+  private final @NonNull AuthenticatedUser authenticatedUser;
+
+  /**
+   * ADR-008 item 4: when true, only the assigned consultant and agency admins may add/remove
+   * supervisors (a plain same-agency consultant is denied). This is the server side of the
+   * agency-admin ("Berater-Admin") Admin-board policy Frank described. Defaults false → assigned OR
+   * same agency (current behaviour), so runtime is unchanged until an agency admin turns it on.
+   * Field-injected (not a constructor arg) so existing @RequiredArgsConstructor callers and unit
+   * tests are unaffected; tests set it via ReflectionTestUtils.
    */
   @Value("${supervision.restrict-add-to-assigned-consultant:false}")
   private boolean restrictAddToAssignedConsultant;
@@ -487,20 +499,38 @@ public class SessionSupervisorFacade {
       return true;
     }
 
-    // ADR-008 item 4 (DRAFT) target: only the assigned consultant may add/remove supervisors. The
-    // flag defaults OFF, so at runtime this changes nothing until it is flipped — the draft is
-    // inert. When ON, a same-agency-but-not-assigned consultant is denied here.
+    boolean sameAgency = areFromSameAgency(session, consultant);
+
+    // ADR-008 item 4 (Frank, 2026-07-04): a Berater-Admin (agency admin) may manage supervisors for
+    // sessions of their OWN agency — this is exactly their role. It holds even when the
+    // assigned-only
+    // tightening below is on, so agency admins are never locked out of their own agency's sessions.
+    boolean isAgencyAdmin =
+        authenticatedUser != null
+            && (authenticatedUser.isRestrictedAgencyAdmin()
+                || authenticatedUser.isAgencySuperAdmin());
+    if (isAgencyAdmin && sameAgency) {
+      log.info(
+          "Consultant {} is an agency admin for session {} agency {} — allowing supervisor management",
+          consultant.getId(),
+          session.getId(),
+          session.getAgencyId());
+      return true;
+    }
+
+    // ADR-008 item 4 tightening — the agency-admin Admin-board policy: when enabled, only the
+    // assigned consultant and agency admins (above) may manage supervisors; a plain same-agency
+    // consultant is denied. Defaults OFF, so at runtime nothing changes until it is turned on.
     if (restrictAddToAssignedConsultant) {
       log.info(
-          "Consultant {} is not the assigned consultant for session {} and assigned-only "
-              + "restriction is enabled (ADR-008) — denying",
+          "Consultant {} is neither the assigned consultant nor an agency admin for session {} and "
+              + "the assigned-only restriction is enabled (ADR-008) — denying",
           consultant.getId(),
           session.getId());
       return false;
     }
 
-    // Current behaviour (flag off): assigned consultant OR same agency.
-    boolean sameAgency = areFromSameAgency(session, consultant);
+    // Current default behaviour (flag off): assigned consultant OR any same-agency consultant.
     log.info(
         "Consultant {} same agency check for session {} (agencyId: {}): {}",
         consultant.getId(),
