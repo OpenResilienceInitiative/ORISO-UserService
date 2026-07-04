@@ -18,6 +18,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -127,6 +128,7 @@ public class MatrixSynapseService {
     }
   }
 
+  @Autowired
   public MatrixSynapseService(
       MatrixConfig matrixConfig,
       RestTemplate restTemplate,
