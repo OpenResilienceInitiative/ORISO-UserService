@@ -21,9 +21,12 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
   private final ChatService chatService;
   private final RocketChatService rocketChatService;
   private final ChatReCreator chatReCreator;
+  private final MatrixChatShutdownService matrixChatShutdownService;
 
   /**
-   * Deletes the given active chat and recreates it if repetitive.
+   * Deletes the given active chat and recreates it if repetitive. For non-repetitive chats the
+   * Matrix room is shut down (best-effort) so that all members are removed and their clients can
+   * show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
@@ -43,6 +46,7 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
         chatReCreator.updateAsNextChat(chat, rcGroupId);
       } else {
         chatService.deleteChat(chat);
+        matrixChatShutdownService.shutdownRoom(chat);
       }
     }
   }

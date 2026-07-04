@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -34,6 +35,7 @@ public class JoinAndLeaveChatFacade {
   private final UserService userService;
   private final RocketChatService rocketChatService;
   private final ChatReCreator chatReCreator;
+  private final MatrixChatShutdownService matrixChatShutdownService;
 
   /**
    * Join a chat.
@@ -76,6 +78,7 @@ public class JoinAndLeaveChatFacade {
           chatReCreator.updateAsNextChat(chat, rcGroupId);
         } else {
           chatService.deleteChat(chat);
+          matrixChatShutdownService.shutdownRoom(chat);
         }
       }
     } catch (RocketChatRemoveUserFromGroupException
