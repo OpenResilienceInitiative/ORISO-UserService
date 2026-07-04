@@ -15,6 +15,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
@@ -33,6 +34,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -64,6 +66,8 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private Consultant consultant;
 
   @Mock private RocketChatService rocketChatService;
+
+  @Mock private MatrixChatShutdownService matrixChatShutdownService;
 
   @Test
   void joinChat_Should_ThrowNotFoundException_WhenChatDoesNotExist() {
@@ -346,5 +350,34 @@ class JoinAndLeaveChatFacadeTest {
 
     verify(rocketChatService, never()).deleteGroupAsSystemUser(anyString());
     verify(chatService, never()).deleteChat(any());
+    verify(matrixChatShutdownService, never()).shutdownRoom(any());
+  }
+
+  @Test
+  void leaveChatShouldDeleteChatAndShutDownMatrixRoomWhenLastMemberLeft()
+      throws RocketChatUserNotInitializedException, RocketChatGetGroupMembersException {
+    Chat chat =
+        Chat.builder()
+            .id(CHAT_ID)
+            .topic("topic")
+            .consultingTypeId(0)
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .duration(30)
+            .repetitive(false)
+            .active(true)
+            .groupId("groupId")
+            .matrixRoomId("!room:matrix.local")
+            .build();
+    when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(chat));
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(user.getRcUserId()).thenReturn(RC_USER_ID);
+    when(rocketChatService.getStandardMembersOfGroup(chat.getGroupId())).thenReturn(List.of());
+    when(rocketChatService.deleteGroupAsSystemUser(chat.getGroupId())).thenReturn(true);
+
+    joinAndLeaveChatFacade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatService).deleteChat(chat);
+    verify(matrixChatShutdownService).shutdownRoom(chat);
   }
 }
