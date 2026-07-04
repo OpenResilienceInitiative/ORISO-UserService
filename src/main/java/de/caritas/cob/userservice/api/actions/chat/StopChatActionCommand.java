@@ -24,9 +24,10 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
   private final MatrixChatShutdownService matrixChatShutdownService;
 
   /**
-   * Deletes the given active chat and recreates it if repetitive. For non-repetitive chats the
-   * Matrix room is shut down (best-effort) so that all members are removed and their clients can
-   * show the chat as stopped.
+   * Deletes the given active chat and recreates it if repetitive. Repetitive chats get a fresh
+   * Matrix room for their next occurrence and the old room is shut down (via {@link
+   * ChatReCreator}); for non-repetitive chats the Matrix room is shut down directly. Either way the
+   * shutdown is best-effort and removes all members so their clients can show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
