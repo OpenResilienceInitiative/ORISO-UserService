@@ -1227,6 +1227,55 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Bans a user from a Matrix room using the given room-moderator access token.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to ban
+   * @param accessToken access token of a user with ban permission in the room
+   * @return true when the user is banned afterwards, false otherwise
+   */
+  public boolean banUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.banUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /**
+   * Bans a user from a Matrix room with a freshly minted admin impersonation token, so callers do
+   * not have to hold a moderator token themselves. Never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param bannedMatrixUserId the full Matrix user ID to ban
+   * @param actingModeratorMatrixUserId a Matrix user ID that has ban permission in the room (e.g. a
+   *     consultant or the room creator); impersonated via the Synapse admin API
+   * @return true when the ban succeeded, false when it could not be performed
+   */
+  public boolean banUserFromRoomAsModerator(
+      String roomId, String bannedMatrixUserId, String actingModeratorMatrixUserId) {
+    String moderatorToken = loginUserViaAdmin(actingModeratorMatrixUserId);
+    if (moderatorToken == null) {
+      log.warn(
+          "Could not obtain moderator token for {}; cannot ban {} from room {}",
+          actingModeratorMatrixUserId,
+          bannedMatrixUserId,
+          roomId);
+      return false;
+    }
+    return matrixRoomClient.banUserFromRoom(roomId, bannedMatrixUserId, moderatorToken);
+  }
+
+  /**
+   * Lifts a ban previously placed on a user in a Matrix room using the given room-moderator access
+   * token. Never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to unban
+   * @param accessToken access token of a user with unban permission in the room
+   * @return true when the unban succeeded, false otherwise
+   */
+  public boolean unbanUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.unbanUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /**
    * Reads a single user's Matrix presence state ("online", "unavailable", "offline").
    *
    * @param matrixUserId the full Matrix user ID (e.g. {@code @user:domain})
