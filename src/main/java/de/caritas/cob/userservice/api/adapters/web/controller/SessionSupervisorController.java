@@ -8,10 +8,13 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
+import de.caritas.cob.userservice.api.supervision.SupervisionReason;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -68,7 +71,11 @@ public class SessionSupervisorController {
 
     SessionSupervisor supervisor =
         sessionSupervisorFacade.addSupervisor(
-            sessionId, request.getSupervisorConsultantId(), currentConsultant, request.getNotes());
+            sessionId,
+            request.getSupervisorConsultantId(),
+            currentConsultant,
+            request.getReasonCode(),
+            request.getNotes());
     String accessToken = authenticatedUser.getAccessToken();
     String supervisorDisplayName =
         supervisor.getSupervisorConsultant().getDisplayName() != null
@@ -171,6 +178,24 @@ public class SessionSupervisorController {
     return ResponseEntity.ok(response);
   }
 
+  /**
+   * List the ADR-008 supervision reasons a client may choose from, mirroring how case-handover
+   * serves its reasons. Static enum data — no session context needed.
+   *
+   * @return the reason list as {@link SupervisionReasonDTO}s
+   */
+  @GetMapping("/supervision/reasons")
+  public ResponseEntity<List<SupervisionReasonDTO>> getSupervisionReasons() {
+    List<SupervisionReasonDTO> reasons =
+        Arrays.stream(SupervisionReason.values())
+            .map(
+                reason ->
+                    new SupervisionReasonDTO(
+                        reason.name(), reason.getLabelKey(), reason.isClientConsentRequired()))
+            .collect(Collectors.toList());
+    return ResponseEntity.ok(reasons);
+  }
+
   private SessionSupervisorResponseDTO mapToDTO(SessionSupervisor supervisor) {
     SessionSupervisorResponseDTO dto = new SessionSupervisorResponseDTO();
     dto.setId(supervisor.getId());
@@ -180,13 +205,33 @@ public class SessionSupervisorController {
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
     dto.setMatrixRoomId(supervisor.getMatrixRoomId());
+    // Keep the raw stored value for backward compatibility, but also surface the decoded
+    // structured fields (ADR-008): reasonCode, justification, consent. A legacy free-text note
+    // decodes to a justification with a null reason and NOT_REQUIRED consent.
     dto.setNotes(supervisor.getNotes());
+    SupervisionNotes.Payload payload = SupervisionNotes.decode(supervisor.getNotes());
+    dto.setReasonCode(payload.reasonCode);
+    dto.setJustification(payload.justification);
+    dto.setConsent(payload.consent);
     return dto;
   }
 
   /** Request DTO for adding a supervisor. */
   public static class AddSupervisorRequestDTO {
     @NotNull private String supervisorConsultantId;
+
+    /**
+     * ADR-008 item 4 (DRAFT): optional supervision reason code (e.g. {@code SAFEGUARDING_U25}).
+     * Intentionally OPTIONAL — the current supervisor modal does not send one yet, so requiring it
+     * would 400 add-supervisor in the running app. Validated by the facade only when present. The
+     * productionised version makes this required once the paired FE reason-picker ships.
+     */
+    private String reasonCode;
+
+    /**
+     * The justification for adding the supervisor (free text). This is the human-readable reason;
+     * it is required by the facade only on the explicit path (when a {@link #reasonCode} is sent).
+     */
     private String notes;
 
     public String getSupervisorConsultantId() {
@@ -197,12 +242,59 @@ public class SessionSupervisorController {
       this.supervisorConsultantId = supervisorConsultantId;
     }
 
+    public String getReasonCode() {
+      return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+      this.reasonCode = reasonCode;
+    }
+
     public String getNotes() {
       return notes;
     }
 
     public void setNotes(String notes) {
       this.notes = notes;
+    }
+  }
+
+  /** Response DTO for an ADR-008 supervision reason option. */
+  public static class SupervisionReasonDTO {
+    private String code;
+    private String labelKey;
+    private boolean clientConsentRequired;
+
+    public SupervisionReasonDTO() {}
+
+    public SupervisionReasonDTO(String code, String labelKey, boolean clientConsentRequired) {
+      this.code = code;
+      this.labelKey = labelKey;
+      this.clientConsentRequired = clientConsentRequired;
+    }
+
+    public String getCode() {
+      return code;
+    }
+
+    public void setCode(String code) {
+      this.code = code;
+    }
+
+    public String getLabelKey() {
+      return labelKey;
+    }
+
+    public void setLabelKey(String labelKey) {
+      this.labelKey = labelKey;
+    }
+
+    public boolean isClientConsentRequired() {
+      return clientConsentRequired;
+    }
+
+    public void setClientConsentRequired(boolean clientConsentRequired) {
+      this.clientConsentRequired = clientConsentRequired;
     }
   }
 
@@ -216,6 +308,10 @@ public class SessionSupervisorController {
     private java.time.LocalDateTime addedDate;
     private String matrixRoomId;
     private String notes;
+    // ADR-008 item 4 (DRAFT): decoded structured fields from the stored note.
+    private String reasonCode;
+    private String justification;
+    private String consent;
 
     public Long getId() {
       return id;
@@ -279,6 +375,30 @@ public class SessionSupervisorController {
 
     public void setNotes(String notes) {
       this.notes = notes;
+    }
+
+    public String getReasonCode() {
+      return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+      this.reasonCode = reasonCode;
+    }
+
+    public String getJustification() {
+      return justification;
+    }
+
+    public void setJustification(String justification) {
+      this.justification = justification;
+    }
+
+    public String getConsent() {
+      return consent;
+    }
+
+    public void setConsent(String consent) {
+      this.consent = consent;
     }
   }
 }

@@ -16,6 +16,9 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
+import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
+import de.caritas.cob.userservice.api.supervision.SupervisionReason;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +26,7 @@ import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,20 +47,60 @@ public class SessionSupervisorFacade {
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
 
+  /**
+   * ADR-008 item 4 (DRAFT): when true, only the assigned consultant may add supervisors. Defaults
+   * false → assigned OR same agency (current behaviour), so the draft is inert at runtime until
+   * flipped. Field-injected (not a constructor arg) so existing @RequiredArgsConstructor callers
+   * and unit tests are unaffected; tests set it via ReflectionTestUtils.
+   */
+  @Value("${supervision.restrict-add-to-assigned-consultant:false}")
+  private boolean restrictAddToAssignedConsultant;
+
   private static final int SUPERVISOR_POWER_LEVEL = 10; // Read-only observer level
 
   /**
    * Add a supervisor to a session. The supervisor must be from the same agency as the session.
    *
+   * <p>ADR-008 item 4 (DRAFT): {@code reasonCode} + {@code notes} (the justification) + the
+   * computed consent state are recorded together in the existing {@code notes} column via {@link
+   * SupervisionNotes}. {@code reasonCode} is OPTIONAL and fully backward-compatible: when a caller
+   * supplies one it is validated and consent is computed (the new explicit path); when it is
+   * absent/blank the legacy path applies (reason null, consent NOT_REQUIRED, justification stored
+   * as-is) so the running frontend — which does not yet send a reason — keeps working. The
+   * productionised version makes {@code reasonCode} required once the paired FE reason-picker
+   * ships.
+   *
    * @param sessionId the session ID
    * @param supervisorConsultantId the consultant ID to add as supervisor
    * @param addedByConsultant the consultant adding the supervisor
-   * @param notes optional notes/reason for supervision
+   * @param reasonCode optional ADR-008 supervision reason code (validated when present)
+   * @param notes the justification for supervision (required only when a reasonCode is supplied)
    * @return the created SessionSupervisor
    */
   @Transactional
   public SessionSupervisor addSupervisor(
-      Long sessionId, String supervisorConsultantId, Consultant addedByConsultant, String notes) {
+      Long sessionId,
+      String supervisorConsultantId,
+      Consultant addedByConsultant,
+      String reasonCode,
+      String notes) {
+    // ADR-008 item 4 (DRAFT): resolve the reason + consent. reasonCode is optional; the app's
+    // current supervisor modal does not send one yet, so a missing reason must NOT 400 (legacy
+    // path). A reason that is PRESENT but unknown is a client error.
+    boolean reasonSupplied = reasonCode != null && !reasonCode.isBlank();
+    SupervisionReason reason = null;
+    if (reasonSupplied) {
+      reason =
+          SupervisionReason.fromCode(reasonCode)
+              .orElseThrow(() -> new BadRequestException("A valid supervision reason is required"));
+      // On the explicit (with-reason) path the justification must be present.
+      if (notes == null || notes.isBlank()) {
+        throw new BadRequestException("A supervision justification is required");
+      }
+    }
+    SupervisionConsent consent = SupervisionConsent.initialFor(reason);
+    String encodedNotes = SupervisionNotes.encode(reason, notes, consent);
+
     // Get session
     Session session =
         sessionRepository
@@ -215,7 +259,7 @@ public class SessionSupervisorFacade {
             .addedDate(LocalDateTime.now())
             .isActive(true)
             .matrixRoomId(sideRoomId)
-            .notes(notes)
+            .notes(encodedNotes)
             .build();
 
     SessionSupervisor saved = sessionSupervisorRepository.save(sessionSupervisor);
@@ -432,15 +476,30 @@ public class SessionSupervisorFacade {
    * @return true if has permission
    */
   private boolean hasPermissionToManageSupervisors(Session session, Consultant consultant) {
-    // Must be the assigned consultant or from the same agency
-    if (session.getConsultant() != null
-        && session.getConsultant().getId().equals(consultant.getId())) {
+    boolean isAssignedConsultant =
+        session.getConsultant() != null
+            && session.getConsultant().getId().equals(consultant.getId());
+    if (isAssignedConsultant) {
       log.info(
           "Consultant {} is the assigned consultant for session {}",
           consultant.getId(),
           session.getId());
       return true;
     }
+
+    // ADR-008 item 4 (DRAFT) target: only the assigned consultant may add/remove supervisors. The
+    // flag defaults OFF, so at runtime this changes nothing until it is flipped — the draft is
+    // inert. When ON, a same-agency-but-not-assigned consultant is denied here.
+    if (restrictAddToAssignedConsultant) {
+      log.info(
+          "Consultant {} is not the assigned consultant for session {} and assigned-only "
+              + "restriction is enabled (ADR-008) — denying",
+          consultant.getId(),
+          session.getId());
+      return false;
+    }
+
+    // Current behaviour (flag off): assigned consultant OR same agency.
     boolean sameAgency = areFromSameAgency(session, consultant);
     log.info(
         "Consultant {} same agency check for session {} (agencyId: {}): {}",

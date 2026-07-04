@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -9,7 +10,10 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
@@ -17,8 +21,10 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * ADR-008 safety contract: supervisor feedback / asides must live in a SEPARATE Matrix room the
@@ -109,7 +116,8 @@ class SessionSupervisorFacadeTest {
 
   @Test
   void addSupervisor_Should_storeSideRoomId_notClientRoomId() throws Exception {
-    SessionSupervisor saved = facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
 
     assertThat(saved.getMatrixRoomId())
         .as("entity must hold the supervision SIDE room, never the client room")
@@ -119,7 +127,7 @@ class SessionSupervisorFacadeTest {
 
   @Test
   void addSupervisor_Should_provisionSideRoom_andNeverInviteIntoItAsClientRoom() throws Exception {
-    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
 
     // A side room was created...
     verify(matrixSynapseService).createRoom(any(), any(), any());
@@ -137,7 +145,8 @@ class SessionSupervisorFacadeTest {
     when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
         .thenReturn(List.of(existing));
 
-    SessionSupervisor saved = facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
 
     assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
     // no NEW room created — the existing side room is reused
@@ -152,7 +161,8 @@ class SessionSupervisorFacadeTest {
     when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
         .thenReturn(List.of(oldStyle));
 
-    SessionSupervisor saved = facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
 
     assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM).isNotEqualTo(CLIENT_ROOM);
     verify(matrixSynapseService).createRoom(any(), any(), any());
@@ -180,5 +190,119 @@ class SessionSupervisorFacadeTest {
         .containsOnly(SUPERVISOR_MXID)
         .doesNotContain(CLIENT_MXID);
     verify(matrixSynapseService, never()).inviteUserToRoom(eq(SIDE_ROOM), eq(CLIENT_MXID), any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-008 item 4 (DRAFT): reason + justification + consent + authority flag
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void addSupervisor_Should_throwBadRequest_when_reasonCodeIsPresentButInvalid() {
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, addedBy, "NOT_A_REAL_REASON", "justified"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("valid supervision reason");
+  }
+
+  @Test
+  void addSupervisor_Should_throwBadRequest_when_reasonSuppliedButJustificationBlank() {
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "  "))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("justification");
+  }
+
+  @Test
+  void addSupervisor_Should_notThrow_when_reasonCodeAbsent_legacyPath() {
+    // Legacy path: the running FE sends no reasonCode. Must NOT 400, even with blank justification.
+    SessionSupervisor saved = facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "");
+
+    assertThat(saved).isNotNull();
+    // Stored uniformly as JSON with a null reason and NOT_REQUIRED consent.
+    assertThat(saved.getNotes()).contains(SupervisionConsent.NOT_REQUIRED.name());
+  }
+
+  @Test
+  void addSupervisor_Should_computePendingConsent_for_safeguardingU25() {
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "minor at risk");
+
+    assertThat(saved.getNotes())
+        .contains(SupervisionConsent.PENDING.name())
+        .contains("SAFEGUARDING_U25")
+        .contains("minor at risk");
+  }
+
+  @Test
+  void addSupervisor_Should_computePendingConsent_for_clinicalOversight() {
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "CLINICAL_OVERSIGHT", "stuck case");
+
+    assertThat(saved.getNotes()).contains(SupervisionConsent.PENDING.name());
+  }
+
+  @Test
+  void addSupervisor_Should_computeNotRequiredConsent_for_peerSupport() {
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "shared experience");
+
+    assertThat(saved.getNotes()).contains(SupervisionConsent.NOT_REQUIRED.name());
+  }
+
+  @Test
+  void addSupervisor_Should_computeNotRequiredConsent_for_training() {
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "TRAINING", "onboarding");
+
+    assertThat(saved.getNotes()).contains(SupervisionConsent.NOT_REQUIRED.name());
+  }
+
+  @Test
+  void addSupervisor_Should_storeReasonAndJustificationAsJson() {
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "PEER_SUPPORT", "why we did it");
+
+    assertThat(saved.getNotes()).startsWith("{").contains("PEER_SUPPORT").contains("why we did it");
+  }
+
+  @Test
+  void addSupervisor_Should_rejectSameAgencyNonAssignedConsultant_when_restrictionEnabled() {
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", true);
+    Consultant otherSameAgency = sameAgencyButNotAssignedConsultant();
+
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, otherSameAgency, "PEER_SUPPORT", "justified"))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void addSupervisor_Should_allowSameAgencyNonAssignedConsultant_when_restrictionDisabled() {
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", false);
+    Consultant otherSameAgency = sameAgencyButNotAssignedConsultant();
+
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, otherSameAgency, "PEER_SUPPORT", "justified");
+
+    assertThat(saved).isNotNull();
+  }
+
+  /**
+   * A consultant in the SAME agency (7L) as the session but who is NOT the assigned consultant.
+   * Used to exercise the ADR-008 authority flag: allowed when off, denied when on.
+   */
+  private Consultant sameAgencyButNotAssignedConsultant() {
+    Consultant other = new Consultant();
+    other.setId("con-2");
+    other.setMatrixUserId("@con2:oriso");
+    other.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(7L).build()));
+    return other;
   }
 }
