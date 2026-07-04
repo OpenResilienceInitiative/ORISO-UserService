@@ -55,11 +55,35 @@ public class MatrixSynapseService {
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
 
-  // Cache for Matrix access tokens (username -> access token)
-  private final java.util.Map<String, String> accessTokenCache =
+  // Time source for cache-expiry checks. Real deployment uses the wall clock; tests inject a
+  // controllable supplier so TTL expiry can be exercised deterministically without sleeping.
+  private final java.util.function.LongSupplier nowSupplier;
+
+  // Cache for Matrix access tokens (username -> access token + expiry). Bounded by a TTL so entries
+  // cannot accumulate forever and, crucially, so a token invalidated on the homeserver (e.g. after
+  // a
+  // password reset) is not served indefinitely. Mirrors the impersonationTokenCache mechanism
+  // below.
+  private final java.util.Map<String, CachedAccessToken> accessTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Cache for Matrix sync tokens (username -> next_batch token)
+  private static final long ACCESS_TOKEN_CACHE_TTL_MS = 50 * 60 * 1000L;
+
+  private static final class CachedAccessToken {
+    private final String token;
+    private final long expiryMs;
+
+    private CachedAccessToken(String token, long expiryMs) {
+      this.token = token;
+      this.expiryMs = expiryMs;
+    }
+  }
+
+  // Cache for Matrix sync tokens (username -> next_batch cursor). Intentionally left without a TTL:
+  // a next_batch is an opaque /sync cursor, not an auth credential — it cannot leak access and
+  // never
+  // becomes dangerous when stale; losing it merely triggers a full re-sync from the current
+  // position.
   private final java.util.Map<String, String> syncTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -109,11 +133,40 @@ public class MatrixSynapseService {
       @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
       MatrixMediaClient matrixMediaClient) {
+    this(
+        matrixConfig,
+        restTemplate,
+        matrixLongPollRestTemplate,
+        matrixRoomClient,
+        matrixMediaClient,
+        System::currentTimeMillis);
+  }
+
+  // Package-private constructor allowing tests to inject a controllable clock for TTL assertions.
+  MatrixSynapseService(
+      MatrixConfig matrixConfig,
+      RestTemplate restTemplate,
+      RestTemplate matrixLongPollRestTemplate,
+      MatrixRoomClient matrixRoomClient,
+      MatrixMediaClient matrixMediaClient,
+      java.util.function.LongSupplier nowSupplier) {
     this.matrixConfig = matrixConfig;
     this.restTemplate = restTemplate;
     this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
     this.matrixRoomClient = matrixRoomClient;
     this.matrixMediaClient = matrixMediaClient;
+    this.nowSupplier = nowSupplier;
+  }
+
+  /**
+   * Pure, testable expiry predicate for time-based cache entries.
+   *
+   * @param expiryMs the wall-clock time (epoch millis) at which the entry expires
+   * @param nowMs the current wall-clock time (epoch millis)
+   * @return {@code true} when the entry is expired and must be treated as a cache miss
+   */
+  static boolean isExpired(long expiryMs, long nowMs) {
+    return nowMs >= expiryMs;
   }
 
   /**
@@ -337,8 +390,8 @@ public class MatrixSynapseService {
   private String getAdminAccessToken() {
     // Check if cached token is still valid (expires in 1 hour, we refresh after 50
     // minutes)
-    long now = System.currentTimeMillis();
-    if (cachedAdminToken != null && now < adminTokenExpiry) {
+    long now = nowSupplier.getAsLong();
+    if (cachedAdminToken != null && !isExpired(adminTokenExpiry, now)) {
       return cachedAdminToken;
     }
 
@@ -524,8 +577,8 @@ public class MatrixSynapseService {
       return null;
     }
 
-    long now = System.currentTimeMillis();
-    impersonationTokenCache.entrySet().removeIf(e -> now >= e.getValue().expiryMs);
+    long now = nowSupplier.getAsLong();
+    impersonationTokenCache.entrySet().removeIf(e -> isExpired(e.getValue().expiryMs, now));
 
     CachedImpersonationToken cached = impersonationTokenCache.get(matrixUserId);
     if (cached != null) {
@@ -576,9 +629,14 @@ public class MatrixSynapseService {
    * @return the access token
    */
   public String loginUser(String username, String password) {
-    // Check cache first
-    if (accessTokenCache.containsKey(username)) {
-      return accessTokenCache.get(username);
+    // Check cache first, evicting expired entries so a token invalidated on the homeserver
+    // (e.g. after a password reset) is never served past its TTL and a fresh login is forced.
+    long now = nowSupplier.getAsLong();
+    accessTokenCache.entrySet().removeIf(e -> isExpired(e.getValue().expiryMs, now));
+
+    CachedAccessToken cached = accessTokenCache.get(username);
+    if (cached != null) {
+      return cached.token;
     }
 
     try {
@@ -599,7 +657,8 @@ public class MatrixSynapseService {
 
       if (response.getBody() != null && response.getBody().containsKey("access_token")) {
         String accessToken = (String) response.getBody().get("access_token");
-        accessTokenCache.put(username, accessToken);
+        accessTokenCache.put(
+            username, new CachedAccessToken(accessToken, now + ACCESS_TOKEN_CACHE_TTL_MS));
         log.info("Successfully logged in Matrix user: {}", username);
         return accessToken;
       }
@@ -1192,9 +1251,9 @@ public class MatrixSynapseService {
       return java.util.Optional.empty();
     }
 
-    long now = System.currentTimeMillis();
+    long now = nowSupplier.getAsLong();
     CachedPresence cached = presenceCache.get(matrixUserId);
-    if (cached != null && now < cached.expiresAt) {
+    if (cached != null && !isExpired(cached.expiresAt, now)) {
       return java.util.Optional.of(cached);
     }
 
