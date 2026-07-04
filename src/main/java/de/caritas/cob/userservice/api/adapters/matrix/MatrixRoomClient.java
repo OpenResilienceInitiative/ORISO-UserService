@@ -31,6 +31,8 @@ public class MatrixRoomClient {
   private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
   private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
   private static final String ENDPOINT_LEAVE_ROOM = "/_matrix/client/r0/rooms/{roomId}/leave";
+  private static final String ENDPOINT_BAN_ROOM = "/_matrix/client/r0/rooms/{roomId}/ban";
+  private static final String ENDPOINT_UNBAN_ROOM = "/_matrix/client/r0/rooms/{roomId}/unban";
   private static final String ENDPOINT_POWER_LEVELS =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
@@ -210,6 +212,119 @@ public class MatrixRoomClient {
       return false;
     } catch (Exception ex) {
       log.error("Matrix Error: Could not leave room ({}). Reason: {}", roomId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Bans a user from a Matrix room ({@code POST /rooms/{roomId}/ban}). A ban both removes the user
+   * from the room and prevents them from re-joining until unbanned, which is the Matrix-native
+   * equivalent of the former Rocket.Chat "mute/ban from chat".
+   *
+   * <p>Best-effort: never throws. A ban of a user who is already banned is treated as success.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to ban
+   * @param accessToken access token of a user with permission to ban (room moderator/admin)
+   * @return true when the user is banned afterwards, false when the ban failed
+   */
+  public boolean banUserFromRoom(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      Map<String, Object> body = new HashMap<>();
+      body.put("user_id", userId);
+
+      HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+      var url = buildUrl(ENDPOINT_BAN_ROOM, Map.of("roomId", roomId));
+      log.info("Banning Matrix user {} from room {}", userId, roomId);
+
+      var response = restTemplate.postForEntity(url, request, Map.class);
+      if (response.getStatusCode().is2xxSuccessful()) {
+        log.info("Successfully banned Matrix user {} from room {}", userId, roomId);
+        return true;
+      }
+      log.warn(
+          "Failed to ban Matrix user {} from room {}. Status: {}",
+          userId,
+          roomId,
+          response.getStatusCode());
+      return false;
+    } catch (HttpClientErrorException ex) {
+      log.error(
+          "Matrix Error: Could not ban user ({}) from room ({}). Status: {}, Response: {}",
+          userId,
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return false;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix Error: Could not ban user ({}) from room ({}). Reason: {}",
+          userId,
+          roomId,
+          ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Lifts a ban previously placed with {@link #banUserFromRoom} ({@code POST
+   * /rooms/{roomId}/unban}). Best-effort: never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to unban
+   * @param accessToken access token of a user with permission to unban
+   * @return true when the unban succeeded, false otherwise
+   */
+  public boolean unbanUserFromRoom(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      Map<String, Object> body = new HashMap<>();
+      body.put("user_id", userId);
+
+      HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+      var url = buildUrl(ENDPOINT_UNBAN_ROOM, Map.of("roomId", roomId));
+      log.info("Unbanning Matrix user {} from room {}", userId, roomId);
+
+      var response = restTemplate.postForEntity(url, request, Map.class);
+      if (response.getStatusCode().is2xxSuccessful()) {
+        log.info("Successfully unbanned Matrix user {} from room {}", userId, roomId);
+        return true;
+      }
+      log.warn(
+          "Failed to unban Matrix user {} from room {}. Status: {}",
+          userId,
+          roomId,
+          response.getStatusCode());
+      return false;
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 403 || ex.getStatusCode().value() == 404) {
+        log.info(
+            "Matrix user {} was not banned in room {} (status {}); nothing to unban",
+            userId,
+            roomId,
+            ex.getStatusCode());
+        return true;
+      }
+      log.error(
+          "Matrix Error: Could not unban user ({}) from room ({}). Status: {}, Response: {}",
+          userId,
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return false;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix Error: Could not unban user ({}) from room ({}). Reason: {}",
+          userId,
+          roomId,
+          ex.getMessage());
       return false;
     }
   }

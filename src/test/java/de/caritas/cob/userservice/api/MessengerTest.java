@@ -49,6 +49,13 @@ class MessengerTest {
   @Mock private StringConverter stringConverter;
   @Mock private AgencyService agencyService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
+      groupChatMembershipService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
+
   @InjectMocks private Messenger messenger;
 
   @BeforeEach
@@ -173,44 +180,132 @@ class MessengerTest {
   // ── isInChat ──────────────────────────────────────────────────────────────
 
   @Test
-  void isInChat_Should_ReturnFalse_When_ChatIdIsNull() {
-    assertThat(messenger.isInChat(null, "user-1")).isFalse();
+  void isInChat_Should_ReturnFalse_When_SessionOrConsultantNull() {
+    assertThat(messenger.isInChat(null, new Consultant())).isFalse();
+    assertThat(messenger.isInChat(new Session(), null)).isFalse();
     verify(messageClient, never()).findMembers(any());
   }
 
   // ---------------------------------------------------------------------------
-  // Extended coverage — 2026-07-02
+  // Extended coverage — Matrix-native member queries
   // ---------------------------------------------------------------------------
 
-  // ── isInChat (non-null chatId) ────────────────────────────────────────────
+  // ── isInChat (Matrix room) ────────────────────────────────────────────────
 
   @Test
-  void isInChat_Should_ReturnTrue_When_UserIsMember() {
-    List<Map<String, String>> membersPayload = List.of(Map.of("_id", "user-1"));
-    when(messageClient.findMembers("group-1")).thenReturn(Optional.of(membersPayload));
-    when(mapper.chatUserIdOf(membersPayload)).thenReturn(List.of("user-1", "user-2"));
+  void isInChat_Should_ReturnTrue_When_ConsultantIsMatrixRoomMember() {
+    var session = new Session();
+    session.setMatrixRoomId("!room:matrix.oriso.org");
+    var consultant = new Consultant();
+    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    when(groupChatMembershipService.resolveMatrixRoomId(session))
+        .thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn(
+            List.of(
+                new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
+                    .ResolvedRoomMember("@c:matrix.oriso.org", "c-id", "c", "c", true)));
 
-    assertThat(messenger.isInChat("group-1", "user-1")).isTrue();
+    assertThat(messenger.isInChat(session, consultant)).isTrue();
   }
 
   @Test
-  void isInChat_Should_ReturnFalse_When_UserNotMember() {
-    List<Map<String, String>> membersPayload = List.of(Map.of("_id", "other-user"));
-    when(messageClient.findMembers("group-1")).thenReturn(Optional.of(membersPayload));
-    when(mapper.chatUserIdOf(membersPayload)).thenReturn(List.of("other-user"));
+  void isInChat_Should_ReturnFalse_When_ConsultantNotAMatrixRoomMember() {
+    var session = new Session();
+    session.setMatrixRoomId("!room:matrix.oriso.org");
+    var consultant = new Consultant();
+    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    when(groupChatMembershipService.resolveMatrixRoomId(session))
+        .thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn(
+            List.of(
+                new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
+                    .ResolvedRoomMember("@other:matrix.oriso.org", "o-id", "o", "o", true)));
 
-    assertThat(messenger.isInChat("group-1", "user-1")).isFalse();
+    assertThat(messenger.isInChat(session, consultant)).isFalse();
+  }
+
+  @Test
+  void isInChat_Should_FailSafeToFalse_When_MatrixRoomStateUnknown() {
+    var session = new Session();
+    session.setMatrixRoomId("!room:matrix.oriso.org");
+    var consultant = new Consultant();
+    consultant.setMatrixUserId("@c:matrix.oriso.org");
+    when(groupChatMembershipService.resolveMatrixRoomId(session))
+        .thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn(List.of());
+
+    assertThat(messenger.isInChat(session, consultant)).isFalse();
+  }
+
+  @Test
+  void isInChat_Should_FailSafeToFalse_When_LegacyRoomAndRcMembersEmpty() {
+    var session = new Session();
+    session.setGroupId("group-1");
+    var consultant = new Consultant();
+    consultant.setRocketChatId("rc-1");
+    when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(null);
+    when(messageClient.findMembers("group-1")).thenReturn(Optional.empty());
+
+    assertThat(messenger.isInChat(session, consultant)).isFalse();
   }
 
   // ── banUserFromChat ────────────────────────────────────────────────────────
 
   @Test
-  void banUserFromChat_Should_MuteUserAndReturnResult() {
+  void banUserFromChat_Should_BanFromMatrixRoom_AsChatOwner() {
+    var user = new User("u-1", null, "seeker-username", "email@test.com", false);
+    user.setMatrixUserId("@seeker:matrix.oriso.org");
+    var owner = new Consultant();
+    owner.setMatrixUserId("@owner:matrix.oriso.org");
+    var chat = new Chat();
+    chat.setId(10L);
+    chat.setGroupId("!room:matrix.oriso.org");
+    chat.setMatrixRoomId("!room:matrix.oriso.org");
+    chat.setChatOwner(owner);
+    when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
+    when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn("!room:matrix.oriso.org");
+    when(matrixSynapseService.banUserFromRoomAsModerator(
+            "!room:matrix.oriso.org", "@seeker:matrix.oriso.org", "@owner:matrix.oriso.org"))
+        .thenReturn(true);
+
+    assertThat(messenger.banUserFromChat("u-1", 10L)).isTrue();
+    verify(matrixSynapseService)
+        .banUserFromRoomAsModerator(
+            "!room:matrix.oriso.org", "@seeker:matrix.oriso.org", "@owner:matrix.oriso.org");
+    verify(messageClient, never()).muteUserInChat(any(), any());
+  }
+
+  @Test
+  void banUserFromChat_Should_ReturnFalse_When_MatrixBanFails() {
+    var user = new User("u-1", null, "seeker-username", "email@test.com", false);
+    user.setMatrixUserId("@seeker:matrix.oriso.org");
+    var owner = new Consultant();
+    owner.setMatrixUserId("@owner:matrix.oriso.org");
+    var chat = new Chat();
+    chat.setId(10L);
+    chat.setMatrixRoomId("!room:matrix.oriso.org");
+    chat.setChatOwner(owner);
+    when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
+    when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn("!room:matrix.oriso.org");
+    when(matrixSynapseService.banUserFromRoomAsModerator(any(), any(), any())).thenReturn(false);
+
+    assertThat(messenger.banUserFromChat("u-1", 10L)).isFalse();
+  }
+
+  @Test
+  void banUserFromChat_Should_FallBackToRcMute_When_LegacyRoom() {
     var user = new User("u-1", null, "seeker-username", "email@test.com", false);
     var chat = new Chat();
+    chat.setId(10L);
     chat.setGroupId("group-10");
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
     when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(null);
     when(messageClient.muteUserInChat("seeker-username", "group-10")).thenReturn(true);
 
     assertThat(messenger.banUserFromChat("u-1", 10L)).isTrue();
@@ -347,20 +442,26 @@ class MessengerTest {
   }
 
   @Test
-  void removeUserFromSession_Should_RemoveUser_When_NotAdvisorAndInChat() {
+  void removeUserFromSession_Should_RemoveUser_When_NotAdvisorAndInMatrixRoom() {
     var sessionConsultant = new Consultant();
     sessionConsultant.setId("c-other");
     var requestConsultant = new Consultant();
     requestConsultant.setId("c-1");
+    requestConsultant.setMatrixUserId("@c1:matrix.oriso.org");
     var session = new Session();
     session.setConsultant(sessionConsultant);
     session.setTeamSession(false);
-    List<Map<String, String>> membersPayload = List.of(Map.of("_id", "rc-1"));
+    session.setMatrixRoomId("!room:matrix.oriso.org");
     when(sessionRepository.findByGroupId("group-1")).thenReturn(Optional.of(session));
     when(consultantRepository.findByRocketChatIdAndDeleteDateIsNull("rc-1"))
         .thenReturn(Optional.of(requestConsultant));
-    when(messageClient.findMembers("group-1")).thenReturn(Optional.of(membersPayload));
-    when(mapper.chatUserIdOf(membersPayload)).thenReturn(List.of("rc-1"));
+    when(groupChatMembershipService.resolveMatrixRoomId(session))
+        .thenReturn("!room:matrix.oriso.org");
+    when(groupChatMembershipService.resolveHumanMembers("!room:matrix.oriso.org"))
+        .thenReturn(
+            List.of(
+                new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
+                    .ResolvedRoomMember("@c1:matrix.oriso.org", "c-1", "c1", "c1", true)));
     when(messageClient.removeUserFromSession("rc-1", "group-1")).thenReturn(true);
 
     assertThat(messenger.removeUserFromSession("rc-1", "group-1")).isTrue();

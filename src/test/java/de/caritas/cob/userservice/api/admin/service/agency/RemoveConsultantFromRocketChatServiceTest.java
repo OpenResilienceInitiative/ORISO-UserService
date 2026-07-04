@@ -1,20 +1,17 @@
 package de.caritas.cob.userservice.api.admin.service.agency;
 
 import static java.util.Collections.singletonList;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import java.util.Optional;
-import org.jeasy.random.EasyRandom;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -24,37 +21,99 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RemoveConsultantFromRocketChatServiceTest {
 
+  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
+  private static final String ASSIGNED_MATRIX_ID = "@assigned:matrix.oriso.org";
+  private static final String SURPLUS_MATRIX_ID = "@surplus:matrix.oriso.org";
+
   @InjectMocks private RemoveConsultantFromRocketChatService removeConsultantFromRocketChatService;
 
-  @Mock private RocketChatFacade rocketChatFacade;
+  @Mock private GroupChatMembershipService groupChatMembershipService;
 
-  @Mock private ConsultantRepository consultantRepository;
+  private Session sessionWithAssignedConsultant(String assignedConsultantId) {
+    var assigned = new Consultant();
+    assigned.setId(assignedConsultantId);
+    var session = new Session();
+    session.setId(1L);
+    session.setConsultant(assigned);
+    session.setMatrixRoomId(MATRIX_ROOM_ID);
+    return session;
+  }
 
-  @Mock private IdentityClient identityClient;
+  private ResolvedRoomMember consultantMember(String accountId, String matrixUserId) {
+    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, true);
+  }
 
-  @Mock private ConsultingTypeManager consultingTypeManager;
+  private ResolvedRoomMember askerMember(String accountId, String matrixUserId) {
+    return new ResolvedRoomMember(matrixUserId, accountId, accountId, accountId, false);
+  }
 
   @Test
-  void
-      removeConsultantFromSessions_Should_removeConsultant_When_consultantIsNotUserAndNotDirectlyAssigned() {
-    Session session = new EasyRandom().nextObject(Session.class);
-    session.getConsultant().setRocketChatId("consultant");
-    session.getUser().setRcUserId("user");
-    GroupMemberDTO groupMemberDTO = new EasyRandom().nextObject(GroupMemberDTO.class);
-    groupMemberDTO.set_id("another");
-    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
-    when(this.consultantRepository.findByRocketChatIdAndDeleteDateIsNull(any()))
-        .thenReturn(Optional.of(consultant));
-    GroupMemberDTO otherConsultant = new GroupMemberDTO();
-    otherConsultant.set_id(consultant.getRocketChatId());
-    when(this.rocketChatFacade.getStandardMembersOfGroup(any()))
-        .thenReturn(singletonList(groupMemberDTO));
-    when(this.rocketChatFacade.retrieveRocketChatMembers(any()))
-        .thenReturn(singletonList(otherConsultant));
+  void removeConsultantFromSessions_Should_RemoveSurplusConsultant_ButNotAssignedOne() {
+    var session = sessionWithAssignedConsultant("assigned-id");
+    when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                consultantMember("assigned-id", ASSIGNED_MATRIX_ID),
+                consultantMember("surplus-id", SURPLUS_MATRIX_ID)));
 
-    this.removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
 
-    verify(this.rocketChatFacade, times(1))
-        .removeUserFromGroup(consultant.getRocketChatId(), session.getGroupId());
+    verify(groupChatMembershipService).removeMemberFromRoom(MATRIX_ROOM_ID, SURPLUS_MATRIX_ID);
+    verify(groupChatMembershipService, never())
+        .removeMemberFromRoom(MATRIX_ROOM_ID, ASSIGNED_MATRIX_ID);
+  }
+
+  @Test
+  void removeConsultantFromSessions_Should_NeverRemoveAskers() {
+    var session = sessionWithAssignedConsultant("assigned-id");
+    when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                consultantMember("assigned-id", ASSIGNED_MATRIX_ID),
+                askerMember("asker-id", "@asker:matrix.oriso.org")));
+
+    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+
+    verify(groupChatMembershipService, never())
+        .removeMemberFromRoom(eq(MATRIX_ROOM_ID), eq("@asker:matrix.oriso.org"));
+    verify(groupChatMembershipService, never())
+        .removeMemberFromRoom(MATRIX_ROOM_ID, ASSIGNED_MATRIX_ID);
+  }
+
+  @Test
+  void removeConsultantFromSessions_Should_DoNothing_When_RoomStateUnknown() {
+    var session = sessionWithAssignedConsultant("assigned-id");
+    when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)).thenReturn(List.of());
+
+    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+
+    verify(groupChatMembershipService, never())
+        .removeMemberFromRoom(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void removeConsultantFromSessions_Should_Skip_When_SessionHasNoMatrixRoom() {
+    var session = new Session();
+    session.setId(2L);
+    when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(null);
+
+    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+
+    verify(groupChatMembershipService, never())
+        .removeMemberFromRoom(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    verify(groupChatMembershipService, never())
+        .resolveHumanMembers(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void removeConsultantFromSessions_Should_DoNothing_When_NoSessions() {
+    removeConsultantFromRocketChatService.removeConsultantFromSessions(List.of());
+
+    verifyNoInteractions(groupChatMembershipService);
   }
 }
