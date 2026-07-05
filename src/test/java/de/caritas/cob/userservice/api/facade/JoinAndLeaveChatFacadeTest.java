@@ -38,7 +38,6 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -358,8 +357,7 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
-  void leaveChatShouldDeleteChatAndShutDownMatrixRoomWhenLastMemberLeft()
-      throws RocketChatUserNotInitializedException, RocketChatGetGroupMembersException {
+  void leaveChatShouldDeleteChatAndShutDownMatrixRoomWhenLastMemberLeft() {
     Chat chat =
         Chat.builder()
             .id(CHAT_ID)
@@ -376,7 +374,10 @@ class JoinAndLeaveChatFacadeTest {
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(chat));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(user.getRcUserId()).thenReturn(RC_USER_ID);
-    when(rocketChatService.getStandardMembersOfGroup(chat.getGroupId())).thenReturn(List.of());
+    // Matrix-native: the "last member left" decision comes from GroupChatMembershipService, not
+    // from
+    // Rocket.Chat's member query (ADR-004, RC disabled by default).
+    when(groupChatMembershipService.hasRemainingHumanMembers(eq(chat), any())).thenReturn(false);
     when(rocketChatService.deleteGroupAsSystemUser(chat.getGroupId())).thenReturn(true);
 
     joinAndLeaveChatFacade.leaveChat(CHAT_ID, authenticatedUser);
@@ -475,7 +476,8 @@ class JoinAndLeaveChatFacadeTest {
             userService,
             disabledRocketChatService,
             chatReCreator,
-            groupChatMembershipService);
+            groupChatMembershipService,
+            matrixChatShutdownService);
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(user.getRcUserId()).thenReturn(RC_USER_ID);
