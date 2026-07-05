@@ -280,9 +280,7 @@ public class ChatService {
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
     log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
 
-    var chats =
-        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-            .collect(Collectors.toList());
+    var chats = chatRepository.findByIdsWithChatAgencies(chatIds);
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(
