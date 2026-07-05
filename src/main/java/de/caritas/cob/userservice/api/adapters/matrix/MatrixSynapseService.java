@@ -42,6 +42,7 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
+  private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
   private static final String ENDPOINT_SEND_MESSAGE =
@@ -687,6 +688,63 @@ public class MatrixSynapseService {
    */
   public boolean joinRoom(String roomId, String accessToken) {
     return matrixRoomClient.joinRoom(roomId, accessToken);
+  }
+
+  /**
+   * Leaves a Matrix room with the given user's own access token.
+   *
+   * @param roomId the room ID
+   * @param accessToken the access token of the leaving user
+   * @return true when the user is not in the room afterwards, false when the leave failed
+   */
+  public boolean leaveRoom(String roomId, String accessToken) {
+    return matrixRoomClient.leaveRoom(roomId, accessToken);
+  }
+
+  /**
+   * Reads the current members of a Matrix room via the Synapse admin API ({@code GET
+   * /_synapse/admin/v1/rooms/{roomId}/members}).
+   *
+   * <p>Uses the admin token, so it works regardless of whether the admin user is a member of the
+   * room. Never throws.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return the list of full Matrix user IDs currently joined to the room, or {@link
+   *     java.util.Optional#empty()} when the room state could not be determined (no admin token,
+   *     request failed, unexpected response shape). Callers must treat empty as "unknown", not as
+   *     "no members".
+   */
+  public java.util.Optional<java.util.List<String>> getRoomMembers(String matrixRoomId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Could not get admin token for reading members of Matrix room {}", matrixRoomId);
+      return java.util.Optional.empty();
+    }
+
+    try {
+      String url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_MEMBERS, java.util.Map.of("roomId", matrixRoomId));
+
+      var headers = getClientHttpHeaders(adminToken);
+      var request = new HttpEntity<>(headers);
+
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      var body = response.getBody();
+      if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
+        log.warn("Unexpected response reading members of Matrix room {}", matrixRoomId);
+        return java.util.Optional.empty();
+      }
+
+      return java.util.Optional.of(members.stream().map(String::valueOf).toList());
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read members of room {}: {}", matrixRoomId, ex.getMessage());
+      return java.util.Optional.empty();
+    }
   }
 
   /**
