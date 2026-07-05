@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -366,14 +367,22 @@ public class SessionSupervisorFacade {
   private void inviteAndJoin(String roomId, String matrixUserId, String inviterToken) {
     try {
       matrixSynapseService.inviteUserToRoom(roomId, matrixUserId, inviterToken);
+    } catch (MatrixInviteUserException e) {
+      if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
+        log.info("User {} already in room {}, skipping invite", matrixUserId, roomId);
+      } else {
+        throw new InternalServerErrorException(
+            "Failed to invite user to supervision side room: " + e.getMessage());
+      }
     } catch (Exception e) {
       throw new InternalServerErrorException(
           "Failed to invite user to supervision side room: " + e.getMessage());
     }
     String userToken = matrixSynapseService.loginAsUserAccessToken(matrixUserId);
-    if (userToken != null) {
-      matrixSynapseService.joinRoom(roomId, userToken);
+    if (userToken == null) {
+      throw new InternalServerErrorException("Failed to create user Matrix token");
     }
+    matrixSynapseService.joinRoom(roomId, userToken);
   }
 
   /** Remove a user from a room if a room id is present; log but never fail the removal flow. */
