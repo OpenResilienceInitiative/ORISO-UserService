@@ -85,6 +85,7 @@
   <include file="db/changelog/changeset/0054_event_notification_params/0054_changeSet.xml"/>
   <include file="db/changelog/changeset/0055_account_invites/0055_changeSet.xml"/>
   <include file="db/changelog/changeset/0056_matrix_columns_and_missing_tables/0056_changeSet.xml"/>
+  <include file="db/changelog/changeset/0057_case_handover_request/0057_changeSet.xml"/>
 
   <!-- Seed/demo data (context="seed"): currently none. Append future seed
        changesets below this line and tag every changeset with context="seed". -->
