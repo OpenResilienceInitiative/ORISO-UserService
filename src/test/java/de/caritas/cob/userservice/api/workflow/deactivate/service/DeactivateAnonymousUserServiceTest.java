@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.deactivate.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -32,7 +33,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -55,6 +56,22 @@ class DeactivateAnonymousUserServiceTest {
   public void setUp() {
     ReflectionTestUtils.setField(
         deactivateAnonymousUserService, "deactivatePeriodMinutes", DEACTIVATE_PERIOD_MINUTES);
+    ensureSessionActionMocks();
+  }
+
+  @SuppressWarnings("unchecked")
+  private void ensureSessionActionMocks() {
+    Stream.of(
+            DeactivateSessionActionCommand.class,
+            PostConversationFinishedAliasMessageActionCommand.class,
+            SetRocketChatRoomReadOnlyActionCommand.class,
+            SendFinishedAnonymousConversationEventActionCommand.class)
+        .forEach(
+            actionClass -> {
+              if (this.commandMockProvider.getActionMock(actionClass) == null) {
+                this.commandMockProvider.setCustomClassForAction(actionClass, mock(actionClass));
+              }
+            });
   }
 
   @Test
@@ -73,9 +90,8 @@ class DeactivateAnonymousUserServiceTest {
 
     when(this.actionsRegistry.buildContainerForType(User.class))
         .thenReturn(new ActionContainer<>(Set.of(deactivateUserAction)));
-    var deactivateSessionAction = mock(DeactivateSessionActionCommand.class);
     when(this.actionsRegistry.buildContainerForType(Session.class))
-        .thenReturn(new ActionContainer<>(Set.of(deactivateSessionAction)));
+        .thenReturn(this.commandMockProvider.getActionContainer(Session.class));
 
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
@@ -84,7 +100,8 @@ class DeactivateAnonymousUserServiceTest {
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
-    verifyNoMoreInteractions(deactivateUserAction, deactivateSessionAction);
+    verifyNoMoreInteractions(deactivateUserAction);
+    verifyNoSessionDeactivationActionsExecuted();
   }
 
   private SessionStatus[] getAnyStatusWhichIsNotInProgress() {
@@ -127,19 +144,19 @@ class DeactivateAnonymousUserServiceTest {
   }
 
   @ParameterizedTest
-  @MethodSource("createUpdateDatesWithinDeactivationPeriod")
+  @EnumSource(WithinDeactivationPeriodScenario.class)
   void
       deactivateStaleAnonymousUsers_Should_notPerformAnyDeactivation_When_sessionsAreInProgressWithinDeactivatePeriod(
-          LocalDateTime updateDate) {
+          WithinDeactivationPeriodScenario scenario) {
+    var updateDate = updateDateWithinDeactivationPeriod(scenario);
     var user = createUserWithSingleSession(updateDate);
     when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
         .thenReturn(new ArrayList<>(user.getSessions()));
     var deactivateUserAction = mock(DeactivateKeycloakUserActionCommand.class);
     when(this.actionsRegistry.buildContainerForType(User.class))
         .thenReturn(new ActionContainer<>(Set.of(deactivateUserAction)));
-    var deactivateSessionAction = mock(DeactivateSessionActionCommand.class);
     when(this.actionsRegistry.buildContainerForType(Session.class))
-        .thenReturn(new ActionContainer<>(Set.of(deactivateSessionAction)));
+        .thenReturn(this.commandMockProvider.getActionContainer(Session.class));
 
     this.deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
 
@@ -148,16 +165,43 @@ class DeactivateAnonymousUserServiceTest {
             Set.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS), RegistrationType.ANONYMOUS);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(User.class);
     verify(this.actionsRegistry, atLeastOnce()).buildContainerForType(Session.class);
-    verifyNoMoreInteractions(deactivateUserAction, deactivateSessionAction);
+    verifyNoMoreInteractions(deactivateUserAction);
+    verifyNoSessionDeactivationActionsExecuted();
   }
 
-  private static List<LocalDateTime> createUpdateDatesWithinDeactivationPeriod() {
-    LocalDateTime now = LocalDateTime.now();
-    LocalDateTime oneSecondWithinDeletionPeriod =
-        now.minusMinutes(DEACTIVATE_PERIOD_MINUTES).plusSeconds(10);
-    LocalDateTime timeInTheFuture = now.plusSeconds(20);
+  private enum WithinDeactivationPeriodScenario {
+    NOW,
+    JUST_INSIDE_BOUNDARY,
+    IN_THE_FUTURE
+  }
 
-    return List.of(now, oneSecondWithinDeletionPeriod, timeInTheFuture);
+  private static LocalDateTime updateDateWithinDeactivationPeriod(
+      WithinDeactivationPeriodScenario scenario) {
+    LocalDateTime now = LocalDateTime.now();
+    return switch (scenario) {
+      case NOW -> now;
+      case JUST_INSIDE_BOUNDARY -> now.minusMinutes(DEACTIVATE_PERIOD_MINUTES).plusSeconds(10);
+      case IN_THE_FUTURE -> now.plusSeconds(20);
+    };
+  }
+
+  private void verifyNoSessionDeactivationActionsExecuted() {
+    verify(this.commandMockProvider.getActionMock(DeactivateSessionActionCommand.class), never())
+        .execute(any(Session.class));
+    verify(
+            this.commandMockProvider.getActionMock(
+                PostConversationFinishedAliasMessageActionCommand.class),
+            never())
+        .execute(any(Session.class));
+    verify(
+            this.commandMockProvider.getActionMock(SetRocketChatRoomReadOnlyActionCommand.class),
+            never())
+        .execute(any(Session.class));
+    verify(
+            this.commandMockProvider.getActionMock(
+                SendFinishedAnonymousConversationEventActionCommand.class),
+            never())
+        .execute(any(Session.class));
   }
 
   private User createUserWithSingleSession(LocalDateTime updateDate) {
@@ -169,10 +213,11 @@ class DeactivateAnonymousUserServiceTest {
   }
 
   @ParameterizedTest
-  @MethodSource("createOverdueUpdateDates")
+  @EnumSource(OverdueDeactivationScenario.class)
   void
       deactivateStaleAnonymousUsers_Should_callUserAndSessionDeactivateActions_When_userSessionsAreInProgressForTooLong(
-          LocalDateTime overdueUpdateDate) {
+          OverdueDeactivationScenario scenario) {
+    var overdueUpdateDate = overdueUpdateDate(scenario);
     var user = createUserWithSingleSession(overdueUpdateDate);
 
     when(this.sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
@@ -217,11 +262,16 @@ class DeactivateAnonymousUserServiceTest {
             });
   }
 
-  private static List<LocalDateTime> createOverdueUpdateDates() {
-    LocalDateTime now = LocalDateTime.now();
-    LocalDateTime oneDeletionPeriodAgo = now.minusMinutes(DEACTIVATE_PERIOD_MINUTES);
-    LocalDateTime timeLongInThePast = oneDeletionPeriodAgo.minusMinutes(10);
+  private enum OverdueDeactivationScenario {
+    JUST_PAST_BOUNDARY,
+    LONG_IN_THE_PAST
+  }
 
-    return List.of(oneDeletionPeriodAgo, timeLongInThePast);
+  private static LocalDateTime overdueUpdateDate(OverdueDeactivationScenario scenario) {
+    LocalDateTime deactivationCutoff = LocalDateTime.now().minusMinutes(DEACTIVATE_PERIOD_MINUTES);
+    return switch (scenario) {
+      case JUST_PAST_BOUNDARY -> deactivationCutoff.minusSeconds(1);
+      case LONG_IN_THE_PAST -> deactivationCutoff.minusMinutes(10);
+    };
   }
 }

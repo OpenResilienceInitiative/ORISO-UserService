@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import java.time.LocalDateTime;
+import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.hibernate.Hibernate;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -63,6 +65,38 @@ class ChatRepositoryIT {
 
     assertEquals(1, chats.size());
     assertEquals(2, chats.get(0).getId());
+  }
+
+  @Test
+  @Sql(value = "/database/chatAndRelationData.sql")
+  void findByAgencyIds_Should_FetchChatAgencies() {
+    var chats = underTest.findByAgencyIds(Set.of(1731L));
+
+    assertEquals(2, chats.size());
+    assertTrue(Hibernate.isInitialized(chats.get(0).getChatAgencies()));
+    assertTrue(Hibernate.isInitialized(chats.get(1).getChatAgencies()));
+  }
+
+  @Test
+  @Sql(value = "/database/chatAndRelationData.sql")
+  void findByGroupIds_Should_FetchChatAgencies() {
+    var chats = underTest.findByGroupIds(Set.of("x"));
+
+    assertEquals(1, chats.size());
+    assertEquals(0, chats.get(0).getId());
+    assertTrue(Hibernate.isInitialized(chats.get(0).getChatAgencies()));
+    assertEquals(2, chats.get(0).getChatAgencies().size());
+  }
+
+  @Test
+  @Sql(value = "/database/chatAndRelationData.sql")
+  void findByIdsWithChatAgencies_Should_FetchChatAgencies() {
+    var chats = underTest.findByIdsWithChatAgencies(Set.of(0L));
+
+    assertEquals(1, chats.size());
+    assertEquals(0, chats.get(0).getId());
+    assertTrue(Hibernate.isInitialized(chats.get(0).getChatAgencies()));
+    assertEquals(2, chats.get(0).getChatAgencies().size());
   }
 
   @Test

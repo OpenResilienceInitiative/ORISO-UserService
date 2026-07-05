@@ -121,7 +121,7 @@ import org.springframework.test.web.servlet.MockMvc;
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
-      "spring.jpa.hibernate.ddl-auto=none",
+      "spring.jpa.hibernate.ddl-auto=create-drop",
       "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
       "keycloak.auth-server-url=https://auth.testing",
       "keycloak.realm=testing",

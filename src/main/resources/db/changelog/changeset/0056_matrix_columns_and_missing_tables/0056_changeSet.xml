@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="0056_matrix_columns_and_missing_tables" author="caritas">
+    <sqlFile
+      path="db/changelog/changeset/0056_matrix_columns_and_missing_tables/add-missing-columns.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <sqlFile
+      path="db/changelog/changeset/0056_matrix_columns_and_missing_tables/create-missing-tables.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0056_matrix_columns_and_missing_tables/rollback.sql"
+        relativeToChangelogFile="false"
+        splitStatements="true"
+        stripComments="true"
+        endDelimiter=";"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
