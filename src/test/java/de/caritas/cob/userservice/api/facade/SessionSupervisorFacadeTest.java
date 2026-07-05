@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -45,6 +46,7 @@ class SessionSupervisorFacadeTest {
   private static final String SUPERVISOR_ID = "sup-1";
   private static final String SUPERVISOR_MXID = "@sup:oriso";
   private static final String CONSULTANT_MXID = "@con:oriso";
+  private static final String CLIENT_MXID = "@client:oriso";
 
   @InjectMocks private SessionSupervisorFacade facade;
 
@@ -154,5 +156,29 @@ class SessionSupervisorFacadeTest {
 
     assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM).isNotEqualTo(CLIENT_ROOM);
     verify(matrixSynapseService).createRoom(any(), any(), any());
+  }
+
+  @Test
+  void addSupervisor_Should_neverInviteTheClient_intoTheSideRoom() throws Exception {
+    // ADR-008 safeguarding regression guard. The asker (client) must NEVER be invited into the
+    // supervision side room — nor anywhere by this flow. We give the session's client a Matrix id
+    // so that a future change which started inviting it would be caught here. Today only the
+    // supervisor is ever invited (client-room observation + side-room membership), so every
+    // captured
+    // invitee must be the supervisor and never the client.
+    User client = new User();
+    client.setMatrixUserId(CLIENT_MXID);
+    session.setUser(client);
+
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+
+    ArgumentCaptor<String> invitedUsers = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService, org.mockito.Mockito.atLeastOnce())
+        .inviteUserToRoom(any(), invitedUsers.capture(), any());
+    assertThat(invitedUsers.getAllValues())
+        .as("only the supervisor is ever invited; the client is never invited into any room")
+        .containsOnly(SUPERVISOR_MXID)
+        .doesNotContain(CLIENT_MXID);
+    verify(matrixSynapseService, never()).inviteUserToRoom(eq(SIDE_ROOM), eq(CLIENT_MXID), any());
   }
 }
