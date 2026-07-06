@@ -814,4 +814,120 @@ class EmailNotificationFacadeTest {
               reassignmentNotification, null);
         });
   }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void sendNewDirectEnquiryEmailNotification_Should_SendEmail_When_MailsGenerated() {
+    when(newDirectEnquiryEmailSupplier.generateEmails()).thenReturn(getMailDTOS());
+
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
+        CONSULTANT_ID, AGENCY_ID, "88045", null);
+
+    verify(mailService).sendEmailNotification(Mockito.any(MailsDTO.class));
+  }
+
+  @Test
+  void sendNewDirectEnquiryEmailNotification_ShouldNot_SendEmail_When_MailListIsEmpty() {
+    when(newDirectEnquiryEmailSupplier.generateEmails()).thenReturn(List.of());
+
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
+        CONSULTANT_ID, AGENCY_ID, "88045", null);
+
+    verify(mailService, times(0)).sendEmailNotification(Mockito.any(MailsDTO.class));
+  }
+
+  @Test
+  void sendNewDirectEnquiryEmailNotification_Should_LogError_When_GenerateEmailsThrows() {
+    when(newDirectEnquiryEmailSupplier.generateEmails())
+        .thenThrow(new EmailNotificationException(new Exception()));
+
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
+        CONSULTANT_ID, AGENCY_ID, "88045", null);
+
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(
+                Level.ERROR, "Failed to send NEW_DIRECT_ENQUIRY_EMAIL_NOTIFICATION"))
+        .isTrue();
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_ShouldNot_SendEmail_When_UserHasInvalidEmail() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER_NO_EMAIL, CONSULTANT, null);
+
+    verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void
+      sendInquiryAcceptedNotification_ShouldNot_SendEmail_When_ToggleEnabledAndUserHasNotificationsDisabled() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+
+    verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_SendEmail_When_ToggleDisabled() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+
+    verify(mailService).sendEmailNotification(Mockito.any(MailsDTO.class));
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_UseDefaultConsultantName_When_ConsultantIsNull() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, null, null);
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var text = captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
+    org.assertj.core.api.Assertions.assertThat(text).contains("Ihre Beraterin/Ihr Berater");
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_UseConsultantFullName_When_ConsultantProvided() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var text = captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
+    org.assertj.core.api.Assertions.assertThat(text).contains(CONSULTANT.getFullName());
+  }
+
+  @Test
+  void
+      sendInquiryAcceptedNotification_Should_UseTenantTemplateAttributes_When_MultiTenancyEnabled() {
+    ReflectionTestUtils.setField(emailNotificationFacade, "multiTenancyEnabled", true);
+    when(tenantTemplateSupplier.getTemplateAttributes())
+        .thenReturn(
+            List.of(
+                new de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO()
+                    .key("tenantKey")
+                    .value("tenantValue")));
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var templateData = captor.getValue().getMails().get(0).getTemplateData();
+    org.assertj.core.api.Assertions.assertThat(
+            templateData.stream().anyMatch(td -> "tenantKey".equals(td.getKey())))
+        .isTrue();
+    ReflectionTestUtils.setField(emailNotificationFacade, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_LogError_When_MailServiceThrows() {
+    doThrow(new RuntimeException("boom")).when(mailService).sendEmailNotification(any());
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+
+    org.assertj.core.api.Assertions.assertThat(
+            facadeLogCaptor.contains(Level.ERROR, "Failed to send inquiry accepted notification"))
+        .isTrue();
+  }
 }
