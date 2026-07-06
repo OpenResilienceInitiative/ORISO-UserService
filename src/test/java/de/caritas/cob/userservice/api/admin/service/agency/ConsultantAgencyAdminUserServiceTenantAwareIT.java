@@ -264,6 +264,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
     consultant.setTeamConsultant(isTeamConsultant);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setConsultantMobileTokens(Sets.newHashSet());
     consultant.setLanguageCode(LanguageCode.de);
 
