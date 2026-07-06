@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static org.apache.commons.lang3.BooleanUtils.isTrue;
-
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -38,25 +36,15 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
-import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.AskerImportService;
-import de.caritas.cob.userservice.api.service.ConsultantImportService;
-import de.caritas.cob.userservice.api.service.SessionDataService;
-import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.util.List;
 import java.util.UUID;
-import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -76,20 +64,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController implements UsersApi {
 
   private final @NotNull UserAccountService userAccountProvider;
-  private final @NotNull SessionService sessionService;
-  private final @NotNull AuthenticatedUser authenticatedUser;
-  private final @NotNull ConsultantImportService consultantImportService;
-  private final @NotNull EmailNotificationFacade emailNotificationFacade;
-  private final @NotNull AskerImportService askerImportService;
   private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
   private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
   private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserConsultantControllerDelegate userConsultantControllerDelegate;
-  private final @NotNull SessionDataService sessionDataService;
-
-  private final @NonNull EventNotificationService eventNotificationService;
+  private final @NotNull UserSupportControllerDelegate userSupportControllerDelegate;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -325,10 +306,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> importConsultants() {
-
-    consultantImportService.startImport();
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.importConsultants();
   }
 
   /**
@@ -338,10 +316,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> importAskers() {
-
-    askerImportService.startImport();
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.importAskers();
   }
 
   /**
@@ -351,10 +326,7 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<Void> importAskersWithoutSession() {
-
-    askerImportService.startImportForAskersWithoutSession();
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.importAskersWithoutSession();
   }
 
   /**
@@ -368,16 +340,7 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> sendNewMessageNotification(
       @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
-
-    emailNotificationFacade.sendNewMessageNotification(
-        newMessageNotificationDTO.getRcGroupId(),
-        authenticatedUser.getRoles(),
-        authenticatedUser.getUserId(),
-        TenantContext.getCurrentTenantData());
-    eventNotificationService.createMessageNotificationFromRoom(
-        newMessageNotificationDTO.getRcGroupId(), authenticatedUser.getUserId(), null, false);
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.sendNewMessageNotification(newMessageNotificationDTO);
   }
 
   /**
@@ -391,16 +354,7 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> sendReassignmentNotification(
       @RequestBody ReassignmentNotificationDTO reassignmentNotificationDTO) {
-
-    if (isTrue(reassignmentNotificationDTO.getIsConfirmed())) {
-      emailNotificationFacade.sendReassignConfirmationNotification(
-          reassignmentNotificationDTO, TenantContext.getCurrentTenantData());
-    } else {
-      emailNotificationFacade.sendReassignRequestNotification(
-          reassignmentNotificationDTO.getRcGroupId(), TenantContext.getCurrentTenantData());
-    }
-
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.sendReassignmentNotification(reassignmentNotificationDTO);
   }
 
   /**
@@ -671,8 +625,7 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateSessionData(
       @PathVariable Long sessionId, SessionDataDTO sessionDataDTO) {
-    this.sessionDataService.saveSessionData(sessionId, sessionDataDTO);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return userSupportControllerDelegate.updateSessionData(sessionId, sessionDataDTO);
   }
 
   /**
@@ -742,7 +695,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<RocketChatGroupIdDTO> getRocketChatGroupId(
       String consultantId, String askerId) {
-    String groupId = sessionService.findGroupIdByConsultantAndUser(consultantId, askerId);
-    return new ResponseEntity<>(new RocketChatGroupIdDTO().groupId(groupId), HttpStatus.OK);
+    return userSupportControllerDelegate.getRocketChatGroupId(consultantId, askerId);
   }
 }
