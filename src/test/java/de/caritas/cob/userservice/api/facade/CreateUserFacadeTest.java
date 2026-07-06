@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -68,6 +69,8 @@ public class CreateUserFacadeTest {
   @Mock private TenantService tenantService;
 
   @Mock private AgencyService agencyService;
+
+  @Mock private ApplicationSettingsService applicationSettingsService;
 
   @Mock private CreateSessionFacade createSessionFacade;
 

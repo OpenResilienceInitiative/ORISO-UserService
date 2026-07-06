@@ -38,7 +38,11 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         "/actuator/loggers/**",
         "/actuator/loggers",
         "/swagger-ui.html",
-        "/favicon.ico"
+        "/favicon.ico",
+        "/users/askers/new",
+        "/users/magic-link/",
+        "/users/invitelinks/",
+        "/conversations/askers/anonymous/new"
       };
 
   private final DefaultRequiresTenantFilterMatcher requiresTenantFilterMatcher =

@@ -106,6 +106,11 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
           && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
         return true;
       }
+      // Registration is public and may be called with or without the /service prefix.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/users/askers/new")) {
+        return true;
+      }
       List<String> csrfWhitelist =
           new ArrayList<>(Arrays.asList(csrfSecurityProperties.getWhitelist().getConfigUris()));
       csrfWhitelist.addAll(Arrays.asList(csrfSecurityProperties.getWhitelist().getAdminUris()));

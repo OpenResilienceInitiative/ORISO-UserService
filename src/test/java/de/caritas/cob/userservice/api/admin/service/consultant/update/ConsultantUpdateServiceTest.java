@@ -19,9 +19,11 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -40,6 +42,8 @@ public class ConsultantUpdateServiceTest {
   @Mock private KeycloakService keycloakService;
 
   @Mock private ConsultantService consultantService;
+
+  @Mock private ConsultantPublicSlugService consultantPublicSlugService;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
 
@@ -78,6 +82,8 @@ public class ConsultantUpdateServiceTest {
 
     verify(this.keycloakService, Mockito.never())
         .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify(this.keycloakService, Mockito.never())
+        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
 
     ArgumentCaptor<UserDTO> userDTOArgumentCaptor = ArgumentCaptor.forClass(UserDTO.class);
     verify(this.keycloakService, times(1))
@@ -89,6 +95,39 @@ public class ConsultantUpdateServiceTest {
     assertEquals(userDTOArgumentCaptor.getValue().getTenantId(), consultant.getTenantId());
     verify(this.consultantService, times(1)).saveConsultant(any());
     verify(this.appointmentService, times(1)).syncConsultantData(any());
+  }
+
+  @Test
+  public void
+      updateConsultant_Should_skipIdentityAndAppointmentSync_When_selfServiceOnlyRequestsPublicSlug() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setTenantId(1L);
+    consultant.setFirstName("Direct");
+    consultant.setLastName("Consultant");
+    consultant.setEmail("dev_direct_consultant_local@example.test");
+    consultant.setAbsent(false);
+    when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any())).thenReturn(consultant);
+
+    UpdateAdminConsultantDTO updateConsultant =
+        new UpdateAdminConsultantDTO()
+            .firstname("Direct")
+            .lastname("Consultant")
+            .email("dev_direct_consultant_local@example.test")
+            .absent(false)
+            .formalLanguage(false)
+            .languages(List.of("de"))
+            .topicIds(List.of())
+            .publicSlug("nikunnj-rohit");
+
+    this.consultantUpdateService.updateConsultant(consultant.getId(), updateConsultant, false);
+
+    verify(this.keycloakService, Mockito.never()).updateUserData(any(), any(), any(), any());
+    verify(this.keycloakService, Mockito.never()).updateRole(any(), any(String.class));
+    verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
+    verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
+    verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
+    verify(this.consultantService, times(1)).saveConsultant(any());
   }
 
   @Test

@@ -415,6 +415,20 @@ class UserControllerIT {
         .andExpect(status().isConflict());
   }
 
+  @Test
+  void usernameAvailability_Should_ReturnNoContent_When_KeycloakAvailabilityCheckFails()
+      throws Exception {
+    /* given */
+    val username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username))
+        .thenThrow(new RuntimeException("Keycloak 401"));
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isNoContent());
+  }
+
   /** Method: registerUser */
   @Test
   void registerUser_Should_ReturnBadRequest_WhenProvidedWithInvalidRequestBody() throws Exception {

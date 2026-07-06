@@ -78,6 +78,12 @@ public class ConsultantDataProvider {
         .preferredLanguage(preferredLanguageOf(consultant.getLanguageCode()))
         .encourage2fa(consultant.getEncourage2fa())
         .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
+        .publicSlug(consultant.getPublicSlug())
+        .pendingPublicSlug(consultant.getPendingPublicSlug())
+        .publicSlugStatus(
+            consultant.getPublicSlugStatus() != null
+                ? consultant.getPublicSlugStatus().name()
+                : null)
         .absenceMessage(consultant.getAbsenceMessage())
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencies)

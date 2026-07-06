@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -65,6 +66,7 @@ public class CreateConsultantSaga {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
@@ -481,6 +483,7 @@ public class CreateConsultantSaga {
             .build();
 
     consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    consultantPublicSlugService.applyAdminSlug(consultant, consultantCreationInput.getPublicSlug());
     return consultant;
   }
 

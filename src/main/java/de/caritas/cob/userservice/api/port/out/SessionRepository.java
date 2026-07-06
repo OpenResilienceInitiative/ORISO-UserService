@@ -358,4 +358,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   @Query("SELECT max(s.updateDate) FROM Session s WHERE s.consultant = :consultant")
   LocalDateTime findMaxUpdateDateByConsultant(@Param("consultant") Consultant consultant);
+
+  @Query(
+      "SELECT DISTINCT s.consultingTypeId FROM Session s WHERE s.agencyId = :agencyId ORDER BY s.consultingTypeId")
+  List<Integer> findDistinctConsultingTypeIdsByAgencyId(
+      @Param("agencyId") Long agencyId, Pageable pageable);
 }

@@ -23,18 +23,24 @@ import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 
 /** Facade to encapsulate the steps to initialize a user account. */
 @Service
@@ -57,6 +63,11 @@ public class CreateUserFacade {
 
   private final @NonNull AgencyService agencyService;
 
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
+
+  @Value("${feature.multitenancy.with.single.domain.enabled:false}")
+  private boolean multitenancyWithSingleDomain;
+
   /**
    * Creates a user in Keycloak and MariaDB. Then creates a session or chat account depending on the
    * provided consulting ID.
@@ -64,6 +75,8 @@ public class CreateUserFacade {
    * @param userDTO {@link UserDTO}
    */
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
+
+    initializeTenantContextForRegistration(userDTO);
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -293,6 +306,55 @@ public class CreateUserFacade {
     }
 
     return userDTO.getEmail();
+  }
+
+  private void initializeTenantContextForRegistration(UserDTO userDTO) {
+    if (TenantContext.contextIsSet()) {
+      return;
+    }
+
+    if (userDTO.getAgencyId() != null) {
+      try {
+        AgencyDTO agency = agencyService.getAgencyWithoutCaching(userDTO.getAgencyId());
+        if (agency != null && agency.getTenantId() != null) {
+          TenantContext.setCurrentTenant(agency.getTenantId());
+          return;
+        }
+      } catch (RestClientException exception) {
+        log.warn(
+            "Could not resolve tenant from registration agencyId {}. Falling back to main tenant.",
+            userDTO.getAgencyId(),
+            exception);
+      }
+    }
+
+    resolveMainTenantIdFromApplicationSettings()
+        .ifPresent(
+            tenantId -> {
+              log.debug("Using main tenant {} for registration", tenantId);
+              TenantContext.setCurrentTenant(tenantId);
+            });
+  }
+
+  private Optional<Long> resolveMainTenantIdFromApplicationSettings() {
+    if (!multitenancyWithSingleDomain) {
+      return Optional.empty();
+    }
+
+    ApplicationSettingsDTO applicationSettings =
+        applicationSettingsService.getApplicationSettings();
+    SettingDTO mainTenantSubdomainForSingleDomainMultitenancy =
+        applicationSettings.getMainTenantSubdomainForSingleDomainMultitenancy();
+    if (mainTenantSubdomainForSingleDomainMultitenancy == null
+        || mainTenantSubdomainForSingleDomainMultitenancy.getValue() == null
+        || mainTenantSubdomainForSingleDomainMultitenancy.getValue().isBlank()) {
+      log.warn("Main tenant subdomain not available in application settings.");
+      return Optional.empty();
+    }
+    return Optional.of(
+        tenantService
+            .getRestrictedTenantData(mainTenantSubdomainForSingleDomainMultitenancy.getValue())
+            .getId());
   }
 
   private void rollBackAccountInitialization(String userId, UserDTO userDTO) {

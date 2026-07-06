@@ -84,6 +84,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -158,6 +159,7 @@ public class UserController implements UsersApi {
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull ConsultantUpdateService consultantUpdateService;
   private final @NonNull ConsultantDataProvider consultantDataProvider;
   private final @NonNull AskerDataProvider askerDataProvider;
@@ -187,7 +189,16 @@ public class UserController implements UsersApi {
 
   @GetMapping("/users/availability/{username}")
   public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
-    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    boolean usernameAvailable;
+    try {
+      usernameAvailable = identityClient.isUsernameAvailable(username);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not check username availability for {}. Treating it as available so registration is not blocked.",
+          username,
+          exception);
+      usernameAvailable = true;
+    }
     return usernameAvailable
         ? ResponseEntity.noContent().build()
         : ResponseEntity.status(HttpStatus.CONFLICT).build();
@@ -219,6 +230,9 @@ public class UserController implements UsersApi {
    * @param user the {@link UserDTO}
    * @return {@link ResponseEntity} with possible registration conflict information in header
    */
+  @org.springframework.web.bind.annotation.PostMapping(
+      value = {"/users/askers/new", "/service/users/askers/new"},
+      consumes = MediaType.APPLICATION_JSON_VALUE)
   @Override
   public ResponseEntity<Void> registerUser(@Valid @RequestBody UserDTO user) {
     validateUserHasChosenTopicIfTopicsFeatureIsEnabled(user);
@@ -733,7 +747,7 @@ public class UserController implements UsersApi {
 
     var updateAdminConsultantDTO =
         consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
+    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -1470,14 +1484,14 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing all agencies of consultant
    */
   @Override
-  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(UUID consultantId) {
-    var consultantIdString = consultantId.toString();
+  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(String consultantId) {
+    var consultantIdString = consultantId.trim();
     var consultant =
-        consultantService
-            .getConsultant(consultantIdString)
+        consultantPublicSlugService
+            .resolveActiveConsultant(consultantIdString)
             .orElseThrow(
                 () -> new NotFoundException("Consultant with id %s not found", consultantIdString));
-    var onlineAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant(consultantIdString);
+    var onlineAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant(consultant.getId());
     var consultantDto =
         consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
 

@@ -133,6 +133,19 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "display_name")
   private String displayName;
 
+  @Column(name = "public_slug", length = 128)
+  private String publicSlug;
+
+  @Column(name = "pending_public_slug", length = 128)
+  private String pendingPublicSlug;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "public_slug_status", length = 32)
+  private PublicSlugStatus publicSlugStatus;
+
+  @Column(name = "public_slug_reviewed_at", columnDefinition = "datetime")
+  private LocalDateTime publicSlugReviewedAt;
+
   @Column(name = "absence_message")
   @Lob
   private String absenceMessage;

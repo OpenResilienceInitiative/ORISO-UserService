@@ -19,12 +19,15 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Service class to communicate with the AgencyService. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyService {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
@@ -40,7 +43,7 @@ public class AgencyService {
    */
   @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId")
   public AgencyDTO getAgency(Long agencyId) {
-    return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).iterator().next();
+    return getFirstAgencyOrNull(getAgenciesFromAgencyService(Collections.singletonList(agencyId)));
   }
 
   /**
@@ -51,7 +54,11 @@ public class AgencyService {
    * @return AgencyDTO {@link AgencyDTO}
    */
   public AgencyDTO getAgencyWithoutCaching(Long agencyId) {
-    return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).iterator().next();
+    return getFirstAgencyOrNull(getAgenciesFromAgencyService(Collections.singletonList(agencyId)));
+  }
+
+  private AgencyDTO getFirstAgencyOrNull(List<AgencyDTO> agencies) {
+    return agencies.isEmpty() ? null : agencies.get(0);
   }
 
   /**
@@ -78,11 +85,18 @@ public class AgencyService {
    */
   private List<AgencyDTO> getAgenciesFromAgencyService(List<Long> agencyIds) {
     if (isNotEmpty(agencyIds)) {
-      AgencyControllerApi agencyControllerApi = this.getAgencyControllerApi();
-      addDefaultHeaders(agencyControllerApi.getApiClient());
-      return agencyControllerApi.getAgenciesByIds(agencyIds).stream()
-          .map(this::fromOriginalAgency)
-          .collect(Collectors.toList());
+      try {
+        AgencyControllerApi agencyControllerApi = this.getAgencyControllerApi();
+        addDefaultHeaders(agencyControllerApi.getApiClient());
+        return agencyControllerApi.getAgenciesByIds(agencyIds).stream()
+            .map(this::fromOriginalAgency)
+            .collect(Collectors.toList());
+      } catch (HttpClientErrorException.NotFound notFound) {
+        log.warn(
+            "AgencyService returned 404 for agency ids {}. Treating as missing agencies for local hybrid registration.",
+            agencyIds);
+        return emptyList();
+      }
     }
     return emptyList();
   }

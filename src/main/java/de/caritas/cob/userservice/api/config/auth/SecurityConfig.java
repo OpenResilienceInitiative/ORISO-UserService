@@ -33,6 +33,8 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
 
   private static final String UUID_PATTERN =
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
+  private static final String PUBLIC_CONSULTANT_ID_PATTERN =
+      "(" + UUID_PATTERN + ")|([a-z]+(-[a-z]+)*)";
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
   @SuppressWarnings({"unused", "FieldCanBeLocal"})
@@ -89,15 +91,25 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
         .authorizeRequests()
         .antMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
         .permitAll()
+        .regexMatchers(
+            HttpMethod.GET,
+            ".*/users/consultants/(?!search$|toggleWalkThrough$|absences$|sessions$)"
+                + "("
+                + PUBLIC_CONSULTANT_ID_PATTERN
+                + ")$")
+        .permitAll()
         .antMatchers(
             "/users/askers/new",
+            "/service/users/askers/new",
             "/conversations/askers/anonymous/new",
             "/conversations/anonymous/availability",
-            "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
             "/users/consultants/languages",
+            "/service/users/consultants/languages",
             "/users/magic-link/request",
             "/users/magic-link/consume",
             "/users/invitelinks/*/redeem")
+        .permitAll()
+        .regexMatchers(HttpMethod.POST, ".*/users/askers/new$")
         .permitAll()
         .antMatchers(
             HttpMethod.POST,
@@ -307,8 +319,19 @@ public class SecurityConfig extends KeycloakWebSecurityConfigurerAdapter {
     // Completely ignore actuator endpoints and registration endpoint from Spring Security to avoid
     // Keycloak challenges
     web.ignoring()
+        .regexMatchers(
+            HttpMethod.GET,
+            ".*/users/consultants/(?!search$|toggleWalkThrough$|absences$|sessions$)"
+                + "("
+                + PUBLIC_CONSULTANT_ID_PATTERN
+                + ")$")
         .antMatchers(
-            "/actuator/**", "/users/askers/new", "/matrix/sync/**", "/service/matrix/sync/**");
+            "/actuator/**",
+            "/users/askers/new",
+            "/service/users/askers/new",
+            "/matrix/sync/**",
+            "/service/matrix/sync/**")
+        .regexMatchers(HttpMethod.POST, ".*/users/askers/new$");
   }
 
   /**
