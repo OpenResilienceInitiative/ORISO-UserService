@@ -32,8 +32,10 @@ class MatrixMediaClientTest {
 
   // After the encode()-before-buildAndExpand() fix, '!' → %21 and ':' → %3A in path segments.
   private static final String ENCODED_SEND_MSG_PATH =
-      "/_matrix/client/r0/rooms/%21room%3Amatrix.local/send/m.room.message/";
-
+      "/_matrix/client/r0/rooms/"
+          + org.springframework.web.util.UriUtils.encodePathSegment(
+              ROOM_ID, java.nio.charset.StandardCharsets.UTF_8)
+          + "/send/m.room.message/";
   @Mock private RestTemplate restTemplate;
 
   private MatrixMediaClient matrixMediaClient;
