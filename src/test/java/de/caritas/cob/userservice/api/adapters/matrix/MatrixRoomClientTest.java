@@ -29,7 +29,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixRoomClientTest {
@@ -38,12 +37,11 @@ class MatrixRoomClientTest {
   private static final String API_URL = "https://matrix.example";
   private static final String ROOM_ID = "!room:matrix.example";
   private static final String USER_ID = "@user:matrix.example";
-  // MatrixUrlBuilder.buildUrl() now calls encode() before buildAndExpand(), so Matrix room/user
-  // IDs are fully percent-encoded in the path: '!' → %21, ':' → %3A, '@' → %40.
-  private static final String ENCODED_ROOM_ID =
-      UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8);
-  private static final String ENCODED_USER_ID =
-      UriUtils.encodePathSegment(USER_ID, StandardCharsets.UTF_8);
+  // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A, '@' → %40.
+  // UriUtils.encodePathSegment leaves those RFC-3986 sub-delimiters unencoded — do NOT use it
+  // here, or the mock URLs will not match what MatrixUrlBuilder actually produces.
+  private static final String ENCODED_ROOM_ID = "%21room%3Amatrix.example";
+  private static final String ENCODED_USER_ID = "%40user%3Amatrix.example";
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;

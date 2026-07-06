@@ -144,9 +144,7 @@ class MatrixSynapseServiceTest {
         .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     assertThat(urlCaptor.getValue())
         .startsWith(
-            "https://matrix.example/_matrix/client/r0/rooms/"
-                + UriUtils.encodePathSegment(roomId, StandardCharsets.UTF_8)
-                + "/messages?");
+            "https://matrix.example/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
     assertThat(urlCaptor.getValue()).contains("dir=b");
     assertThat(urlCaptor.getValue()).contains("limit=100");
     verifyNoInteractions(restTemplate);
@@ -158,7 +156,7 @@ class MatrixSynapseServiceTest {
     when(restTemplate.exchange(
             eq(
                 "https://matrix.example.com/_synapse/admin/v1/deactivate/"
-                    + UriUtils.encodePathSegment(MATRIX_USER_ID, StandardCharsets.UTF_8)),
+                    + "%40seeker%3Amatrix.example.com"),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
@@ -173,7 +171,7 @@ class MatrixSynapseServiceTest {
     when(restTemplate.exchange(
             eq(
                 "https://matrix.example.com/_synapse/admin/v1/deactivate/"
-                    + UriUtils.encodePathSegment(MATRIX_USER_ID, StandardCharsets.UTF_8)),
+                    + "%40seeker%3Amatrix.example.com"),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
@@ -194,9 +192,7 @@ class MatrixSynapseServiceTest {
   void purgeRoomShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq(
-                "https://matrix.example.com/_synapse/admin/v2/rooms/"
-                    + UriUtils.encodePathSegment(MATRIX_ROOM_ID, StandardCharsets.UTF_8)),
+            eq("https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com"),
             eq(HttpMethod.DELETE),
             any(HttpEntity.class),
             eq(String.class)))
@@ -209,9 +205,7 @@ class MatrixSynapseServiceTest {
   void purgeRoomShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq(
-                "https://matrix.example.com/_synapse/admin/v2/rooms/"
-                    + UriUtils.encodePathSegment(MATRIX_ROOM_ID, StandardCharsets.UTF_8)),
+            eq("https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com"),
             eq(HttpMethod.DELETE),
             any(HttpEntity.class),
             eq(String.class)))

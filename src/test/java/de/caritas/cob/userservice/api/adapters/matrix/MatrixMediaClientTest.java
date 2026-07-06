@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +22,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixMediaClientTest {
@@ -32,13 +30,10 @@ class MatrixMediaClientTest {
   private static final String ACCESS_TOKEN = "access-token";
   private static final String ROOM_ID = "!room:matrix.local";
 
-  // After the encode()-before-buildAndExpand() fix, '!' → %21 and ':' → %3A in path segments.
-  // The expected path substring is derived from the same UriUtils.encodePathSegment call that
-  // MatrixUrlBuilder uses, so the assertion stays correct if the encoding logic ever changes.
+  // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A.
+  // This differs from UriUtils.encodePathSegment which leaves RFC-3986 sub-delimiters unencoded.
   private static final String ENCODED_SEND_MSG_PATH =
-      "/_matrix/client/r0/rooms/"
-          + UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8)
-          + "/send/m.room.message/";
+      "/_matrix/client/r0/rooms/%21room%3Amatrix.local/send/m.room.message/";
 
   @Mock private RestTemplate restTemplate;
 
