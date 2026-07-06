@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixMediaClientTest {
@@ -31,11 +33,13 @@ class MatrixMediaClientTest {
   private static final String ROOM_ID = "!room:matrix.local";
 
   // After the encode()-before-buildAndExpand() fix, '!' → %21 and ':' → %3A in path segments.
+  // The expected path substring is derived from the same UriUtils.encodePathSegment call that
+  // MatrixUrlBuilder uses, so the assertion stays correct if the encoding logic ever changes.
   private static final String ENCODED_SEND_MSG_PATH =
       "/_matrix/client/r0/rooms/"
-          + org.springframework.web.util.UriUtils.encodePathSegment(
-              ROOM_ID, java.nio.charset.StandardCharsets.UTF_8)
+          + UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8)
           + "/send/m.room.message/";
+
   @Mock private RestTemplate restTemplate;
 
   private MatrixMediaClient matrixMediaClient;

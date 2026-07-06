@@ -29,6 +29,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixRoomClientTest {
@@ -40,9 +41,9 @@ class MatrixRoomClientTest {
   // MatrixUrlBuilder.buildUrl() now calls encode() before buildAndExpand(), so Matrix room/user
   // IDs are fully percent-encoded in the path: '!' → %21, ':' → %3A, '@' → %40.
   private static final String ENCODED_ROOM_ID =
-      org.springframework.web.util.UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8);
+      UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8);
   private static final String ENCODED_USER_ID =
-      org.springframework.web.util.UriUtils.encodePathSegment(USER_ID, StandardCharsets.UTF_8);
+      UriUtils.encodePathSegment(USER_ID, StandardCharsets.UTF_8);
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;
