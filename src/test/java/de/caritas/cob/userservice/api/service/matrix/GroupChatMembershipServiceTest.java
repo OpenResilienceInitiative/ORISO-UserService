@@ -11,6 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -19,11 +22,14 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 class GroupChatMembershipServiceTest {
@@ -46,6 +52,22 @@ class GroupChatMembershipServiceTest {
   @Mock private Consultant consultant;
 
   @Mock private User user;
+
+  private Logger logger;
+  private ListAppender<ILoggingEvent> logAppender;
+
+  @BeforeEach
+  void setUpLogging() {
+    logger = (Logger) LoggerFactory.getLogger(GroupChatMembershipService.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  void tearDownLogging() {
+    logger.detachAppender(logAppender);
+  }
 
   private Chat.ChatBuilder chatBuilder() {
     return Chat.builder()
@@ -343,5 +365,65 @@ class GroupChatMembershipServiceTest {
     session.setGroupId("rcGroupId4711");
 
     assertNull(groupChatMembershipService.resolveMatrixRoomId(session));
+  }
+
+  // ── resolveMatrixRoomId(Chat) gaps ─────────────────────────────────────────
+
+  @Test
+  void resolveMatrixRoomId_Should_ReturnNull_When_ChatIsNull() {
+    // Callers may pass a null chat during teardown — room resolution must not NPE.
+    assertNull(groupChatMembershipService.resolveMatrixRoomId((Chat) null));
+  }
+
+  @Test
+  void resolveMatrixRoomId_Should_PreferMatrixRoomIdColumn_onChat() {
+    // Dedicated matrix_room_id column is authoritative over legacy group_id values.
+    var chat = chatBuilder().matrixRoomId(MATRIX_ROOM_ID).groupId("rcGroupId").build();
+    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(chat));
+  }
+
+  @Test
+  void resolveMatrixRoomId_Should_FallBackToGroupId_onChat_When_MatrixRoomIdNull() {
+    // Legacy chats may only store the Matrix room id in group_id — still resolvable.
+    var chat = chatBuilder().groupId(MATRIX_ROOM_ID).build();
+    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(chat));
+  }
+
+  @Test
+  void removeMemberFromRoom_Should_WarnAndNotThrow_When_LeaveRoomReturnsFalse() {
+    // A failed Matrix leave must not abort the chat-leave flow — warn and continue.
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(false);
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+    assertTrue(
+        logAppender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel().toString().equals("WARN")
+                        && e.getFormattedMessage().contains("Could not remove member")));
+  }
+
+  @Test
+  void resolveHumanMembers_Should_IncludeConsultant_When_DisplayNameAndFullNameBlank() {
+    // Consultants without display metadata are still real members and must appear in member lists.
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getUsername()).thenReturn("consultantUsername");
+    when(consultant.getDisplayName()).thenReturn("  ");
+    when(consultant.getFullName()).thenReturn(null);
+
+    var resolved = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+
+    assertEquals(1, resolved.size());
+    assertEquals("consultant-id", resolved.get(0).accountId());
+    assertTrue(resolved.get(0).consultant());
   }
 }
