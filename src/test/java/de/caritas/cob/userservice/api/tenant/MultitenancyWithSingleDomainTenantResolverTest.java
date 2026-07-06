@@ -140,8 +140,7 @@ class MultitenancyWithSingleDomainTenantResolverTest {
   }
 
   @Test
-  void
-      resolve_Should_ThrowBadRequestException_When_AgencyIdProvidedInHeader_ButAgencyNotFound() {
+  void resolve_Should_ThrowBadRequestException_When_AgencyIdProvidedInHeader_ButAgencyNotFound() {
     // given
     ReflectionTestUtils.setField(
         multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
