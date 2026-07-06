@@ -50,6 +50,13 @@ public class CreateUserChatRelationFacadeTest {
   @SuppressWarnings("unused")
   private AuditingHandler auditingHandler;
 
+  @org.junit.jupiter.api.BeforeEach
+  void enableRocketChat() {
+    // These tests cover the legacy Rocket.Chat flow (ADR-004: disabled by default)
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserChatRelationFacade, "rocketChatEnabled", true);
+  }
+
   @Test
   public void
       initializeUserChatAgencyRelation_Should_CreateUserChatAgencyRelation_ForNewUserAccountCreation()

@@ -32,7 +32,10 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+// RC teardown phase 2: this scheduler IT never exercises Rocket.Chat (it only imports
+// RocketChatTestConfig for context and never calls it), so it runs in the production Matrix-only
+// mode (rocket-chat.enabled=false → DisabledRocketChatService is the active bean).
+@TestPropertySource(properties = {"spring.profiles.active=testing", "rocket-chat.enabled=false"})
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 @Import({
   KeycloakTestConfig.class,

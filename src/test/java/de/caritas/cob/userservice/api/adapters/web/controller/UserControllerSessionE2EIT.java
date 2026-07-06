@@ -139,7 +139,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExc
 import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
 import org.springframework.web.util.UriTemplateHandler;
 
-@SpringBootTest
+@SpringBootTest(properties = "rocket-chat.enabled=true")
 @ExtendWith(OutputCaptureExtension.class)
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase

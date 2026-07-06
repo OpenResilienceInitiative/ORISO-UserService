@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -284,6 +286,83 @@ class MatrixSynapseServiceTest {
     when(restTemplate.postForEntity(
             eq(expectedLoginAsUserUri), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
+  }
+
+  @Test
+  void isExpiredShouldTreatEntryAsExpiredOnlyOnceNowReachesExpiry() {
+    assertThat(MatrixSynapseService.isExpired(1000L, 999L)).isFalse();
+    assertThat(MatrixSynapseService.isExpired(1000L, 1000L)).isTrue();
+    assertThat(MatrixSynapseService.isExpired(1000L, 1001L)).isTrue();
+  }
+
+  @Test
+  void loginUserShouldServeAccessTokenFromCacheWhileWithinTtl() {
+    var clock = new AtomicLong(0L);
+    var service = matrixSynapseServiceWithClock(clock::get);
+    stubPasswordLogin("fresh-token");
+
+    var first = service.loginUser("alice", "secret");
+    // Advance well within the 50-minute TTL: still a cache hit, no second HTTP login.
+    clock.set(10 * 60 * 1000L);
+    var second = service.loginUser("alice", "secret");
+
+    assertThat(first).isEqualTo("fresh-token");
+    assertThat(second).isEqualTo("fresh-token");
+    verify(restTemplate, times(1))
+        .postForEntity(
+            eq("https://matrix.example/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class));
+  }
+
+  @Test
+  void loginUserShouldNotServeExpiredAccessTokenAndFetchesAFreshOne() {
+    var clock = new AtomicLong(0L);
+    var service = matrixSynapseServiceWithClock(clock::get);
+    // First login caches "stale-token"; after TTL elapses, a second login must fetch "fresh-token".
+    when(restTemplate.postForEntity(
+            eq("https://matrix.example/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "stale-token")))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", "fresh-token")));
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/login"))
+        .thenReturn("https://matrix.example/_matrix/client/r0/login");
+
+    var stale = service.loginUser("alice", "secret");
+    // Jump just past the 50-minute TTL so the cached entry is expired on the next read.
+    clock.set(50 * 60 * 1000L + 1L);
+    var fresh = service.loginUser("alice", "secret");
+
+    assertThat(stale).isEqualTo("stale-token");
+    assertThat(fresh)
+        .as("expired cache entry must not be served; a fresh token is fetched")
+        .isEqualTo("fresh-token");
+    verify(restTemplate, times(2))
+        .postForEntity(
+            eq("https://matrix.example/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class));
+  }
+
+  private void stubPasswordLogin(String accessToken) {
+    when(matrixConfig.getApiUrl("/_matrix/client/r0/login"))
+        .thenReturn("https://matrix.example/_matrix/client/r0/login");
+    when(restTemplate.postForEntity(
+            eq("https://matrix.example/_matrix/client/r0/login"),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", accessToken)));
+  }
+
+  private MatrixSynapseService matrixSynapseServiceWithClock(LongSupplier nowSupplier) {
+    return new MatrixSynapseService(
+        matrixConfig,
+        restTemplate,
+        matrixLongPollRestTemplate,
+        matrixRoomClient,
+        matrixMediaClient,
+        nowSupplier);
   }
 
   private MatrixSynapseService matrixSynapseService() {

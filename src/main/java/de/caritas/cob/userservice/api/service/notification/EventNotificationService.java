@@ -117,6 +117,9 @@ public class EventNotificationService {
   @Transactional
   public void createSupervisorRemovedNotification(
       Session session, String recipientUserId, String supervisorName) {
+    if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "supervisorName", supervisorName);
     createEvent(

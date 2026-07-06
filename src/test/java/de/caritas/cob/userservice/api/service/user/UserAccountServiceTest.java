@@ -305,6 +305,101 @@ public class UserAccountServiceTest {
     assertThat(notificationsSettingsDTO.getNewChatMessageNotificationEnabled()).isTrue();
   }
 
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-03
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void
+      retrieveValidatedConsultantById_Should_ThrowForbiddenException_When_ConsultantIsSoftDeleted() {
+    String consultantId = "soft-deleted-id";
+    when(consultantService.getConsultant(consultantId)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(consultantId))
+        .thenReturn(Optional.of(new Consultant()));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> accountProvider.retrieveValidatedConsultantById(consultantId));
+  }
+
+  @Test
+  public void
+      retrieveValidatedConsultantById_Should_ThrowInternalServerErrorException_When_ConsultantNotFoundAtAll() {
+    String consultantId = "unknown-id";
+    when(consultantService.getConsultant(consultantId)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(consultantId))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> accountProvider.retrieveValidatedConsultantById(consultantId));
+  }
+
+  @Test
+  public void updateUserMobileToken_Should_DoNothing_When_UserIsNotPresent() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+
+    accountProvider.updateUserMobileToken("mobileToken");
+
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  public void
+      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsInReadOnlySafeguard() {
+    var user = new User();
+    user.setDeleteDate(java.time.LocalDateTime.now());
+    user.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .READ_ONLY_SAFEGUARD);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(user));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+  }
+
+  @Test
+  public void
+      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    Consultant consultant = new Consultant();
+    consultant.setDeleteDate(java.time.LocalDateTime.now());
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .READ_ONLY_SAFEGUARD);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(consultant));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+  }
+
+  @Test
+  public void updateConsultantEmail_Should_ContinueWithSave_When_RocketChatThrowsException() {
+    Consultant consultant = EASY_RANDOM.nextObject(Consultant.class);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
+    when(consultantService.getConsultant("consultant-id")).thenReturn(Optional.of(consultant));
+    Mockito.doThrow(new RuntimeException("RC down")).when(rocketChatService).updateUser(any());
+
+    accountProvider.changeUserAccountEmailAddress(Optional.of("new@email.com"));
+
+    verify(consultantService).saveConsultant(consultant);
+  }
+
+  @Test
+  public void
+      deactivateAndFlagUserAccountForDeletion_Should_ContinueWithoutEvent_When_StatisticsServiceThrows() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doThrow(new RuntimeException("stats service down"))
+        .when(statisticsService)
+        .fireEvent(any());
+
+    accountProvider.deactivateAndFlagUserAccountForDeletion();
+
+    verify(userService).saveUser(USER);
+  }
+
   @Test
   public void
       deactivateAndFlagUserAccountForDeletion_Should_DeactivateKeycloakAccountAndSetDeleteDate() {

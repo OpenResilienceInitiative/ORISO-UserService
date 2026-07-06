@@ -1,4 +1,4 @@
-name: CI - Main
+name: UserService Build and Publish
 
 on:
   push:
@@ -11,7 +11,8 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
-  build:
+  publish:
+    name: test, build and publish image
     runs-on: ubuntu-latest
 
     permissions:
@@ -22,14 +23,33 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
 
-    - name: Create and Publish Docker image
+    - name: Publish UserService Docker image
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: true
         image_name: oriso-userservice
         github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Non-blocking burn-in (Test Quality Audit 2026-07-04, item 3 + CI Roadmap Part 1).
+  # Runs `mvnw -B verify` on dev/main so integration-test results stay visible after
+  # merge. Deliberately independent of the publish job: a red burn-in must NOT block
+  # image publishing while the ITs are being stabilised. continue-on-error enforces
+  # that. Flip to a required gate once burn-in is consistently green.
+  integration-tests:
+    name: integration-tests (non-blocking, burn-in)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Run integration tests (verify)
+      uses: ./.github/actions/maven-verify-burnin
+      with:
+        java_version: '21'

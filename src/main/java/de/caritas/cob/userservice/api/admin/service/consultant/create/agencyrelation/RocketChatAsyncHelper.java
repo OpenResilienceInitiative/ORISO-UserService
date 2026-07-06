@@ -79,12 +79,33 @@ public class RocketChatAsyncHelper {
     TenantContext.clear();
   }
 
+  /**
+   * Synchronous finalization for the Matrix-only path (rocket-chat.enabled=false): there is no
+   * Rocket.Chat work to do, so the relation status must be completed in the caller's transaction.
+   * The async variant races the caller's not-yet-committed consultant_agency row and cannot see it
+   * from its own fresh transaction.
+   */
+  @Transactional
+  public void finalizeConsultantAgencyRelation(Consultant consultant, AgencyDTO agency) {
+    updateConsultantStatus(consultant, agency);
+  }
+
   private void updateConsultantStatus(Consultant consultant, AgencyDTO agencyDTO) {
     ConsultantAgency consultantAgency =
         consultantAgencyRepository.findByConsultantIdAndAgencyIdAndStatusAndDeleteDateIsNull(
             consultant.getId(), agencyDTO.getId(), ConsultantAgencyStatus.IN_PROGRESS);
 
+    if (consultantAgency == null) {
+      log.warn(
+          "No IN_PROGRESS consultant_agency relation visible for consultant {} and agency {};"
+              + " skipping status finalization",
+          consultant.getId(),
+          agencyDTO.getId());
+      return;
+    }
+
     consultantAgency.setStatus(ConsultantAgencyStatus.CREATED);
+    consultantAgencyRepository.save(consultantAgency);
     List<ConsultantAgency> consultantAgencies =
         consultantAgencyRepository.findByConsultantIdAndStatusAndDeleteDateIsNull(
             consultant.getId(), ConsultantAgencyStatus.IN_PROGRESS);

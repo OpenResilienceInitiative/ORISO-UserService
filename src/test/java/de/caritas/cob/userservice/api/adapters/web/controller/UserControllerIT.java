@@ -64,7 +64,6 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.servlet.http.Cookie;
 import java.util.*;
-import lombok.val;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.hibernate.service.spi.ServiceException;
@@ -92,6 +91,12 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc(addFilters = false)
 @Import({
   UserChatControllerDelegate.class,
+  UserSessionControllerDelegate.class,
+  UserAccountControllerDelegate.class,
+  UserTwoFactorAuthControllerDelegate.class,
+  UserRegistrationControllerDelegate.class,
+  UserConsultantControllerDelegate.class,
+  UserSupportControllerDelegate.class,
   ApiResponseEntityExceptionHandler.class,
   EncodeUsernameJsonDeserializer.class,
   UrlDecodePasswordJsonDeserializer.class,
@@ -273,6 +278,7 @@ class UserControllerIT {
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;
+  @MockitoBean private UsernameTranscoder usernameTranscoder;
   @MockitoBean private ChatService chatService;
   @MockitoBean private StartChatFacade startChatFacade;
   @MockitoBean private GetChatFacade getChatFacade;
@@ -365,10 +371,6 @@ class UserControllerIT {
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
 
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private UsernameTranscoder usernameTranscoder;
-
   @BeforeEach
   void setUp() {
     when(usernameTranscoder.encodeUsername(anyString())).thenAnswer(inv -> inv.getArgument(0));
@@ -378,7 +380,7 @@ class UserControllerIT {
   @Test
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -389,7 +391,7 @@ class UserControllerIT {
   @Test
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
@@ -401,7 +403,7 @@ class UserControllerIT {
   @Test
   void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
 
     /* when */
@@ -413,7 +415,7 @@ class UserControllerIT {
   @Test
   void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
@@ -475,6 +477,12 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
     when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(
@@ -535,6 +543,12 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
     when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(

@@ -37,20 +37,26 @@ public class MatrixSyncController {
   @PostMapping("/register/{sessionId}")
   public ResponseEntity<?> registerRoomForSync(@PathVariable Long sessionId) {
 
+    // Authorize the authenticated caller against the session (asker owns it / consultant is
+    // assigned) BEFORE doing anything. Kept outside the try/catch so the ForbiddenException /
+    // NotFoundException propagate to the global exception handler (403/404) instead of being
+    // swallowed into a 500. Closes the unauthenticated IDOR that leaked room ids + participant
+    // counts and allowed anonymous state changes.
+    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+
     try {
       log.info("📡 Registering Matrix room for session {}", sessionId);
 
-      var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
-        log.error("Session {} not found or has no Matrix room", sessionId);
+      if (session.getMatrixRoomId() == null) {
+        log.error("Session {} has no Matrix room", sessionId);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
 
-      String matrixRoomId = session.get().getMatrixRoomId();
-      String userId = session.get().getUser().getUserId();
+      String matrixRoomId = session.getMatrixRoomId();
+      String userId = session.getUser().getUserId();
       String consultantId =
-          session.get().getConsultant() != null ? session.get().getConsultant().getId() : null;
+          session.getConsultant() != null ? session.getConsultant().getId() : null;
 
       // Build set of user IDs who should receive notifications
       Set<String> userIds = new HashSet<>();
@@ -87,13 +93,17 @@ public class MatrixSyncController {
   @DeleteMapping("/register/{sessionId}")
   public ResponseEntity<?> unregisterRoomFromSync(@PathVariable Long sessionId) {
 
+    // Authorize the caller against the session before unregistering, so an outsider cannot silently
+    // kill live-event notifications for another session (denial-of-function). Kept outside the
+    // try/catch so ForbiddenException / NotFoundException reach the global exception handler.
+    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+
     try {
-      var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
+      if (session.getMatrixRoomId() == null) {
         return ResponseEntity.ok(Map.of("success", true));
       }
 
-      String matrixRoomId = session.get().getMatrixRoomId();
+      String matrixRoomId = session.getMatrixRoomId();
       matrixEventListenerService.unregisterRoom(matrixRoomId);
 
       log.info("✅ Unregistered Matrix room {} for session {}", matrixRoomId, sessionId);

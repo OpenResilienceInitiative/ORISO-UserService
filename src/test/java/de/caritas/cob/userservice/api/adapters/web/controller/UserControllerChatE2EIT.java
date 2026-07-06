@@ -116,7 +116,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
-@SpringBootTest
+@SpringBootTest(properties = "rocket-chat.enabled=true")
 @ExtendWith(OutputCaptureExtension.class)
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")

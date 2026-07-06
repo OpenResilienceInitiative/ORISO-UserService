@@ -30,6 +30,7 @@ public class MatrixRoomClient {
   private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
   private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
   private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
+  private static final String ENDPOINT_LEAVE_ROOM = "/_matrix/client/r0/rooms/{roomId}/leave";
   private static final String ENDPOINT_POWER_LEVELS =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
@@ -160,6 +161,55 @@ public class MatrixRoomClient {
       return false;
     } catch (Exception ex) {
       log.error("Matrix Error: Could not join room ({}). Reason: {}", roomId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Leaves a Matrix room with the given user's own access token (the canonical self-leave, {@code
+   * POST /rooms/{roomId}/leave}).
+   *
+   * <p>Best-effort: never throws. Leaving a room the user is not (or no longer) a member of is
+   * treated as success, because the desired end state ("user is not in the room") already holds.
+   *
+   * @param roomId the Matrix room ID
+   * @param accessToken the access token of the leaving user
+   * @return true when the user is not in the room afterwards, false when the leave failed
+   */
+  public boolean leaveRoom(String roomId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      HttpEntity<String> request = new HttpEntity<>("{}", headers);
+
+      var url = buildUrl(ENDPOINT_LEAVE_ROOM, Map.of("roomId", roomId));
+      log.info("Leaving Matrix room: {} at URL: {}", roomId, url);
+
+      var response = restTemplate.postForEntity(url, request, Map.class);
+
+      if (response.getStatusCode().is2xxSuccessful()) {
+        log.info("Successfully left Matrix room: {}", roomId);
+        return true;
+      }
+      log.warn("Failed to leave Matrix room: {}. Status: {}", roomId, response.getStatusCode());
+      return false;
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 403 || ex.getStatusCode().value() == 404) {
+        log.info(
+            "User was not in Matrix room {} (status {}); nothing to leave",
+            roomId,
+            ex.getStatusCode());
+        return true;
+      }
+      log.error(
+          "Matrix Error: Could not leave room ({}). Status: {}, Response: {}",
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return false;
+    } catch (Exception ex) {
+      log.error("Matrix Error: Could not leave room ({}). Reason: {}", roomId, ex.getMessage());
       return false;
     }
   }

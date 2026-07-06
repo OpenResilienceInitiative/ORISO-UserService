@@ -92,6 +92,45 @@ public class CreateConsultantSagaTenantAwareIT {
 
   @Test
   public void
+      createNewConsultant_Should_countLicensesPerTenant_When_consultantsExistInOtherTenants()
+          throws RocketChatLoginException {
+    // given: a tenant admin acts inside tenant 1, while two consultants already exist in a
+    // different tenant. Tenant 1 allows 2 consultants and currently has none, so creation must
+    // succeed even though the global consultant count already reaches the limit.
+    TenantContext.setCurrentTenant(1L);
+    createConsultantForTenant("otherTenantUser1", 2L);
+    createConsultantForTenant("otherTenantUser2", 2L);
+
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenReturn(DUMMY_RC_ID);
+    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    var tenant =
+        new TenantDTO()
+            .licensing(new Licensing().allowedNumberOfUsers(2))
+            .settings(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false));
+    when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
+
+    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setTenantId(1L);
+
+    // when
+    ConsultantAdminResponseDTO consultant =
+        createConsultantSaga.createNewConsultant(createConsultantDTO);
+
+    // then
+    assertThat(consultant.getEmbedded(), notNullValue());
+    assertThat(consultant.getEmbedded().getId(), notNullValue());
+    rollbackDBState();
+  }
+
+  @Test
+  public void
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled()
           throws RocketChatLoginException {
     // given
@@ -129,9 +168,13 @@ public class CreateConsultantSagaTenantAwareIT {
   }
 
   private void createConsultant(String username) {
+    createConsultantForTenant(username, 1L);
+  }
+
+  private void createConsultantForTenant(String username, Long tenantId) {
     Consultant consultant = new Consultant();
     consultant.setAppointments(null);
-    consultant.setTenantId(1L);
+    consultant.setTenantId(tenantId);
     consultant.setId(username);
     consultant.setRocketChatId(username);
     consultant.setUsername(username);
@@ -139,6 +182,7 @@ public class CreateConsultantSagaTenantAwareIT {
     consultant.setLastName(username);
     consultant.setEmail(username + "@email.com");
     consultant.setEncourage2fa(true);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
