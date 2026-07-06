@@ -40,7 +40,7 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import javax.ws.rs.InternalServerErrorException;
+import jakarta.ws.rs.InternalServerErrorException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -35,9 +35,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.ws.rs.BadRequestException;
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Synchronized;
@@ -928,7 +928,7 @@ public class KeycloakService implements IdentityClient {
    * @param sessionId Keycloak session ID
    */
   public void closeSession(String sessionId) {
-    keycloakClient.getRealmResource().deleteSession(sessionId);
+    keycloakClient.getRealmResource().deleteSession(sessionId, false);
   }
 
   /**

@@ -31,6 +31,9 @@
 		<skip.unit-tests>false</skip.unit-tests>
 		<skip.integration-tests>false</skip.integration-tests>
 		<keycloak.version>17.0.0</keycloak.version>
+		<!-- Admin client decoupled from the deprecated keycloak.version adapter:
+		     server is Keycloak 26.x; the 17.0.0 admin client 401s against it (create-user). -->
+		<keycloak-admin-client.version>26.0.4</keycloak-admin-client.version>
 		<springfox.version>2.9.2</springfox.version>
 		<spring-plugin-core.version>2.0.0.RELEASE</spring-plugin-core.version>
 		<openapi.generator.maven.version>7.17.0</openapi.generator.maven.version>
@@ -220,7 +223,7 @@
 		<dependency>
 			<groupId>org.keycloak</groupId>
 			<artifactId>keycloak-admin-client</artifactId>
-			<version>${keycloak.version}</version>
+			<version>${keycloak-admin-client.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>jakarta.ws.rs</groupId>
