@@ -181,7 +181,7 @@ class SessionSupervisorFacadeTest {
     client.setMatrixUserId(CLIENT_MXID);
     session.setUser(client);
 
-    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, "reason");
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
 
     ArgumentCaptor<String> invitedUsers = ArgumentCaptor.forClass(String.class);
     verify(matrixSynapseService, org.mockito.Mockito.atLeastOnce())
