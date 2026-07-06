@@ -139,6 +139,20 @@ class MultitenancyWithSingleDomainTenantResolverTest {
         () -> multitenancyWithSingleDomainTenantResolver.resolve(request));
   }
 
+  @Test
+  void
+      resolve_Should_ThrowBadRequestException_When_AgencyIdProvidedInHeader_ButAgencyNotFound() {
+    // given
+    ReflectionTestUtils.setField(
+        multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
+    when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.of(1L));
+    when(agencyService.getAgency(1L)).thenReturn(null);
+    // when, then
+    assertThrows(
+        BadRequestException.class,
+        () -> multitenancyWithSingleDomainTenantResolver.resolve(request));
+  }
+
   private void resetRequestAttributes() {
     RequestContextHolder.setRequestAttributes(null);
   }

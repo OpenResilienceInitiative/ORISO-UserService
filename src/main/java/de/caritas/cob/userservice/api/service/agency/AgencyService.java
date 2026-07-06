@@ -38,7 +38,7 @@ public class AgencyService {
    * @param agencyId {@link AgencyDTO#getId()}
    * @return AgencyDTO {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId")
+  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId", unless = "#result == null")
   public AgencyDTO getAgency(Long agencyId) {
     return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
         .findFirst()
