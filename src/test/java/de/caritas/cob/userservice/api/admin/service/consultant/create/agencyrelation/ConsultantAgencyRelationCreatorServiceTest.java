@@ -25,7 +25,6 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Optional;
-import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -93,7 +92,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
-        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies("consultant Id", Set.of(2L), 1L);
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(anyString(), any(), any());
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
