@@ -39,8 +39,10 @@ class MatrixRoomClientTest {
   private static final String USER_ID = "@user:matrix.example";
   // MatrixUrlBuilder.buildUrl() now calls encode() before buildAndExpand(), so Matrix room/user
   // IDs are fully percent-encoded in the path: '!' → %21, ':' → %3A, '@' → %40.
-  private static final String ENCODED_ROOM_ID = "%21room%3Amatrix.example";
-  private static final String ENCODED_USER_ID = "%40user%3Amatrix.example";
+  private static final String ENCODED_ROOM_ID =
+      org.springframework.web.util.UriUtils.encodePathSegment(ROOM_ID, StandardCharsets.UTF_8);
+  private static final String ENCODED_USER_ID =
+      org.springframework.web.util.UriUtils.encodePathSegment(USER_ID, StandardCharsets.UTF_8);
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;
