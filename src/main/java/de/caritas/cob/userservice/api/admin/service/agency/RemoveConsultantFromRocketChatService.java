@@ -1,63 +1,74 @@
 package de.caritas.cob.userservice.api.admin.service.agency;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveFromGroupOperationService;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 /**
- * Service to provide logic to remove a consultant who was a team consultant from Rocket.Chat rooms.
+ * Removes a consultant who was a team consultant from the chat rooms of the given sessions.
+ *
+ * <p>Matrix-native: when an agency is detached from a consultant, that consultant must lose access
+ * to the team sessions of that agency. Membership and removal both go through Matrix (the only chat
+ * backend since Rocket.Chat was disabled, ADR-004). With Rocket.Chat disabled the former
+ * Rocket.Chat member query returned nobody, so no consultant was ever removed and detached
+ * consultants silently kept room access.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class RemoveConsultantFromRocketChatService {
 
-  private final @NonNull RocketChatFacade rocketChatFacade;
-  private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull ConsultingTypeManager consultingTypeManager;
+  private final @NonNull GroupChatMembershipService groupChatMembershipService;
 
   /**
-   * Removes the consultant who is not directly assigned to session from Rocket.Chat rooms.
+   * Removes the consultants who are not the directly assigned consultant (and not the asker) from
+   * the Matrix rooms of the given sessions.
    *
-   * @param sessions the sessions where consultant should be removed in Rocket.Chat
+   * @param sessions the sessions whose rooms the surplus consultants should be removed from
    */
   public void removeConsultantFromSessions(List<Session> sessions) {
-    Map<Session, List<Consultant>> consultantsFromSession =
-        sessions.stream()
-            .collect(Collectors.toMap(session -> session, this::observeConsultantsToRemove));
-
-    RocketChatRemoveFromGroupOperationService.getInstance(
-            this.rocketChatFacade, this.identityClient, this.consultingTypeManager)
-        .onSessionConsultants(consultantsFromSession)
-        .removeFromGroupsOrRollbackOnFailure();
+    sessions.forEach(this::removeConsultantsFromSessionRoom);
   }
 
-  private List<Consultant> observeConsultantsToRemove(Session session) {
-    return this.rocketChatFacade.getStandardMembersOfGroup(session.getGroupId()).stream()
-        .filter(notUserAndNotDirectlyAssignedConsultant(session))
-        .map(GroupMemberDTO::get_id)
-        .map(this.consultantRepository::findByRocketChatIdAndDeleteDateIsNull)
-        .filter(Optional::isPresent)
-        .map(Optional::get)
-        .collect(Collectors.toList());
+  private void removeConsultantsFromSessionRoom(Session session) {
+    var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(session);
+    if (StringUtils.isBlank(matrixRoomId)) {
+      log.warn("Session {} has no Matrix room; cannot remove surplus consultants", session.getId());
+      return;
+    }
+
+    observeConsultantsToRemove(session, matrixRoomId)
+        .forEach(
+            consultant ->
+                groupChatMembershipService.removeMemberFromRoom(
+                    matrixRoomId, consultant.matrixUserId()));
   }
 
-  private Predicate<GroupMemberDTO> notUserAndNotDirectlyAssignedConsultant(Session session) {
-    return member ->
-        !member.get_id().equals(session.getConsultant().getRocketChatId())
-            && !member.get_id().equals(session.getUser().getRcUserId());
+  /**
+   * The consultants currently in the session's Matrix room that must lose access: every human
+   * consultant member except the session's directly assigned consultant. The asker is never a
+   * consultant, so consultant membership already excludes them.
+   */
+  private List<ResolvedRoomMember> observeConsultantsToRemove(
+      Session session, String matrixRoomId) {
+    return groupChatMembershipService.resolveHumanMembers(matrixRoomId).stream()
+        .filter(ResolvedRoomMember::consultant)
+        .filter(member -> notDirectlyAssignedConsultant(session, member))
+        .toList();
+  }
+
+  private boolean notDirectlyAssignedConsultant(Session session, ResolvedRoomMember member) {
+    Consultant assigned = session.getConsultant();
+    if (assigned == null) {
+      return true;
+    }
+    return !member.accountId().equals(assigned.getId());
   }
 }

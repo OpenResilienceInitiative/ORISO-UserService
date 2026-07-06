@@ -275,6 +275,52 @@ class MatrixSynapseServiceTest {
             eq(Map.class));
   }
 
+  @Test
+  void banUserFromRoomShouldDelegateToRoomClient() {
+    when(matrixRoomClient.banUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN))
+        .thenReturn(true);
+    var service = matrixSynapseService();
+
+    assertThat(service.banUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN)).isTrue();
+    verify(matrixRoomClient).banUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN);
+  }
+
+  @Test
+  void unbanUserFromRoomShouldDelegateToRoomClient() {
+    when(matrixRoomClient.unbanUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN))
+        .thenReturn(true);
+    var service = matrixSynapseService();
+
+    assertThat(service.unbanUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN)).isTrue();
+    verify(matrixRoomClient).unbanUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN);
+  }
+
+  @Test
+  void banUserFromRoomAsModeratorShouldMintModeratorTokenAndBan() {
+    var moderatorId = "@moderator:example.org";
+    var expectedUri =
+        URI.create(MATRIX_BASE_URL + "/_synapse/admin/v1/users/%40moderator%3Aexample.org/login");
+    stubAdminLogin(expectedUri);
+    when(matrixRoomClient.banUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, MATRIX_USER_TOKEN))
+        .thenReturn(true);
+    var service = matrixSynapseService();
+
+    assertThat(service.banUserFromRoomAsModerator(MATRIX_ROOM_ID, MATRIX_USER_ID, moderatorId))
+        .isTrue();
+    verify(matrixRoomClient).banUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, MATRIX_USER_TOKEN);
+  }
+
+  @Test
+  void banUserFromRoomAsModeratorShouldReturnFalse_WhenModeratorTokenCannotBeMinted() {
+    var service = matrixSynapseService();
+    // No admin credentials configured -> admin token unavailable -> impersonation fails.
+    assertThat(
+            service.banUserFromRoomAsModerator(
+                MATRIX_ROOM_ID, MATRIX_USER_ID, "@moderator:example.org"))
+        .isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
+
   private void stubAdminLogin(URI expectedLoginAsUserUri) {
     when(matrixConfig.getAdminUsername()).thenReturn("admin");
     when(matrixConfig.getAdminPassword()).thenReturn("admin-password");

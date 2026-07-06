@@ -372,4 +372,81 @@ class MatrixRoomClientTest {
 
     assertThat(matrixRoomClient.removeUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
   }
+
+  // ── banUserFromRoom ─────────────────────────────────────────────────────────
+
+  @Test
+  void banUserFromRoom_ShouldPostBanWithUserId_AndReturnTrue() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/ban"),
+            mapRequestCaptor.capture(),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isTrue();
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ACCESS_TOKEN);
+    assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("user_id", USER_ID));
+  }
+
+  @Test
+  void banUserFromRoom_ShouldReturnFalse_WhenMatrixRejectsBan() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"no power\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/ban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void banUserFromRoom_ShouldReturnFalse_WhenMatrixThrows() {
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/ban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  // ── unbanUserFromRoom ───────────────────────────────────────────────────────
+
+  @Test
+  void unbanUserFromRoom_ShouldPostUnban_AndReturnTrue() {
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/unban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.unbanUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
+  void unbanUserFromRoom_ShouldTreatNotBannedAsSuccess() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"not banned\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/unban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.unbanUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isTrue();
+  }
 }

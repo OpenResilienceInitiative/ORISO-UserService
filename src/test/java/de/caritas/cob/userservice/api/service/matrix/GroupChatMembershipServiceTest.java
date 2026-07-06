@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -212,5 +214,134 @@ class GroupChatMembershipServiceTest {
     groupChatMembershipService.removeLeavingMemberFromRoom(chatWithMatrixRoom(), LEAVER_MATRIX_ID);
 
     verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+  }
+
+  // ── resolveHumanMembers ────────────────────────────────────────────────────
+
+  @Test
+  void resolveHumanMembers_Should_MapConsultantsAndAskers_AndFilterTechnicalAccounts() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            Optional.of(
+                List.of(
+                    CONSULTANT_MATRIX_ID,
+                    ASKER_MATRIX_ID,
+                    AGENCY_BOT_MATRIX_ID,
+                    SYSTEM_USER_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getUsername()).thenReturn("consultantUsername");
+    when(consultant.getDisplayName()).thenReturn("Consultant Display");
+
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(ASKER_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(ASKER_MATRIX_ID))
+        .thenReturn(Optional.of(user));
+    when(user.getUserId()).thenReturn("asker-id");
+    when(user.getUsername()).thenReturn("askerUsername");
+
+    // agency bot: unknown to both repositories -> filtered
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(AGENCY_BOT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(AGENCY_BOT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+
+    // group chat system user: a User whose userId has the system prefix -> filtered
+    var systemUser =
+        org.mockito.Mockito.mock(User.class, org.mockito.Mockito.withSettings().lenient());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(SYSTEM_USER_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SYSTEM_USER_MATRIX_ID))
+        .thenReturn(Optional.of(systemUser));
+    when(systemUser.getUserId()).thenReturn("group-chat-system-1");
+
+    var resolved = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+
+    assertEquals(2, resolved.size());
+    var byId =
+        resolved.stream().collect(java.util.stream.Collectors.toMap(m -> m.accountId(), m -> m));
+    assertTrue(byId.containsKey("consultant-id"));
+    assertTrue(byId.get("consultant-id").consultant());
+    assertEquals("Consultant Display", byId.get("consultant-id").displayName());
+    assertTrue(byId.containsKey("asker-id"));
+    assertFalse(byId.get("asker-id").consultant());
+    assertEquals("askerUsername", byId.get("asker-id").displayName());
+  }
+
+  @Test
+  void resolveHumanMembers_Should_UseFullName_When_ConsultantHasNoDisplayName() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultant.getId()).thenReturn("consultant-id");
+    when(consultant.getDisplayName()).thenReturn(null);
+    when(consultant.getFullName()).thenReturn("Jane Doe");
+
+    var resolved = groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID);
+
+    assertEquals(1, resolved.size());
+    assertEquals("Jane Doe", resolved.get(0).displayName());
+  }
+
+  @Test
+  void resolveHumanMembers_Should_ReturnEmpty_When_RoomStateUnknown() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
+
+    assertTrue(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID).isEmpty());
+  }
+
+  @Test
+  void resolveHumanMembers_Should_ReturnEmpty_When_RoomIdIsBlank() {
+    assertTrue(groupChatMembershipService.resolveHumanMembers("  ").isEmpty());
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  // ── removeMemberFromRoom ───────────────────────────────────────────────────
+
+  @Test
+  void removeMemberFromRoom_Should_LeaveRoomWithMembersOwnToken() {
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.leaveRoom(MATRIX_ROOM_ID, "token")).thenReturn(true);
+
+    groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID);
+
+    verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void removeMemberFromRoom_Should_DoNothing_When_RoomOrMemberBlank() {
+    groupChatMembershipService.removeMemberFromRoom("", CONSULTANT_MATRIX_ID);
+    groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, "");
+
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  // ── resolveMatrixRoomId(Session) ───────────────────────────────────────────
+
+  @Test
+  void resolveMatrixRoomId_Should_PreferSessionMatrixRoomIdColumn() {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setMatrixRoomId(MATRIX_ROOM_ID);
+    session.setGroupId("rcGroupId");
+
+    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(session));
+  }
+
+  @Test
+  void resolveMatrixRoomId_Should_FallBackToSessionGroupId_When_ItIsAMatrixRoomId() {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setGroupId(MATRIX_ROOM_ID);
+
+    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(session));
+  }
+
+  @Test
+  void resolveMatrixRoomId_Should_ReturnNull_When_SessionHasOnlyLegacyGroupId() {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setGroupId("rcGroupId4711");
+
+    assertNull(groupChatMembershipService.resolveMatrixRoomId(session));
   }
 }
