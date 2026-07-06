@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -62,7 +63,8 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
-    // Verify addedByConsultant has permission (must be assigned consultant or from same agency)
+    // Verify addedByConsultant has permission (must be assigned consultant or from
+    // same agency)
     log.info(
         "Checking permission for consultant {} to add supervisor to session {} (agencyId: {})",
         addedByConsultant.getId(),
@@ -136,10 +138,14 @@ public class SessionSupervisorFacade {
       throw new InternalServerErrorException("Failed to create consultant Matrix token");
     }
 
-    // ADR-008: provision (or reuse) a SEPARATE supervision side room that the client is NEVER
-    // invited to. Supervisor↔counsellor feedback and coordinator↔peer asides live here, so they
-    // are never delivered to the client's Matrix device. Do this BEFORE touching the client room
-    // so a failure leaves no half state. The supervisor still joins the client room read-only
+    // ADR-008: provision (or reuse) a SEPARATE supervision side room that the
+    // client is NEVER
+    // invited to. Supervisor↔counsellor feedback and coordinator↔peer asides live
+    // here, so they
+    // are never delivered to the client's Matrix device. Do this BEFORE touching
+    // the client room
+    // so a failure leaves no half state. The supervisor still joins the client room
+    // read-only
     // (below) for observation — only their feedback moves out.
     String sideRoomId =
         ensureSupervisionSideRoom(
@@ -195,9 +201,11 @@ public class SessionSupervisorFacade {
       }
     }
 
-    // Create SessionSupervisor entity. NOTE: matrixRoomId now holds the SUPERVISION SIDE ROOM id
+    // Create SessionSupervisor entity. NOTE: matrixRoomId now holds the SUPERVISION
+    // SIDE ROOM id
     // (ADR-008), not the client room — the client room is always available via
-    // session.getMatrixRoomId(). This reuses the existing column (no schema change; ddl-auto is
+    // session.getMatrixRoomId(). This reuses the existing column (no schema change;
+    // ddl-auto is
     // validate everywhere, so a new column would crash on boot — ADR-006 hazard).
     SessionSupervisor sessionSupervisor =
         SessionSupervisor.builder()
@@ -256,7 +264,8 @@ public class SessionSupervisorFacade {
     }
 
     // Remove the supervisor from BOTH rooms: the supervision side room (stored in
-    // supervisor.matrixRoomId, ADR-008) and the client room they observed (session.matrixRoomId).
+    // supervisor.matrixRoomId, ADR-008) and the client room they observed
+    // (session.matrixRoomId).
     String sideRoomId = supervisor.getMatrixRoomId();
     String clientRoomId = session.getMatrixRoomId();
     String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
@@ -313,8 +322,10 @@ public class SessionSupervisorFacade {
 
     String clientRoomId = session.getMatrixRoomId();
 
-    // Reuse an existing side room if another active supervisor already has one for this session.
-    // Old-style rows stored the CLIENT room id in matrixRoomId — never reuse that as a side room.
+    // Reuse an existing side room if another active supervisor already has one for
+    // this session.
+    // Old-style rows stored the CLIENT room id in matrixRoomId — never reuse that
+    // as a side room.
     String sideRoomId =
         sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(session.getId()).stream()
             .map(SessionSupervisor::getMatrixRoomId)
@@ -341,7 +352,8 @@ public class SessionSupervisorFacade {
       }
       log.info("Created supervision side room {} for session {}", sideRoomId, session.getId());
 
-      // Ensure the assigned consultant (who handles the case) is also in the side room, in case a
+      // Ensure the assigned consultant (who handles the case) is also in the side
+      // room, in case a
       // different same-agency consultant created it.
       Consultant assigned = session.getConsultant();
       if (assigned != null
@@ -351,7 +363,8 @@ public class SessionSupervisorFacade {
       }
     }
 
-    // Invite + join the supervisor into the side room (full member — this is their feedback
+    // Invite + join the supervisor into the side room (full member — this is their
+    // feedback
     // back-channel, not a read-only observation room).
     inviteAndJoin(sideRoomId, supervisorMatrixUserId, consultantToken);
     log.info(
@@ -366,14 +379,22 @@ public class SessionSupervisorFacade {
   private void inviteAndJoin(String roomId, String matrixUserId, String inviterToken) {
     try {
       matrixSynapseService.inviteUserToRoom(roomId, matrixUserId, inviterToken);
+    } catch (MatrixInviteUserException e) {
+      if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
+        log.info("User {} already in room {}, skipping invite", matrixUserId, roomId);
+      } else {
+        throw new InternalServerErrorException(
+            "Failed to invite user to supervision side room: " + e.getMessage());
+      }
     } catch (Exception e) {
       throw new InternalServerErrorException(
           "Failed to invite user to supervision side room: " + e.getMessage());
     }
     String userToken = matrixSynapseService.loginAsUserAccessToken(matrixUserId);
-    if (userToken != null) {
-      matrixSynapseService.joinRoom(roomId, userToken);
+    if (userToken == null) {
+      throw new InternalServerErrorException("Failed to create user Matrix token");
     }
+    matrixSynapseService.joinRoom(roomId, userToken);
   }
 
   /** Remove a user from a room if a room id is present; log but never fail the removal flow. */
