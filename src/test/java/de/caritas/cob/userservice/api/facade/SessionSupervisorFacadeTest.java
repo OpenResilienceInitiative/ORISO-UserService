@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
+import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
+import de.caritas.cob.userservice.api.supervision.SupervisionReason;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -327,6 +329,103 @@ class SessionSupervisorFacadeTest {
                 facade.addSupervisor(
                     SESSION_ID, SUPERVISOR_ID, adminOfOtherAgency, "PEER_SUPPORT", "justified"))
         .isInstanceOf(ForbiddenException.class);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-008 item 4: consent GATE — no room access until the client approves
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void addSupervisor_Should_notProvisionAnyRoom_when_consentRequiredAndPending() throws Exception {
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "minor at risk");
+
+    // The consent gate: for a consent-required reason with no consent yet, the supervisor gets
+    // NO Matrix access at all — no side room, no client-room invite — until the client approves.
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    assertThat(saved.getIsActive()).isFalse();
+    assertThat(saved.getMatrixRoomId()).isNull();
+    assertThat(saved.getNotes()).contains(SupervisionConsent.PENDING.name());
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_provisionAndActivate_when_approved() throws Exception {
+    SessionSupervisor pending = pendingSupervisor(99L);
+    when(sessionSupervisorRepository.findById(99L)).thenReturn(Optional.of(pending));
+
+    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 99L, true);
+
+    // Approval runs the deferred provisioning: side room created + supervisor invited to the
+    // client room, and the row flips to active with APPROVED consent.
+    verify(matrixSynapseService).createRoom(any(), any(), any());
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+    assertThat(result.getIsActive()).isTrue();
+    assertThat(result.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    assertThat(result.getNotes()).contains(SupervisionConsent.APPROVED.name());
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_recordDeclined_andNeverProvision_when_declined()
+      throws Exception {
+    SessionSupervisor pending = pendingSupervisor(98L);
+    when(sessionSupervisorRepository.findById(98L)).thenReturn(Optional.of(pending));
+
+    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 98L, false);
+
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    assertThat(result.getIsActive()).isFalse();
+    assertThat(result.getNotes()).contains(SupervisionConsent.DECLINED.name());
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_throwBadRequest_when_noPendingRequest() {
+    SessionSupervisor active =
+        SessionSupervisor.builder()
+            .id(97L)
+            .session(session)
+            .supervisorConsultant(supervisor)
+            .addedByConsultant(addedBy)
+            .isActive(true)
+            .matrixRoomId(SIDE_ROOM)
+            .notes(
+                SupervisionNotes.encode(
+                    SupervisionReason.PEER_SUPPORT, "x", SupervisionConsent.NOT_REQUIRED))
+            .build();
+    when(sessionSupervisorRepository.findById(97L)).thenReturn(Optional.of(active));
+
+    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 97L, true))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void addSupervisor_Should_throwBadRequest_when_aPendingRequestAlreadyExists() {
+    when(sessionSupervisorRepository.findBySessionId(SESSION_ID))
+        .thenReturn(List.of(pendingSupervisor(1L)));
+
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "again"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("already pending");
+  }
+
+  /** A PENDING-consent (inactive, no room) supervisor row for the mocked session/supervisor. */
+  private SessionSupervisor pendingSupervisor(Long id) {
+    return SessionSupervisor.builder()
+        .id(id)
+        .session(session)
+        .supervisorConsultant(supervisor)
+        .addedByConsultant(addedBy)
+        .isActive(false)
+        .matrixRoomId(null)
+        .notes(
+            SupervisionNotes.encode(
+                SupervisionReason.SAFEGUARDING_U25, "minor at risk", SupervisionConsent.PENDING))
+        .build();
   }
 
   /**

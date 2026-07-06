@@ -18,6 +18,17 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
   List<SessionSupervisor> findBySessionIdAndIsActiveTrue(Long sessionId);
 
   /**
+   * Find ALL supervisor rows for a session, regardless of active state. Used to inspect
+   * consent-pending rows (ADR-008 item 4): the consent state lives inside the {@code notes} JSON,
+   * not a queryable column, so callers decode and filter in Java. Supervisor rows per session are
+   * few, so a full fetch is cheap.
+   *
+   * @param sessionId the session ID
+   * @return all supervisor rows for the session
+   */
+  List<SessionSupervisor> findBySessionId(Long sessionId);
+
+  /**
    * Find all sessions supervised by a consultant.
    *
    * @param consultantId the consultant ID

@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -76,6 +77,86 @@ public class SessionSupervisorController {
             currentConsultant,
             request.getReasonCode(),
             request.getNotes());
+    // Only notify "supervisor added" when the supervisor actually became active. For a
+    // consent-gated add (ADR-008 item 4) the supervisor is PENDING with no room access yet — those
+    // notifications fire later, when the client approves consent.
+    if (Boolean.TRUE.equals(supervisor.getIsActive())) {
+      fireSupervisorActivatedNotifications(supervisor);
+    }
+
+    SessionSupervisorResponseDTO response = mapToDTO(supervisor);
+    return ResponseEntity.status(HttpStatus.CREATED).body(response);
+  }
+
+  /**
+   * The ratsuchende approves or declines a PENDING supervision-consent request (ADR-008 item 4).
+   * Only the session's own client may decide. On approval the supervisor is provisioned into the
+   * rooms and the "supervisor added" notifications fire (deferred from add time).
+   *
+   * @param sessionId the session ID
+   * @param supervisorId the pending supervisor row id
+   * @param request the decision (APPROVED / DECLINED)
+   * @return the updated supervisor
+   */
+  @PostMapping("/{sessionId}/supervisors/{supervisorId}/consent")
+  public ResponseEntity<SessionSupervisorResponseDTO> decideSupervisionConsent(
+      @PathVariable @NotNull Long sessionId,
+      @PathVariable @NotNull Long supervisorId,
+      @Valid @RequestBody SupervisionConsentDecisionDTO request) {
+    User client = userAccountService.retrieveValidatedUser();
+    if (client == null || !isClientOfSession(client, sessionId)) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    boolean approve;
+    if ("APPROVED".equalsIgnoreCase(request.getDecision())) {
+      approve = true;
+    } else if ("DECLINED".equalsIgnoreCase(request.getDecision())) {
+      approve = false;
+    } else {
+      return ResponseEntity.badRequest().build();
+    }
+
+    SessionSupervisor updated =
+        sessionSupervisorFacade.decideSupervisionConsent(sessionId, supervisorId, approve);
+    if (approve && Boolean.TRUE.equals(updated.getIsActive())) {
+      fireSupervisorActivatedNotifications(updated);
+    }
+    return ResponseEntity.ok(mapToDTO(updated));
+  }
+
+  /**
+   * List the supervision requests for a session that are still awaiting the client's consent
+   * (ADR-008 item 4). Only the session's own client may read this.
+   *
+   * @param sessionId the session ID
+   * @return the pending-consent supervisor requests
+   */
+  @GetMapping("/{sessionId}/supervisors/pending-consent")
+  public ResponseEntity<List<SessionSupervisorResponseDTO>> getPendingConsentSupervisors(
+      @PathVariable @NotNull Long sessionId) {
+    User client = userAccountService.retrieveValidatedUser();
+    if (client == null || !isClientOfSession(client, sessionId)) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    List<SessionSupervisorResponseDTO> response =
+        sessionSupervisorFacade.getPendingConsentSupervisors(sessionId).stream()
+            .map(this::mapToDTO)
+            .collect(Collectors.toList());
+    return ResponseEntity.ok(response);
+  }
+
+  /** True when the authenticated user is the ratsuchende (asker) that owns the session. */
+  private boolean isClientOfSession(User client, Long sessionId) {
+    return sessionService
+        .getSession(sessionId)
+        .map(session -> session.getUser())
+        .map(User::getUserId)
+        .filter(ownerId -> ownerId.equals(client.getUserId()))
+        .isPresent();
+  }
+
+  /** Fire the "supervisor added / assigned" notifications for a now-active supervisor. */
+  private void fireSupervisorActivatedNotifications(SessionSupervisor supervisor) {
     String accessToken = authenticatedUser.getAccessToken();
     String supervisorDisplayName =
         supervisor.getSupervisorConsultant().getDisplayName() != null
@@ -105,9 +186,6 @@ public class SessionSupervisorController {
       eventNotificationService.createSupervisorAssignedNotification(
           supervisor.getSession(), supervisor.getSupervisorConsultant().getId());
     }
-
-    SessionSupervisorResponseDTO response = mapToDTO(supervisor);
-    return ResponseEntity.status(HttpStatus.CREATED).body(response);
   }
 
   /**
@@ -256,6 +334,20 @@ public class SessionSupervisorController {
 
     public void setNotes(String notes) {
       this.notes = notes;
+    }
+  }
+
+  /** Request DTO for the client's decision on a pending supervision-consent request. */
+  public static class SupervisionConsentDecisionDTO {
+    /** The decision: {@code APPROVED} or {@code DECLINED} (case-insensitive). */
+    @NotNull private String decision;
+
+    public String getDecision() {
+      return decision;
+    }
+
+    public void setDecision(String decision) {
+      this.decision = decision;
     }
   }
 

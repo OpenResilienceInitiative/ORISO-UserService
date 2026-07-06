@@ -188,20 +188,78 @@ public class SessionSupervisorFacade {
           "Consultant adding supervisor does not have Matrix credentials");
     }
 
+    // ADR-008 item 4: never create a second PENDING-consent request for the same supervisor on
+    // the same session (the client would get duplicate disclosure prompts).
+    boolean pendingAlreadyExists =
+        sessionSupervisorRepository.findBySessionId(sessionId).stream()
+            .filter(s -> s.getSupervisorConsultant() != null)
+            .filter(s -> supervisorConsultantId.equals(s.getSupervisorConsultant().getId()))
+            .anyMatch(SessionSupervisorFacade::isPendingConsent);
+    if (pendingAlreadyExists) {
+      throw new BadRequestException(
+          "A supervision consent request for this consultant is already pending");
+    }
+
+    SessionSupervisor.SessionSupervisorBuilder builder =
+        SessionSupervisor.builder()
+            .session(session)
+            .supervisorConsultant(supervisorConsultant)
+            .addedByConsultant(addedByConsultant)
+            .addedDate(LocalDateTime.now())
+            .notes(encodedNotes);
+
+    if (consent == SupervisionConsent.PENDING) {
+      // CONSENT GATE (ADR-008 item 4): the ratsuchende's consent is required for this reason
+      // (SAFEGUARDING_U25 / CLINICAL_OVERSIGHT) and has NOT been given yet. Record the request but
+      // grant NO Matrix access — the supervisor is invited to NEITHER the client room nor the side
+      // room until the client approves via the consent endpoint. For minors' cases a supervisor
+      // must never observe before consent exists.
+      SessionSupervisor pending = builder.isActive(false).matrixRoomId(null).build();
+      SessionSupervisor saved = sessionSupervisorRepository.save(pending);
+      log.info(
+          "Recorded PENDING-consent supervisor {} for session {} (no Matrix access until approved)",
+          supervisorConsultant.getUsername(),
+          sessionId);
+      return saved;
+    }
+
+    // No consent required (or legacy no-reason path) — provision Matrix access immediately.
+    String sideRoomId =
+        provisionSupervisorRooms(
+            session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
+    SessionSupervisor saved =
+        sessionSupervisorRepository.save(builder.isActive(true).matrixRoomId(sideRoomId).build());
+    log.info(
+        "Added supervisor {} to session {} by consultant {}",
+        supervisorConsultant.getUsername(),
+        sessionId,
+        addedByConsultant.getUsername());
+    return saved;
+  }
+
+  /**
+   * Give the supervisor Matrix access: (re)use the ADR-008 side room, invite them into the client
+   * room as a read-only observer, set their power level, and join them. Extracted so it can run
+   * either immediately (no-consent path) or deferred, after the client approves consent.
+   *
+   * @return the supervision side room id the supervisor was placed in
+   */
+  private String provisionSupervisorRooms(
+      Session session,
+      Consultant addedByConsultant,
+      Consultant supervisorConsultant,
+      String supervisorMatrixUserId,
+      String matrixRoomId) {
     String consultantToken =
         matrixSynapseService.loginAsUserAccessToken(addedByConsultant.getMatrixUserId());
     if (consultantToken == null) {
       throw new InternalServerErrorException("Failed to create consultant Matrix token");
     }
 
-    // ADR-008: provision (or reuse) a SEPARATE supervision side room that the
-    // client is NEVER
-    // invited to. Supervisor↔counsellor feedback and coordinator↔peer asides live
-    // here, so they
-    // are never delivered to the client's Matrix device. Do this BEFORE touching
-    // the client room
-    // so a failure leaves no half state. The supervisor still joins the client room
-    // read-only
+    // ADR-008: provision (or reuse) a SEPARATE supervision side room that the client is NEVER
+    // invited to. Supervisor↔counsellor feedback and coordinator↔peer asides live here, so they
+    // are never delivered to the client's Matrix device. Do this BEFORE touching the client room
+    // so a failure leaves no half state. The supervisor still joins the client room read-only
     // (below) for observation — only their feedback moves out.
     String sideRoomId =
         ensureSupervisionSideRoom(
@@ -218,7 +276,7 @@ public class SessionSupervisorFacade {
           "Invited supervisor {} to Matrix room {} for session {}",
           supervisorConsultant.getUsername(),
           matrixRoomId,
-          sessionId);
+          session.getId());
     } catch (Exception e) {
       log.error(
           "Failed to invite supervisor {} to Matrix room {}: {}",
@@ -256,32 +314,85 @@ public class SessionSupervisorFacade {
             matrixRoomId);
       }
     }
+    return sideRoomId;
+  }
 
-    // Create SessionSupervisor entity. NOTE: matrixRoomId now holds the SUPERVISION
-    // SIDE ROOM id
-    // (ADR-008), not the client room — the client room is always available via
-    // session.getMatrixRoomId(). This reuses the existing column (no schema change;
-    // ddl-auto is
-    // validate everywhere, so a new column would crash on boot — ADR-006 hazard).
-    SessionSupervisor sessionSupervisor =
-        SessionSupervisor.builder()
-            .session(session)
-            .supervisorConsultant(supervisorConsultant)
-            .addedByConsultant(addedByConsultant)
-            .addedDate(LocalDateTime.now())
-            .isActive(true)
-            .matrixRoomId(sideRoomId)
-            .notes(encodedNotes)
-            .build();
+  /**
+   * The ratsuchende's decision on a PENDING supervision-consent request (ADR-008 item 4). On
+   * APPROVE the deferred Matrix provisioning runs and the supervisor becomes active; on DECLINE the
+   * request is recorded as declined and the supervisor never gets room access.
+   *
+   * @param sessionId the session the request belongs to
+   * @param supervisorId the pending {@link SessionSupervisor} row id
+   * @param approve true to approve (provision + activate), false to decline
+   * @return the updated {@link SessionSupervisor}
+   */
+  @Transactional
+  public SessionSupervisor decideSupervisionConsent(
+      Long sessionId, Long supervisorId, boolean approve) {
+    SessionSupervisor supervisor =
+        sessionSupervisorRepository
+            .findById(supervisorId)
+            .orElseThrow(() -> new NotFoundException("Supervisor not found: " + supervisorId));
+    if (supervisor.getSession() == null || !supervisor.getSession().getId().equals(sessionId)) {
+      throw new BadRequestException("Supervisor does not belong to this session");
+    }
+    if (!isPendingConsent(supervisor)) {
+      throw new BadRequestException("No pending supervision-consent request for this supervisor");
+    }
 
-    SessionSupervisor saved = sessionSupervisorRepository.save(sessionSupervisor);
-    log.info(
-        "Added supervisor {} to session {} by consultant {}",
-        supervisorConsultant.getUsername(),
-        sessionId,
-        addedByConsultant.getUsername());
+    SupervisionNotes.Payload payload = SupervisionNotes.decode(supervisor.getNotes());
+    SupervisionReason reason = SupervisionReason.fromCode(payload.reasonCode).orElse(null);
 
-    return saved;
+    if (approve) {
+      Session session = supervisor.getSession();
+      String sideRoomId =
+          provisionSupervisorRooms(
+              session,
+              supervisor.getAddedByConsultant(),
+              supervisor.getSupervisorConsultant(),
+              supervisor.getSupervisorConsultant().getMatrixUserId(),
+              session.getMatrixRoomId());
+      supervisor.setMatrixRoomId(sideRoomId);
+      supervisor.setIsActive(true);
+      supervisor.setNotes(
+          SupervisionNotes.encode(reason, payload.justification, SupervisionConsent.APPROVED));
+      log.info(
+          "Supervision consent APPROVED — activated supervisor {} for session {}",
+          supervisor.getSupervisorConsultant().getUsername(),
+          sessionId);
+    } else {
+      supervisor.setIsActive(false);
+      supervisor.setNotes(
+          SupervisionNotes.encode(reason, payload.justification, SupervisionConsent.DECLINED));
+      log.info(
+          "Supervision consent DECLINED for supervisor {} on session {}",
+          supervisor.getSupervisorConsultant().getUsername(),
+          sessionId);
+    }
+    return sessionSupervisorRepository.save(supervisor);
+  }
+
+  /**
+   * The supervision requests for a session that are still awaiting the ratsuchende's consent
+   * (ADR-008 item 4). Consent state is decoded from the {@code notes} JSON, not a column.
+   *
+   * @param sessionId the session ID
+   * @return the pending-consent supervisor rows
+   */
+  public List<SessionSupervisor> getPendingConsentSupervisors(Long sessionId) {
+    return sessionSupervisorRepository.findBySessionId(sessionId).stream()
+        .filter(SessionSupervisorFacade::isPendingConsent)
+        .collect(java.util.stream.Collectors.toList());
+  }
+
+  /** True when the row is an inactive, not-removed request whose recorded consent is PENDING. */
+  private static boolean isPendingConsent(SessionSupervisor supervisor) {
+    return Boolean.FALSE.equals(supervisor.getIsActive())
+        && supervisor.getRemovedDate() == null
+        && SupervisionConsent.PENDING
+            .name()
+            .equals(SupervisionNotes.decode(supervisor.getNotes()).consent);
   }
 
   /**
