@@ -30,6 +30,10 @@ class MatrixMediaClientTest {
   private static final String ACCESS_TOKEN = "access-token";
   private static final String ROOM_ID = "!room:matrix.local";
 
+  // After the encode()-before-buildAndExpand() fix, '!' → %21 and ':' → %3A in path segments.
+  private static final String ENCODED_SEND_MSG_PATH =
+      "/_matrix/client/r0/rooms/%21room%3Amatrix.local/send/m.room.message/";
+
   @Mock private RestTemplate restTemplate;
 
   private MatrixMediaClient matrixMediaClient;
@@ -51,8 +55,7 @@ class MatrixMediaClientTest {
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(new ResponseEntity<>(uploadResponse, HttpStatus.OK));
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(
-                "/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            org.mockito.ArgumentMatchers.contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -145,7 +148,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/img-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -156,7 +159,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -176,7 +179,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/vid-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -187,7 +190,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -207,7 +210,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/aud-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -218,7 +221,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -238,7 +241,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/doc-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -249,7 +252,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -269,7 +272,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/media-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))

@@ -23,14 +23,17 @@ final class MatrixUrlBuilder {
       String endpoint,
       Map<String, ?> uriVariables,
       Map<String, ?> queryParams) {
-    // Expand path template variables on the endpoint FIRST, while no query params are present, so
-    // that query values containing literal braces (e.g. a JSON `filter`) are never mistaken for
-    // URI-template variables by buildAndExpand (which previously threw IllegalArgumentException and
-    // silently disabled the room long-poll sync).
+    // Encode the URI template FIRST so that template-variable values are percent-encoded when
+    // they are expanded.  Calling encode() before buildAndExpand() makes Spring treat every
+    // variable value as opaque data: characters such as '!' (%21), ':' (%3A) and '@' (%40) that
+    // appear in Matrix room IDs / user IDs are fully percent-encoded in the resulting path, rather
+    // than being left as raw sub-delimiters the way buildAndExpand().encode() would leave them.
+    // No query params are present yet, so braces in JSON filter values cannot be mistaken for
+    // URI-template variables by buildAndExpand.
     String expandedUrl =
         UriComponentsBuilder.fromUriString(matrixConfig.getApiUrl(endpoint))
-            .buildAndExpand(uriVariables)
             .encode()
+            .buildAndExpand(uriVariables)
             .toUriString();
     var builder = UriComponentsBuilder.fromUriString(expandedUrl);
     queryParams.forEach(
