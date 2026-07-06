@@ -190,7 +190,7 @@ class MatrixSynapseServiceTest {
   void purgeRoomShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq("https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com"),
+            eq("https://matrix.example.com/_synapse/admin/v2/rooms/" + UriUtils.encodePathSegment(MATRIX_ROOM_ID, StandardCharsets.UTF_8)),
             eq(HttpMethod.DELETE),
             any(HttpEntity.class),
             eq(String.class)))
