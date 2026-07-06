@@ -14,14 +14,14 @@ import org.junit.jupiter.api.Test;
  *
  * <ol>
  *   <li>Matrix room IDs ({@code !room:server}) and user IDs ({@code @user:server}) that appear as
- *       path-template variables are <em>fully</em> percent-encoded: {@code !} → {@code %21},
- *       {@code :} → {@code %3A}, {@code @} → {@code %40}. This requires calling {@code encode()}
+ *       path-template variables are <em>fully</em> percent-encoded: {@code !} → {@code %21}, {@code
+ *       :} → {@code %3A}, {@code @} → {@code %40}. This requires calling {@code encode()}
  *       <em>before</em> {@code buildAndExpand()} so Spring treats the values as opaque data rather
  *       than URI structural characters.
- *   <li>Query parameters that contain literal JSON braces (e.g. the Matrix {@code /sync} filter)
- *       do not cause {@link IllegalArgumentException} ("Map has no value for …"). The builder
- *       expands path variables first (with no query params present), then appends query params with
- *       {@link org.springframework.web.util.UriUtils#encodeQueryParam}.
+ *   <li>Query parameters that contain literal JSON braces (e.g. the Matrix {@code /sync} filter) do
+ *       not cause {@link IllegalArgumentException} ("Map has no value for …"). The builder expands
+ *       path variables first (with no query params present), then appends query params with {@link
+ *       org.springframework.web.util.UriUtils#encodeQueryParam}.
  * </ol>
  */
 class MatrixUrlBuilderTest {
@@ -44,8 +44,7 @@ class MatrixUrlBuilderTest {
             "/_matrix/client/r0/rooms/{roomId}/messages",
             Map.of("roomId", "!room:example.org"));
 
-    assertThat(url)
-        .isEqualTo(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages");
+    assertThat(url).isEqualTo(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages");
   }
 
   @Test
@@ -85,8 +84,7 @@ class MatrixUrlBuilderTest {
             Map.of("dir", "b", "limit", 100));
 
     assertThat(url)
-        .startsWith(
-            BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
+        .startsWith(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
     assertThat(url).contains("dir=b");
     assertThat(url).contains("limit=100");
   }
@@ -118,10 +116,7 @@ class MatrixUrlBuilderTest {
 
     var url =
         MatrixUrlBuilder.buildUrl(
-            matrixConfig(),
-            "/_matrix/client/r0/sync",
-            Map.of(),
-            Map.of("filter", jsonFilter));
+            matrixConfig(), "/_matrix/client/r0/sync", Map.of(), Map.of("filter", jsonFilter));
 
     assertThat(url).contains("filter=");
     // Braces must be percent-encoded in the query string.
@@ -130,4 +125,3 @@ class MatrixUrlBuilderTest {
     assertThat(url).doesNotContain("}");
   }
 }
-

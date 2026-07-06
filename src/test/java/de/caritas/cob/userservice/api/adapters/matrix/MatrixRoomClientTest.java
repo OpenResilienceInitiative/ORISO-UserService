@@ -227,7 +227,11 @@ class MatrixRoomClientTest {
     var currentPowerLevels = new HashMap<String, Object>();
     currentPowerLevels.put("users", currentUsers);
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -238,7 +242,11 @@ class MatrixRoomClientTest {
     assertThat(result).isTrue();
     verify(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             mapRequestCaptor.capture());
     assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
         .isEqualTo("Bearer " + ACCESS_TOKEN);
@@ -250,7 +258,11 @@ class MatrixRoomClientTest {
   void setUserPowerLevel_ShouldCreateUsersMap_WhenPowerLevelsDoNotContainUsers() {
     var currentPowerLevels = new HashMap<String, Object>();
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -261,7 +273,11 @@ class MatrixRoomClientTest {
     assertThat(result).isTrue();
     verify(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             mapRequestCaptor.capture());
     assertThat(mapRequestCaptor.getValue().getBody().get("users")).isEqualTo(Map.of(USER_ID, 50));
   }
@@ -269,7 +285,11 @@ class MatrixRoomClientTest {
   @Test
   void setUserPowerLevel_ShouldReturnFalse_WhenCurrentPowerLevelsBodyIsNull() {
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -281,7 +301,11 @@ class MatrixRoomClientTest {
   @Test
   void setUserPowerLevel_ShouldReturnFalse_WhenMatrixRejectsPowerLevelUpdate() {
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -289,7 +313,11 @@ class MatrixRoomClientTest {
     doThrow(new RuntimeException("update failed"))
         .when(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class));
 
     assertThat(matrixRoomClient.setUserPowerLevel(ROOM_ID, USER_ID, 50, ACCESS_TOKEN)).isFalse();
@@ -298,7 +326,11 @@ class MatrixRoomClientTest {
   @Test
   void setUserPowerLevel_ShouldReturnFalse_WhenMatrixRejectsPowerLevelRead() {
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -318,7 +350,11 @@ class MatrixRoomClientTest {
     var currentPowerLevels = new HashMap<String, Object>();
     currentPowerLevels.put("users", Map.of("@other:matrix.example", 100L));
     when(restTemplate.exchange(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             eq(HttpMethod.GET),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
@@ -329,7 +365,11 @@ class MatrixRoomClientTest {
     assertThat(result).isTrue();
     verify(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.power_levels"),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.power_levels"),
             mapRequestCaptor.capture());
     assertThat(mapRequestCaptor.getValue().getBody().get("users"))
         .isEqualTo(Map.of("@other:matrix.example", 100L, USER_ID, 50));
@@ -342,7 +382,12 @@ class MatrixRoomClientTest {
     assertThat(result).isTrue();
     verify(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.member/" + ENCODED_USER_ID),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.member/"
+                    + ENCODED_USER_ID),
             mapRequestCaptor.capture());
     assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
         .isEqualTo("Bearer " + ACCESS_TOKEN);
@@ -354,7 +399,12 @@ class MatrixRoomClientTest {
     doThrow(new RuntimeException("remove failed"))
         .when(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.member/" + ENCODED_USER_ID),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.member/"
+                    + ENCODED_USER_ID),
             org.mockito.ArgumentMatchers.any(HttpEntity.class));
 
     assertThat(matrixRoomClient.removeUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
@@ -371,7 +421,12 @@ class MatrixRoomClientTest {
                 StandardCharsets.UTF_8))
         .when(restTemplate)
         .put(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/state/m.room.member/" + ENCODED_USER_ID),
+            eq(
+                API_URL
+                    + "/_matrix/client/r0/rooms/"
+                    + ENCODED_ROOM_ID
+                    + "/state/m.room.member/"
+                    + ENCODED_USER_ID),
             org.mockito.ArgumentMatchers.any(HttpEntity.class));
 
     assertThat(matrixRoomClient.removeUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();

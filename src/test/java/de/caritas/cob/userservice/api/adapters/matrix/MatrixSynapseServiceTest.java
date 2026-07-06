@@ -143,7 +143,8 @@ class MatrixSynapseServiceTest {
     verify(matrixLongPollRestTemplate)
         .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
     assertThat(urlCaptor.getValue())
-        .startsWith("https://matrix.example/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
+        .startsWith(
+            "https://matrix.example/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
     assertThat(urlCaptor.getValue()).contains("dir=b");
     assertThat(urlCaptor.getValue()).contains("limit=100");
     verifyNoInteractions(restTemplate);
@@ -153,7 +154,8 @@ class MatrixSynapseServiceTest {
   void deactivateUserShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq("https://matrix.example.com/_synapse/admin/v1/deactivate/%40seeker%3Amatrix.example.com"),
+            eq(
+                "https://matrix.example.com/_synapse/admin/v1/deactivate/%40seeker%3Amatrix.example.com"),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
@@ -166,7 +168,8 @@ class MatrixSynapseServiceTest {
   void deactivateUserShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq("https://matrix.example.com/_synapse/admin/v1/deactivate/%40seeker%3Amatrix.example.com"),
+            eq(
+                "https://matrix.example.com/_synapse/admin/v1/deactivate/%40seeker%3Amatrix.example.com"),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
