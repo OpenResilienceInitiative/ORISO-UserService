@@ -228,6 +228,7 @@ class ConsultantAdminFacadeIT {
     newConsultant.setId(id);
     newConsultant.setNotifyEnquiriesRepeating(false);
     newConsultant.setNotifyNewChatMessageFromAdviceSeeker(false);
+    newConsultant.setMagicLinkLoginEnabled(false);
     newConsultant.setLanguageCode(LanguageCode.de);
     newConsultant.setLanguages(null);
 

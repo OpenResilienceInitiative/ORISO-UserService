@@ -106,6 +106,7 @@ public class ConsultantUpdateServiceTenantAwareIT extends ConsultantUpdateServic
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
     consultant.setTeamConsultant(isTeamConsultant);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setConsultantMobileTokens(Sets.newHashSet());
     consultant.setLanguageCode(LanguageCode.de);
 

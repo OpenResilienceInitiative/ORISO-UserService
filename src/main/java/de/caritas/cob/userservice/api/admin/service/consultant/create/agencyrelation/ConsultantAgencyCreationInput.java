@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrel
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Set;
 
 /** Definition for required input data used to create a new consultantAgency. */
@@ -13,6 +14,10 @@ public interface ConsultantAgencyCreationInput {
   Set<String> getRoleSetNames();
 
   Long getAgencyId();
+
+  default Collection<Long> getAdditionalAgencyIds() {
+    return Set.of(getAgencyId());
+  }
 
   default LocalDateTime getCreateDate() {
     return nowInUtc();

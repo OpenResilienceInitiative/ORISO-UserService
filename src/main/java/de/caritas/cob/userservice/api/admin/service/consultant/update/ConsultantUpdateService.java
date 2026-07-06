@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDat
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UpdateConsultantDTOAbsenceInputAdapter;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -46,6 +47,8 @@ public class ConsultantUpdateService {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
 
   /**
    * Updates the basic data of consultant with given id.
@@ -67,6 +70,9 @@ public class ConsultantUpdateService {
                 () ->
                     new BadRequestException(
                         String.format("Consultant with id %s does not exist", consultantId)));
+
+    consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
+        consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
 
     String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
     String nextDisplayName =

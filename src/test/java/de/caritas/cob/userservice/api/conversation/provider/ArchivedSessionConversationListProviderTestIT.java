@@ -175,6 +175,7 @@ class ArchivedSessionConversationListProviderTestIT {
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setLanguageCode(LanguageCode.de);
 
     return consultant;

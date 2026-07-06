@@ -13,11 +13,11 @@ ALTER TABLE session ADD COLUMN IF NOT EXISTS matrix_room_id VARCHAR(255) NULL;
 
 -- User.matrixUserId, User.magicLinkLoginEnabled
 ALTER TABLE user ADD COLUMN IF NOT EXISTS matrix_user_id VARCHAR(255) NULL;
-ALTER TABLE user ADD COLUMN IF NOT EXISTS magic_link_login_enabled BIT NOT NULL DEFAULT b'0';
+ALTER TABLE user ADD COLUMN IF NOT EXISTS magic_link_login_enabled BIT NOT NULL DEFAULT 0;
 
 -- Consultant.matrixUserId, Consultant.displayName, Consultant.isSupervisor,
 -- Consultant.magicLinkLoginEnabled
 ALTER TABLE consultant ADD COLUMN IF NOT EXISTS matrix_user_id VARCHAR(255) NULL;
 ALTER TABLE consultant ADD COLUMN IF NOT EXISTS display_name VARCHAR(255) NULL;
 ALTER TABLE consultant ADD COLUMN IF NOT EXISTS is_supervisor TINYINT NOT NULL DEFAULT 0;
-ALTER TABLE consultant ADD COLUMN IF NOT EXISTS magic_link_login_enabled BIT NOT NULL DEFAULT b'0';
+ALTER TABLE consultant ADD COLUMN IF NOT EXISTS magic_link_login_enabled BIT NOT NULL DEFAULT 0;
