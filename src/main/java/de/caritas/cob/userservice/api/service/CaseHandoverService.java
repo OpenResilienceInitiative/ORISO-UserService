@@ -137,9 +137,19 @@ public class CaseHandoverService {
       throw new BadRequestException("At least one handover reason policy is required");
     }
 
+    // Keep the first row per code: a plain toMap throws IllegalStateException (-> 500)
+    // if the table ever holds duplicate codes, e.g. after a hand-applied seed on an
+    // environment where the guarded 0057 changeset was skipped. Note that code is the
+    // table's PRIMARY KEY in both the 0057 and 0059 schemas, so the DB already enforces
+    // uniqueness; no extra UNIQUE constraint is needed and this merge is defense-in-depth
+    // for rows created outside Liquibase (review note on #324).
     Map<String, CaseHandoverReasonPolicy> existingPolicies =
         caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
-            .collect(Collectors.toMap(CaseHandoverReasonPolicy::getCode, Function.identity()));
+            .collect(
+                Collectors.toMap(
+                    CaseHandoverReasonPolicy::getCode,
+                    Function.identity(),
+                    (first, ignored) -> first));
     LocalDateTime now = LocalDateTime.now();
     List<CaseHandoverReasonPolicy> policiesToSave =
         requestedReasons.stream()

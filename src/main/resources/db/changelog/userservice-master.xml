@@ -93,7 +93,9 @@
   <include
     file="db/changelog/changeset/0058_adr008_supervision_sideroom_migration/0058_changeSet.xml" />
 
-  <!-- Seed/demo data (context="seed"): currently none. Append future seed
-       changesets below this line and tag every changeset with context="seed". -->
+  <!-- Seed/demo data (context="seed"): append future seed changesets below this
+       line and tag every changeset with context="seed". -->
+  <include
+    file="db/changelog/changeset/0059_case_handover_reason_policy_repair/0059_changeSet.xml" />
 
 </databaseChangeLog>
