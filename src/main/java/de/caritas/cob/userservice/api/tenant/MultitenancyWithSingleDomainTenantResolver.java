@@ -113,6 +113,9 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
   }
 
   private void validateResolvedAgencyContainsTenant(AgencyDTO agency) {
+    if (agency == null) {
+      throw new BadRequestException("Cannot resolve tenant, as the agency could not be found!");
+    }
     if (agency.getTenantId() == null) {
       throw new BadRequestException(
           "Cannot resolve tenant, as the resolved agency has null tenantId!");

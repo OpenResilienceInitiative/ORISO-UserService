@@ -343,7 +343,13 @@ public class ConsultantAdminFacade {
       List<CreateConsultantAgencyDTO> agencyList, Long consultantTenantId) {
     agencyList.stream()
         .map(a -> agencyService.getAgency(a.getAgencyId()))
-        .map(a -> a.getTenantId())
+        .map(
+            agency -> {
+              if (agency == null) {
+                throw new BadRequestException("Agency not found");
+              }
+              return agency.getTenantId();
+            })
         .filter(agencyTenantId -> !agencyTenantId.equals(consultantTenantId))
         .findAny()
         .ifPresent(

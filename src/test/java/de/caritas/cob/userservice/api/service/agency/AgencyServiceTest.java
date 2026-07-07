@@ -85,6 +85,32 @@ class AgencyServiceTest {
   }
 
   @Test
+  void getAgencyWithoutCaching_Should_returnNull_When_agencyNotFound() {
+    HttpHeaders headers = new HttpHeaders();
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    when(agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L))).thenReturn(List.of());
+
+    AgencyDTO result = agencyService.getAgencyWithoutCaching(1L);
+
+    assertThat(result).isNull();
+  }
+
+  @Test
+  void getAgency_Should_returnNull_When_agencyNotFound() {
+    HttpHeaders headers = new HttpHeaders();
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    when(agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L))).thenReturn(List.of());
+
+    AgencyDTO result = agencyService.getAgency(1L);
+
+    assertThat(result).isNull();
+  }
+
+  @Test
   void getAgenciesNotCached_Should_returnEmptyList_When_emptyIdsProvided() {
     List<AgencyDTO> result = agencyService.getAgenciesNotCached(List.of());
     assertThat(result).isEmpty();
