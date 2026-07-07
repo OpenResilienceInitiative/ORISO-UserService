@@ -6,11 +6,13 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -65,19 +68,11 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldAuthenticateAsTechnicalUser() throws Exception {
-    var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
-
-    var loginResponse = new KeycloakLoginResponseDTO();
-    loginResponse.setAccessToken("technical-access-token");
+    stubTechnicalUserLogin("technical-access-token");
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency:matrix");
     credentials.setMatrixPassword("matrix-password");
-
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityClient.loginUser("technical", "secret")).thenReturn(loginResponse);
 
     mockServer
         .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
@@ -97,5 +92,57 @@ class AgencyMatrixCredentialClientTest {
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyIdIsNull() {
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(null)).isEmpty();
+  }
+
+  @Test
+  void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
+    var technicalUser = new TechnicalUserConfig();
+    technicalUser.setUsername("technical");
+    technicalUser.setPassword("secret");
+
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityClient.loginUser("technical", "secret"))
+        .thenThrow(new BadRequestException("Keycloak unavailable"));
+
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
+  }
+
+  @Test
+  void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyHasNoMatrixCredentials() {
+    stubTechnicalUserLogin("technical-access-token");
+
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
+  }
+
+  @Test
+  void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyServiceFails() {
+    stubTechnicalUserLogin("technical-access-token");
+
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
+  }
+
+  private void stubTechnicalUserLogin(String accessToken) {
+    var technicalUser = new TechnicalUserConfig();
+    technicalUser.setUsername("technical");
+    technicalUser.setPassword("secret");
+
+    var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setAccessToken(accessToken);
+
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityClient.loginUser("technical", "secret")).thenReturn(loginResponse);
   }
 }
