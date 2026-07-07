@@ -1139,4 +1139,294 @@ public class KeycloakServiceTest {
 
     return userError;
   }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
+    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(exception);
+
+    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+
+    assertThat(result, is(true));
+  }
+
+  @Test
+  public void verifyIgnoringOtp_Should_ReturnFalse_When_OtherBadRequest() {
+    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(exception.getResponseBodyAsString()).thenReturn("Invalid credentials");
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(exception);
+
+    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+
+    assertThat(result, is(false));
+  }
+
+  @Test
+  public void verifyIgnoringOtp_Should_ReturnTrueAndLogout_When_LoginSucceedsWithRefreshToken() {
+    var loginResponse = mock(KeycloakLoginResponseDTO.class);
+    when(loginResponse.getRefreshToken()).thenReturn(REFRESH_TOKEN);
+    ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
+        new ResponseEntity<>(loginResponse, HttpStatus.OK);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(responseEntity);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    ResponseEntity<Void> logoutResponse = new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    when(restTemplate.postForEntity(anyString(), any(), eq(Void.class))).thenReturn(logoutResponse);
+
+    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+
+    assertThat(result, is(true));
+    verify(restTemplate).postForEntity(anyString(), any(), eq(Void.class));
+  }
+
+  @Test
+  public void verifyIgnoringOtp_Should_ReturnTrueWithoutLogout_When_NoRefreshToken() {
+    var loginResponse = mock(KeycloakLoginResponseDTO.class);
+    when(loginResponse.getRefreshToken()).thenReturn(null);
+    ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
+        new ResponseEntity<>(loginResponse, HttpStatus.OK);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(responseEntity);
+
+    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+
+    assertThat(result, is(true));
+    verify(restTemplate, org.mockito.Mockito.never())
+        .postForEntity(anyString(), any(), eq(Void.class));
+  }
+
+  @Test
+  public void initiateEmailVerification_Should_ReturnEmptyOptional_When_RequestSucceeds() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.putForEntity(any(), any(), any(), any()))
+        .thenReturn(new ResponseEntity<>(HttpStatus.OK));
+
+    var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
+
+    assertThat(result.isPresent(), is(false));
+  }
+
+  @Test
+  public void initiateEmailVerification_Should_ReturnMessage_When_KeycloakRejects() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.putForEntity(any(), any(), any(), any()))
+        .thenThrow(new RestClientException("Keycloak said no"));
+
+    var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
+
+    assertThat(result.isPresent(), is(true));
+    assertThat(result.get().contains("Keycloak said no"), is(true));
+  }
+
+  @Test
+  public void finishEmailVerification_Should_ReturnMappedSuccess_When_RequestSucceeds() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    ResponseEntity<de.caritas.cob.userservice.api.model.SuccessWithEmail> responseEntity =
+        new ResponseEntity<>(
+            new de.caritas.cob.userservice.api.model.SuccessWithEmail(), HttpStatus.OK);
+    when(keycloakClient.postForEntity(
+            any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
+        .thenReturn(responseEntity);
+    var expected = new HashMap<String, String>();
+    expected.put("status", "ok");
+    when(keycloakMapper.mapOf(responseEntity)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "123456");
+
+    assertThat(result, is(expected));
+  }
+
+  @Test
+  public void finishEmailVerification_Should_ReturnMappedError_When_KeycloakRejects() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(exception);
+    var expected = new HashMap<String, String>();
+    expected.put("status", "error");
+    when(keycloakMapper.mapOf(exception)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "123456");
+
+    assertThat(result, is(expected));
+  }
+
+  @Test
+  public void findUserByEmail_Should_ReturnMappedUser_When_MatchFound() {
+    var email = "mail@example.com";
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    when(userRepresentation.getEmail()).thenReturn(email);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(email, 0, Integer.MAX_VALUE))
+        .thenReturn(singletonList(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var expected = new HashMap<String, String>();
+    expected.put("email", email);
+    when(keycloakMapper.mapOf(userRepresentation)).thenReturn(expected);
+
+    var result = keycloakService.findUserByEmail(email);
+
+    assertThat(result, is(expected));
+  }
+
+  @Test
+  public void findUserByEmail_Should_ReturnEmptyMap_When_NoMatchFound() {
+    var email = "mail@example.com";
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(email, 0, Integer.MAX_VALUE)).thenReturn(List.of());
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    var result = keycloakService.findUserByEmail(email);
+
+    assertThat(result.isEmpty(), is(true));
+  }
+
+  private UserResource givenUserResourceWithRealmRoles(String... roleNames) {
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    var roleRepresentations =
+        java.util.Arrays.stream(roleNames)
+            .map(
+                name -> {
+                  RoleRepresentation role = mock(RoleRepresentation.class);
+                  when(role.getName()).thenReturn(name);
+                  return role;
+                })
+            .collect(java.util.stream.Collectors.toList());
+    when(roleScopeResource.listAll()).thenReturn(roleRepresentations);
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    UserResource userResource = mock(UserResource.class);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    return userResource;
+  }
+
+  @Test
+  public void userHasRole_Should_ReturnTrue_When_UserHasRole() {
+    UserResource userResource = givenUserResourceWithRealmRoles("user");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(true));
+  }
+
+  @Test
+  public void userHasRole_Should_ReturnFalse_When_UserDoesNotHaveRole() {
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(false));
+  }
+
+  @Test
+  public void userHasRole_Should_ThrowKeycloakException_When_LookupFails() {
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThrows(KeycloakException.class, () -> keycloakService.userHasRole(USER_ID, "user"));
+  }
+
+  @Test
+  public void getRealmRoles_Should_ReturnRoleNames_When_LookupSucceeds() {
+    UserResource userResource = givenUserResourceWithRealmRoles("user", "consultant");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    List<String> roles = keycloakService.getRealmRoles(USER_ID);
+
+    assertThat(roles, is(Lists.newArrayList("user", "consultant")));
+  }
+
+  @Test
+  public void getRealmRoles_Should_ThrowKeycloakException_When_LookupFails() {
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThrows(KeycloakException.class, () -> keycloakService.getRealmRoles(USER_ID));
+  }
+
+  @Test
+  public void findByUsername_Should_DelegateToUsersResourceSearch() {
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME)).thenReturn(singletonList(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    List<UserRepresentation> result = keycloakService.findByUsername(USERNAME);
+
+    assertThat(result, is(singletonList(userRepresentation)));
+  }
+
+  @Test
+  public void deleteUser_Should_RemoveUser_When_UserExists() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.deleteUser(USER_ID);
+
+    verify(userResource).remove();
+  }
+
+  @Test
+  public void deleteUser_Should_LogWarnAndSwallow_When_UserNotFound() {
+    UsersResource usersResource = mock(UsersResource.class);
+    UserResource userResource = mock(UserResource.class);
+    org.mockito.Mockito.doThrow(new javax.ws.rs.NotFoundException()).when(userResource).remove();
+    when(usersResource.get(any())).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.deleteUser(USER_ID);
+
+    assertThat(
+        logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
+  }
+
+  @Test
+  public void ensureRole_Should_SkipUpdate_When_UserAlreadyHasRole() {
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.ensureRole(USER_ID, "consultant");
+
+    verify(usersResource, times(1)).get(USER_ID);
+  }
+
+  @Test
+  public void ensureRole_Should_UpdateRole_When_UserDoesNotHaveRole() {
+    // ensureRole's own userHasRole pre-check goes through keycloakClient.getUsersResource() —
+    // report no roles so the check fails and updateRole proceeds.
+    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
+    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+
+    // updateRole goes through keycloakClient.getRealmResource().users() — report the role as
+    // already assigned so the post-add verification loop succeeds immediately.
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var roleResource = mock(RoleResource.class);
+    var roleRepresentation = new RoleRepresentation();
+    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
+    when(rolesResource.get("consultant")).thenReturn(roleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+    UserResource userResourceForUpdate = givenUserResourceWithRealmRoles("consultant");
+    UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
+    when(realmResource.users()).thenReturn(usersResourceForUpdate);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.ensureRole(USER_ID, "consultant");
+
+    verify(userResourceForUpdate.roles().realmLevel()).add(singletonList(roleRepresentation));
+  }
 }
