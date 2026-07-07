@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -124,6 +125,22 @@ class UserChatControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);
     assertThat(chatInfoResponseDTO.getBannedUsers()).containsExactly("banned-user");
+  }
+
+  @Test
+  void getChat_noChatMetadata_responseUnchangedNoBannedUsersSet() {
+    // Missing chat metadata leaves the facade response untouched.
+    var chatInfoResponseDTO = new ChatInfoResponseDTO();
+    when(getChatFacade.getChat(1L)).thenReturn(chatInfoResponseDTO);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
+    when(messenger.findChatMetaInfo(1L, "consultant-id")).thenReturn(Optional.empty());
+
+    var response = delegate.getChat(1L);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);
+    assertThat(chatInfoResponseDTO.getBannedUsers()).isEmpty();
+    verify(userDtoMapper, never()).bannedChatUserIdsOf(org.mockito.ArgumentMatchers.anyMap());
   }
 
   @Test

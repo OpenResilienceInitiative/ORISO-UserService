@@ -262,6 +262,94 @@ class UserRegistrationControllerDelegateTest {
     verify(sessionDeleteService).deleteSession(SESSION_ID);
   }
 
+  @Test
+  void userExists_usernameAvailable_returnsNotFound() {
+    // Available usernames indicate the account does not exist yet.
+    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+
+    var response = delegate.userExists(USERNAME);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void usernameAvailability_available_returnsNoContent() {
+    // Available usernames confirm the handle can be registered.
+    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+
+    var response = delegate.usernameAvailability(USERNAME);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void requestMagicLink_enabled_returnsNoContent() {
+    // Enabled magic-link login accepts the request without a response body.
+    var request = new MagicLinkRequestDTO();
+    request.setUsername(USERNAME);
+    when(magicLinkLoginService.requestMagicLink(USERNAME))
+        .thenReturn(MagicLinkLoginService.MagicLinkRequestResult.ACCEPTED);
+
+    var response = delegate.requestMagicLink(request);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void consumeMagicLink_invalidToken_returnsBadRequest() {
+    // Invalid or expired magic-link tokens are rejected.
+    var consume = new MagicLinkConsumeDTO();
+    consume.setToken("invalid-token");
+    when(magicLinkLoginService.consumeMagicLink("invalid-token")).thenReturn(Optional.empty());
+
+    var response = delegate.consumeMagicLink(consume);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+  }
+
+  @Test
+  void registerUser_invalidUsername_throwsBadRequestException() {
+    // Registration rejects usernames that fail validation rules.
+    var user = newUserDto();
+    when(userHelper.isUsernameValid(USERNAME)).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.registerUser(user)).isInstanceOf(BadRequestException.class);
+
+    verifyNoInteractions(createUserFacade);
+  }
+
+  @Test
+  void registerUser_consultantSetAndDirectConsultantSuccess_returnsCreated() {
+    // Direct-consultant registration succeeds when chat marks the session accordingly.
+    var user = newUserDto();
+    user.setConsultantId("consultant-id");
+    when(userHelper.isUsernameValid(USERNAME)).thenReturn(true);
+    when(createUserFacade.createUserAccountWithInitializedConsultingType(user))
+        .thenReturn(SESSION_ID);
+    when(messenger.markAsDirectConsultant(SESSION_ID)).thenReturn(true);
+
+    var response = delegate.registerUser(user);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    verify(messenger).markAsDirectConsultant(SESSION_ID);
+  }
+
+  @Test
+  void registerUser_topicsEnabledWithValidMainTopicId_returnsCreated() {
+    // Topic selection is mandatory when the topics feature flag is enabled.
+    ReflectionTestUtils.setField(delegate, "featureTopicsEnabled", true);
+    var user = newUserDto();
+    user.setMainTopicId(99L);
+    when(userHelper.isUsernameValid(USERNAME)).thenReturn(true);
+    when(createUserFacade.createUserAccountWithInitializedConsultingType(user))
+        .thenReturn(SESSION_ID);
+
+    var response = delegate.registerUser(user);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    verify(createUserFacade).createUserAccountWithInitializedConsultingType(user);
+  }
+
   @SuppressWarnings("unchecked")
   private ArgumentCaptor<List<NewSessionValidationConstraint>> constraintsCaptor() {
     return ArgumentCaptor.forClass(List.class);

@@ -438,6 +438,159 @@ class UserSessionControllerDelegateTest {
     verify(sessionArchiveService).dearchiveSession(2L);
   }
 
+  @Test
+  void getSessionsForGroupIds_consultantPathWithSessions_returnsOkWithList() {
+    // Consultants resolve group sessions through the consultant-specific facade path.
+    var responseDto =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    var consultant = consultant();
+    var roles = Set.of(UserRole.CONSULTANT.getValue());
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+            consultant, List.of("group-id"), roles))
+        .thenReturn(responseDto);
+
+    var response = delegate.getSessionsForGroupIds(List.of("group-id"), "rc-token");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(responseDto);
+    verify(consultantDataFacade).addConsultantDisplayNameToSessionList(responseDto);
+  }
+
+  @Test
+  void getSessionForId_consultantChatFallbackWhenSessionLookupEmpty_returnsChat() {
+    // Consultants fall back to chat lookup when no session matches the room id.
+    var emptySessionList = new GroupSessionListResponseDTO().sessions(List.of());
+    var chatSessionList =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    var roles = Set.of(UserRole.CONSULTANT.getValue());
+    var consultant = consultant();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+            consultant, List.of(1L), roles))
+        .thenReturn(emptySessionList);
+    when(sessionListFacade.retrieveChatsForConsultantByChatIds(
+            eq(consultant), eq(List.of(1L)), any()))
+        .thenReturn(chatSessionList);
+
+    var response = delegate.getSessionForId(1L, "rc-token");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(chatSessionList);
+    verify(consultantDataFacade).addConsultantDisplayNameToSessionList(chatSessionList);
+  }
+
+  @Test
+  void getSessionForId_bothSessionAndChatEmpty_returnsNoContent() {
+    // Empty session and chat lookups yield no content for the requested room.
+    var emptySessionList = new GroupSessionListResponseDTO().sessions(List.of());
+    var emptyChatList = new GroupSessionListResponseDTO().sessions(List.of());
+    var roles = Set.of(UserRole.CONSULTANT.getValue());
+    var consultant = consultant();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+            consultant, List.of(1L), roles))
+        .thenReturn(emptySessionList);
+    when(sessionListFacade.retrieveChatsForConsultantByChatIds(
+            eq(consultant), eq(List.of(1L)), any()))
+        .thenReturn(emptyChatList);
+
+    var response = delegate.getSessionForId(1L, null);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(consultantDataFacade).addConsultantDisplayNameToSessionList(emptyChatList);
+  }
+
+  @Test
+  void getSessionsForAuthenticatedConsultant_emptySessions_returnsNoContent() {
+    // Consultants with no matching sessions receive an empty response.
+    var responseDto = new ConsultantSessionListResponseDTO().sessions(List.of());
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant());
+    when(sessionListFacade.retrieveSessionsDtoForAuthenticatedConsultant(any(), any()))
+        .thenReturn(responseDto);
+
+    var response = delegate.getSessionsForAuthenticatedConsultant("rc-token", 0, 10, "all", 2);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void getSessionsForAuthenticatedConsultant_invalidFilter_returnsNoContent() {
+    // Unknown session filters skip facade lookup and return no content.
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant());
+
+    var response =
+        delegate.getSessionsForAuthenticatedConsultant("rc-token", 0, 10, "unknown-filter", null);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verifyNoInteractions(sessionListFacade);
+  }
+
+  @Test
+  void getTeamSessionsForAuthenticatedConsultant_emptySessions_returnsNoContent() {
+    // Team consultants with no team sessions receive an empty response.
+    var responseDto = new ConsultantSessionListResponseDTO().sessions(List.of());
+    when(userAccountProvider.retrieveValidatedTeamConsultant()).thenReturn(consultant());
+    when(sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(any(), any(), any()))
+        .thenReturn(responseDto);
+
+    var response = delegate.getTeamSessionsForAuthenticatedConsultant("rc-token", 0, 10, "all");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void getTeamSessionsForAuthenticatedConsultant_invalidFilter_returnsNoContent() {
+    // Unknown team session filters skip facade lookup and return no content.
+    when(userAccountProvider.retrieveValidatedTeamConsultant()).thenReturn(consultant());
+
+    var response =
+        delegate.getTeamSessionsForAuthenticatedConsultant("rc-token", 0, 10, "unknown-filter");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verifyNoInteractions(sessionListFacade);
+  }
+
+  @Test
+  void assignSession_newSessionWithEnquiryAuthority_success() {
+    // New enquiries may be assigned when the caller holds enquiry assignment authority.
+    var session = newSession();
+    var consultantToAssign = consultant("assigned-consultant-id");
+    var consultantToKeep = consultant("consultant-id");
+    when(sessionService.getSession(1L)).thenReturn(Optional.of(session));
+    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
+    when(authenticatedUser.getGrantedAuthorities())
+        .thenReturn(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY));
+    when(userAccountProvider.retrieveValidatedConsultantById("assigned-consultant-id"))
+        .thenReturn(consultantToAssign);
+    when(consultantService.getConsultant("consultant-id"))
+        .thenReturn(Optional.of(consultantToKeep));
+
+    var response = delegate.assignSession(1L, "assigned-consultant-id");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignSessionFacade).assignSession(session, consultantToAssign, consultantToKeep);
+  }
+
+  @Test
+  void removeFromSession_sessionNotFound_throwsNotFoundException() {
+    // Removing a consultant requires the target session to exist in chat.
+    var consultantId = UUID.randomUUID();
+    var consultantMap = Map.<String, Object>of("id", consultantId.toString());
+    when(accountManager.findConsultant(consultantId.toString()))
+        .thenReturn(Optional.of(consultantMap));
+    when(messenger.findSession(1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> delegate.removeFromSession(1L, consultantId))
+        .isInstanceOf(NotFoundException.class);
+  }
+
   private User userWithoutRocketChatId() {
     return User.builder().userId("user-id").username("user").email("user@example.com").build();
   }

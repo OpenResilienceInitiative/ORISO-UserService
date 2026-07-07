@@ -2,6 +2,9 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
@@ -26,6 +29,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -112,6 +116,87 @@ class UserConsultantControllerDelegateTest {
     assertThat(searchResult.getEmbedded().get(0).getEmbedded().getAgencies())
         .extracting(AgencyAdminResponseDTO::getId)
         .containsExactly(1L);
+  }
+
+  @Test
+  void searchConsultants_nonRestrictedAdmin_noAgencyFilteringApplied() {
+    // Non-restricted admins see all agencies attached to each consultant result.
+    var resultMap = Map.<String, Object>of("consultants", List.of(), "totalElements", 1);
+    var searchResult =
+        new ConsultantSearchResultDTO()
+            .embedded(
+                List.of(
+                    new ConsultantAdminResponseDTO()
+                        .embedded(
+                            new ConsultantDTO()
+                                .agencies(
+                                    List.of(
+                                        new AgencyAdminResponseDTO().id(1L),
+                                        new AgencyAdminResponseDTO().id(2L))))));
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(consultantDtoMapper.mappedFieldOf("LASTNAME")).thenReturn("lastName");
+    when(accountManager.findConsultantsByInfix("smith", false, List.of(), 0, 20, "lastName", true))
+        .thenReturn(resultMap);
+    when(consultantDtoMapper.consultantSearchResultOf(resultMap, "smith", 1, 20, "LASTNAME", "asc"))
+        .thenReturn(searchResult);
+
+    var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "asc");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(searchResult.getEmbedded().get(0).getEmbedded().getAgencies())
+        .extracting(AgencyAdminResponseDTO::getId)
+        .containsExactly(1L, 2L);
+    verifyNoInteractions(adminUserFacade);
+  }
+
+  @Test
+  void searchConsultants_nonEmailQuery_urlDecodePathUsed() {
+    // Non-email search queries are URL-decoded before hitting the account manager.
+    var resultMap = Map.<String, Object>of("consultants", List.of(), "totalElements", 0);
+    var searchResult = new ConsultantSearchResultDTO();
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(consultantDtoMapper.mappedFieldOf("FIRSTNAME")).thenReturn("firstName");
+    when(accountManager.findConsultantsByInfix(
+            "Müller", false, List.of(), 0, 20, "firstName", true))
+        .thenReturn(resultMap);
+    when(consultantDtoMapper.consultantSearchResultOf(
+            resultMap, "M%C3%BCller", 1, 20, "FIRSTNAME", "asc"))
+        .thenReturn(searchResult);
+
+    var response = delegate.searchConsultants("M%C3%BCller", 1, 20, "FIRSTNAME", "asc");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(accountManager)
+        .findConsultantsByInfix("Müller", false, List.of(), 0, 20, "firstName", true);
+  }
+
+  @Test
+  void searchConsultants_orderDesc_isAscendingFalsePassedToService() {
+    // Descending sort order is forwarded as isAscending=false to the search service.
+    var resultMap = Map.<String, Object>of("consultants", List.of(), "totalElements", 0);
+    var searchResult = new ConsultantSearchResultDTO();
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(consultantDtoMapper.mappedFieldOf("LASTNAME")).thenReturn("lastName");
+    when(accountManager.findConsultantsByInfix("smith", false, List.of(), 0, 20, "lastName", false))
+        .thenReturn(resultMap);
+    when(consultantDtoMapper.consultantSearchResultOf(
+            resultMap, "smith", 1, 20, "LASTNAME", "desc"))
+        .thenReturn(searchResult);
+
+    var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "desc");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    var isAscendingCaptor = ArgumentCaptor.forClass(Boolean.class);
+    verify(accountManager)
+        .findConsultantsByInfix(
+            eq("smith"),
+            eq(false),
+            eq(List.of()),
+            eq(0),
+            eq(20),
+            eq("lastName"),
+            isAscendingCaptor.capture());
+    assertThat(isAscendingCaptor.getValue()).isFalse();
   }
 
   @Test
