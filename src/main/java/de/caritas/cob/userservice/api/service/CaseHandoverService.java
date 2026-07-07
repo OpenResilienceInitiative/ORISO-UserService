@@ -137,9 +137,14 @@ public class CaseHandoverService {
       throw new BadRequestException("At least one handover reason policy is required");
     }
 
+    // Keep the first row per code: a plain toMap throws IllegalStateException (-> 500)
+    // if the table ever holds duplicate codes, e.g. after a hand-applied seed on an
+    // environment where the guarded 0057 changeset was skipped.
     Map<String, CaseHandoverReasonPolicy> existingPolicies =
         caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
-            .collect(Collectors.toMap(CaseHandoverReasonPolicy::getCode, Function.identity()));
+            .collect(
+                Collectors.toMap(
+                    CaseHandoverReasonPolicy::getCode, Function.identity(), (first, ignored) -> first));
     LocalDateTime now = LocalDateTime.now();
     List<CaseHandoverReasonPolicy> policiesToSave =
         requestedReasons.stream()

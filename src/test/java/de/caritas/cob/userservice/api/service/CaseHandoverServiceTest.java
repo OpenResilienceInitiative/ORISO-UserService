@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -340,6 +341,38 @@ class CaseHandoverServiceTest {
         .auditOutcome("ACCESS_GRANTED")
         .tenantId(7L)
         .build();
+  }
+
+  @Test
+  void updateReasonPolicies_toleratesDuplicateStoredCodes_andPersists() {
+    // A hand-applied seed on an environment where 0057 was skipped can leave the
+    // table with duplicate codes; the update must not blow up with a 500.
+    when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
+        .thenReturn(
+            List.of(
+                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, true, true, 40),
+                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill (dup)", true, true, true, 40)));
+    when(caseHandoverReasonPolicyRepository.saveAll(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CaseHandoverReason requested =
+        CaseHandoverReason.builder()
+            .code("COUNSELLOR_IS_ILL")
+            .label("Counsellor is ill")
+            .clientConsentRequired(true)
+            .accessAllowed(true)
+            .enabled(false)
+            .displayOrder(40)
+            .policyAuthority("platform-admin-default-case-handover-policy")
+            .build();
+
+    caseHandoverService.updateReasonPolicies(List.of(requested));
+
+    ArgumentCaptor<List<CaseHandoverReasonPolicy>> captor = ArgumentCaptor.forClass(List.class);
+    verify(caseHandoverReasonPolicyRepository).saveAll(captor.capture());
+    assertEquals(1, captor.getValue().size());
+    assertEquals("COUNSELLOR_IS_ILL", captor.getValue().get(0).getCode());
+    assertFalse(captor.getValue().get(0).getEnabled());
   }
 
   private CaseHandoverReasonPolicy reasonPolicy(
