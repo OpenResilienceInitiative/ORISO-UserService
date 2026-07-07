@@ -41,12 +41,12 @@ public class AgencyMatrixCredentialClient {
         String.format(
             "%s/internal/agencies/%d/matrix-service-account", agencyServiceBaseUrl, agencyId);
 
-    HttpHeaders headers = technicalUserHeaders();
-    // In single-domain multitenancy, non-auth internal calls can miss tenant context.
-    // Passing agencyId lets AgencyService resolve the tenant from the target agency.
-    headers.add("agencyId", String.valueOf(agencyId));
-
     try {
+      HttpHeaders headers = technicalUserHeaders();
+      // In single-domain multitenancy, non-auth internal calls can miss tenant context.
+      // Passing agencyId lets AgencyService resolve the tenant from the target agency.
+      headers.add("agencyId", String.valueOf(agencyId));
+
       ResponseEntity<AgencyMatrixCredentialsDTO> response =
           restTemplate.exchange(
               url, HttpMethod.GET, new HttpEntity<>(headers), AgencyMatrixCredentialsDTO.class);
