@@ -40,11 +40,11 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
-import javax.ws.rs.BadRequestException;
-import javax.ws.rs.core.Response;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -976,7 +976,7 @@ public class KeycloakServiceTest {
 
     this.keycloakService.closeSession("sessionId");
 
-    verify(realmResource, times(1)).deleteSession(anyString());
+    verify(realmResource, times(1)).deleteSession(anyString(), eq(false));
   }
 
   @Test
