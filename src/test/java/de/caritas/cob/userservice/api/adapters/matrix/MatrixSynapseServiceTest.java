@@ -448,7 +448,6 @@ class MatrixSynapseServiceTest {
   @Test
   void createUser_success_buildsRegistrationRequestWithNonceAndMac() throws Exception {
     // New platform users must be registered in Synapse with a signed nonce/MAC pair.
-    stubRegisterEndpoint();
     when(restTemplate.getForEntity(REGISTER_URL, String.class))
         .thenReturn(ResponseEntity.ok("{\"nonce\":\"nonce-abc\"}"));
     var responseBody = new MatrixCreateUserResponseDTO();
@@ -476,7 +475,6 @@ class MatrixSynapseServiceTest {
   @Test
   void createUser_missingNonce_throwsMatrixCreateUserException() {
     // Registration cannot proceed without a Synapse-issued nonce.
-    stubRegisterEndpoint();
     when(restTemplate.getForEntity(REGISTER_URL, String.class))
         .thenReturn(ResponseEntity.ok("{\"status\":\"ok\"}"));
 
@@ -488,7 +486,6 @@ class MatrixSynapseServiceTest {
   @Test
   void createUser_httpClientError_throwsMatrixCreateUserException() {
     // Synapse rejection must surface as a typed registration failure for callers.
-    stubRegisterEndpoint();
     when(restTemplate.getForEntity(REGISTER_URL, String.class))
         .thenReturn(ResponseEntity.ok("{\"nonce\":\"nonce-abc\"}"));
     when(restTemplate.postForEntity(
@@ -509,7 +506,6 @@ class MatrixSynapseServiceTest {
   @Test
   void createUser_unexpectedError_throwsMatrixCreateUserException() {
     // Network failures during registration must not leak as unchecked exceptions.
-    stubRegisterEndpoint();
     when(restTemplate.getForEntity(REGISTER_URL, String.class))
         .thenThrow(new RuntimeException("connection reset"));
 
@@ -525,7 +521,6 @@ class MatrixSynapseServiceTest {
   @Test
   void getAdminToken_createsAdminUserWhenInitialLoginFails() {
     // First deployment auto-provisions the technical admin account when login fails.
-    stubRegisterEndpoint();
     matrixConfig.setAdminUsername("sysadmin");
     matrixConfig.setAdminPassword("admin-pass");
     when(restTemplate.postForEntity(eq(LOGIN_URL), any(HttpEntity.class), eq(Map.class)))
@@ -815,8 +810,12 @@ class MatrixSynapseServiceTest {
     stubAdminLogin();
     var onlineId = "@online:matrix.example.com";
     var offlineId = "@offline:matrix.example.com";
+    // The user ID is percent-encoded in the presence URL path by MatrixUrlBuilder, so the URL
+    // matchers must look for the encoded form even though the client is called with the raw IDs.
+    var encodedOnlineId = "%40online%3Amatrix.example.com";
+    var encodedOfflineId = "%40offline%3Amatrix.example.com";
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(onlineId),
+            org.mockito.ArgumentMatchers.contains(encodedOnlineId),
             eq(HttpMethod.GET),
             any(),
             eq(Map.class)))
@@ -824,7 +823,7 @@ class MatrixSynapseServiceTest {
             ResponseEntity.ok(
                 Map.of("presence", "online", "currently_active", true, "last_active_ago", 0)));
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(offlineId),
+            org.mockito.ArgumentMatchers.contains(encodedOfflineId),
             eq(HttpMethod.GET),
             any(),
             eq(Map.class)))
@@ -901,9 +900,5 @@ class MatrixSynapseServiceTest {
         .thenReturn(ResponseEntity.ok(Map.of("user_id", "@alice:example.org")));
 
     assertThat(matrixSynapseService().loginUserViaAdmin("@alice:example.org")).isNull();
-  }
-
-  private void stubRegisterEndpoint() {
-    // apiUrl and registration secret are configured in setUpMatrixConfig()
   }
 }

@@ -29,6 +29,9 @@ class MatrixMediaClientTest {
   private static final String BASE_URL = "http://matrix.local";
   private static final String ACCESS_TOKEN = "access-token";
   private static final String ROOM_ID = "!room:matrix.local";
+  // MatrixUrlBuilder percent-encodes the room ID in the path (encode() before buildAndExpand()),
+  // so URL matchers expect the encoded form while uploadFile is still called with the raw ROOM_ID.
+  private static final String ENCODED_ROOM_ID = "%21room%3Amatrix.local";
 
   // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A.
   // This differs from UriUtils.encodePathSegment which leaves RFC-3986 sub-delimiters unencoded.
@@ -274,7 +277,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/bin-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -285,7 +288,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            contains("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));

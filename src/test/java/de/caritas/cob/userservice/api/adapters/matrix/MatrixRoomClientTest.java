@@ -516,7 +516,7 @@ class MatrixRoomClientTest {
   void leaveRoom_success_returnsTrue() {
     // Leaving a room is best-effort; a 2xx from Synapse means the user is no longer a member.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/leave"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of()));
@@ -528,7 +528,7 @@ class MatrixRoomClientTest {
   void leaveRoom_forbidden_returnsTrueWhenUserAlreadyLeft() {
     // A 403 on leave means the desired end state (not in room) already holds.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/leave"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenThrow(
@@ -546,7 +546,7 @@ class MatrixRoomClientTest {
   void leaveRoom_notFound_returnsTrueWhenRoomIsGone() {
     // A 404 on leave is treated as success because the user cannot be in a missing room.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/leave"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenThrow(
@@ -564,7 +564,7 @@ class MatrixRoomClientTest {
   void leaveRoom_otherClientError_returnsFalse() {
     // Non-recoverable client errors must surface as a failed leave for callers to handle.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/leave"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenThrow(
@@ -582,7 +582,7 @@ class MatrixRoomClientTest {
   void leaveRoom_genericException_returnsFalse() {
     // Network failures during leave must not propagate as unchecked exceptions.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/leave"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenThrow(new RuntimeException("connection reset"));
@@ -594,7 +594,7 @@ class MatrixRoomClientTest {
   void joinRoom_genericException_returnsFalse() {
     // Unexpected join failures must degrade to false so membership flows can retry.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/join"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/join"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenThrow(new RuntimeException("connection reset"));
@@ -614,7 +614,7 @@ class MatrixRoomClientTest {
                 StandardCharsets.UTF_8))
         .when(restTemplate)
         .postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/unban"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/unban"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class));
 
@@ -627,7 +627,7 @@ class MatrixRoomClientTest {
     doThrow(new RuntimeException("synapse down"))
         .when(restTemplate)
         .postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/unban"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/unban"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class));
 
@@ -638,7 +638,7 @@ class MatrixRoomClientTest {
   void banUserFromRoom_nonSuccessResponse_returnsFalse() {
     // A non-2xx ban response without an exception must still be treated as failure.
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/rooms/" + ROOM_ID + "/ban"),
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/ban"),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(Map.class)))
         .thenReturn(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of()));
