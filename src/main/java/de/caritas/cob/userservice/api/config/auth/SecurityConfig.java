@@ -182,7 +182,11 @@ public class SecurityConfig {
                     "/users/mobiletoken",
                     "/users/sessions/{sessionId:[0-9]+}/data",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent")
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
+                    "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
+                    "/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
