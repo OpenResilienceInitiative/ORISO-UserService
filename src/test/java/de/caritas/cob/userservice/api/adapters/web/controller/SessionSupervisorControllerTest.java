@@ -66,7 +66,7 @@ class SessionSupervisorControllerTest {
     var created = supervisor(15L, "sup-1", "added-by", "Display Name", "Full Name", user("u-1"));
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
     when(authenticatedUser.getAccessToken()).thenReturn("token");
-    when(sessionSupervisorFacade.addSupervisor(55L, "sup-1", current, "observe"))
+    when(sessionSupervisorFacade.addSupervisor(55L, "sup-1", current, null, "observe"))
         .thenReturn(created);
 
     var response = controller.addSupervisor(55L, request);
@@ -75,7 +75,7 @@ class SessionSupervisorControllerTest {
     assertNotNull(response.getBody());
     assertEquals(15L, response.getBody().getId());
     assertEquals("sup-1", response.getBody().getSupervisorConsultantId());
-    verify(sessionSupervisorFacade).addSupervisor(55L, "sup-1", current, "observe");
+    verify(sessionSupervisorFacade).addSupervisor(55L, "sup-1", current, null, "observe");
     verify(eventNotificationService)
         .createSupervisorAddedNotification(any(), eq("u-1"), eq("Display Name"));
     verify(eventNotificationService).createSupervisorAssignedNotification(any(), eq("sup-1"));
@@ -91,7 +91,7 @@ class SessionSupervisorControllerTest {
     var response = controller.addSupervisor(55L, request);
 
     assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-    verify(sessionSupervisorFacade, never()).addSupervisor(any(), any(), any(), any());
+    verify(sessionSupervisorFacade, never()).addSupervisor(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -111,7 +111,8 @@ class SessionSupervisorControllerTest {
             null /* session user intentionally null */);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
     when(authenticatedUser.getAccessToken()).thenReturn("token");
-    when(sessionSupervisorFacade.addSupervisor(56L, "sup-1", current, null)).thenReturn(created);
+    when(sessionSupervisorFacade.addSupervisor(56L, "sup-1", current, null, null))
+        .thenReturn(created);
 
     var response = controller.addSupervisor(56L, request);
 
