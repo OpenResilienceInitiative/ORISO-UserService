@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.appointment;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -19,12 +21,15 @@ import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceA
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AgencyApi;
+import de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.ConsultantApi;
+import de.caritas.cob.userservice.appointmentservice.generated.web.model.AskerDTO;
 import de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO;
 import java.util.LinkedList;
 import org.jeasy.random.EasyRandom;
@@ -56,6 +61,7 @@ class AppointmentServiceTest {
 
   @Mock ConsultantApi appointmentConsultantApi;
   @Mock AgencyApi appointmentAgencyApi;
+  @Mock AskerApi appointmentAskerApi;
   @Mock SecurityHeaderSupplier securityHeaderSupplier;
 
   @Mock TenantHeaderSupplier tenantHeaderSupplier;
@@ -91,6 +97,7 @@ class AppointmentServiceTest {
     when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
     when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");
     when(objectMapper.readValue(
             nullable(String.class), ArgumentMatchers.<Class<ConsultantDTO>>any()))
@@ -192,5 +199,163 @@ class AppointmentServiceTest {
   private void givenAnIdentityClientConfig() {
     var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
     setField(appointmentService, "identityClientConfig", identityClientConfig);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createConsultant_Should_NotCallAppointmentService_WhenConsultantAdminResponseDtoIsNull() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    appointmentService.createConsultant(null);
+    verify(appointmentConsultantApi, never()).createConsultant(any());
+  }
+
+  @Test
+  void syncConsultantData_Should_CallUpdateConsultant_When_ConsultantIsGiven() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    var consultant = new Consultant();
+    consultant.setId("consultantId");
+    consultant.setFirstName("Firstname");
+    consultant.setLastName("Lastname");
+    consultant.setEmail("mail@example.com");
+    consultant.setAbsent(true);
+
+    appointmentService.syncConsultantData(consultant);
+
+    verify(appointmentConsultantApi, times(1)).updateConsultant(any(), any());
+  }
+
+  @Test
+  void updateConsultant_Should_SwallowException_When_MapperThrows() throws JsonProcessingException {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    when(objectMapper.readValue(
+            nullable(String.class), ArgumentMatchers.<Class<ConsultantDTO>>any()))
+        .thenThrow(new JsonProcessingException("boom") {});
+
+    appointmentService.updateConsultant(consultantAdminResponseDTO);
+
+    verify(appointmentConsultantApi, never()).updateConsultant(any(), any());
+  }
+
+  @Test
+  void deleteConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsNull() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    appointmentService.deleteConsultant(null);
+    verify(appointmentConsultantApi, never()).deleteConsultant(any());
+  }
+
+  @Test
+  void deleteConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsEmpty() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    appointmentService.deleteConsultant("");
+    verify(appointmentConsultantApi, never()).deleteConsultant(any());
+  }
+
+  @Test
+  void deleteAsker_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
+    appointmentService.deleteAsker("askerId");
+    verify(appointmentAskerApi, never()).deleteAskerData(any());
+  }
+
+  @Test
+  void deleteAsker_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
+    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
+        .thenReturn(appointmentAskerApi);
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+
+    appointmentService.deleteAsker("askerId");
+
+    verify(appointmentAskerApi, times(1)).deleteAskerData("askerId");
+  }
+
+  @Test
+  void updateAskerEmail_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
+    appointmentService.updateAskerEmail("askerId", "mail@example.com");
+    verify(appointmentAskerApi, never()).updateAskerEmail(any(), any());
+  }
+
+  @Test
+  void updateAskerEmail_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
+    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
+        .thenReturn(appointmentAskerApi);
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+
+    appointmentService.updateAskerEmail("askerId", "mail@example.com");
+
+    verify(appointmentAskerApi, times(1)).updateAskerEmail(eq("askerId"), any(AskerDTO.class));
+  }
+
+  @Test
+  void updateAskerEmail_Should_SwallowException_When_ApiThrows() {
+    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
+        .thenReturn(appointmentAskerApi);
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    doThrow(new RuntimeException("boom"))
+        .when(appointmentAskerApi)
+        .updateAskerEmail(anyString(), any(AskerDTO.class));
+
+    appointmentService.updateAskerEmail("askerId", "mail@example.com");
+
+    verify(appointmentAskerApi, times(1)).updateAskerEmail(anyString(), any(AskerDTO.class));
+  }
+
+  @Test
+  void patchConsultant_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
+    appointmentService.patchConsultant("consultantId", "New Name");
+    verify(appointmentConsultantApi, never()).patchConsultant(any(), any());
+  }
+
+  @Test
+  void patchConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsEmpty() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    appointmentService.patchConsultant("", "New Name");
+    verify(appointmentConsultantApi, never()).patchConsultant(any(), any());
+  }
+
+  @Test
+  void patchConsultant_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+
+    appointmentService.patchConsultant("consultantId", "New Name");
+
+    verify(appointmentConsultantApi, times(1)).patchConsultant(eq("consultantId"), any());
+  }
+
+  @Test
+  void patchConsultant_Should_ProceedSilently_When_AppointmentServiceThrows404() {
+    givenAnIdentityClientConfig();
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
+    doThrow(httpClientErrorException).when(appointmentConsultantApi).patchConsultant(any(), any());
+
+    appointmentService.patchConsultant("consultantId", "New Name");
+
+    verify(appointmentConsultantApi, times(1)).patchConsultant(any(), any());
+  }
+
+  @Test
+  void patchConsultant_Should_RethrowException_When_AppointmentServiceThrowsNon404() {
+    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
+    setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
+    setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+    when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    doThrow(httpClientErrorException).when(appointmentConsultantApi).patchConsultant(any(), any());
+
+    assertThrows(
+        HttpClientErrorException.class,
+        () -> nonSpiedAppointmentService.patchConsultant("consultantId", "New Name"));
   }
 }

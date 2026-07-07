@@ -2,19 +2,27 @@ package de.caritas.cob.userservice.api.admin.facade;
 
 import static de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO.AgencyTypeEnum.DEFAULT_AGENCY;
 import static de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO.AgencyTypeEnum.TEAM_AGENCY;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminFullResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
@@ -270,5 +278,178 @@ class ConsultantAdminFacadeTest {
     AgencyDTO agency = new AgencyDTO();
     agency.setTenantId(tenantId);
     return agency;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void markConsultantAgenciesForDeletion_Should_useConsultantAgencyAdminServiceCorrectly() {
+    List<Long> agencyIds = Lists.newArrayList(1L, 2L);
+
+    consultantAdminFacade.markConsultantAgenciesForDeletion("consultantId", agencyIds);
+
+    verify(consultantAgencyAdminService)
+        .markConsultantAgenciesForDeletion("consultantId", agencyIds);
+  }
+
+  @Test
+  void pauseConsultantDeletion_Should_useConsultantAdminServiceCorrectly() {
+    consultantAdminFacade.pauseConsultantDeletion("consultantId", "reason", 3, "admin");
+
+    verify(consultantAdminService).pauseConsultantDeletion("consultantId", "reason", 3, "admin");
+  }
+
+  @Test
+  void prepareConsultantAgencyRelation_Should_prepareEachAgencyInList() {
+    List<CreateConsultantAgencyDTO> agencies =
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(1L),
+            new CreateConsultantAgencyDTO().agencyId(2L));
+
+    consultantAdminFacade.prepareConsultantAgencyRelation("consultantId", agencies);
+
+    verify(relationCreatorService, times(2)).prepareConsultantAgencyRelation(any());
+  }
+
+  @Test
+  void completeConsultantAgencyAssigment_Should_completeEachAgencyInList() {
+    List<CreateConsultantAgencyDTO> agencies =
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(1L),
+            new CreateConsultantAgencyDTO().agencyId(2L));
+
+    consultantAdminFacade.completeConsultantAgencyAssigment("consultantId", agencies);
+
+    verify(relationCreatorService, times(2)).completeConsultantAgencyAssigment(any(), any());
+  }
+
+  @Test
+  void filterAgencyListForDeletion_Should_returnPersistedAgenciesNotInNewList() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(
+        Lists.newArrayList(
+            agencyAdminFullResponse(1L), agencyAdminFullResponse(2L), agencyAdminFullResponse(3L)));
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+
+    List<Long> result =
+        consultantAdminFacade.filterAgencyListForDeletion(
+            "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    assertThat(result, containsInAnyOrder(2L, 3L));
+  }
+
+  @Test
+  void filterAgencyListForDeletion_Should_returnEmptyList_When_AllPersistedAgenciesAreInNewList() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(Lists.newArrayList(agencyAdminFullResponse(1L)));
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+
+    List<Long> result =
+        consultantAdminFacade.filterAgencyListForDeletion(
+            "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    assertThat(result, empty());
+  }
+
+  @Test
+  void filterAgencyListForCreation_Should_removeAgenciesAlreadyPersisted() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(Lists.newArrayList(agencyAdminFullResponse(1L)));
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    List<CreateConsultantAgencyDTO> newList =
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(1L),
+            new CreateConsultantAgencyDTO().agencyId(2L));
+
+    consultantAdminFacade.filterAgencyListForCreation("consultantId", newList);
+
+    List<Long> remainingIds =
+        newList.stream()
+            .map(CreateConsultantAgencyDTO::getAgencyId)
+            .collect(java.util.stream.Collectors.toList());
+    assertThat(remainingIds, contains(2L));
+  }
+
+  @Test
+  void findFilteredConsultants_Should_useDefaultSort_When_SortIsNull() {
+    var searchResult = new ConsultantSearchResultDTO();
+    when(consultantAdminFilterService.findFilteredConsultants(any(), any(), any(), any()))
+        .thenReturn(searchResult);
+
+    consultantAdminFacade.findFilteredConsultants(1, 1, new ConsultantFilter(), null);
+
+    verify(consultantAdminFilterService)
+        .findFilteredConsultants(eq(1), eq(1), any(), argThatSortHasField(FieldEnum.LAST_NAME));
+  }
+
+  @Test
+  void findFilteredConsultants_Should_useDefaultSort_When_SortFieldIsUnknown() {
+    var searchResult = new ConsultantSearchResultDTO();
+    when(consultantAdminFilterService.findFilteredConsultants(any(), any(), any(), any()))
+        .thenReturn(searchResult);
+    Sort sortWithNullField = new Sort();
+
+    consultantAdminFacade.findFilteredConsultants(1, 1, new ConsultantFilter(), sortWithNullField);
+
+    verify(consultantAdminFilterService)
+        .findFilteredConsultants(eq(1), eq(1), any(), argThatSortHasField(FieldEnum.LAST_NAME));
+  }
+
+  @Test
+  void findFilteredConsultants_Should_notMergeAgencies_When_ResultIsNull() {
+    when(consultantAdminFilterService.findFilteredConsultants(any(), any(), any(), any()))
+        .thenReturn(null);
+
+    consultantAdminFacade.findFilteredConsultants(
+        1, 1, new ConsultantFilter(), new Sort().field(FieldEnum.EMAIL));
+
+    verify(consultantAgencyAdminService, never()).appendAgenciesForConsultants(any());
+  }
+
+  @Test
+  void
+      checkAssignedAgenciesMatchConsultantTenant_Should_ThrowBadRequestException_When_ConsultantNotFound() {
+    ReflectionTestUtils.setField(consultantAdminFacade, "multiTenancyEnabled", true);
+    when(consultantAdminService.findConsultantById("consultantId")).thenReturn(null);
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            consultantAdminFacade.checkAssignedAgenciesMatchConsultantTenant(
+                "consultantId", new ArrayList<>()));
+
+    ReflectionTestUtils.setField(consultantAdminFacade, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  void
+      checkAssignedAgenciesMatchConsultantTenant_Should_ThrowBadRequestException_When_ConsultantHasNoTenantAssigned() {
+    ReflectionTestUtils.setField(consultantAdminFacade, "multiTenancyEnabled", true);
+    ConsultantAdminResponseDTO consultant =
+        new ConsultantAdminResponseDTO().embedded(new ConsultantDTO());
+    when(consultantAdminService.findConsultantById("consultantId")).thenReturn(consultant);
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            consultantAdminFacade.checkAssignedAgenciesMatchConsultantTenant(
+                "consultantId", new ArrayList<>()));
+
+    ReflectionTestUtils.setField(consultantAdminFacade, "multiTenancyEnabled", false);
+  }
+
+  private AgencyAdminFullResponseDTO agencyAdminFullResponse(Long id) {
+    var response = new AgencyAdminFullResponseDTO();
+    var agencyAdminResponseDTO =
+        new de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO();
+    agencyAdminResponseDTO.setId(id);
+    response.setEmbedded(agencyAdminResponseDTO);
+    return response;
+  }
+
+  private Sort argThatSortHasField(FieldEnum expectedField) {
+    return org.mockito.ArgumentMatchers.argThat(sort -> sort.getField() == expectedField);
   }
 }

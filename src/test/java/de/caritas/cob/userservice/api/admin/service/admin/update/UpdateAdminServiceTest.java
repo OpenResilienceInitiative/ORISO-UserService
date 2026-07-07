@@ -11,7 +11,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -94,6 +96,104 @@ class UpdateAdminServiceTest {
     // then
     verify(identityClient).updateUserData(any(), userDTOCaptor.capture(), any(), any());
     assertEquals(2, userDTOCaptor.getValue().getTenantId());
+    verify(adminRepository).save(admin);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void updateTenantAdmin_Should_updateAdmin_When_validDataIsGiven() {
+    // given
+    UpdateTenantAdminDTO updateTenantAdminDTO = mock(UpdateTenantAdminDTO.class);
+    when(updateTenantAdminDTO.getTenantId()).thenReturn(5);
+    when(updateTenantAdminDTO.getFirstname()).thenReturn("Firstname");
+    when(updateTenantAdminDTO.getLastname()).thenReturn("Lastname");
+    when(updateTenantAdminDTO.getEmail()).thenReturn("mail@example.com");
+    Admin admin = mock(Admin.class);
+    when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.TENANT))).thenReturn(admin);
+
+    // when
+    updateAdminService.updateTenantAdmin("adminId", updateTenantAdminDTO);
+
+    // then
+    verify(identityClient)
+        .updateUserData(
+            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
+    assertEquals(5L, userDTOCaptor.getValue().getTenantId());
+    verify(admin).setTenantId(5L);
+    verify(admin).setFirstName("Firstname");
+    verify(admin).setLastName("Lastname");
+    verify(admin).setEmail("mail@example.com");
+    verify(adminRepository).save(admin);
+  }
+
+  @Test
+  void patchAgencyAdmin_Should_notPatchAdmin_When_adminEntityHasTenantIdEqualZero() {
+    // given
+    Admin admin = mock(Admin.class);
+    when(admin.getTenantId()).thenReturn(0L);
+    when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.AGENCY))).thenReturn(admin);
+
+    // when, then
+    Exception exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> updateAdminService.patchAgencyAdmin("adminId", mock(PatchAdminDTO.class)));
+
+    assertEquals("Admin has tenant id 0", exception.getMessage());
+    verify(identityClient, never()).updateUserData(any(), any(), any(), any());
+    verify(adminRepository, never()).save(any());
+  }
+
+  @Test
+  void patchAgencyAdmin_Should_patchAdmin_When_validDataIsGiven() {
+    // given
+    PatchAdminDTO patchAdminDTO = mock(PatchAdminDTO.class);
+    when(patchAdminDTO.getFirstname()).thenReturn("Firstname");
+    when(patchAdminDTO.getLastname()).thenReturn("Lastname");
+    when(patchAdminDTO.getEmail()).thenReturn("mail@example.com");
+    Admin admin = mock(Admin.class);
+    when(admin.getTenantId()).thenReturn(3L);
+    when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.AGENCY))).thenReturn(admin);
+
+    // when
+    updateAdminService.patchAgencyAdmin("adminId", patchAdminDTO);
+
+    // then
+    verify(identityClient)
+        .updateUserData(
+            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
+    assertEquals(3, userDTOCaptor.getValue().getTenantId());
+    verify(admin).setFirstName("Firstname");
+    verify(admin).setLastName("Lastname");
+    verify(admin).setEmail("mail@example.com");
+    verify(adminRepository).save(admin);
+  }
+
+  @Test
+  void patchTenantAdmin_Should_patchAdmin_When_validDataIsGiven() {
+    // given
+    PatchAdminDTO patchAdminDTO = mock(PatchAdminDTO.class);
+    when(patchAdminDTO.getFirstname()).thenReturn("Firstname");
+    when(patchAdminDTO.getLastname()).thenReturn("Lastname");
+    when(patchAdminDTO.getEmail()).thenReturn("mail@example.com");
+    Admin admin = mock(Admin.class);
+    when(admin.getTenantId()).thenReturn(7L);
+    when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.TENANT))).thenReturn(admin);
+
+    // when
+    updateAdminService.patchTenantAdmin("adminId", patchAdminDTO);
+
+    // then
+    verify(identityClient)
+        .updateUserData(
+            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
+    assertEquals(7, userDTOCaptor.getValue().getTenantId());
+    verify(admin).setFirstName("Firstname");
+    verify(admin).setLastName("Lastname");
+    verify(admin).setEmail("mail@example.com");
     verify(adminRepository).save(admin);
   }
 }
