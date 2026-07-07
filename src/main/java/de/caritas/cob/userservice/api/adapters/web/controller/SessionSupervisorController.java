@@ -283,11 +283,11 @@ public class SessionSupervisorController {
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
     dto.setMatrixRoomId(supervisor.getMatrixRoomId());
-    // Keep the raw stored value for backward compatibility, but also surface the decoded
-    // structured fields (ADR-008): reasonCode, justification, consent. A legacy free-text note
-    // decodes to a justification with a null reason and NOT_REQUIRED consent.
-    dto.setNotes(supervisor.getNotes());
+    // Expose the decoded, human-readable justification as `notes` — never the raw stored value,
+    // which is JSON for rows written since ADR-008. Legacy free-text notes decode to themselves
+    // (null reason, NOT_REQUIRED consent), so existing clients see unchanged output.
     SupervisionNotes.Payload payload = SupervisionNotes.decode(supervisor.getNotes());
+    dto.setNotes(payload.justification);
     dto.setReasonCode(payload.reasonCode);
     dto.setJustification(payload.justification);
     dto.setConsent(payload.consent);
