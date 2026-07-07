@@ -1,8 +1,12 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -21,6 +25,7 @@ import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -30,6 +35,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockMultipartFile;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixMessageControllerTest {
@@ -121,6 +127,145 @@ class MatrixMessageControllerTest {
     verify(matrixSynapseService).sendMessage(MATRIX_ROOM_ID, "hello", "matrix-token");
   }
 
+  @Test
+  void getCurrentUserMatrixToken_ShouldReturnNotFound_WhenMatrixUserMissing() {
+    // Business reason: clients should get explicit 404 when no Matrix identity is provisioned yet.
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId("")));
+
+    var response = controller.getCurrentUserMatrixToken();
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+  }
+
+  @Test
+  void getCurrentUserMatrixToken_ShouldReturnOk_WhenTokenMintingSucceeds() {
+    // Business reason: authenticated users need short-lived Matrix browser tokens for messaging
+    // features.
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginAsUser(MATRIX_USER_ID, 55 * 60 * 1000L))
+        .thenReturn(Map.of("access_token", "abc", "user_id", MATRIX_USER_ID, "device_id", "dev1"));
+
+    var response = controller.getCurrentUserMatrixToken();
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("abc", body.get("accessToken"));
+  }
+
+  @Test
+  void sendMessage_ShouldReturnUnauthorized_WhenMatrixTokenUnavailable() {
+    // Business reason: write operations must fail safely when Matrix auth token cannot be minted.
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithMatrixRoom());
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(null);
+
+    var response = controller.sendMessage(SESSION_ID, Map.of("message", "hello"));
+
+    assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    verify(matrixSynapseService, never())
+        .sendMessage(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void getMessages_ShouldReturnOkWithMessages_WhenRoomAndTokenAvailable() {
+    // Business reason: authorized users must receive message history for active Matrix sessions.
+    var session = sessionWithMatrixRoom();
+    session.setConsultant(consultantWithMatrixId("ignored"));
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("matrix-token");
+    when(matrixSynapseService.getRoomMessages(MATRIX_ROOM_ID, "matrix-token"))
+        .thenReturn(List.of(Map.of("event_id", "$1")));
+
+    var response = controller.getMessages(SESSION_ID);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals(true, body.get("success"));
+  }
+
+  @Test
+  void syncMessages_ShouldReturnSyncPayload_WhenSessionRoomAndTokenExist() {
+    // Business reason: chat UI long-polling depends on sync endpoint forwarding Matrix updates.
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithMatrixRoom());
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("token");
+    when(matrixSynapseService.syncRoom(MATRIX_ROOM_ID, "token", USERNAME, 30000))
+        .thenReturn(Map.of("messages", List.of("m1")));
+
+    var response = controller.syncMessages(SESSION_ID);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertTrue(body.containsKey("messages"));
+  }
+
+  @Test
+  void uploadFile_ShouldReturnNotFound_WhenRoomCannotBeResolved() {
+    // Business reason: uploads must be blocked for non-existent or unauthorized sessions/chats.
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
+    when(chatService.getChat(SESSION_ID)).thenReturn(Optional.empty());
+    var file = new MockMultipartFile("file", "a.txt", "text/plain", "a".getBytes());
+
+    var response = controller.uploadFile(SESSION_ID, file);
+
+    assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+  }
+
+  @Test
+  void uploadFile_ShouldReturnOk_WhenUploadSucceeds() {
+    // Business reason: successful media uploads must return Matrix response metadata for message
+    // rendering.
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(sessionWithMatrixRoom()));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithMatrixRoom());
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("token");
+    var file = new MockMultipartFile("file", "a.txt", "text/plain", "a".getBytes());
+    when(matrixSynapseService.uploadFile(file, MATRIX_ROOM_ID, "token"))
+        .thenReturn(Map.of("content_uri", "mxc://server/id"));
+
+    var response = controller.uploadFile(SESSION_ID, file);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+  }
+
+  @Test
+  void downloadFile_ShouldReturnOkWithBytes_WhenAdminTokenPresent() {
+    // Business reason: authenticated users must be able to fetch shared media assets.
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(matrixSynapseService.getAdminToken()).thenReturn("admin-token");
+    when(matrixSynapseService.downloadFile("matrix.org", "media-1", "admin-token"))
+        .thenReturn("hello".getBytes());
+
+    var response = controller.downloadFile("matrix.org", "media-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getHeaders().getFirst("Content-Type"));
+  }
+
   private Session sessionWithMatrixRoom() {
     return Session.builder()
         .id(SESSION_ID)
@@ -152,6 +297,29 @@ class MatrixMessageControllerTest {
         .email("seeker@example.org")
         .matrixUserId(MATRIX_USER_ID)
         .languageFormal(false)
+        .build();
+  }
+
+  private User userWithMatrixId(String matrixUserId) {
+    return User.builder()
+        .userId(USER_ID)
+        .username(USERNAME)
+        .email("seeker@example.org")
+        .matrixUserId(matrixUserId)
+        .languageFormal(false)
+        .build();
+  }
+
+  private de.caritas.cob.userservice.api.model.Consultant consultantWithMatrixId(
+      String matrixUserId) {
+    return de.caritas.cob.userservice.api.model.Consultant.builder()
+        .id("consultant-id")
+        .rocketChatId("rocketchat-id")
+        .username("consultant-user")
+        .firstName("Con")
+        .lastName("Sultant")
+        .email("consultant@example.org")
+        .matrixUserId(matrixUserId)
         .build();
   }
 }
