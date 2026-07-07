@@ -124,4 +124,18 @@ class MatrixUrlBuilderTest {
     assertThat(url).doesNotContain("{");
     assertThat(url).doesNotContain("}");
   }
+
+  @Test
+  void buildUrl_ShouldSkipNullQueryParams() {
+    var queryParams = new java.util.LinkedHashMap<String, Object>();
+    queryParams.put("since", null);
+    queryParams.put("timeout", 0);
+
+    var url =
+        MatrixUrlBuilder.buildUrl(matrixConfig(), "/_matrix/client/r0/sync", Map.of(), queryParams);
+
+    // Null optional sync cursors must not produce empty query parameters in the URL.
+    assertThat(url).isEqualTo(BASE_URL + "/_matrix/client/r0/sync?timeout=0");
+    assertThat(url).doesNotContain("since");
+  }
 }

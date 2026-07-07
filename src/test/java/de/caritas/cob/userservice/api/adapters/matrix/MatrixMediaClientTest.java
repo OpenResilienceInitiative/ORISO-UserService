@@ -29,6 +29,9 @@ class MatrixMediaClientTest {
   private static final String BASE_URL = "http://matrix.local";
   private static final String ACCESS_TOKEN = "access-token";
   private static final String ROOM_ID = "!room:matrix.local";
+  // MatrixUrlBuilder percent-encodes the room ID in the path (encode() before buildAndExpand()),
+  // so URL matchers expect the encoded form while uploadFile is still called with the raw ROOM_ID.
+  private static final String ENCODED_ROOM_ID = "%21room%3Amatrix.local";
 
   // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A.
   // This differs from UriUtils.encodePathSegment which leaves RFC-3986 sub-delimiters unencoded.
@@ -254,6 +257,38 @@ class MatrixMediaClientTest {
     verify(restTemplate)
         .exchange(
             contains(ENCODED_SEND_MSG_PATH),
+            eq(HttpMethod.PUT),
+            messageCaptor.capture(),
+            eq(Map.class));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> body = (Map<String, Object>) messageCaptor.getValue().getBody();
+    assertThat(body).containsEntry("msgtype", "m.file");
+  }
+
+  @Test
+  void uploadFile_Should_UseFileMsgtype_When_ContentTypeIsNull() {
+    // Files without a MIME type must still be shared as generic Matrix file messages.
+    var file = new MockMultipartFile("file", "unknown.bin", null, "binary".getBytes());
+
+    when(restTemplate.postForEntity(
+            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/bin-id"), HttpStatus.OK));
+    when(restTemplate.exchange(
+            contains("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
+            eq(HttpMethod.PUT),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(new ResponseEntity<>(Map.of("event_id", "$event"), HttpStatus.OK));
+
+    matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN);
+
+    var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .exchange(
+            contains("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));

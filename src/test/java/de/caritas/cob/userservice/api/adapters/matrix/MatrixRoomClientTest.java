@@ -509,4 +509,140 @@ class MatrixRoomClientTest {
 
     assertThat(matrixRoomClient.unbanUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isTrue();
   }
+
+  // ── leaveRoom ───────────────────────────────────────────────────────────────
+
+  @Test
+  void leaveRoom_success_returnsTrue() {
+    // Leaving a room is best-effort; a 2xx from Synapse means the user is no longer a member.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.leaveRoom(ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
+  void leaveRoom_forbidden_returnsTrueWhenUserAlreadyLeft() {
+    // A 403 on leave means the desired end state (not in room) already holds.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixRoomClient.leaveRoom(ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
+  void leaveRoom_notFound_returnsTrueWhenRoomIsGone() {
+    // A 404 on leave is treated as success because the user cannot be in a missing room.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND,
+                "Not Found",
+                null,
+                "{}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixRoomClient.leaveRoom(ROOM_ID, ACCESS_TOKEN)).isTrue();
+  }
+
+  @Test
+  void leaveRoom_otherClientError_returnsFalse() {
+    // Non-recoverable client errors must surface as a failed leave for callers to handle.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixRoomClient.leaveRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void leaveRoom_genericException_returnsFalse() {
+    // Network failures during leave must not propagate as unchecked exceptions.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/leave"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new RuntimeException("connection reset"));
+
+    assertThat(matrixRoomClient.leaveRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void joinRoom_genericException_returnsFalse() {
+    // Unexpected join failures must degrade to false so membership flows can retry.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/join"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new RuntimeException("connection reset"));
+
+    assertThat(matrixRoomClient.joinRoom(ROOM_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void unbanUserFromRoom_otherClientError_returnsFalse() {
+    // A genuine unban rejection (not "not banned") must be reported as failure.
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"error\":\"denied\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/unban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.unbanUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void unbanUserFromRoom_genericException_returnsFalse() {
+    // Unban is best-effort; transport errors must not bubble up to callers.
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/unban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.unbanUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  @Test
+  void banUserFromRoom_nonSuccessResponse_returnsFalse() {
+    // A non-2xx ban response without an exception must still be treated as failure.
+    when(restTemplate.postForEntity(
+            eq(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/ban"),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of()));
+
+    assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
 }
