@@ -1429,4 +1429,210 @@ public class KeycloakServiceTest {
 
     verify(userResourceForUpdate.roles().realmLevel()).add(singletonList(roleRepresentation));
   }
+
+  // ---------------------------------------------------------------------------
+  // Extended branch coverage — 2026-07-07 (isPasswordPolicyViolation / isPasswordPolicyMessage)
+  // ---------------------------------------------------------------------------
+
+  private void givenResetPasswordThrows(Exception exception) {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(exception).when(userResource).resetPassword(any());
+  }
+
+  @Test
+  public void
+      updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordPolicy() {
+    givenResetPasswordThrows(new RuntimeException("password policy violation"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordInvalid() {
+    givenResetPasswordThrows(new RuntimeException("password is invalid"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordNotMet() {
+    givenResetPasswordThrows(new RuntimeException("password requirements not met"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordDoesNotMatch() {
+    givenResetPasswordThrows(new RuntimeException("password does not match pattern"));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_ThrowCustomValidationHttpStatusException_When_CauseIsPolicyViolation() {
+    var cause = new RuntimeException("password policy violation");
+    givenResetPasswordThrows(new RuntimeException("wrapper", cause));
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_ThrowCustomValidationHttpStatusException_When_RestClientResponseExceptionHasPolicyBody() {
+    var restException = mock(RestClientResponseException.class);
+    when(restException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(restException.getResponseBodyAsString()).thenReturn("password policy violated");
+    when(restException.getMessage()).thenReturn("400 Bad Request");
+    givenResetPasswordThrows(restException);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_RethrowOriginalException_When_RestClientResponseExceptionHasNonPolicyBody() {
+    var restException = mock(RestClientResponseException.class);
+    when(restException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(restException.getResponseBodyAsString()).thenReturn("some other error");
+    when(restException.getMessage()).thenReturn("some other error");
+    givenResetPasswordThrows(restException);
+
+    assertThrows(
+        RestClientResponseException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_RethrowOriginalException_When_RestClientResponseExceptionHasNonBadRequestStatus() {
+    var restException = mock(RestClientResponseException.class);
+    when(restException.getStatusCode()).thenReturn(HttpStatus.INTERNAL_SERVER_ERROR);
+    when(restException.getMessage()).thenReturn("server error");
+    givenResetPasswordThrows(restException);
+
+    assertThrows(
+        RestClientResponseException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void updatePassword_Should_RethrowOriginalException_When_MessageIsNull() {
+    givenResetPasswordThrows(new RuntimeException((String) null));
+
+    assertThrows(RuntimeException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void updatePassword_Should_RethrowOriginalException_When_MessageIsBlank() {
+    givenResetPasswordThrows(new RuntimeException("   "));
+
+    assertThrows(RuntimeException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      updatePassword_Should_RethrowOriginalException_When_MessageMentionsPasswordButNoPolicyKeyword() {
+    givenResetPasswordThrows(new RuntimeException("password field is required"));
+
+    assertThrows(RuntimeException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void updatePassword_Should_RethrowOriginalException_When_UnrelatedError() {
+    givenResetPasswordThrows(new RuntimeException("connection refused"));
+
+    assertThrows(RuntimeException.class, () -> keycloakService.updatePassword("userId", "weak"));
+  }
+
+  @Test
+  public void
+      createKeycloakUser_Should_LeaveTenantIdAttributeUnset_When_TenantIdAndCurrentTenantAreNull() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    TenantContext.clear();
+    UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
+    userDTO.setTenantId(null);
+    UsersResource usersResource = mock(UsersResource.class);
+    Response response = mock(Response.class);
+    when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(usersResource.create(any())).thenReturn(response);
+    givenAUserResourceForCreatedUser(usersResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
+
+    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+
+    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  public void changeEmailAddress_username_Should_UpdateEmail_When_EmailDiffers() {
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    when(userRepresentation.getEmail()).thenReturn("old@example.com");
+    when(userRepresentation.getId()).thenReturn(USER_ID);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME)).thenReturn(List.of(userRepresentation));
+    UserResource userResource = mock(UserResource.class);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.changeEmailAddress(USERNAME, "New@Example.com");
+
+    verify(userRepresentation).setEmail("new@example.com");
+    verify(userResource).update(userRepresentation);
+  }
+
+  @Test
+  public void changeEmailAddress_username_Should_NotUpdateEmail_When_EmailIsUnchanged() {
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    when(userRepresentation.getEmail()).thenReturn("same@example.com");
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME)).thenReturn(List.of(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.changeEmailAddress(USERNAME, "same@example.com");
+
+    verify(userRepresentation, org.mockito.Mockito.never()).setEmail(anyString());
+    verify(usersResource, org.mockito.Mockito.never()).get(anyString());
+  }
+
+  @Test
+  public void setUpOtpCredential_Should_ReturnFalse_When_KeycloakReturnsUnauthorized() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.putForEntity(any(), any(), any(), any())).thenThrow(exception);
+
+    boolean result = keycloakService.setUpOtpCredential(USERNAME, "123456", "secret");
+
+    assertThat(result, is(false));
+  }
+
+  @Test
+  public void setUpOtpCredential_Should_RethrowException_When_StatusIsNotUnauthorized() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(keycloakClient.putForEntity(any(), any(), any(), any())).thenThrow(exception);
+
+    assertThrows(
+        org.springframework.web.client.HttpClientErrorException.class,
+        () -> keycloakService.setUpOtpCredential(USERNAME, "123456", "secret"));
+  }
 }

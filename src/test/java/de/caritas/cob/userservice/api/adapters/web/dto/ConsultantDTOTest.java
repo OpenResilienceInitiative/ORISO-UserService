@@ -185,4 +185,34 @@ class ConsultantDTOTest {
 
     assertThat(result).contains("username").contains("Display Name");
   }
+
+  @Test
+  void equals_Should_ReturnFalse_When_AnyIndividualFieldDiffers() {
+    var base = givenAFullyPopulatedConsultantDTO();
+
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().id("otherId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().firstname("otherFirstname"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().lastname("otherLastname"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().email("other@example.com"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().formalLanguage(false));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().teamConsultant(false));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().absent(true));
+    assertThat(base)
+        .isNotEqualTo(givenAFullyPopulatedConsultantDTO().absenceMessage("other message"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().createDate("2027-01-01"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().updateDate("2027-01-02"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().deleteDate("2027-01-03"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().status("DELETED"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().agencies(List.of()));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().isGroupchatConsultant(false));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().isSupervisor(true));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().tenantId(2));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().tenantName("otherTenant"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().displayName("Other Display"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().publicName("Other Public"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().roleInOrg("other role"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().vacated(true));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().adminRights(false));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedConsultantDTO().topics(List.of()));
+  }
 }

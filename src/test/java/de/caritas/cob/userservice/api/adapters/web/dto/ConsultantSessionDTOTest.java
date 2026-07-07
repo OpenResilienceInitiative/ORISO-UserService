@@ -146,4 +146,38 @@ class ConsultantSessionDTOTest {
 
     assertThat(result).contains("askerUserName").contains("relation");
   }
+
+  @Test
+  void toString_Should_HandleNullField() {
+    var dto = givenAFullyPopulatedDto().referer(null);
+
+    var result = dto.toString();
+
+    assertThat(result).contains("null");
+  }
+
+  @Test
+  void equals_Should_ReturnFalse_When_AnyIndividualFieldDiffers() {
+    var base = givenAFullyPopulatedDto();
+
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().id(99L));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().agencyId(99L));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultingType(99));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().status(99));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().postcode("00000"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().groupId("otherGroupId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultantId("otherConsultantId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultantRcId("otherRcId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerId("otherAskerId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerRcId("otherAskerRcId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerUserName("otherAskerUserName"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().isTeamSession(false));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().age(99));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().gender("otherGender"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().counsellingRelation("otherRelation"));
+    assertThat(base)
+        .isNotEqualTo(givenAFullyPopulatedDto().mainTopic(new SessionTopicDTO().id(99L)));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().topics(List.of()));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().referer("otherReferer"));
+  }
 }
