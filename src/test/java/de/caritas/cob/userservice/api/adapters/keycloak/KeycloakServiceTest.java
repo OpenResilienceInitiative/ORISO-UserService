@@ -1382,7 +1382,9 @@ public class KeycloakServiceTest {
   public void deleteUser_Should_LogWarnAndSwallow_When_UserNotFound() {
     UsersResource usersResource = mock(UsersResource.class);
     UserResource userResource = mock(UserResource.class);
-    org.mockito.Mockito.doThrow(new javax.ws.rs.NotFoundException()).when(userResource).remove();
+    org.mockito.Mockito.doThrow(mock(jakarta.ws.rs.NotFoundException.class))
+        .when(userResource)
+        .remove();
     when(usersResource.get(any())).thenReturn(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
