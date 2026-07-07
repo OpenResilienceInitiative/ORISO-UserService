@@ -46,3 +46,39 @@ jobs:
       uses: ./.github/actions/maven-verify-burnin
       with:
         java_version: '21'
+
+  # Non-blocking OpenAPI contract diff: flags breaking changes to this service's
+  # own vendored specs (api/*.yaml) between the PR base and head. Informational
+  # for now; flip to blocking once the process around intentional breaking
+  # changes (version bump / consumer sign-off) is agreed.
+  api-contract-diff:
+    name: api-contract-diff (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - name: Checkout PR head
+      uses: actions/checkout@v6
+
+    - name: Checkout base branch
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.base_ref }}
+        path: .base
+
+    - name: Diff own OpenAPI specs against base (oasdiff breaking)
+      shell: bash
+      run: |
+        shopt -s nullglob
+        status=0
+        for spec in api/*.yaml api/*.yml; do
+          if [ -f ".base/$spec" ]; then
+            echo "::group::oasdiff breaking $spec"
+            docker run --rm -v "$PWD:/work:ro" tufin/oasdiff:latest \
+              breaking "/work/.base/$spec" "/work/$spec" --fail-on WARN || status=1
+            echo "::endgroup::"
+          else
+            echo "Skipping $spec (new on this branch, nothing to diff against)"
+          fi
+        done
+        exit $status
