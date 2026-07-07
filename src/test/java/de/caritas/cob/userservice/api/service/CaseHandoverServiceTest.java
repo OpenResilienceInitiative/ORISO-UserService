@@ -351,7 +351,8 @@ class CaseHandoverServiceTest {
         .thenReturn(
             List.of(
                 reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, true, true, 40),
-                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill (dup)", true, true, true, 40)));
+                reasonPolicy(
+                    "COUNSELLOR_IS_ILL", "Counsellor is ill (dup)", true, true, true, 40)));
     when(caseHandoverReasonPolicyRepository.saveAll(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 

@@ -144,7 +144,9 @@ public class CaseHandoverService {
         caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
             .collect(
                 Collectors.toMap(
-                    CaseHandoverReasonPolicy::getCode, Function.identity(), (first, ignored) -> first));
+                    CaseHandoverReasonPolicy::getCode,
+                    Function.identity(),
+                    (first, ignored) -> first));
     LocalDateTime now = LocalDateTime.now();
     List<CaseHandoverReasonPolicy> policiesToSave =
         requestedReasons.stream()
