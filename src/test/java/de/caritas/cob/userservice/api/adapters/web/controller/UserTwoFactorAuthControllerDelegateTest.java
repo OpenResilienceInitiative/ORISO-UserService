@@ -217,7 +217,6 @@ class UserTwoFactorAuthControllerDelegateTest {
     verify(identityManager).deleteOneTimePassword(ENCODED_USERNAME);
   }
 
-
   private OneTimePasswordDTO oneTimePassword() {
     return new OneTimePasswordDTO(SECRET, OTP);
   }
