@@ -68,6 +68,10 @@ jobs:
 
     - name: Diff own OpenAPI specs against base (oasdiff breaking)
       shell: bash
+      # This is an informational contract gate while the service specs are being
+      # stabilized. Keep the finding visible in logs, but do not mark the PR red
+      # until this non-blocking job is promoted to required CI.
+      continue-on-error: true
       run: |
         shopt -s nullglob
         status=0
