@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.testConfig;
 
 import com.google.common.collect.Maps;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
@@ -35,14 +36,18 @@ public class KeycloakTestConfig {
       KeycloakMapper keycloakMapper,
       UserHelper userHelper) {
 
+    var keycloakAuthClient =
+        new KeycloakAuthClient(
+            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+
     return new KeycloakService(
-        restTemplate,
         authenticatedUser,
         userAccountInputValidator,
         identityClientConfig,
         keycloakClient,
         keycloakMapper,
-        userHelper) {
+        userHelper,
+        keycloakAuthClient) {
       @Override
       public boolean changePassword(String userId, String password) {
         return super.changePassword(userId, password);
