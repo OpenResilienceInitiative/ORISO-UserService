@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -63,6 +65,19 @@ class AdminAgencyRepositoryIT {
     adminAgency = adminAgencyRepository.save(adminAgency);
 
     assertTrue(adminAgency.getCreateDate().isBefore(adminAgency.getUpdateDate()));
+  }
+
+  @Test
+  void findByAdminIdInShouldReturnProjectionWithAdminId() {
+    givenPersistedAdminWIthAgency();
+
+    var adminAgencies = adminAgencyRepository.findByAdminIdIn(Set.of(admin.getId()));
+
+    assertEquals(1, adminAgencies.size());
+    AdminAgencyBase projection = adminAgencies.get(0);
+    assertEquals(adminAgency.getId(), projection.getId());
+    assertEquals(adminAgency.getAgencyId(), projection.getAgencyId());
+    assertEquals(admin.getId(), projection.getAdminId());
   }
 
   private void givenPersistedAdminWIthAgency() {
