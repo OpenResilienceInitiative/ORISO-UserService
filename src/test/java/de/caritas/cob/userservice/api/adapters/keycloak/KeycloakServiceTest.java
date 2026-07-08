@@ -98,6 +98,9 @@ public class KeycloakServiceTest {
   @SuppressWarnings("unused")
   private KeycloakMapper keycloakMapper;
 
+  /** Satisfies {@link InjectMocks}; replaced with a real client in {@link #setup()}. */
+  @Mock private KeycloakAuthClient keycloakAuthClient;
+
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private UserHelper userHelper;
 
@@ -106,15 +109,21 @@ public class KeycloakServiceTest {
   EasyRandom easyRandom = new EasyRandom();
 
   private LogbackCaptor logCaptor;
+  private LogbackCaptor authLogCaptor;
 
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
     givenAKeycloakLoginUrl();
     givenAKeycloakLogoutUrl();
-    setField(keycloakService, "keycloakClientId", "app");
+    var realAuthClient =
+        new KeycloakAuthClient(
+            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+    setField(realAuthClient, "keycloakClientId", "app");
+    setField(keycloakService, "keycloakAuthClient", realAuthClient);
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
     logCaptor = LogbackCaptor.forClass(KeycloakService.class);
+    authLogCaptor = LogbackCaptor.forClass(KeycloakAuthClient.class);
     when(usernameTranscoder.decodeUsername(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
@@ -122,6 +131,7 @@ public class KeycloakServiceTest {
   @AfterEach
   public void tearDown() {
     logCaptor.detach();
+    authLogCaptor.detach();
   }
 
   @Test
@@ -192,7 +202,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
+    assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
@@ -204,7 +214,7 @@ public class KeycloakServiceTest {
     boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
 
     assertFalse(response);
-    assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
+    assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
