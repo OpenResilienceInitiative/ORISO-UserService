@@ -156,7 +156,7 @@ public class KeycloakAuthClient {
     return true;
   }
 
-  static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
+  private static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
 
     private static final String REDACTED = "[REDACTED]";
 
