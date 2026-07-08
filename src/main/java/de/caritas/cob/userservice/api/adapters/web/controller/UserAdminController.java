@@ -44,6 +44,7 @@ import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -203,24 +204,13 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    // MATRIX MIGRATION: Use simple creation for each agency instead of complex update logic
-    // This avoids the 403 error from filterAgencyListForDeletion
-    try {
-      for (CreateConsultantAgencyDTO agencyDTO : agencyList) {
-        try {
-          this.consultantAdminFacade.createNewConsultantAgency(consultantId, agencyDTO);
-        } catch (Exception e) {
-          // If agency already exists, continue
-          System.out.println("Agency assignment (might already exist): " + e.getMessage());
-        }
-      }
-      return ResponseEntity.ok().build();
-    } catch (Exception e) {
-      // Return 200 anyway to not block consultant creation
-      System.out.println(
-          "ERROR: Agency assignment failed for consultant " + consultantId + ": " + e.getMessage());
-      return ResponseEntity.ok().build();
-    }
+    consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
+
+    var agenciesToCreate = new ArrayList<>(agencyList);
+    consultantAdminFacade.filterAgencyListForCreation(consultantId, agenciesToCreate);
+    consultantAdminFacade.prepareConsultantAgencyRelation(consultantId, agenciesToCreate);
+    consultantAdminFacade.completeConsultantAgencyAssigment(consultantId, agenciesToCreate);
+    return ResponseEntity.ok().build();
   }
 
   /**

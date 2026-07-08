@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,7 +32,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -280,23 +281,32 @@ class UserAdminControllerIT {
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
 
-    verify(consultantAdminFacade, times(agencies.size()))
-        .createNewConsultantAgency(eq(consultantId), any());
+    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
+    verify(consultantAdminFacade).filterAgencyListForCreation(eq(consultantId), anyList());
+    verify(consultantAdminFacade).prepareConsultantAgencyRelation(eq(consultantId), anyList());
+    verify(consultantAdminFacade).completeConsultantAgencyAssigment(eq(consultantId), anyList());
   }
 
   @Test
-  void setConsultantAgencies_Should_ReturnOkIfAgencyAssignmentFails() throws Exception {
+  void setConsultantAgencies_Should_ReturnBadRequestWithMessage_WhenValidationFails()
+      throws Exception {
     var consultantId = UUID.randomUUID().toString();
     var agencies = givenAgenciesToSet();
-    doThrow(new ForbiddenException(""))
+    var validationMessage =
+        "Consultant topic ids [10] are not covered by selected/assigned agencies [272]";
+    doThrow(new BadRequestException(validationMessage))
         .when(consultantAdminFacade)
-        .createNewConsultantAgency(eq(consultantId), any());
+        .prepareConsultantAgencyRelation(eq(consultantId), anyList());
 
     mvc.perform(
             put("/useradmin/consultants/{consultantId}/agencies", consultantId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
-        .andExpect(status().isOk());
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(validationMessage));
+
+    verify(consultantAdminFacade, never())
+        .completeConsultantAgencyAssigment(anyString(), anyList());
   }
 
   @Test
