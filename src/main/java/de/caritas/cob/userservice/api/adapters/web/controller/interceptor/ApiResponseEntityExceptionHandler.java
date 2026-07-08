@@ -94,7 +94,8 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final BadRequestException ex, final WebRequest request) {
     log.warn(BAD_REQUEST, ex);
 
-    return handleExceptionInternal(ex, null, new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
+    return handleExceptionInternal(
+        ex, messageBody(ex.getMessage()), new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
   }
 
   /**
@@ -230,6 +231,10 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
   private Map<String, String> reasonBody(String reason) {
     return Map.of("reason", reason);
+  }
+
+  private Map<String, String> messageBody(String message) {
+    return Map.of("message", Optional.ofNullable(message).orElse(HttpStatus.BAD_REQUEST.name()));
   }
 
   /**
