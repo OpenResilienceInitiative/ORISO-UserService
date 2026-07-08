@@ -145,7 +145,8 @@ components:
         - description
       properties:
         id:
-          type: long
+          type: integer
+          format: int64
           example: 12132
         name:
           type: string

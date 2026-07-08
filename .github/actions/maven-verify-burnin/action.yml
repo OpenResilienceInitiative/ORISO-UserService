@@ -27,7 +27,10 @@ runs:
     # -fae (fail-at-end) lets every module/execution run so the report set is
     # complete; the actual pass/fail signal comes from the report gate below,
     # which this burn-in job tolerates (continue-on-error at the job level).
-    run: ./mvnw -B -fae verify
+    run: |
+      if ! ./mvnw -B -fae verify; then
+        echo "::warning::Integration-test burn-in is red (expected during burn-in) - report-only. See the summary step and the uploaded report artifacts."
+      fi
 
   - name: Assert test reports were produced (zero-report guard)
     if: ${{ always() }}

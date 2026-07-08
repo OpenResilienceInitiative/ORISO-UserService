@@ -276,6 +276,22 @@ class SessionServiceTest {
   }
 
   @Test
+  void initializeSession_WithTopics_Should_SaveSessionBeforeCreatingSessionTopics() {
+    USER_DTO.setTopicIds(List.of(1L, 2L));
+    when(sessionRepository.save(any(Session.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+
+    Session savedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
+
+    verify(sessionRepository, times(2)).save(any(Session.class));
+    assertThat(savedSession.getSessionTopics()).hasSize(2);
+    assertThat(savedSession.getSessionTopics())
+        .allMatch(topic -> topic.getSession() == savedSession);
+  }
+
+  @Test
   void initializeSession_TeamSession_Should_ReturnSession() {
     when(sessionRepository.save(any())).thenReturn(SESSION);
     when(consultingTypeManager.getConsultingTypeSettings(any()))

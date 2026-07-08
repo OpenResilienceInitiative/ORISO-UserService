@@ -19,7 +19,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/** Validates that directly assigned consultant topics are covered by active tenant agencies. */
+/** Validates that directly assigned consultant topics are covered by tenant agencies. */
 @Service
 @RequiredArgsConstructor
 public class ConsultantTopicAgencyCompatibilityValidator {
@@ -84,7 +84,6 @@ public class ConsultantTopicAgencyCompatibilityValidator {
 
     var coveredTopicIds =
         agencies.stream()
-            .filter(this::isActive)
             .map(AgencyDTO::getTopicIds)
             .filter(Objects::nonNull)
             .flatMap(Collection::stream)
@@ -99,7 +98,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     if (!uncoveredTopicIds.isEmpty()) {
       throw new BadRequestException(
           String.format(
-              "Consultant topic ids %s are not covered by active selected/assigned agencies %s",
+              "Consultant topic ids %s are not covered by selected/assigned agencies %s",
               uncoveredTopicIds, selectedAgencyIds));
     }
   }
@@ -159,10 +158,6 @@ public class ConsultantTopicAgencyCompatibilityValidator {
               "Selected agency ids %s do not belong to consultant tenant %s",
               mismatchingAgencyIds, tenantId));
     }
-  }
-
-  private boolean isActive(AgencyDTO agency) {
-    return !Boolean.TRUE.equals(agency.getOffline());
   }
 
   private List<Long> normalizedIds(Collection<Long> ids) {

@@ -283,7 +283,8 @@ class ChatServiceTest {
 
   @Test
   void getChat_Should_ReturnChatObject() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(ACTIVE_CHAT));
 
     Optional<Chat> result = chatService.getChat(CHAT_ID);
 
@@ -305,7 +306,7 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowBadRequestException_WhenChatDoesNotExist() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.empty());
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID)).thenReturn(Optional.empty());
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER);
@@ -317,7 +318,8 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowForbiddenException_WhenCallingConsultantNotOwnerOfChat() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(INACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(INACTIVE_CHAT));
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_3);
@@ -329,7 +331,8 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowConflictException_WhenChatIsActive() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(ACTIVE_CHAT));
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
@@ -346,7 +349,8 @@ class ChatServiceTest {
     inactiveChat.setActive(false);
     inactiveChat.setChatOwner(CONSULTANT);
 
-    when(chatRepository.findById(Mockito.any())).thenReturn(Optional.of(inactiveChat));
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
 
     // when
     chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);

@@ -233,8 +233,9 @@ public class SessionService {
             .isConsultantDirectlySet(false)
             .build();
 
-    session.setSessionTopics(createSessionTopics(userDto.getTopicIds(), session));
-    return saveSession(session);
+    Session savedSession = saveSession(session);
+    savedSession.setSessionTopics(createSessionTopics(userDto.getTopicIds(), savedSession));
+    return saveSession(savedSession);
   }
 
   private List<SessionTopic> createSessionTopics(
