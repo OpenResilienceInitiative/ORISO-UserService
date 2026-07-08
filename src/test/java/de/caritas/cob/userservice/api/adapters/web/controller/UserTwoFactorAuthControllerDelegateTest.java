@@ -219,45 +219,33 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByApp_consultantDisabled_throwsConflictException() {
-    // Consultants cannot enable app-based 2FA when OTP is disabled for their role.
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
-    when(authenticatedUser.isConsultant()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForConsultants()).thenReturn(false);
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
-        .hasMessage("2FA is disabled for consultant role");
+        .hasMessage("2FA is disabled for user role");
 
     verifyNoInteractions(identityManager);
   }
 
   @Test
   void activateTwoFactorAuthByApp_singleTenantAdminDisabled_throwsConflictException() {
-    // Single-tenant admins cannot enable app-based 2FA when OTP is disabled for their role.
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
-    when(authenticatedUser.isConsultant()).thenReturn(false);
-    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForSingleTenantAdmins()).thenReturn(false);
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
-        .hasMessage("2FA is disabled for single tenant admin role");
+        .hasMessage("2FA is disabled for user role");
 
     verifyNoInteractions(identityManager);
   }
 
   @Test
   void activateTwoFactorAuthByApp_tenantSuperAdminDisabled_throwsConflictException() {
-    // Tenant super admins cannot enable app-based 2FA when OTP is disabled for their role.
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
-    when(authenticatedUser.isConsultant()).thenReturn(false);
-    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(false);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForTenantSuperAdmins()).thenReturn(false);
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
-        .hasMessage("2FA is disabled for tenant admin role");
+        .hasMessage("2FA is disabled for user role");
 
     verifyNoInteractions(identityManager);
   }
