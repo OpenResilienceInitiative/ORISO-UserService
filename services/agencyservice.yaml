@@ -168,7 +168,8 @@ components:
         topicIds:
           type: array
           items:
-            type: long
+            type: integer
+            format: int64
 
     FullAgencyResponseDTO:
       type: object
