@@ -170,6 +170,38 @@ public class ConsultantAdminFacade {
   }
 
   /**
+   * Sets the complete set of agency relations for a consultant: relations no longer present in the
+   * passed list are marked for deletion, missing relations are created, already-existing relations
+   * are left untouched (idempotency). Validation failures (e.g. topic/agency mismatch) are
+   * propagated to the caller instead of being swallowed, so the admin UI can surface them.
+   *
+   * @param consultantId the consultant to update
+   * @param agencyList the desired complete set of agency relations
+   */
+  public void setConsultantAgencies(
+      String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
+    var persistedAgencyIds =
+        consultantAgencyAdminService.findConsultantAgencies(consultantId).getEmbedded().stream()
+            .map(agencyAdminResponse -> agencyAdminResponse.getEmbedded().getId())
+            .collect(Collectors.toSet());
+    var desiredAgencyIds =
+        agencyList.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
+
+    var agencyIdsToDelete =
+        persistedAgencyIds.stream()
+            .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
+            .collect(Collectors.toList());
+    if (!agencyIdsToDelete.isEmpty()) {
+      consultantAgencyAdminService.markConsultantAgenciesForDeletion(
+          consultantId, agencyIdsToDelete);
+    }
+
+    agencyList.stream()
+        .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
+        .forEach(agency -> createNewConsultantAgency(consultantId, agency));
+  }
+
+  /**
    * Changes the consultant flag is_team_consultant and assignments for agency type changes.
    *
    * @param agencyId the id of the changed agency

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -280,23 +282,42 @@ class UserAdminControllerIT {
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
 
-    verify(consultantAdminFacade, times(agencies.size()))
-        .createNewConsultantAgency(eq(consultantId), any());
+    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(anyList());
+    verify(consultantAdminFacade).setConsultantAgencies(eq(consultantId), anyList());
   }
 
   @Test
-  void setConsultantAgencies_Should_ReturnOkIfAgencyAssignmentFails() throws Exception {
+  void setConsultantAgencies_Should_PropagateBadRequest_When_AssignmentIsInvalid()
+      throws Exception {
     var consultantId = UUID.randomUUID().toString();
     var agencies = givenAgenciesToSet();
-    doThrow(new ForbiddenException(""))
+    doThrow(new BadRequestException("Consultant topic ids [10] are not covered by any agency"))
         .when(consultantAdminFacade)
-        .createNewConsultantAgency(eq(consultantId), any());
+        .setConsultantAgencies(eq(consultantId), anyList());
 
     mvc.perform(
             put("/useradmin/consultants/{consultantId}/agencies", consultantId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
-        .andExpect(status().isOk());
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void setConsultantAgencies_Should_PropagateForbidden_When_PermissionCheckFails()
+      throws Exception {
+    var consultantId = UUID.randomUUID().toString();
+    var agencies = givenAgenciesToSet();
+    doThrow(new ForbiddenException(""))
+        .when(consultantAdminFacade)
+        .checkPermissionsToAssignedAgencies(anyList());
+
+    mvc.perform(
+            put("/useradmin/consultants/{consultantId}/agencies", consultantId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(agencies)))
+        .andExpect(status().isForbidden());
+
+    verify(consultantAdminFacade, never()).setConsultantAgencies(any(), anyList());
   }
 
   @Test

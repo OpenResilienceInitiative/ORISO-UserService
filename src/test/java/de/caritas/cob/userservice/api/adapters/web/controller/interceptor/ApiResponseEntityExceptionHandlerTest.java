@@ -37,9 +37,12 @@ class ApiResponseEntityExceptionHandlerTest {
 
   @Test
   void handleCustomBadRequest_badRequestException_returnsBadRequest() {
-    // Business reason: clients must receive 400 for semantic request errors.
+    // Business reason: clients must receive the semantic validation reason, not a silent failure.
     var response = handler.handleCustomBadRequest(new BadRequestException("bad"), request);
+
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("bad", body.get("message"));
   }
 
   @Test

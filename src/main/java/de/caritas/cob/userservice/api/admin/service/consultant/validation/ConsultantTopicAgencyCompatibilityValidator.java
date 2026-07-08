@@ -82,6 +82,9 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     assertAllSelectedAgenciesResolved(selectedAgencyIds, agencies);
     assertAgenciesBelongToTenant(agencies, tenantId);
 
+    // Offline agencies count towards topic coverage on purpose: a freshly created agency is
+    // offline until it has an assigned consultant, so filtering them out here would make it
+    // impossible to ever assign the first consultant to a new agency (bootstrap deadlock).
     var coveredTopicIds =
         agencies.stream()
             .map(AgencyDTO::getTopicIds)
