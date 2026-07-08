@@ -470,7 +470,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.PUT, request, String.class);
+              URI.create(url), org.springframework.http.HttpMethod.PUT, request, String.class);
 
       log.info(
           "Successfully updated Matrix display name for user: {} to: {}",
@@ -514,7 +514,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.POST, request, String.class);
+              URI.create(url), org.springframework.http.HttpMethod.POST, request, String.class);
 
       log.info("Successfully deactivated Matrix user: {}", matrixUserId);
       return response.getStatusCode().is2xxSuccessful();
@@ -554,7 +554,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.DELETE, request, String.class);
+              URI.create(url), org.springframework.http.HttpMethod.DELETE, request, String.class);
 
       log.info("Successfully purged Matrix room: {}", matrixRoomId);
       return response.getStatusCode().is2xxSuccessful();
@@ -792,7 +792,10 @@ public class MatrixSynapseService {
 
       ResponseEntity<java.util.Map> response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       var body = response.getBody();
       if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
@@ -839,7 +842,10 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.PUT, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.PUT,
+              request,
+              java.util.Map.class);
 
       return response.getBody();
     } catch (Exception ex) {
@@ -874,7 +880,10 @@ public class MatrixSynapseService {
 
       var response =
           matrixLongPollRestTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
         @SuppressWarnings("unchecked")
@@ -1194,7 +1203,10 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
         @SuppressWarnings("unchecked")

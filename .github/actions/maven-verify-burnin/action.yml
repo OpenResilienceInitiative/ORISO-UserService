@@ -25,8 +25,10 @@ runs:
   - name: Run Maven verify (unit + integration tests, burn-in)
     shell: bash
     # -fae (fail-at-end) lets every module/execution run so the report set is
-    # complete; the actual pass/fail signal comes from the report gate below,
-    # which this burn-in job tolerates (continue-on-error at the job level).
+    # complete. This step is informational during burn-in: failures are
+    # summarized below and uploaded as reports, but they must not mark the
+    # non-blocking PR check red before the suite is promoted to required CI.
+    continue-on-error: true
     run: ./mvnw -B -fae verify
 
   - name: Assert test reports were produced (zero-report guard)

@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -63,6 +64,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private TenantService tenantService;
   @Mock private AgencyService agencyService;
+  @Mock private SessionService sessionService;
 
   @AfterEach
   void tearDown() {

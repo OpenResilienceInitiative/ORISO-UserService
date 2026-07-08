@@ -43,19 +43,15 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   }
 
   @Test
-  void validateGrantTopicsAgainstSelectedAgencies_RejectsTopicsOnlyCoveredByOfflineAgency() {
+  void validateGrantTopicsAgainstSelectedAgencies_AllowsTopicsCoveredByOfflineAgency() {
     when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
         .thenReturn(
             List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, true, List.of(7L))));
 
-    var exception =
-        assertThrows(
-            BadRequestException.class,
-            () ->
-                validator.validateGrantTopicsAgainstSelectedAgencies(
-                    List.of(7L), List.of(10L, 20L), 1L));
-
-    assertTrue(exception.getMessage().contains("[7]"));
+    assertDoesNotThrow(
+        () ->
+            validator.validateGrantTopicsAgainstSelectedAgencies(
+                List.of(7L), List.of(10L, 20L), 1L));
   }
 
   @Test

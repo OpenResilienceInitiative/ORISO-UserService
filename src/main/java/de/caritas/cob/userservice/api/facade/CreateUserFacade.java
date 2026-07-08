@@ -22,15 +22,18 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +54,7 @@ public class CreateUserFacade {
   private final @NonNull AgencyVerifier agencyVerifier;
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull CreateSessionFacade createSessionFacade;
+  private final @NonNull SessionService sessionService;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -286,8 +290,39 @@ public class CreateUserFacade {
           consultingTypeSettings,
           Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
     } catch (Exception e) {
+      Long existingSessionId = findExistingSessionId(user, consultingTypeSettings);
+      if (nonNull(existingSessionId)) {
+        log.warn(
+            "Using existing session {} for user {} after registration fallback failed",
+            existingSessionId,
+            user.getUsername());
+        return existingSessionId;
+      }
       log.error("Could not create minimal session for user {}", user.getUsername(), e);
       throw new InternalServerErrorException("Could not create session for user", e);
+    }
+  }
+
+  private Long findExistingSessionId(
+      User user, ExtendedConsultingTypeResponseDTO consultingTypeSettings) {
+    if (isNull(user) || isNull(consultingTypeSettings) || isNull(consultingTypeSettings.getId())) {
+      return null;
+    }
+
+    try {
+      List<Session> existingSessions =
+          sessionService.getSessionsForUserByConsultingTypeId(user, consultingTypeSettings.getId());
+      return existingSessions.stream()
+          .filter(session -> nonNull(session.getId()))
+          .findFirst()
+          .map(Session::getId)
+          .orElse(null);
+    } catch (Exception lookupException) {
+      log.warn(
+          "Could not lookup existing session for user {} after registration fallback failed",
+          user.getUsername(),
+          lookupException);
+      return null;
     }
   }
 
