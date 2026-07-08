@@ -1,15 +1,11 @@
 package de.caritas.cob.userservice.api.service.appointment;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
@@ -26,25 +22,28 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AgencyApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.ConsultantApi;
+import de.caritas.cob.userservice.appointmentservice.generated.web.model.AgencyConsultantSyncRequestDTO;
 import de.caritas.cob.userservice.appointmentservice.generated.web.model.AskerDTO;
+import de.caritas.cob.userservice.appointmentservice.generated.web.model.CalcomUser;
 import de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO;
 import java.util.LinkedList;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentMatchers;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.slf4j.Logger;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -55,13 +54,12 @@ class AppointmentServiceTest {
   private static final String FIELD_NAME_APPOINTMENTS_ENABLED = "appointmentFeatureEnabled";
   private static final EasyRandom easyRandom = new EasyRandom();
 
-  @Spy @InjectMocks AppointmentService appointmentService;
+  private StubConsultantApi appointmentConsultantApi;
+  private StubAgencyApi appointmentAgencyApi;
+  private StubAskerApi appointmentAskerApi;
+  private AppointmentService appointmentService;
+  private AppointmentService nonSpiedAppointmentService;
 
-  @InjectMocks AppointmentService nonSpiedAppointmentService;
-
-  @Mock ConsultantApi appointmentConsultantApi;
-  @Mock AgencyApi appointmentAgencyApi;
-  @Mock AskerApi appointmentAskerApi;
   @Mock SecurityHeaderSupplier securityHeaderSupplier;
 
   @Mock TenantHeaderSupplier tenantHeaderSupplier;
@@ -85,16 +83,14 @@ class AppointmentServiceTest {
 
   @Mock HttpClientErrorException httpClientErrorException;
 
-  @Mock AppointmentAgencyServiceApiControllerFactory appointmentAgencyServiceApiControllerFactory;
-
-  @Mock
-  AppointmentConsultantServiceApiControllerFactory appointmentConsultantServiceApiControllerFactory;
-
-  @Mock AppointmentAskerServiceApiControllerFactory appointmentAskerServiceApiControllerFactory;
-
   @BeforeEach
   public void beforeEach() throws JsonProcessingException {
-    when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
+    appointmentConsultantApi = new StubConsultantApi();
+    appointmentAgencyApi = new StubAgencyApi();
+    appointmentAskerApi = new StubAskerApi();
+    appointmentService = spy(createAppointmentService());
+    nonSpiedAppointmentService = createAppointmentService();
+
     when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
@@ -103,34 +99,41 @@ class AppointmentServiceTest {
             nullable(String.class), ArgumentMatchers.<Class<ConsultantDTO>>any()))
         .thenReturn(consultantDTO);
     when(appointmentService.getObjectMapper(anyBoolean())).thenReturn(objectMapper);
-    when(appointmentAgencyServiceApiControllerFactory.createControllerApi())
-        .thenReturn(appointmentAgencyApi);
-    when(appointmentConsultantServiceApiControllerFactory.createControllerApi())
-        .thenReturn(appointmentConsultantApi);
+  }
+
+  private AppointmentService createAppointmentService() {
+    return new AppointmentService(
+        new StubAppointmentConsultantServiceApiControllerFactory(appointmentConsultantApi),
+        new StubAppointmentAgencyServiceApiControllerFactory(appointmentAgencyApi),
+        new StubAppointmentAskerServiceApiControllerFactory(appointmentAskerApi),
+        securityHeaderSupplier,
+        tenantHeaderSupplier,
+        identityClient,
+        identityClientConfig);
   }
 
   @Test
   void createConsultant_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.createConsultant(consultantAdminResponseDTO);
-    verify(appointmentConsultantApi, never()).createConsultant(any());
-    verify(appointmentConsultantApi, never()).createConsultantWithHttpInfo(any());
+    assertThat(appointmentConsultantApi.createConsultantCallCount.get()).isZero();
+    assertThat(appointmentConsultantApi.createConsultantWithHttpInfoCallCount.get()).isZero();
   }
 
   @Test
   void updateConsultant_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.updateConsultant(consultantAdminResponseDTO);
-    verify(appointmentConsultantApi, never()).updateConsultant(any(), any());
-    verify(appointmentConsultantApi, never()).updateConsultantWithHttpInfo(any(), any());
+    assertThat(appointmentConsultantApi.updateConsultantCallCount.get()).isZero();
+    assertThat(appointmentConsultantApi.updateConsultantWithHttpInfoCallCount.get()).isZero();
   }
 
   @Test
   void deleteConsultant_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.deleteConsultant("testId");
-    verify(appointmentConsultantApi, never()).deleteConsultant(any());
-    verify(appointmentConsultantApi, never()).deleteConsultantWithHttpInfo(any());
+    assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isZero();
+    assertThat(appointmentConsultantApi.deleteConsultantWithHttpInfoCallCount.get()).isZero();
   }
 
   @Test
@@ -139,9 +142,9 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
-    doThrow(httpClientErrorException).when(appointmentConsultantApi).deleteConsultant("testId");
+    appointmentConsultantApi.deleteConsultantException = httpClientErrorException;
     appointmentService.deleteConsultant("testId");
-    verify(appointmentConsultantApi).deleteConsultant("testId");
+    assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -151,7 +154,7 @@ class AppointmentServiceTest {
     setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    doThrow(httpClientErrorException).when(appointmentConsultantApi).deleteConsultant("testId");
+    appointmentConsultantApi.deleteConsultantException = httpClientErrorException;
     assertThrows(
         HttpClientErrorException.class,
         () -> nonSpiedAppointmentService.deleteConsultant("testId"));
@@ -161,7 +164,7 @@ class AppointmentServiceTest {
   void syncAgencies_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.syncAgencies("testId", new LinkedList<>());
-    verify(appointmentAgencyApi, never()).agencyConsultantsSync(any());
+    assertThat(appointmentAgencyApi.agencyConsultantsSyncCallCount.get()).isZero();
   }
 
   @Test
@@ -169,7 +172,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.createConsultant(consultantAdminResponseDTO);
-    verify(appointmentConsultantApi, times(1)).createConsultant(any());
+    assertThat(appointmentConsultantApi.createConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -177,7 +180,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.updateConsultant(consultantAdminResponseDTO);
-    verify(appointmentConsultantApi, times(1)).updateConsultant(any(), any());
+    assertThat(appointmentConsultantApi.updateConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -185,7 +188,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant("testId");
-    verify(appointmentConsultantApi, times(1)).deleteConsultant(any());
+    assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -193,7 +196,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.syncAgencies("testId", new LinkedList<>());
-    verify(appointmentAgencyApi, times(1)).agencyConsultantsSync(any());
+    assertThat(appointmentAgencyApi.agencyConsultantsSyncCallCount.get()).isEqualTo(1);
   }
 
   private void givenAnIdentityClientConfig() {
@@ -210,7 +213,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.createConsultant(null);
-    verify(appointmentConsultantApi, never()).createConsultant(any());
+    assertThat(appointmentConsultantApi.createConsultantCallCount.get()).isZero();
   }
 
   @Test
@@ -226,7 +229,7 @@ class AppointmentServiceTest {
 
     appointmentService.syncConsultantData(consultant);
 
-    verify(appointmentConsultantApi, times(1)).updateConsultant(any(), any());
+    assertThat(appointmentConsultantApi.updateConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -239,7 +242,7 @@ class AppointmentServiceTest {
 
     appointmentService.updateConsultant(consultantAdminResponseDTO);
 
-    verify(appointmentConsultantApi, never()).updateConsultant(any(), any());
+    assertThat(appointmentConsultantApi.updateConsultantCallCount.get()).isZero();
   }
 
   @Test
@@ -247,7 +250,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant(null);
-    verify(appointmentConsultantApi, never()).deleteConsultant(any());
+    assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isZero();
   }
 
   @Test
@@ -255,65 +258,58 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant("");
-    verify(appointmentConsultantApi, never()).deleteConsultant(any());
+    assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isZero();
   }
 
   @Test
   void deleteAsker_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.deleteAsker("askerId");
-    verify(appointmentAskerApi, never()).deleteAskerData(any());
+    assertThat(appointmentAskerApi.deleteAskerDataCallCount.get()).isZero();
   }
 
   @Test
   void deleteAsker_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
-    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
-        .thenReturn(appointmentAskerApi);
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
 
     appointmentService.deleteAsker("askerId");
 
-    verify(appointmentAskerApi, times(1)).deleteAskerData("askerId");
+    assertThat(appointmentAskerApi.deleteAskerDataCallCount.get()).isEqualTo(1);
   }
 
   @Test
   void updateAskerEmail_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.updateAskerEmail("askerId", "mail@example.com");
-    verify(appointmentAskerApi, never()).updateAskerEmail(any(), any());
+    assertThat(appointmentAskerApi.updateAskerEmailCallCount.get()).isZero();
   }
 
   @Test
   void updateAskerEmail_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
-    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
-        .thenReturn(appointmentAskerApi);
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
 
     appointmentService.updateAskerEmail("askerId", "mail@example.com");
 
-    verify(appointmentAskerApi, times(1)).updateAskerEmail(eq("askerId"), any(AskerDTO.class));
+    assertThat(appointmentAskerApi.updateAskerEmailCallCount.get()).isEqualTo(1);
+    assertThat(appointmentAskerApi.lastUpdateAskerId).isEqualTo("askerId");
   }
 
   @Test
   void updateAskerEmail_Should_SwallowException_When_ApiThrows() {
-    when(appointmentAskerServiceApiControllerFactory.createControllerApi())
-        .thenReturn(appointmentAskerApi);
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
-    doThrow(new RuntimeException("boom"))
-        .when(appointmentAskerApi)
-        .updateAskerEmail(anyString(), any(AskerDTO.class));
+    appointmentAskerApi.updateAskerEmailException = new RuntimeException("boom");
 
     appointmentService.updateAskerEmail("askerId", "mail@example.com");
 
-    verify(appointmentAskerApi, times(1)).updateAskerEmail(anyString(), any(AskerDTO.class));
+    assertThat(appointmentAskerApi.updateAskerEmailCallCount.get()).isEqualTo(1);
   }
 
   @Test
   void patchConsultant_Should_NotCallAppointmentService_WhenAppointmentsIsDisabled() {
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, false);
     appointmentService.patchConsultant("consultantId", "New Name");
-    verify(appointmentConsultantApi, never()).patchConsultant(any(), any());
+    assertThat(appointmentConsultantApi.patchConsultantCallCount.get()).isZero();
   }
 
   @Test
@@ -321,7 +317,7 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.patchConsultant("", "New Name");
-    verify(appointmentConsultantApi, never()).patchConsultant(any(), any());
+    assertThat(appointmentConsultantApi.patchConsultantCallCount.get()).isZero();
   }
 
   @Test
@@ -331,7 +327,8 @@ class AppointmentServiceTest {
 
     appointmentService.patchConsultant("consultantId", "New Name");
 
-    verify(appointmentConsultantApi, times(1)).patchConsultant(eq("consultantId"), any());
+    assertThat(appointmentConsultantApi.patchConsultantCallCount.get()).isEqualTo(1);
+    assertThat(appointmentConsultantApi.lastPatchConsultantId).isEqualTo("consultantId");
   }
 
   @Test
@@ -339,11 +336,11 @@ class AppointmentServiceTest {
     givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
-    doThrow(httpClientErrorException).when(appointmentConsultantApi).patchConsultant(any(), any());
+    appointmentConsultantApi.patchConsultantException = httpClientErrorException;
 
     appointmentService.patchConsultant("consultantId", "New Name");
 
-    verify(appointmentConsultantApi, times(1)).patchConsultant(any(), any());
+    assertThat(appointmentConsultantApi.patchConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -352,10 +349,161 @@ class AppointmentServiceTest {
     setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    doThrow(httpClientErrorException).when(appointmentConsultantApi).patchConsultant(any(), any());
+    appointmentConsultantApi.patchConsultantException = httpClientErrorException;
 
     assertThrows(
         HttpClientErrorException.class,
         () -> nonSpiedAppointmentService.patchConsultant("consultantId", "New Name"));
+  }
+
+  static final class StubConsultantApi extends ConsultantApi {
+
+    final AtomicInteger createConsultantCallCount = new AtomicInteger();
+    final AtomicInteger createConsultantWithHttpInfoCallCount = new AtomicInteger();
+    final AtomicInteger updateConsultantCallCount = new AtomicInteger();
+    final AtomicInteger updateConsultantWithHttpInfoCallCount = new AtomicInteger();
+    final AtomicInteger deleteConsultantCallCount = new AtomicInteger();
+    final AtomicInteger deleteConsultantWithHttpInfoCallCount = new AtomicInteger();
+    final AtomicInteger patchConsultantCallCount = new AtomicInteger();
+    HttpClientErrorException deleteConsultantException;
+    HttpClientErrorException patchConsultantException;
+    String lastPatchConsultantId;
+
+    StubConsultantApi() {
+      super(new ApiClient());
+    }
+
+    @Override
+    public CalcomUser createConsultant(ConsultantDTO consultantDTO) {
+      createConsultantCallCount.incrementAndGet();
+      return new CalcomUser();
+    }
+
+    @Override
+    public ResponseEntity<CalcomUser> createConsultantWithHttpInfo(ConsultantDTO consultantDTO) {
+      createConsultantWithHttpInfoCallCount.incrementAndGet();
+      return ResponseEntity.ok(new CalcomUser());
+    }
+
+    @Override
+    public CalcomUser updateConsultant(String consultantId, ConsultantDTO consultantDTO) {
+      updateConsultantCallCount.incrementAndGet();
+      return new CalcomUser();
+    }
+
+    @Override
+    public ResponseEntity<CalcomUser> updateConsultantWithHttpInfo(
+        String consultantId, ConsultantDTO consultantDTO) {
+      updateConsultantWithHttpInfoCallCount.incrementAndGet();
+      return ResponseEntity.ok(new CalcomUser());
+    }
+
+    @Override
+    public void deleteConsultant(String consultantId) {
+      deleteConsultantCallCount.incrementAndGet();
+      if (deleteConsultantException != null) {
+        throw deleteConsultantException;
+      }
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteConsultantWithHttpInfo(String consultantId) {
+      deleteConsultantWithHttpInfoCallCount.incrementAndGet();
+      return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public void patchConsultant(String consultantId, ConsultantDTO consultantDTO) {
+      patchConsultantCallCount.incrementAndGet();
+      lastPatchConsultantId = consultantId;
+      if (patchConsultantException != null) {
+        throw patchConsultantException;
+      }
+    }
+  }
+
+  static final class StubAgencyApi extends AgencyApi {
+
+    final AtomicInteger agencyConsultantsSyncCallCount = new AtomicInteger();
+
+    StubAgencyApi() {
+      super(new ApiClient());
+    }
+
+    @Override
+    public void agencyConsultantsSync(AgencyConsultantSyncRequestDTO request) {
+      agencyConsultantsSyncCallCount.incrementAndGet();
+    }
+  }
+
+  static final class StubAskerApi extends AskerApi {
+
+    final AtomicInteger deleteAskerDataCallCount = new AtomicInteger();
+    final AtomicInteger updateAskerEmailCallCount = new AtomicInteger();
+    RuntimeException updateAskerEmailException;
+    String lastUpdateAskerId;
+
+    StubAskerApi() {
+      super(new ApiClient());
+    }
+
+    @Override
+    public void deleteAskerData(String askerId) {
+      deleteAskerDataCallCount.incrementAndGet();
+    }
+
+    @Override
+    public void updateAskerEmail(String askerId, AskerDTO askerDTO) {
+      updateAskerEmailCallCount.incrementAndGet();
+      lastUpdateAskerId = askerId;
+      if (updateAskerEmailException != null) {
+        throw updateAskerEmailException;
+      }
+    }
+  }
+
+  static final class StubAppointmentConsultantServiceApiControllerFactory
+      extends AppointmentConsultantServiceApiControllerFactory {
+
+    private final ConsultantApi api;
+
+    StubAppointmentConsultantServiceApiControllerFactory(ConsultantApi api) {
+      this.api = api;
+    }
+
+    @Override
+    public ConsultantApi createControllerApi() {
+      return api;
+    }
+  }
+
+  static final class StubAppointmentAgencyServiceApiControllerFactory
+      extends AppointmentAgencyServiceApiControllerFactory {
+
+    private final AgencyApi api;
+
+    StubAppointmentAgencyServiceApiControllerFactory(AgencyApi api) {
+      this.api = api;
+    }
+
+    @Override
+    public AgencyApi createControllerApi() {
+      return api;
+    }
+  }
+
+  static final class StubAppointmentAskerServiceApiControllerFactory
+      extends AppointmentAskerServiceApiControllerFactory {
+
+    private final AskerApi api;
+
+    StubAppointmentAskerServiceApiControllerFactory(AskerApi api) {
+      this.api = api;
+    }
+
+    @Override
+    public AskerApi createControllerApi() {
+      return api;
+    }
   }
 }
