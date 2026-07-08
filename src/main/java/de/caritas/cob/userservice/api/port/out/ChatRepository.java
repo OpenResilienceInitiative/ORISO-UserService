@@ -42,6 +42,13 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   @Query("select distinct c from Chat c left join fetch c.chatAgencies where c.id in :chat_ids")
   List<Chat> findByIdsWithChatAgencies(@Param(value = "chat_ids") Set<Long> chatIds);
 
+  @Query(
+      "select distinct c from Chat c "
+          + "left join fetch c.chatAgencies "
+          + "left join fetch c.chatUsers "
+          + "where c.id = :chat_id")
+  Optional<Chat> findByIdWithPermissionRelations(@Param(value = "chat_id") Long chatId);
+
   List<Chat> findByChatOwner(Consultant chatOwner);
 
   List<Chat> findAllByActiveIsTrue();

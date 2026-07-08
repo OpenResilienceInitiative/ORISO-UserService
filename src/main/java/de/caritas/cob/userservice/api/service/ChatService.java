@@ -268,7 +268,7 @@ public class ChatService {
    * @return {@link Optional} of {@link Chat}
    */
   public Optional<Chat> getChat(Long chatId) {
-    return chatRepository.findById(chatId);
+    return chatRepository.findByIdWithPermissionRelations(chatId);
   }
 
   /**

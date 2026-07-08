@@ -8,7 +8,9 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -373,6 +375,62 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
+  void setConsultantAgencies_Should_createMissingAndDeleteRemovedAndSkipExisting() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(
+        Lists.newArrayList(agencyAdminFullResponse(1L), agencyAdminFullResponse(2L)));
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    // desired set: keep 1, drop 2, add 3
+    List<CreateConsultantAgencyDTO> desired =
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(1L),
+            new CreateConsultantAgencyDTO().agencyId(3L));
+
+    consultantAdminFacade.setConsultantAgencies("consultantId", desired);
+
+    verify(consultantAgencyAdminService)
+        .markConsultantAgenciesForDeletion("consultantId", Lists.newArrayList(2L));
+    verify(relationCreatorService)
+        .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(3L));
+    verify(relationCreatorService, never())
+        .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(1L));
+  }
+
+  @Test
+  void setConsultantAgencies_Should_notDelete_When_NothingRemoved() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(Lists.newArrayList(agencyAdminFullResponse(1L)));
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+
+    consultantAdminFacade.setConsultantAgencies(
+        "consultantId",
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(1L),
+            new CreateConsultantAgencyDTO().agencyId(2L)));
+
+    verify(consultantAgencyAdminService, never())
+        .markConsultantAgenciesForDeletion(any(), anyList());
+    verify(relationCreatorService)
+        .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(2L));
+  }
+
+  @Test
+  void setConsultantAgencies_Should_propagateValidationError() {
+    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
+    persisted.setEmbedded(Lists.newArrayList());
+    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    doThrow(new BadRequestException("topic not covered"))
+        .when(relationCreatorService)
+        .createNewConsultantAgency(eq("consultantId"), any());
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            consultantAdminFacade.setConsultantAgencies(
+                "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(9L))));
+  }
+
+  @Test
   void findFilteredConsultants_Should_useDefaultSort_When_SortIsNull() {
     var searchResult = new ConsultantSearchResultDTO();
     when(consultantAdminFilterService.findFilteredConsultants(any(), any(), any(), any()))
@@ -451,5 +509,10 @@ class ConsultantAdminFacadeTest {
 
   private Sort argThatSortHasField(FieldEnum expectedField) {
     return org.mockito.ArgumentMatchers.argThat(sort -> sort.getField() == expectedField);
+  }
+
+  private CreateConsultantAgencyDTO argThatAgencyId(Long expectedAgencyId) {
+    return org.mockito.ArgumentMatchers.argThat(
+        dto -> dto != null && expectedAgencyId.equals(dto.getAgencyId()));
   }
 }

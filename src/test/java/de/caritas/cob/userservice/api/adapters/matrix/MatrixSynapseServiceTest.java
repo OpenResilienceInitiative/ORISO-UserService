@@ -150,20 +150,20 @@ class MatrixSynapseServiceTest {
     var roomId = "!room:example.org";
     matrixConfig.setApiUrl("https://matrix.example");
     when(matrixLongPollRestTemplate.exchange(
-            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("chunk", java.util.List.of())));
-    var urlCaptor = ArgumentCaptor.forClass(String.class);
+    var urlCaptor = ArgumentCaptor.forClass(URI.class);
 
     var result = service.getRoomMessages(roomId, ACCESS_TOKEN);
 
     assertThat(result).isNotNull().isEmpty();
     verify(matrixLongPollRestTemplate)
         .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
-    assertThat(urlCaptor.getValue())
+    assertThat(urlCaptor.getValue().toString())
         .startsWith(
             "https://matrix.example/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
-    assertThat(urlCaptor.getValue()).contains("dir=b");
-    assertThat(urlCaptor.getValue()).contains("limit=100");
+    assertThat(urlCaptor.getValue().toString()).contains("dir=b");
+    assertThat(urlCaptor.getValue().toString()).contains("limit=100");
     verifyNoInteractions(restTemplate);
   }
 
@@ -172,8 +172,9 @@ class MatrixSynapseServiceTest {
     stubAdminLogin();
     when(restTemplate.exchange(
             eq(
-                "https://matrix.example.com/_synapse/admin/v1/deactivate/"
-                    + "%40seeker%3Amatrix.example.com"),
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/deactivate/"
+                        + "%40seeker%3Amatrix.example.com")),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
@@ -187,8 +188,9 @@ class MatrixSynapseServiceTest {
     stubAdminLogin();
     when(restTemplate.exchange(
             eq(
-                "https://matrix.example.com/_synapse/admin/v1/deactivate/"
-                    + "%40seeker%3Amatrix.example.com"),
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/deactivate/"
+                        + "%40seeker%3Amatrix.example.com")),
             eq(HttpMethod.POST),
             any(HttpEntity.class),
             eq(String.class)))
@@ -210,7 +212,9 @@ class MatrixSynapseServiceTest {
   void purgeRoomShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq("https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com"),
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
             eq(HttpMethod.DELETE),
             any(HttpEntity.class),
             eq(String.class)))
@@ -223,7 +227,9 @@ class MatrixSynapseServiceTest {
   void purgeRoomShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
     when(restTemplate.exchange(
-            eq("https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com"),
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
             eq(HttpMethod.DELETE),
             any(HttpEntity.class),
             eq(String.class)))
@@ -648,7 +654,8 @@ class MatrixSynapseServiceTest {
     // Consultant display names shown in Matrix must be updatable via the admin API.
     stubAdminLogin();
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains("/_synapse/admin/v2/users/"),
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/_synapse/admin/v2/users/")),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(String.class)))
@@ -671,7 +678,7 @@ class MatrixSynapseServiceTest {
     // Display-name sync is best-effort and must not break account flows.
     stubAdminLogin();
     when(restTemplate.exchange(
-            any(String.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(String.class)))
+            any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(String.class)))
         .thenThrow(new RuntimeException("synapse down"));
 
     assertThat(matrixSynapseService().updateUserDisplayName(MATRIX_USER_ID, "Seeker")).isFalse();
@@ -695,7 +702,7 @@ class MatrixSynapseServiceTest {
     // Callers treat empty as "unknown" when Synapse returns an unexpected payload.
     stubAdminLogin();
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains("/members"),
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -709,7 +716,7 @@ class MatrixSynapseServiceTest {
     // Supervision and moderation flows need the authoritative room member list.
     stubAdminLogin();
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains("/members"),
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -728,7 +735,7 @@ class MatrixSynapseServiceTest {
     // Membership lookup is best-effort and must never throw to callers.
     stubAdminLogin();
     when(restTemplate.exchange(
-            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
         .thenThrow(new RuntimeException("synapse down"));
 
     assertThat(matrixSynapseService().getRoomMembers(MATRIX_ROOM_ID)).isEmpty();
@@ -744,7 +751,8 @@ class MatrixSynapseServiceTest {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     var synapseResponse = Map.<String, Object>of("event_id", "$event123");
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains("/send/m.room.message/"),
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/send/m.room.message/")),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -760,7 +768,7 @@ class MatrixSynapseServiceTest {
     // Send failures must return a structured error instead of propagating exceptions.
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     when(restTemplate.exchange(
-            any(String.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+            any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
         .thenThrow(new RuntimeException("room not found"));
 
     var result = matrixSynapseService().sendMessage(MATRIX_ROOM_ID, "hello", ACCESS_TOKEN);
@@ -815,7 +823,8 @@ class MatrixSynapseServiceTest {
     var encodedOnlineId = "%40online%3Amatrix.example.com";
     var encodedOfflineId = "%40offline%3Amatrix.example.com";
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(encodedOnlineId),
+            org.mockito.ArgumentMatchers.<String>argThat(
+                uri -> uri != null && uri.toString().contains(encodedOnlineId)),
             eq(HttpMethod.GET),
             any(),
             eq(Map.class)))
@@ -823,7 +832,8 @@ class MatrixSynapseServiceTest {
             ResponseEntity.ok(
                 Map.of("presence", "online", "currently_active", true, "last_active_ago", 0)));
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(encodedOfflineId),
+            org.mockito.ArgumentMatchers.<String>argThat(
+                uri -> uri != null && uri.toString().contains(encodedOfflineId)),
             eq(HttpMethod.GET),
             any(),
             eq(Map.class)))
@@ -840,7 +850,7 @@ class MatrixSynapseServiceTest {
     matrixConfig.setPresenceEnabled(true);
     stubAdminLogin();
     when(restTemplate.exchange(
-            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
         .thenThrow(new RuntimeException("presence disabled on server"));
 
     assertThat(
