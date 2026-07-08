@@ -2766,9 +2766,11 @@ components:
       properties:
         oldPassword:
           type: string
+          format: password
           example: oldpass@w0rd
         newPassword:
           type: string
+          format: password
           example: newpass@w0rd
 
     ChatDTO:
@@ -2993,6 +2995,7 @@ components:
       properties:
         password:
           type: string
+          format: password
           example: p@ssw0rd
 
     RocketChatGroupIdDTO:
