@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -95,7 +96,7 @@ public class ConsultantAdminFacade {
     if (sort == null
         || Stream.of(FieldEnum.values()).noneMatch(providedSortFieldIgnoringCase(sort))) {
       sort = new Sort();
-      sort.setField(FieldEnum.LASTNAME);
+      sort.setField(FieldEnum.LAST_NAME);
       sort.setOrder(OrderEnum.ASC);
     }
     return sort;
@@ -169,6 +170,38 @@ public class ConsultantAdminFacade {
   }
 
   /**
+   * Sets the complete set of agency relations for a consultant: relations no longer present in the
+   * passed list are marked for deletion, missing relations are created, already-existing relations
+   * are left untouched (idempotency). Validation failures (e.g. topic/agency mismatch) are
+   * propagated to the caller instead of being swallowed, so the admin UI can surface them.
+   *
+   * @param consultantId the consultant to update
+   * @param agencyList the desired complete set of agency relations
+   */
+  public void setConsultantAgencies(
+      String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
+    var persistedAgencyIds =
+        consultantAgencyAdminService.findConsultantAgencies(consultantId).getEmbedded().stream()
+            .map(agencyAdminResponse -> agencyAdminResponse.getEmbedded().getId())
+            .collect(Collectors.toSet());
+    var desiredAgencyIds =
+        agencyList.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
+
+    var agencyIdsToDelete =
+        persistedAgencyIds.stream()
+            .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
+            .collect(Collectors.toList());
+    if (!agencyIdsToDelete.isEmpty()) {
+      consultantAgencyAdminService.markConsultantAgenciesForDeletion(
+          consultantId, agencyIdsToDelete);
+    }
+
+    agencyList.stream()
+        .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
+        .forEach(agency -> createNewConsultantAgency(consultantId, agency));
+  }
+
+  /**
    * Changes the consultant flag is_team_consultant and assignments for agency type changes.
    *
    * @param agencyId the id of the changed agency
@@ -237,10 +270,17 @@ public class ConsultantAdminFacade {
    */
   public void prepareConsultantAgencyRelation(
       String consultantId, List<CreateConsultantAgencyDTO> agencies) {
+    Set<Long> additionalAgencyIds =
+        agencies.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
     agencies.forEach(
         agency ->
             this.consultantAgencyRelationCreatorService.prepareConsultantAgencyRelation(
-                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency)));
+                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                }));
   }
 
   /**
@@ -335,7 +375,13 @@ public class ConsultantAdminFacade {
       List<CreateConsultantAgencyDTO> agencyList, Long consultantTenantId) {
     agencyList.stream()
         .map(a -> agencyService.getAgency(a.getAgencyId()))
-        .map(a -> a.getTenantId())
+        .map(
+            agency -> {
+              if (agency == null) {
+                throw new BadRequestException("Agency not found");
+              }
+              return agency.getTenantId();
+            })
         .filter(agencyTenantId -> !agencyTenantId.equals(consultantTenantId))
         .findAny()
         .ifPresent(

@@ -1,9 +1,8 @@
-name: Reusable Maven Build steps
+name: Reusable Maven validation and build steps
 
 inputs:
   java_version:
     required: true
-    type: string
 
 runs:
   using: 'composite'
@@ -15,6 +14,30 @@ runs:
       distribution: 'temurin'
       cache: maven
 
-  - name: Build with Maven Wrapper
+  - name: Run Maven tests
     shell: bash
-    run: ./mvnw -B package
+    run: |
+      ./mvnw -B test
+      python3 - <<'PY'
+      from pathlib import Path
+      import sys
+      import xml.etree.ElementTree as ET
+
+      failing_reports = []
+      for report in Path("target/surefire-reports").glob("TEST-*.xml"):
+          root = ET.parse(report).getroot()
+          failures = int(root.attrib.get("failures", 0))
+          errors = int(root.attrib.get("errors", 0))
+          if failures or errors:
+              failing_reports.append((report, failures, errors))
+
+      if failing_reports:
+          print("Maven reported test failures/errors:")
+          for report, failures, errors in failing_reports:
+              print(f"- {report}: failures={failures}, errors={errors}")
+          sys.exit(1)
+      PY
+
+  - name: Package Java application
+    shell: bash
+    run: ./mvnw -B package -DskipTests

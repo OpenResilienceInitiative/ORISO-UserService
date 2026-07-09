@@ -31,11 +31,11 @@ import org.jeasy.random.EasyRandomParameters;
 import org.jeasy.random.FieldPredicates;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -51,13 +51,13 @@ public class ConsultantAdminServiceIT {
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockBean private CreateConsultantSaga createConsultantSaga;
+  @MockitoBean private CreateConsultantSaga createConsultantSaga;
 
-  @MockBean private ConsultantUpdateService consultantUpdateService;
+  @MockitoBean private ConsultantUpdateService consultantUpdateService;
 
-  @MockBean private AppointmentService appointmentService;
+  @MockitoBean private AppointmentService appointmentService;
 
-  @MockBean private AccountManager accountManager;
+  @MockitoBean private AccountManager accountManager;
 
   @Test
   public void findConsultantById_Should_returnExpectedConsultant_When_consultantIdExists() {

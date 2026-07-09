@@ -5,9 +5,9 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.model.Consultant;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
 import java.util.ArrayList;
-import javax.persistence.criteria.JoinType;
-import javax.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
 /** Builds a JPA {@link Specification} for filtering {@link Consultant} entities. */
@@ -18,6 +18,7 @@ public class ConsultantFilterSpecification {
   public static Specification<Consultant> of(ConsultantFilter filter) {
     return (root, query, cb) -> {
       var predicates = new ArrayList<Predicate>();
+      predicates.add(cb.isNull(root.get("deleteDate")));
       if (nonNull(filter)) {
         if (isNotBlank(filter.getUsername())) {
           predicates.add(

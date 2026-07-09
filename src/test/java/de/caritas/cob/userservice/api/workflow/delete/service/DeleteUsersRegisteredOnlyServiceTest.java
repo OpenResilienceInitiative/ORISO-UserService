@@ -11,6 +11,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetUserIdException;
+import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -94,7 +95,8 @@ public class DeleteUsersRegisteredOnlyServiceTest {
 
     setField(
         deleteUsersRegisteredOnlyService, "userRegisteredOnlyDeleteWorkflowCheckDays", thirtyDays);
-    LocalDateTime dateToCheck = LocalDateTime.now().with(LocalTime.MIDNIGHT).minusDays(thirtyDays);
+    LocalDateTime dateToCheck =
+        CustomLocalDateTime.nowInUtc().with(LocalTime.MIDNIGHT).minusDays(thirtyDays);
 
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
 
@@ -105,13 +107,13 @@ public class DeleteUsersRegisteredOnlyServiceTest {
   @Test
   public void deleteUserAccountsTimeInsensitive_Should_CheckUsersIgnoringTheDateSetting() {
     setField(deleteUsersRegisteredOnlyService, "userRegisteredOnlyDeleteWorkflowCheckDays", 30);
-    var dateToCheck = LocalDateTime.now().with(LocalTime.MIDNIGHT).plusDays(1);
+    var dateToCheck = CustomLocalDateTime.nowInUtc().with(LocalTime.MIDNIGHT).plusDays(1);
 
     deleteUsersRegisteredOnlyService.deleteUserAccountsTimeInsensitive();
 
     verify(userRepository)
         .findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(dateToCheck);
-    assertTrue(dateToCheck.isAfter(LocalDateTime.now()));
+    assertTrue(dateToCheck.isAfter(CustomLocalDateTime.nowInUtc()));
   }
 
   @Test

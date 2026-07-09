@@ -2,9 +2,9 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
+import jakarta.mail.AuthenticationFailedException;
+import jakarta.validation.Valid;
 import java.util.Map;
-import javax.mail.AuthenticationFailedException;
-import javax.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

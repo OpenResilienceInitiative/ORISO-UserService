@@ -26,12 +26,12 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ConversationController.class)
@@ -48,35 +48,35 @@ class ConversationControllerIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private ConversationListResolver conversationListResolver;
+  @MockitoBean private ConversationListResolver conversationListResolver;
 
-  @MockBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
+  @MockitoBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  @MockitoBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
-  @MockBean private LinkDiscoverers linkDiscoverers;
+  @MockitoBean private LinkDiscoverers linkDiscoverers;
 
-  @MockBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
+  @MockitoBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
 
-  @MockBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
+  @MockitoBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private ConversationDtoMapper conversationDtoMapper;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private Messaging messaging;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private TopicConsultantRoutingService topicConsultantRoutingService;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private AuthenticatedUser authenticatedUser;
 
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
+  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {

@@ -57,6 +57,7 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserF
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.LogService;
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -65,12 +66,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
@@ -87,10 +88,15 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/** Service for Rocket.Chat functionalities. */
+/**
+ * Service for Rocket.Chat functionalities. Only registered when {@code rocket-chat.enabled=true}
+ * (ADR-004); with the default {@code false} the inert {@link DisabledRocketChatService} is bound
+ * instead and the service runs Matrix-only.
+ */
 @Slf4j
 @Getter
 @Service
+@ConditionalOnProperty(name = "rocket-chat.enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class RocketChatService implements MessageClient {
 
@@ -1041,7 +1047,7 @@ public class RocketChatService implements MessageClient {
           String.format(
               "Could not get Rocket.Chat user info of user id %s.%n Status: %s.%n error: %s.%n error type: %s",
               rcUserId,
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);
@@ -1081,7 +1087,7 @@ public class RocketChatService implements MessageClient {
           String.format(
               "Could not get Rocket.Chat user info of user id %s.%n Status: %s.%n error: %s.%n error type: %s",
               requestDTO.getUserId(),
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);
@@ -1127,7 +1133,7 @@ public class RocketChatService implements MessageClient {
               "Could not delete Rocket.Chat user with user id %s.%n Status: %s.%n error: %s.%n "
                   + "error type: %s",
               rcUserId,
-              response.getStatusCodeValue(),
+              response.getStatusCode().value(),
               response.getBody().getError(),
               response.getBody().getErrorType()),
           LogService::logRocketChatError);

@@ -54,9 +54,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class CreateChatV2FacadeTest {
 
   @InjectMocks private CreateChatFacade createChatFacade;
@@ -93,6 +96,9 @@ public class CreateChatV2FacadeTest {
 
   @BeforeEach
   public void setup() {
+    // These tests cover the legacy Rocket.Chat flow (ADR-004: disabled by default)
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createChatFacade, "rocketChatEnabled", true);
     when(chat.getId()).thenReturn(CHAT_ID);
     when(chat.getCreateDate()).thenReturn(LocalDateTime.now());
   }

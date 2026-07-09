@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
 import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
-import org.apache.http.client.config.RequestConfig;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
@@ -49,10 +51,13 @@ class RestTemplateTimeoutConfigTest {
 
   private void assertTimeouts(RestTemplate restTemplate, int connectTimeout, int readTimeout) {
     var requestFactory = restTemplate.getRequestFactory();
-    var requestConfig =
-        (RequestConfig) ReflectionTestUtils.getField(requestFactory, "requestConfig");
+    assertThat(requestFactory).isInstanceOf(JdkClientHttpRequestFactory.class);
 
-    assertThat(requestConfig.getConnectTimeout()).isEqualTo(connectTimeout);
-    assertThat(requestConfig.getSocketTimeout()).isEqualTo(readTimeout);
+    var httpClient = (HttpClient) ReflectionTestUtils.getField(requestFactory, "httpClient");
+    var readTimeoutDuration =
+        (Duration) ReflectionTestUtils.getField(requestFactory, "readTimeout");
+
+    assertThat(httpClient.connectTimeout()).contains(Duration.ofMillis(connectTimeout));
+    assertThat(readTimeoutDuration).isEqualTo(Duration.ofMillis(readTimeout));
   }
 }

@@ -29,11 +29,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
@@ -50,13 +50,13 @@ class SessionServiceIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private TopicControllerApi topicControllerApi;
+  @MockitoBean private TopicControllerApi topicControllerApi;
 
-  @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("primary")
   private AgencyControllerApi agencyControllerApi;
 
@@ -173,7 +173,7 @@ class SessionServiceIT {
     session.setIsConsultantDirectlySet(false);
     sessionService.saveSession(session);
     assertThrows(
-        javax.ws.rs.BadRequestException.class,
+        jakarta.ws.rs.BadRequestException.class,
         () -> {
           sessionService.findGroupIdByConsultantAndUser(
               "473f7c4b-f011-4fc2-847c-ceb636a5b399", "1da238c6-cd46-4162-80f1-bff74eafe77f");

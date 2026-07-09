@@ -9,52 +9,49 @@ import de.caritas.cob.userservice.api.adapters.web.dto.PaginationLinks;
 import de.caritas.cob.userservice.api.admin.service.SearchResultBuilder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
+import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.hibernate.search.jpa.FullTextQuery;
 
 public class AdminSearchResultBuilder
     extends SearchResultBuilder<AdminFilter, AdminSearchResultDTO> {
-  private AdminSearchResultBuilder(FullTextQuery fullTextQuery) {
-    super(fullTextQuery);
+  private final List<Admin> admins;
+  private final long totalCount;
+
+  private AdminSearchResultBuilder(List<Admin> admins, long totalCount) {
+    super(null);
+    this.admins = admins;
+    this.totalCount = totalCount;
   }
 
-  public static AdminSearchResultBuilder getInstance(FullTextQuery fullTextQuery) {
-    return new AdminSearchResultBuilder(fullTextQuery);
+  public static AdminSearchResultBuilder getInstance(List<Admin> admins, long totalCount) {
+    return new AdminSearchResultBuilder(admins, totalCount);
   }
 
   public AdminSearchResultDTO buildSearchResult() {
-    Stream<Admin> resultStream = fullTextQuery.getResultStream();
     var resultList =
-        resultStream
+        admins.stream()
             .map(AdminResponseDTOBuilder::getInstance)
             .map(AdminResponseDTOBuilder::buildAgencyAdminResponseDTO)
             .collect(Collectors.toList());
 
     var paginationLinks =
         new PaginationLinks()
-            .self(buildSelfLink())
-            .next(buildNextLink())
-            .previous(buildPreviousLink());
+            .self(buildPageLink(page))
+            .next(hasNext() ? buildPageLink(page + 1) : null)
+            .previous(page > 1 ? buildPageLink(page - 1) : null);
 
     return new AdminSearchResultDTO()
         .embedded(resultList)
         .links(paginationLinks)
-        .total(fullTextQuery.getResultSize());
+        .total((int) totalCount);
   }
 
-  private HalLink buildSelfLink() {
+  private boolean hasNext() {
+    return totalCount > (long) page * perPage;
+  }
+
+  private HalLink buildPageLink(int targetPage) {
     return super.buildSelfLink(
-        methodOn(UseradminApi.class).getAgencyAdmins(page, perPage, filter, sort));
-  }
-
-  private HalLink buildNextLink() {
-    return super.buildNextLink(
-        methodOn(UseradminApi.class).getAgencyAdmins(page + 1, perPage, filter, sort));
-  }
-
-  private HalLink buildPreviousLink() {
-    return buildPreviousLink(
-        methodOn(UseradminApi.class).getAgencyAdmins(page - 1, perPage, filter, sort));
+        methodOn(UseradminApi.class).getAgencyAdmins(targetPage, perPage, filter, sort));
   }
 }

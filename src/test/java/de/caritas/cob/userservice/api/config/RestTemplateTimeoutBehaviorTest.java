@@ -9,14 +9,14 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfi
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.SocketTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
@@ -97,7 +97,7 @@ class RestTemplateTimeoutBehaviorTest {
 
     assertThatThrownBy(() -> restTemplate.getForEntity(slowUrl, String.class))
         .isInstanceOf(ResourceAccessException.class)
-        .hasRootCauseInstanceOf(SocketTimeoutException.class);
+        .hasRootCauseInstanceOf(HttpTimeoutException.class);
 
     long elapsedMs = Duration.between(startedAt, Instant.now()).toMillis();
     assertThat(elapsedMs).isGreaterThanOrEqualTo(MIN_TIMEOUT_OBSERVATION_MS);

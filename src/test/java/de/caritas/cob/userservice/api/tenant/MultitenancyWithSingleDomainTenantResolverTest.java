@@ -13,8 +13,8 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -164,5 +164,27 @@ class MultitenancyWithSingleDomainTenantResolverTest {
     assertThrows(
         BadRequestException.class,
         () -> multitenancyWithSingleDomainTenantResolver.resolve(request));
+  }
+
+  @Test
+  void resolve_Should_ThrowBadRequestException_When_AgencyIdProvidedInHeader_ButAgencyNotFound() {
+    // given
+    ReflectionTestUtils.setField(
+        multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
+    when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.of(1L));
+    when(agencyService.getAgency(1L)).thenReturn(null);
+    // when, then
+    assertThrows(
+        BadRequestException.class,
+        () -> multitenancyWithSingleDomainTenantResolver.resolve(request));
+  }
+
+  private void resetRequestAttributes() {
+    RequestContextHolder.setRequestAttributes(null);
+  }
+
+  private void givenRequestContextIsSet() {
+    when(requestAttributes.getRequest()).thenReturn(request);
+    RequestContextHolder.setRequestAttributes(requestAttributes);
   }
 }

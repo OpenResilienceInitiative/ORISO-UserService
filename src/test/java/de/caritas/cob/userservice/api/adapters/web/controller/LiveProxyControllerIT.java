@@ -12,11 +12,11 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(LiveProxyController.class)
@@ -28,13 +28,13 @@ class LiveProxyControllerIT {
 
   @Autowired private MockMvc mockMvc;
 
-  @MockBean private LiveEventNotificationService liveEventNotificationService;
+  @MockitoBean private LiveEventNotificationService liveEventNotificationService;
 
-  @MockBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
+  @MockitoBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean private LinkDiscoverers linkDiscoverers;
+  @MockitoBean private LinkDiscoverers linkDiscoverers;
 
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
+  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void sendLiveEvent_Should_returnBadRequest_When_rcGroupIdIsNotProvided() throws Exception {

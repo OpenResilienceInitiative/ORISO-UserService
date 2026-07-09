@@ -20,11 +20,11 @@ import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -36,7 +36,7 @@ public class CreateAdminAgencyRelationServiceIT {
   @Autowired private CreateAdminAgencyRelationService createAdminAgencyRelationService;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private AdminRepository adminRepository;
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
   EasyRandom easyRandom = new EasyRandom();
 

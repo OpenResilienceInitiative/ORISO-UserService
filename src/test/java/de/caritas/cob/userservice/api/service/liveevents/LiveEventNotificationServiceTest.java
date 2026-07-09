@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.service.liveevents;
 
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUSCONVERSATIONFINISHED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUSENQUIRYACCEPTED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.DIRECTMESSAGE;
+import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_CONVERSATION_FINISHED;
+import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_ENQUIRY_ACCEPTED;
+import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.DIRECT_MESSAGE;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
@@ -41,7 +41,7 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class LiveEventNotificationServiceTest {
 
-  private static final LiveEventMessage MESSAGE = new LiveEventMessage().eventType(DIRECTMESSAGE);
+  private static final LiveEventMessage MESSAGE = new LiveEventMessage().eventType(DIRECT_MESSAGE);
 
   @InjectMocks private LiveEventNotificationService liveEventNotificationService;
 
@@ -153,7 +153,7 @@ public class LiveEventNotificationServiceTest {
 
     ArgumentCaptor<LiveEventMessage> captor = ArgumentCaptor.forClass(LiveEventMessage.class);
     verify(liveControllerApi, times(1)).sendLiveEvent(captor.capture());
-    assertEquals(EventType.NEWANONYMOUSENQUIRY, captor.getValue().getEventType());
+    assertEquals(EventType.NEW_ANONYMOUS_ENQUIRY, captor.getValue().getEventType());
   }
 
   @Test
@@ -178,7 +178,7 @@ public class LiveEventNotificationServiceTest {
     verify(this.liveControllerApi, times(1))
         .sendLiveEvent(
             new LiveEventMessage()
-                .eventType(ANONYMOUSENQUIRYACCEPTED)
+                .eventType(ANONYMOUS_ENQUIRY_ACCEPTED)
                 .userIds(singletonList("userId")));
   }
 
@@ -207,7 +207,7 @@ public class LiveEventNotificationServiceTest {
     verify(this.liveControllerApi, times(1))
         .sendLiveEvent(
             new LiveEventMessage()
-                .eventType(ANONYMOUSCONVERSATIONFINISHED)
+                .eventType(ANONYMOUS_CONVERSATION_FINISHED)
                 .userIds(singletonList("userId"))
                 .eventContent(
                     new StatusSource()

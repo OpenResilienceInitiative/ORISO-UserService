@@ -6,6 +6,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -25,6 +26,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
@@ -38,6 +40,11 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull RocketChatAsyncHelper rocketChatAsyncHelper;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
+
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -50,8 +57,16 @@ public class ConsultantAgencyRelationCreatorService {
   public void createConsultantAgencyRelations(
       String consultantId, Set<Long> agencyIds, Set<String> roles, Consumer<String> logMethod) {
     checkConsultantHasRoleSet(roles, consultantId);
+    var additionalAgencyIds = Set.copyOf(agencyIds);
     agencyIds.stream()
-        .map(agencyId -> new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles))
+        .map(
+            agencyId ->
+                new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                })
         .forEach(input -> createNewConsultantAgency(input, logMethod));
   }
 
@@ -83,6 +98,10 @@ public class ConsultantAgencyRelationCreatorService {
       this.verifyAllAssignedAgenciesHaveSameConsultingType(agency.getConsultingType(), consultant);
     }
 
+    consultantTopicAgencyCompatibilityValidator
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+            consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
+
     ensureConsultingTypeRoles(input, agency);
     consultantAgencyService.saveConsultantAgency(buildConsultantAgency(consultant, agency.getId()));
   }
@@ -98,8 +117,14 @@ public class ConsultantAgencyRelationCreatorService {
       consultantRepository.save(consultant);
     }
 
-    rocketChatAsyncHelper.addConsultantToSessions(
-        consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    if (rocketChatEnabled) {
+      rocketChatAsyncHelper.addConsultantToSessions(
+          consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    } else {
+      // Matrix-only: no Rocket.Chat group assignments exist, so finalize synchronously in this
+      // transaction — the async variant cannot see the uncommitted consultant_agency row.
+      rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, agency);
+    }
 
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
       consultant.setTeamConsultant(true);

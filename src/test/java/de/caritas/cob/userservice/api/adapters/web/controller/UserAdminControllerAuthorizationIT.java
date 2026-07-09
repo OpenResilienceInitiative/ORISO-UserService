@@ -33,20 +33,20 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -65,15 +65,15 @@ class UserAdminControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private SessionAdminService sessionAdminService;
+  @MockitoBean private SessionAdminService sessionAdminService;
 
-  @MockBean private ViolationReportGenerator violationReportGenerator;
+  @MockitoBean private ViolationReportGenerator violationReportGenerator;
 
-  @MockBean private ConsultantAdminFacade consultantAdminFacade;
+  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
-  @MockBean private AskerUserAdminFacade askerUserAdminFacade;
+  @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @Test
   void getSessions_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()

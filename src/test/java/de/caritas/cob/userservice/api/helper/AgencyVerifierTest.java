@@ -23,8 +23,9 @@ import org.mockito.Mock;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
 class AgencyVerifierTest {
 
   @InjectMocks private AgencyVerifier agencyVerifier;

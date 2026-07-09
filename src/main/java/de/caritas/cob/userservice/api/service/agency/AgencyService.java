@@ -41,9 +41,11 @@ public class AgencyService {
    * @param agencyId {@link AgencyDTO#getId()}
    * @return AgencyDTO {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId")
+  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId", unless = "#result == null")
   public AgencyDTO getAgency(Long agencyId) {
-    return getFirstAgencyOrNull(getAgenciesFromAgencyService(Collections.singletonList(agencyId)));
+    return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
+        .findFirst()
+        .orElse(null);
   }
 
   /**
@@ -54,11 +56,9 @@ public class AgencyService {
    * @return AgencyDTO {@link AgencyDTO}
    */
   public AgencyDTO getAgencyWithoutCaching(Long agencyId) {
-    return getFirstAgencyOrNull(getAgenciesFromAgencyService(Collections.singletonList(agencyId)));
-  }
-
-  private AgencyDTO getFirstAgencyOrNull(List<AgencyDTO> agencies) {
-    return agencies.isEmpty() ? null : agencies.get(0);
+    return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
+        .findFirst()
+        .orElse(null);
   }
 
   /**

@@ -7,8 +7,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.jdbc.Sql;
@@ -81,6 +81,11 @@ public class ConsultantAdminFilterServiceTenantAwareIT extends ConsultantAdminFi
   @Test
   public void findFilteredConsultants_Should_returnAllEmailConsultants_When_filterEmail() {
     super.findFilteredConsultants_Should_returnAllEmailConsultants_When_filterEmail();
+  }
+
+  @Test
+  public void findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion() {
+    super.findFilteredConsultants_Should_notReturnConsultantsMarkedForDeletion();
   }
 
   @Test

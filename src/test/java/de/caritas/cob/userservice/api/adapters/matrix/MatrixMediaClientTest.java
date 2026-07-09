@@ -3,12 +3,13 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.net.URI;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,10 +30,26 @@ class MatrixMediaClientTest {
   private static final String BASE_URL = "http://matrix.local";
   private static final String ACCESS_TOKEN = "access-token";
   private static final String ROOM_ID = "!room:matrix.local";
+  // MatrixUrlBuilder percent-encodes the room ID in the path (encode() before buildAndExpand()),
+  // so URL matchers expect the encoded form while uploadFile is still called with the raw ROOM_ID.
+  private static final String ENCODED_ROOM_ID = "%21room%3Amatrix.local";
+
+  // encode().buildAndExpand() encodes Matrix IDs as opaque data: '!' → %21, ':' → %3A.
+  // This differs from UriUtils.encodePathSegment which leaves RFC-3986 sub-delimiters unencoded.
+  private static final String ENCODED_SEND_MSG_PATH =
+      "/_matrix/client/r0/rooms/%21room%3Amatrix.local/send/m.room.message/";
 
   @Mock private RestTemplate restTemplate;
 
   private MatrixMediaClient matrixMediaClient;
+
+  private static URI uri(String value) {
+    return URI.create(value);
+  }
+
+  private static URI uriContaining(String value) {
+    return argThat(uri -> uri.toString().contains(value));
+  }
 
   @BeforeEach
   void setUp() {
@@ -51,8 +68,7 @@ class MatrixMediaClientTest {
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(new ResponseEntity<>(uploadResponse, HttpStatus.OK));
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.contains(
-                "/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -72,7 +88,7 @@ class MatrixMediaClientTest {
     byte[] expectedBytes = "content".getBytes();
 
     when(restTemplate.exchange(
-            eq(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id"),
+            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))
@@ -83,7 +99,7 @@ class MatrixMediaClientTest {
     assertThat(result).isEqualTo(expectedBytes);
     verify(restTemplate)
         .exchange(
-            eq(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id"),
+            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class));
@@ -99,7 +115,7 @@ class MatrixMediaClientTest {
 
     when(restTemplate.postForEntity(
             eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
-        .thenReturn(new ResponseEntity<>(null, HttpStatus.OK));
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).build());
 
     assertThatThrownBy(() -> matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN))
         .isInstanceOf(RuntimeException.class)
@@ -145,7 +161,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/img-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -156,7 +172,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -176,7 +192,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/vid-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -187,7 +203,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -207,7 +223,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/aud-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -218,7 +234,7 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -238,7 +254,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/doc-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -249,7 +265,39 @@ class MatrixMediaClientTest {
     var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
         .exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
+            eq(HttpMethod.PUT),
+            messageCaptor.capture(),
+            eq(Map.class));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> body = (Map<String, Object>) messageCaptor.getValue().getBody();
+    assertThat(body).containsEntry("msgtype", "m.file");
+  }
+
+  @Test
+  void uploadFile_Should_UseFileMsgtype_When_ContentTypeIsNull() {
+    // Files without a MIME type must still be shared as generic Matrix file messages.
+    var file = new MockMultipartFile("file", "unknown.bin", null, "binary".getBytes());
+
+    when(restTemplate.postForEntity(
+            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            new ResponseEntity<>(
+                Map.of("content_uri", "mxc://matrix.local/bin-id"), HttpStatus.OK));
+    when(restTemplate.exchange(
+            uriContaining("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
+            eq(HttpMethod.PUT),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(new ResponseEntity<>(Map.of("event_id", "$event"), HttpStatus.OK));
+
+    matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN);
+
+    var messageCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .exchange(
+            uriContaining("/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/send/m.room.message/"),
             eq(HttpMethod.PUT),
             messageCaptor.capture(),
             eq(Map.class));
@@ -269,7 +317,7 @@ class MatrixMediaClientTest {
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/media-id"), HttpStatus.OK));
     when(restTemplate.exchange(
-            contains("/_matrix/client/r0/rooms/" + ROOM_ID + "/send/m.room.message/"),
+            uriContaining(ENCODED_SEND_MSG_PATH),
             eq(HttpMethod.PUT),
             any(HttpEntity.class),
             eq(Map.class)))
@@ -288,11 +336,11 @@ class MatrixMediaClientTest {
   @Test
   void downloadFile_Should_ThrowException_When_ResponseBodyIsNull() {
     when(restTemplate.exchange(
-            eq(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id"),
+            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))
-        .thenReturn(new ResponseEntity<>(null, HttpStatus.OK));
+        .thenReturn(ResponseEntity.status(HttpStatus.OK).build());
 
     assertThatThrownBy(
             () -> matrixMediaClient.downloadFile("matrix.local", "media-id", ACCESS_TOKEN))
@@ -303,7 +351,7 @@ class MatrixMediaClientTest {
   @Test
   void downloadFile_Should_ThrowException_When_RestTemplateThrows() {
     when(restTemplate.exchange(
-            eq(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id"),
+            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))

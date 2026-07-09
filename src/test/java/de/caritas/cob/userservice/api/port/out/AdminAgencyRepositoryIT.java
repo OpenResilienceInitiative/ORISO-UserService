@@ -7,14 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.test.context.ActiveProfiles;
@@ -63,6 +65,19 @@ class AdminAgencyRepositoryIT {
     adminAgency = adminAgencyRepository.save(adminAgency);
 
     assertTrue(adminAgency.getCreateDate().isBefore(adminAgency.getUpdateDate()));
+  }
+
+  @Test
+  void findByAdminIdInShouldReturnProjectionWithAdminId() {
+    givenPersistedAdminWIthAgency();
+
+    var adminAgencies = adminAgencyRepository.findByAdminIdIn(Set.of(admin.getId()));
+
+    assertEquals(1, adminAgencies.size());
+    AdminAgencyBase projection = adminAgencies.get(0);
+    assertEquals(adminAgency.getId(), projection.getId());
+    assertEquals(adminAgency.getAgencyId(), projection.getAgencyId());
+    assertEquals(admin.getId(), projection.getAdminId());
   }
 
   private void givenPersistedAdminWIthAgency() {

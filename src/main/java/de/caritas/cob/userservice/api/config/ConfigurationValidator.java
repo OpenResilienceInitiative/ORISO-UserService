@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.config;
 
+import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
-import javax.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +36,10 @@ public class ConfigurationValidator {
 
   @Value("${identity.technical-user.password:}")
   private String identityTechnicalPassword;
+
+  /** ADR-004: Rocket.Chat settings are only required when the integration is enabled. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   @Value("${rocket-chat.base-url:}")
   private String rocketChatBaseUrl;
@@ -89,17 +93,21 @@ public class ConfigurationValidator {
     if (isEmpty(identityTechnicalPassword)) {
       missingConfigs.add("identity.technical-user.password (IDENTITY_TECHNICAL_USER_PASSWORD)");
     }
-    if (isEmpty(rocketChatBaseUrl)) {
-      missingConfigs.add("rocket-chat.base-url (ROCKET_CHAT_BASE_URL)");
-    }
-    if (isEmpty(rocketChatMongoUrl)) {
-      missingConfigs.add("rocket-chat.mongo-url (ROCKET_CHAT_MONGO_URL)");
-    }
-    if (isEmpty(rocketTechnicalUsername)) {
-      missingConfigs.add("rocket.technical.username (ROCKET_TECHNICAL_USERNAME)");
-    }
-    if (isEmpty(rocketTechnicalPassword)) {
-      missingConfigs.add("rocket.technical.password (ROCKET_TECHNICAL_PASSWORD)");
+    // ADR-004: with rocket-chat.enabled=false (the default) the service is Matrix-only and no
+    // Rocket.Chat configuration is required.
+    if (rocketChatEnabled) {
+      if (isEmpty(rocketChatBaseUrl)) {
+        missingConfigs.add("rocket-chat.base-url (ROCKET_CHAT_BASE_URL)");
+      }
+      if (isEmpty(rocketChatMongoUrl)) {
+        missingConfigs.add("rocket-chat.mongo-url (ROCKET_CHAT_MONGO_URL)");
+      }
+      if (isEmpty(rocketTechnicalUsername)) {
+        missingConfigs.add("rocket.technical.username (ROCKET_TECHNICAL_USERNAME)");
+      }
+      if (isEmpty(rocketTechnicalPassword)) {
+        missingConfigs.add("rocket.technical.password (ROCKET_TECHNICAL_PASSWORD)");
+      }
     }
     if (isEmpty(consultingTypeServiceApiUrl)) {
       missingConfigs.add("consulting.type.service.api.url (CONSULTING_TYPE_SERVICE_API_URL)");

@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -52,7 +53,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import javax.ws.rs.BadRequestException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -233,8 +233,9 @@ public class SessionService {
             .isConsultantDirectlySet(false)
             .build();
 
-    session.setSessionTopics(createSessionTopics(userDto.getTopicIds(), session));
-    return saveSession(session);
+    Session savedSession = saveSession(session);
+    savedSession.setSessionTopics(createSessionTopics(userDto.getTopicIds(), savedSession));
+    return saveSession(savedSession);
   }
 
   private List<SessionTopic> createSessionTopics(
@@ -826,6 +827,8 @@ public class SessionService {
                   .collect(Collectors.toList()));
       sessionTopicEnrichmentService.enrichSessionWithMainTopicData(consultantSessionDTO);
       sessionTopicEnrichmentService.enrichSessionWithTopicsData(consultantSessionDTO);
+    } else {
+      consultantSessionDTO.topics(null);
     }
 
     return consultantSessionDTO;

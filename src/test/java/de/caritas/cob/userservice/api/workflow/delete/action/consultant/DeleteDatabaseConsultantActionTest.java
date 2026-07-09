@@ -97,7 +97,7 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Test
   public void execute_Should_returnExpectedWorkflowErrorAndLogError_When_deletionFails() {
-    doThrow(new RuntimeException()).when(this.consultantRepository).delete(any());
+    doThrow(new RuntimeException()).when(this.consultantRepository).delete(any(Consultant.class));
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
     ConsultantDeletionWorkflowDTO workflowDTO =

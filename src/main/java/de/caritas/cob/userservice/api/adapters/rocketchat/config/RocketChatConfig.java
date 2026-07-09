@@ -10,15 +10,16 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotBlank;
 import java.util.Arrays;
-import javax.servlet.http.HttpServletRequest;
-import javax.validation.constraints.AssertTrue;
-import javax.validation.constraints.NotBlank;
 import lombok.Data;
 import org.apache.logging.log4j.core.util.CronExpression;
 import org.hibernate.validator.constraints.URL;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
@@ -42,17 +43,24 @@ public class RocketChatConfig {
 
   private final HttpServletRequest httpServletRequest;
 
+  /**
+   * Master switch for the Rocket.Chat integration (ADR-004). Defaults to {@code false}: the service
+   * runs Matrix-only and no Rocket.Chat REST call, MongoDB connection or credential cron is ever
+   * made. Only when {@code rocket-chat.enabled=true} are the Rocket.Chat beans created.
+   */
+  private boolean enabled;
+
   @URL private String baseUrl;
 
   @NotBlank private String credentialCron;
 
-  @NotBlank private String mongoUrl;
+  private String mongoUrl;
 
   @Bean("rocketChatRestTemplate")
   public RestTemplate rocketChatRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
-        .setConnectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .setReadTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .defaultHeader(CONTENT_TYPE, MediaType.APPLICATION_JSON.toString())
         .build();
   }
@@ -69,6 +77,7 @@ public class RocketChatConfig {
   }
 
   @Bean
+  @ConditionalOnProperty(name = "rocket-chat.enabled", havingValue = "true")
   public MongoClient mongoClient() {
     var connectionString = new ConnectionString(mongoUrl);
     var settings = MongoClientSettings.builder().applyConnectionString(connectionString).build();
@@ -95,6 +104,18 @@ public class RocketChatConfig {
   @SuppressWarnings("unused")
   private boolean isCronExpression() {
     return CronExpression.isValidExpression(credentialCron);
+  }
+
+  @AssertTrue(message = "rocket-chat.base-url must be set when rocket-chat.enabled=true")
+  @SuppressWarnings("unused")
+  private boolean isBaseUrlPresentWhenEnabled() {
+    return !enabled || StringUtils.hasText(baseUrl);
+  }
+
+  @AssertTrue(message = "rocket-chat.mongo-url must be set when rocket-chat.enabled=true")
+  @SuppressWarnings("unused")
+  private boolean isMongoUrlPresentWhenEnabled() {
+    return !enabled || StringUtils.hasText(mongoUrl);
   }
 
   public String getApiUrl(String path) {

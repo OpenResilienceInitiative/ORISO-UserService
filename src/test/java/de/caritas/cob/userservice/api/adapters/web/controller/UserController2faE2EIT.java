@@ -44,11 +44,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import jakarta.servlet.http.Cookie;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -64,10 +64,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -75,6 +74,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
@@ -87,9 +87,9 @@ import org.springframework.web.client.RestTemplate;
 class UserController2faE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
 
@@ -111,15 +111,15 @@ class UserController2faE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
   @Captor private ArgumentCaptor<HttpEntity<OtpSetupDTO>> otpSetupCaptor;
 
@@ -174,11 +174,14 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = AuthorityValue.RESTRICTED_AGENCY_ADMIN)
   void startTwoFactorAuthByEmailSetupShouldRespondWithNoContent_If_Called_As_AgencyAdmin()
       throws Exception {
+    givenAValidRestrictedAgencyAdmin();
     startTwoFactorAuthorizationAndAssertResponseIsCorrect();
   }
 
   private void startTwoFactorAuthorizationAndAssertResponseIsCorrect() throws Exception {
-    givenAValidConsultant();
+    if (isNull(consultant)) {
+      givenAValidConsultant();
+    }
     givenAValidEmailDTO();
     givenKeycloakFoundNoEmailInUse();
     givenABearerToken();
@@ -203,6 +206,25 @@ class UserController2faE2EIT {
     var otpSetupDTO = otpSetupCaptor.getValue().getBody();
     assertNotNull(otpSetupDTO);
     assertEquals(emailDTO.getEmail().toLowerCase(), otpSetupDTO.getEmail());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void startTwoFactorAuthByEmailSetupShouldRespondWithConflictIfOtpIsDisabledForConsultant()
+      throws Exception {
+    givenAValidConsultant();
+    identityConfig.setOtpAllowedForConsultants(false);
+    givenAValidEmailDTO();
+
+    mockMvc
+        .perform(
+            put("/users/2fa/email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(emailDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
   }
 
   @Test
@@ -348,6 +370,24 @@ class UserController2faE2EIT {
 
     var c = consultantRepository.findById(consultant.getId()).orElseThrow();
     assertEquals(email, c.getEmail());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void finishTwoFactorAuthByEmailSetupShouldRespondWithConflictIfOtpIsDisabledForConsultant()
+      throws Exception {
+    givenAValidConsultant();
+    identityConfig.setOtpAllowedForConsultants(false);
+    givenABearerToken();
+    givenACorrectlyFormattedTan();
+
+    mockMvc
+        .perform(
+            post("/users/2fa/email/validate/{tan}", tan)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
   }
 
   @Test
@@ -653,6 +693,25 @@ class UserController2faE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.RESTRICTED_AGENCY_ADMIN)
+  void activateTwoFactorAuthByAppShouldRespondWithConflictIfRestrictedAgencyAdminOtpIsDisabled()
+      throws Exception {
+    givenAValidRestrictedAgencyAdmin();
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(false);
+    givenACorrectlyFormattedOneTimePasswordDTO();
+
+    mockMvc
+        .perform(
+            put("/users/2fa/app")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(oneTimePasswordDTO))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void deactivateTwoFactorAuthByAppShouldRespondWithOK() throws Exception {
     givenAValidConsultant();
@@ -942,6 +1001,7 @@ class UserController2faE2EIT {
 
   private void givenAValidConsultant() {
     consultant = consultantRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForConsultants(true);
     when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
     when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
     when(authenticatedUser.isConsultant()).thenReturn(true);
@@ -952,11 +1012,25 @@ class UserController2faE2EIT {
 
   private void givenAValidUser() {
     user = userRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForUsers(true);
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
+  }
+
+  private void givenAValidRestrictedAgencyAdmin() {
+    consultant = consultantRepository.findAll().iterator().next();
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(true);
+    when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
+    when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
+    when(authenticatedUser.getRoles())
+        .thenReturn(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue()));
+    when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("restrictedAgencyAdmin"));
   }
 }

@@ -15,10 +15,11 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.MeDTO;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -28,9 +29,15 @@ public class RocketChatTestConfig {
   public static final String AUTH_TOKEN =
       "auth-token configured in " + RocketChatTestConfig.class.getName();
 
-  @MockBean MongoClient mongoClient;
+  @MockitoBean MongoClient mongoClient;
 
+  /**
+   * ADR-004: this fake replaces the real Rocket.Chat adapter only when the integration is enabled.
+   * With {@code rocket-chat.enabled=false} (the testing default) contexts get the inert {@code
+   * DisabledRocketChatService} instead; RC-specific tests must set rocket-chat.enabled=true.
+   */
   @Bean
+  @ConditionalOnProperty(name = "rocket-chat.enabled", havingValue = "true")
   public RocketChatService rocketChatService(
       RestTemplate restTemplate,
       RocketChatCredentialsProvider rocketChatCredentialsProvider,

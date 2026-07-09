@@ -61,8 +61,11 @@ public class SessionStatisticsService {
         .agencyId(session.getAgencyId())
         .consultingType(session.getConsultingTypeId())
         .isTeamSession(session.isTeamSession())
-        .createDate(String.valueOf(session.getCreateDate()))
-        .messageDate(String.valueOf(session.getEnquiryMessageDate()))
+        .createDate(session.getCreateDate() != null ? session.getCreateDate().toString() : null)
+        .messageDate(
+            session.getEnquiryMessageDate() != null
+                ? session.getEnquiryMessageDate().toString()
+                : null)
         .postcode(session.getPostcode());
   }
 }

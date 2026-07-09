@@ -16,10 +16,10 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.Custo
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
+import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
 import java.util.Map;
 import java.util.Optional;
-import javax.validation.ConstraintViolationException;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -30,6 +30,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.lang.Nullable;
@@ -93,7 +94,8 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final BadRequestException ex, final WebRequest request) {
     log.warn(BAD_REQUEST, ex);
 
-    return handleExceptionInternal(ex, null, new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
+    return handleExceptionInternal(
+        ex, messageBody(ex.getMessage()), new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
   }
 
   /**
@@ -140,9 +142,9 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   protected ResponseEntity<Object> handleHttpMessageNotReadable(
       final HttpMessageNotReadableException ex,
       final HttpHeaders headers,
-      final HttpStatus status,
+      final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status.getReasonPhrase(), ex.getStackTrace());
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
@@ -157,9 +159,9 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   protected ResponseEntity<Object> handleMethodArgumentNotValid(
       final MethodArgumentNotValidException ex,
       final HttpHeaders headers,
-      final HttpStatus status,
+      final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status.getReasonPhrase(), ex);
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
@@ -229,6 +231,10 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
   private Map<String, String> reasonBody(String reason) {
     return Map.of("reason", reason);
+  }
+
+  private Map<String, String> messageBody(String message) {
+    return Map.of("message", Optional.ofNullable(message).orElse(HttpStatus.BAD_REQUEST.name()));
   }
 
   /**
@@ -315,10 +321,10 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       @Nullable Exception ex,
       @Nullable Object body,
       HttpHeaders headers,
-      HttpStatus status,
+      HttpStatusCode status,
       WebRequest request) {
     if (HttpStatus.INTERNAL_SERVER_ERROR.equals(status)) {
-      request.setAttribute("javax.servlet.error.exception", ex, 0);
+      request.setAttribute("jakarta.servlet.error.exception", ex, 0);
     }
 
     return new ResponseEntity<>(body, headers, status);

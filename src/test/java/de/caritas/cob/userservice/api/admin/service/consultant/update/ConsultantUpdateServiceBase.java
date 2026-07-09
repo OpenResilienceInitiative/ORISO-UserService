@@ -14,7 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import java.time.LocalDateTime;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 public class ConsultantUpdateServiceBase {
 
@@ -22,9 +22,9 @@ public class ConsultantUpdateServiceBase {
 
   @Autowired protected ConsultantUpdateService consultantUpdateService;
 
-  @MockBean protected IdentityClient identityClient;
+  @MockitoBean protected IdentityClient identityClient;
 
-  @MockBean protected RocketChatService rocketChatService;
+  @MockitoBean protected RocketChatService rocketChatService;
 
   public void updateConsultant_Should_returnUpdatedPersistedConsultant_When_inputDataIsValid() {
     UpdateAdminConsultantDTO updateConsultantDTO = new UpdateAdminConsultantDTO();

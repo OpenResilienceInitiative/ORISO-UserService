@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Renumbered from 0055 (taken by 0055_account_invites on dev meanwhile).
+       Guarded by preconditions because the case handover tables were
+       hand-applied on the dev cluster before this changeset ever ran:
+       if either table already exists, mark the changeset as ran. -->
+  <changeSet id="0057_case_handover_request" author="caritas">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <not>
+          <tableExists tableName="case_handover_request"/>
+        </not>
+        <not>
+          <tableExists tableName="case_handover_reason_policy"/>
+        </not>
+      </and>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0057_case_handover_request/case-handover-request.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+  </changeSet>
+</databaseChangeLog>

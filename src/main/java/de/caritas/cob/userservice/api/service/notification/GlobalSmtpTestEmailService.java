@@ -4,15 +4,15 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import jakarta.mail.Authenticator;
+import jakarta.mail.Message;
+import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Properties;
-import javax.mail.Authenticator;
-import javax.mail.Message;
-import javax.mail.PasswordAuthentication;
-import javax.mail.Transport;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeMessage;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,8 +43,8 @@ public class GlobalSmtpTestEmailService {
       props.put("mail.smtp.starttls.enable", "true");
     }
 
-    javax.mail.Session session =
-        javax.mail.Session.getInstance(
+    jakarta.mail.Session session =
+        jakarta.mail.Session.getInstance(
             props,
             new Authenticator() {
               @Override

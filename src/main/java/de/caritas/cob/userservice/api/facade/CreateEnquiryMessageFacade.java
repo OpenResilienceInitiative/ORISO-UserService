@@ -80,6 +80,10 @@ public class CreateEnquiryMessageFacade {
   @Value("${rocket.systemuser.id}")
   private String rocketChatSystemUserId;
 
+  /** ADR-004: with Rocket.Chat disabled every enquiry always takes the Matrix path. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
+
   /**
    * Creates the private Rocket.Chat group, initializes the session and saves the enquiry message in
    * Rocket.Chat.
@@ -88,7 +92,8 @@ public class CreateEnquiryMessageFacade {
    */
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
-      var hasRocketChatCredentials = hasUsableRocketChatCredentials(enquiryData);
+      var hasRocketChatCredentials =
+          rocketChatEnabled && hasUsableRocketChatCredentials(enquiryData);
       if (hasRocketChatCredentials) {
         checkIfKeycloakAndRocketChatUsernamesMatch(
             enquiryData.getRocketChatCredentials().getRocketChatUserId(), enquiryData.getUser());

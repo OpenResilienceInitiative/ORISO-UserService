@@ -145,20 +145,31 @@ public class CreateSessionFacade {
     var sessionData = fromUserDTO(userDTO);
     var isTeaming = isTrue(agencyDTO.getTeamAgency());
     boolean initialized = false;
+    Long sessionId = null;
 
     try {
       var session = sessionService.initializeSession(user, userDTO, isTeaming);
       initialized = nonNull(session) && nonNull(session.getId());
+      sessionId = initialized ? session.getId() : null;
       sessionDataService.saveSessionData(session, sessionData);
 
       return session;
     } catch (Exception ex) {
-      rollbackFacade.rollBackUserAccount(
-          RollbackUserAccountInformation.builder()
-              .userId(user.getUserId())
-              .user(user)
-              .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-              .build());
+      if (initialized) {
+        log.warn(
+            "Session {} for user {} was already persisted; skipping user rollback after"
+                + " session data failure",
+            sessionId,
+            user.getUsername(),
+            ex);
+      } else {
+        rollbackFacade.rollBackUserAccount(
+            RollbackUserAccountInformation.builder()
+                .userId(user.getUserId())
+                .user(user)
+                .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
+                .build());
+      }
 
       var stepWord = initialized ? "save session data" : "initialize session";
       var message = String.format("Could not %s for user %s.", stepWord, user.getUsername());

@@ -5,26 +5,26 @@ import static java.util.Objects.nonNull;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.SequenceGenerator;
+import jakarta.persistence.Table;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.FetchType;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.JoinColumn;
-import javax.persistence.ManyToOne;
-import javax.persistence.OneToMany;
-import javax.persistence.SequenceGenerator;
-import javax.persistence.Table;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -37,7 +37,9 @@ import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 @Entity
@@ -50,7 +52,7 @@ import org.springframework.lang.Nullable;
 @ToString
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(
     name = "tenantFilter",
     condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
@@ -121,6 +123,7 @@ public class Session implements TenantAware {
       updatable = false,
       nullable = false,
       columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private int consultingTypeId;
 
   @Column(
@@ -146,6 +149,7 @@ public class Session implements TenantAware {
 
   @NonNull
   @Column(columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private SessionStatus status;
 
   @Column(name = "message_date")
@@ -163,6 +167,7 @@ public class Session implements TenantAware {
   private List<SessionData> sessionData;
 
   @Column(name = "is_team_session", columnDefinition = "tinyint(4) default '0'")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamSession;
 
   @Column(nullable = false, columnDefinition = "bit default false")

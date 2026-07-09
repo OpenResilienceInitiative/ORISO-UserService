@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.atMost;
@@ -86,11 +87,11 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Grou
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.SessionDataInitializingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.WelcomeMessageDTO;
 import de.caritas.cob.userservice.messageservice.generated.web.model.MessageResponseDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -206,6 +207,8 @@ class CreateEnquiryMessageFacadeTest {
 
   @BeforeEach
   void setUp() throws SecurityException {
+    // Most cases cover the Rocket.Chat enquiry flow (ADR-004: disabled by default)
+    setField(createEnquiryMessageFacade, "rocketChatEnabled", true);
     setField(
         createEnquiryMessageFacade,
         FIELD_NAME_ROCKET_CHAT_SYSTEM_USER_ID,
@@ -285,6 +288,47 @@ class CreateEnquiryMessageFacadeTest {
     assertEquals(matrixRoomId, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());
     assertNotNull(session.getEnquiryMessageDate());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void createEnquiryMessage_Should_PostMatrixEnquiry_When_RocketChatIsDisabled() throws Exception {
+    // ADR-004: even with usable Rocket.Chat credentials the Matrix path must be taken
+    setField(createEnquiryMessageFacade, "rocketChatEnabled", false);
+    var matrixRoomId = "!session-room:oriso.org";
+    var matrixUserId = "@asker:oriso.org";
+    var matrixToken = "matrix-token";
+    var matrixEventId = "$event";
+    user.setMatrixUserId(matrixUserId);
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setIsConsultantDirectlySet(false);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setMatrixRoomId(matrixRoomId);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId()))
+        .thenReturn(extendedConsultingTypeResponseDTO);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+    when(matrixSynapseService.loginAsUserAccessToken(matrixUserId)).thenReturn(matrixToken);
+    when(matrixSynapseService.sendMessage(matrixRoomId, MESSAGE, matrixToken))
+        .thenReturn(Map.of("event_id", matrixEventId));
+
+    final var response =
+        createEnquiryMessageFacade.createEnquiryMessage(
+            new EnquiryData(user, SESSION_ID, MESSAGE, null, RC_CREDENTIALS));
+
+    verify(rocketChatService, never()).getUserInfo(anyString());
+    verify(rocketChatService, never()).createPrivateGroup(anyString(), any());
+    verify(messageServiceProvider, never())
+        .postEnquiryMessage(
+            any(RocketChatData.class), any(CreateEnquiryExceptionInformation.class));
+    assertEquals(matrixRoomId, response.getRcGroupId());
+    assertEquals(matrixEventId, response.getT());
+    assertEquals(matrixRoomId, session.getGroupId());
     resetRequestAttributes();
   }
 
@@ -1138,5 +1182,175 @@ class CreateEnquiryMessageFacadeTest {
 
   private MessageResponseDTO createMessageResponse() {
     return easyRandom.nextObject(MessageResponseDTO.class);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-06
+  // ---------------------------------------------------------------------------
+
+  private void givenHappyPathEnquiryStubs() throws Exception {
+    extendedConsultingTypeResponseDTO.getWelcomeMessage().sendWelcomeMessage(false);
+    groupDTO.setId(RC_GROUP_ID);
+    groupResponseDTO.setSuccess(true);
+    groupResponseDTO.setGroup(groupDTO);
+    rocketChatUserDTO.setUsername(USERNAME);
+    userInfoResponseDTO.setUser(rocketChatUserDTO);
+    rocketChatCredentials.setRocketChatUserId(RC_USER_ID);
+    rocketChatCredentials.setRocketChatUsername(RC_USERNAME);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultingTypeManager.getConsultingTypeSettings(session.getConsultingTypeId()))
+        .thenReturn(extendedConsultingTypeResponseDTO);
+    when(rocketChatService.createPrivateGroup(anyString(), any()))
+        .thenReturn(Optional.of(groupResponseDTO));
+    when(rocketChatService.getUserInfo(RC_USER_ID)).thenReturn(userInfoResponseDTO);
+    when(userHelper.doUsernamesMatch(anyString(), anyString())).thenReturn(true);
+    when(rocketChatRoomNameGenerator.generateGroupName(any(Session.class)))
+        .thenReturn(session.getId().toString());
+    when(messageServiceProvider.postEnquiryMessage(
+            any(RocketChatData.class), any(CreateEnquiryExceptionInformation.class)))
+        .thenReturn(createMessageResponse());
+  }
+
+  @Test
+  void
+      createEnquiryMessage_Should_UseTopicConsultantAgencies_When_MainTopicIdSetAndEligibleConsultantsFound()
+          throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    session.setMainTopicId(42L);
+    givenHappyPathEnquiryStubs();
+    when(topicConsultantRoutingService.findEligibleConsultantIds(42L, 0))
+        .thenReturn(List.of(USER_ID));
+    when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of(USER_ID)))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+
+    createEnquiryMessageFacade.createEnquiryMessage(
+        new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    verify(consultantAgencyService).getConsultantAgenciesByConsultantIds(List.of(USER_ID));
+    verify(consultantAgencyService, never()).findConsultantsByAgencyId(anyLong());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void
+      createEnquiryMessage_Should_FallBackToAgencyConsultants_When_MainTopicIdSetButNoEligibleConsultantsFound()
+          throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    session.setMainTopicId(42L);
+    givenHappyPathEnquiryStubs();
+    when(topicConsultantRoutingService.findEligibleConsultantIds(42L, 0)).thenReturn(List.of());
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+
+    createEnquiryMessageFacade.createEnquiryMessage(
+        new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    verify(consultantAgencyService).findConsultantsByAgencyId(AGENCY_ID);
+    verify(consultantAgencyService, never()).getConsultantAgenciesByConsultantIds(any());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void
+      createEnquiryMessage_Should_FallBackToAgencyConsultants_When_MainTopicIdSetButTopicAgenciesEmpty()
+          throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    session.setMainTopicId(42L);
+    givenHappyPathEnquiryStubs();
+    when(topicConsultantRoutingService.findEligibleConsultantIds(42L, 0))
+        .thenReturn(List.of(USER_ID));
+    when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of(USER_ID)))
+        .thenReturn(List.of());
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+
+    createEnquiryMessageFacade.createEnquiryMessage(
+        new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    verify(consultantAgencyService).findConsultantsByAgencyId(AGENCY_ID);
+    resetRequestAttributes();
+  }
+
+  @Test
+  void
+      createEnquiryMessage_Should_SendLiveEvent_When_AnonymousStyleRegistrationAndConsultantsFound()
+          throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    givenHappyPathEnquiryStubs();
+    when(sessionService.isAnonymousStyleRegistration(any())).thenReturn(true);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID))
+        .thenReturn(CONSULTANT_AGENCY_LIST);
+
+    createEnquiryMessageFacade.createEnquiryMessage(
+        new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    verify(liveEventNotificationService)
+        .sendLiveNewAnonymousEnquiryEventToUsers(any(), eq(SESSION_ID));
+    resetRequestAttributes();
+  }
+
+  @Test
+  void
+      createEnquiryMessage_ShouldNot_SendLiveEvent_When_AnonymousStyleRegistrationButNoConsultantsFound()
+          throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    givenHappyPathEnquiryStubs();
+    when(sessionService.isAnonymousStyleRegistration(any())).thenReturn(true);
+    when(consultantAgencyService.findConsultantsByAgencyId(AGENCY_ID)).thenReturn(List.of());
+
+    createEnquiryMessageFacade.createEnquiryMessage(
+        new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    verify(liveEventNotificationService, never())
+        .sendLiveNewAnonymousEnquiryEventToUsers(any(), anyLong());
+    resetRequestAttributes();
+  }
+
+  @Test
+  void createEnquiryMessage_Should_SwallowException_When_EventNotificationServiceThrows()
+      throws Exception {
+    session.setUser(user);
+    session.setConsultingTypeId(0);
+    session.setConsultant(null);
+    session.setEnquiryMessageDate(null);
+    session.setAgencyId(AGENCY_ID);
+    session.setIsConsultantDirectlySet(false);
+    givenHappyPathEnquiryStubs();
+    doThrow(new RuntimeException("boom"))
+        .when(eventNotificationService)
+        .createNewClientRequestNotifications(any(), any());
+
+    var response =
+        createEnquiryMessageFacade.createEnquiryMessage(
+            new EnquiryData(user, SESSION_ID, MESSAGE, null, rocketChatCredentials));
+
+    assertEquals(SESSION_ID, response.getSessionId());
+    resetRequestAttributes();
   }
 }

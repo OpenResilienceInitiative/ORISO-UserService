@@ -12,7 +12,10 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -20,8 +23,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.PositiveOrZero;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -29,8 +30,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -239,6 +240,20 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findAllByInfixShouldNotReturnConsultantsMarkedForDeletion() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var consultant = givenConsultantMatchingEmail(infix);
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    consultant.setDeleteDate(LocalDateTime.now());
+    consultant = underTest.save(consultant);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
+
+    assertEquals(0, consultantPage.getTotalElements());
+  }
+
+  @Test
   void findAllByInfixShouldBePagedIfPageSizeGiven() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
     var pageSize = easyRandom.nextInt(100) + 1;
@@ -265,6 +280,23 @@ class ConsultantRepositoryIT {
         underTest.findAllByInfixAndAgencyIds(infix, Lists.newArrayList(), null, pageRequest);
 
     assertEquals(0, consultantPage.getNumberOfElements());
+  }
+
+  @Test
+  void findAllByInfixAndAgencyIdShouldNotReturnConsultantsMarkedForDeletion() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var agencyId = givenANewAgencyId();
+    var consultant = givenConsultantMatchingEmail(infix);
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    consultant.setDeleteDate(LocalDateTime.now());
+    consultant = underTest.save(consultant);
+    saveConsultantAgency(consultant, agencyId);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage =
+        underTest.findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged());
+
+    assertEquals(0, consultantPage.getTotalElements());
   }
 
   @Test

@@ -23,21 +23,21 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,17 +59,17 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @Autowired private IdentityConfig identityConfig;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean IdentityClient identityClient;
+  @MockitoBean IdentityClient identityClient;
 
-  @MockBean TenantService tenantService;
+  @MockitoBean TenantService tenantService;
 
-  @MockBean TenantResolverService tenantResolverService;
+  @MockitoBean TenantResolverService tenantResolverService;
 
-  @MockBean AuthenticatedUser authenticatedUser;
+  @MockitoBean AuthenticatedUser authenticatedUser;
 
-  @MockBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @AfterEach
   void reset() {

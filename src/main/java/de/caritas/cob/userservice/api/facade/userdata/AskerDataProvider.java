@@ -119,7 +119,7 @@ public class AskerDataProvider {
       log.warn(
           "Could not load agencies for user {}: status={}, body={}",
           user.getUserId(),
-          e.getRawStatusCode(),
+          e.getStatusCode().value(),
           e.getResponseBodyAsString());
       return List.of();
     }

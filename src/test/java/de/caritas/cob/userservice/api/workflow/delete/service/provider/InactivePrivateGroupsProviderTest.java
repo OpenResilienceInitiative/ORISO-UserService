@@ -16,6 +16,7 @@ import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupsListAllException;
+import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -83,7 +84,7 @@ public class InactivePrivateGroupsProviderTest {
         fieldNameSessionInactiveDeleteWorkflowCheckDays,
         valueSessionInactiveDeleteWorkflowCheckDays);
     LocalDateTime dateToCheck =
-        LocalDateTime.now()
+        CustomLocalDateTime.nowInUtc()
             .with(LocalTime.MIDNIGHT)
             .minusDays(valueSessionInactiveDeleteWorkflowCheckDays);
     when(chatRepository.findAll()).thenReturn(IterableUtils.emptyIterable());

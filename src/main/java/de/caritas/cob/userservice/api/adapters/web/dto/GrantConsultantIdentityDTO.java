@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
-import javax.validation.constraints.NotNull;
 import lombok.Data;
 
 /**

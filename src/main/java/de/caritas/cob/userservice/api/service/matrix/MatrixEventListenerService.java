@@ -9,10 +9,10 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.util.*;
 import java.util.concurrent.*;
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +53,17 @@ public class MatrixEventListenerService {
 
   // Flag to control sync loop
   private volatile boolean running = false;
+
+  // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
+  static final long INITIAL_BACKOFF_MS = 5_000L;
+  static final long MAX_BACKOFF_MS = 60_000L;
+
+  // Emit a heartbeat every N successful sync iterations so a healthy/stuck loop is observable.
+  // performMatrixSync uses a 30s long-poll, so ~10 iterations is roughly every 5 minutes.
+  static final int HEARTBEAT_EVERY_N_ITERATIONS = 10;
+
+  // Re-bootstrap the admin token after this many consecutive sync failures (likely an auth issue).
+  static final int SYNC_FAILURES_BEFORE_REBOOTSTRAP = 3;
 
   @PostConstruct
   public void initialize() {
@@ -111,23 +122,25 @@ public class MatrixEventListenerService {
   /**
    * Main sync loop - continuously polls Matrix /sync for new events. Uses long-polling with timeout
    * to get real-time updates.
+   *
+   * <p>Deployment is a single replica with no HPA, so no multi-replica leader election is needed
+   * here; a transient admin-token failure must not silently disable real-time events, so the loop
+   * bootstraps the token with backoff and re-acquires it on repeated sync failures.
    */
   private void startMatrixSyncLoop() {
     running = true;
     log.info("🔷 Starting Matrix sync loop...");
 
-    // Get admin token
-    try {
-      adminAccessToken = matrixSynapseService.getAdminToken();
-      if (adminAccessToken == null) {
-        log.error("❌ Failed to get admin token - sync loop cannot start");
-        return;
-      }
-      log.info("✅ Admin token obtained for Matrix sync");
-    } catch (Exception e) {
-      log.error("❌ Error getting admin token", e);
+    // Keep trying to obtain the admin token; a transient failure must not permanently kill events.
+    if (!bootstrapAdminToken()) {
+      // Only returns false on shutdown/interrupt.
+      log.info("🔷 Matrix sync loop stopped before obtaining admin token");
       return;
     }
+
+    long errorBackoffMs = INITIAL_BACKOFF_MS;
+    long iteration = 0;
+    int consecutiveSyncFailures = 0;
 
     while (running) {
       try {
@@ -137,10 +150,36 @@ public class MatrixEventListenerService {
         if (syncResult != null) {
           // Process events from sync result
           processMatrixSyncEvents(syncResult);
+          // Successful sync: reset the error backoff and failure counter.
+          errorBackoffMs = INITIAL_BACKOFF_MS;
+          consecutiveSyncFailures = 0;
+        } else {
+          // performMatrixSync swallows exceptions and returns null; treat as a soft failure so an
+          // auth problem eventually forces a token re-bootstrap instead of spinning forever.
+          consecutiveSyncFailures++;
+          if (consecutiveSyncFailures >= SYNC_FAILURES_BEFORE_REBOOTSTRAP) {
+            log.warn(
+                "⚠️ {} consecutive Matrix sync failures - re-acquiring admin token",
+                consecutiveSyncFailures);
+            adminAccessToken = null;
+            if (!bootstrapAdminToken()) {
+              break;
+            }
+            consecutiveSyncFailures = 0;
+          }
         }
 
-        // Small delay to prevent CPU spinning if sync fails immediately
-        Thread.sleep(100);
+        // Heartbeat so a healthy/stuck loop is observable without log-spamming.
+        iteration++;
+        if (iteration % HEARTBEAT_EVERY_N_ITERATIONS == 0) {
+          log.info(
+              "💓 Matrix sync loop healthy (iteration {}, {} registered rooms)",
+              iteration,
+              roomToSessionMap.size());
+        }
+
+        // Small delay to prevent CPU spinning if sync returns immediately.
+        sleep(100);
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -148,8 +187,9 @@ public class MatrixEventListenerService {
       } catch (Exception e) {
         log.error("❌ Error in Matrix sync loop", e);
         try {
-          // Wait before retrying on error
-          Thread.sleep(5000);
+          // Exponential backoff before retrying on error (5s→10s→…→60s cap).
+          sleep(errorBackoffMs);
+          errorBackoffMs = nextBackoffMillis(errorBackoffMs);
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           break;
@@ -158,6 +198,62 @@ public class MatrixEventListenerService {
     }
 
     log.info("🔷 Matrix sync loop stopped");
+  }
+
+  /**
+   * Acquire the Matrix admin token, retrying with exponential backoff until it succeeds or the loop
+   * is shut down. On success {@link #adminAccessToken} is set.
+   *
+   * @return {@code true} once a token was obtained, {@code false} if the loop stopped (shutdown or
+   *     interrupt) before a token could be acquired
+   */
+  private boolean bootstrapAdminToken() {
+    long backoffMs = INITIAL_BACKOFF_MS;
+    while (running) {
+      try {
+        adminAccessToken = matrixSynapseService.getAdminToken();
+        if (adminAccessToken != null) {
+          log.info("✅ Admin token obtained for Matrix sync");
+          return true;
+        }
+        log.error(
+            "❌ Failed to get admin token - retrying in {}ms (sync loop not yet started)",
+            backoffMs);
+      } catch (Exception e) {
+        log.error("❌ Error getting admin token - retrying in {}ms", backoffMs, e);
+      }
+
+      try {
+        sleep(backoffMs);
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+      backoffMs = nextBackoffMillis(backoffMs);
+    }
+    return false;
+  }
+
+  /**
+   * Compute the next backoff delay: double the current delay, capped at {@link #MAX_BACKOFF_MS}.
+   * Pure and side-effect free so it can be unit tested without real sleeps.
+   *
+   * @param currentMillis the current backoff delay in milliseconds
+   * @return the next backoff delay in milliseconds (5s→10s→20s→40s→60s→60s…)
+   */
+  static long nextBackoffMillis(long currentMillis) {
+    long doubled = currentMillis * 2;
+    return Math.min(doubled, MAX_BACKOFF_MS);
+  }
+
+  /**
+   * Sleep seam so the backoff timing can be stubbed out in unit tests (no real waiting).
+   *
+   * @param millis milliseconds to sleep
+   * @throws InterruptedException if the thread is interrupted while sleeping
+   */
+  void sleep(long millis) throws InterruptedException {
+    Thread.sleep(millis);
   }
 
   /**

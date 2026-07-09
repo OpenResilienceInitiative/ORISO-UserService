@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
@@ -120,6 +121,11 @@ public class SupervisorLogsService {
   private static class SupervisorLogEntryRowMapper implements RowMapper<SupervisorLogEntry> {
     @Override
     public SupervisorLogEntry mapRow(ResultSet rs, int rowNum) throws SQLException {
+      // ADR-008 item 4 (DRAFT): the stored note may be structured JSON (reason + justification +
+      // consent) or legacy free text. Decode it so the log surfaces the human justification (and
+      // reason/consent) rather than raw JSON. decode() is defensive: legacy free text decodes to a
+      // justification with null reason and NOT_REQUIRED consent, so old rows keep working.
+      SupervisionNotes.Payload note = SupervisionNotes.decode(rs.getString("notes"));
       return SupervisorLogEntry.builder()
           .relationId(rs.getLong("relationId"))
           .sessionId(rs.getLong("sessionId"))
@@ -131,7 +137,9 @@ public class SupervisorLogsService {
           .actorConsultantId(rs.getString("actorConsultantId"))
           .actorUsername(rs.getString("actorUsername"))
           .actorName(rs.getString("actorName"))
-          .notes(rs.getString("notes"))
+          .notes(note.justification)
+          .reasonCode(note.reasonCode)
+          .consent(note.consent)
           .build();
     }
   }
@@ -191,7 +199,11 @@ public class SupervisorLogsService {
     private String actorConsultantId;
     private String actorUsername;
     private String actorName;
+    // ADR-008: the human justification (decoded from the stored note; raw JSON is never exposed).
     private String notes;
+    // ADR-008 item 4 (DRAFT): decoded structured fields (null/NOT_REQUIRED for legacy rows).
+    private String reasonCode;
+    private String consent;
   }
 
   @Data

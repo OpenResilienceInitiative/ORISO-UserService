@@ -7,12 +7,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.helper.json.OffsetDateTimeToStringSerializer;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.EventType;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,7 +62,7 @@ class ArchiveOrDeleteSessionStatisticsEventTest {
     assertThat(archiveSessionStatisticsEventMessage.getTenantId()).isEqualTo(TENANT_ID);
     assertThat(archiveSessionStatisticsEventMessage.getUserId()).isEqualTo(USER_ID);
     assertThat(archiveSessionStatisticsEventMessage.getEndDate())
-        .isEqualTo(END_DATE.truncatedTo(ChronoUnit.SECONDS) + "Z");
+        .isEqualTo(CustomLocalDateTime.toIsoTime(END_DATE));
   }
 
   private static SimpleModule buildSimpleModule() {

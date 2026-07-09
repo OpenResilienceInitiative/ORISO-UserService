@@ -1,0 +1,595 @@
+package de.caritas.cob.userservice.api.service.matrix;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
+import de.caritas.cob.userservice.api.service.session.SessionService;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
+import org.springframework.test.util.ReflectionTestUtils;
+
+/**
+ * Focused resilience tests for the Matrix sync loop bootstrap/backoff (hardening B1). These verify
+ * the backoff schedule and that a transient null admin token does not permanently stop retrying.
+ * They never sleep for real: the {@code sleep(long)} seam is stubbed to a no-op.
+ */
+@ExtendWith(MockitoExtension.class)
+class MatrixEventListenerServiceTest {
+
+  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private SessionService sessionService;
+  @Mock private LiveEventNotificationService liveEventNotificationService;
+  @Mock private EventNotificationService eventNotificationService;
+  @Mock private UserRepository userRepository;
+  @Mock private ConsultantRepository consultantRepository;
+  @Mock private SessionRepository sessionRepository;
+
+  private Logger logger;
+  private ListAppender<ILoggingEvent> logAppender;
+
+  @BeforeEach
+  void setUpLogging() {
+    logger = (Logger) LoggerFactory.getLogger(MatrixEventListenerService.class);
+    logAppender = new ListAppender<>();
+    logAppender.start();
+    logger.addAppender(logAppender);
+    logger.setLevel(Level.DEBUG);
+  }
+
+  @AfterEach
+  void tearDownLogging() {
+    logger.detachAppender(logAppender);
+  }
+
+  private MatrixEventListenerService newService() {
+    return new MatrixEventListenerService(
+        matrixSynapseService,
+        sessionService,
+        liveEventNotificationService,
+        eventNotificationService,
+        Optional.empty(),
+        userRepository,
+        consultantRepository,
+        sessionRepository);
+  }
+
+  @Test
+  void nextBackoffMillis_shouldFollowExponentialScheduleCappedAt60s() {
+    assertThat(MatrixEventListenerService.nextBackoffMillis(5_000L)).isEqualTo(10_000L);
+    assertThat(MatrixEventListenerService.nextBackoffMillis(10_000L)).isEqualTo(20_000L);
+    assertThat(MatrixEventListenerService.nextBackoffMillis(20_000L)).isEqualTo(40_000L);
+    assertThat(MatrixEventListenerService.nextBackoffMillis(40_000L)).isEqualTo(60_000L);
+    // Capped: 40s doubles to 80s but is clamped to the 60s ceiling, and stays there.
+    assertThat(MatrixEventListenerService.nextBackoffMillis(60_000L)).isEqualTo(60_000L);
+  }
+
+  @Test
+  void backoffSchedule_startsAt5sAndCapsAt60s() {
+    long current = MatrixEventListenerService.INITIAL_BACKOFF_MS;
+    long[] expected = {5_000L, 10_000L, 20_000L, 40_000L, 60_000L, 60_000L, 60_000L};
+
+    assertThat(current).isEqualTo(expected[0]);
+    for (int i = 1; i < expected.length; i++) {
+      current = MatrixEventListenerService.nextBackoffMillis(current);
+      assertThat(current).as("backoff step %d", i).isEqualTo(expected[i]);
+    }
+    assertThat(MatrixEventListenerService.MAX_BACKOFF_MS).isEqualTo(60_000L);
+  }
+
+  @Test
+  void bootstrapAdminToken_shouldKeepRetryingUntilTokenBecomesAvailable() {
+    // No-op sleep so the retry loop does not wait for real backoff.
+    MatrixEventListenerService service =
+        new MatrixEventListenerService(
+            matrixSynapseService,
+            sessionService,
+            liveEventNotificationService,
+            eventNotificationService,
+            Optional.empty(),
+            userRepository,
+            consultantRepository,
+            sessionRepository) {
+          @Override
+          void sleep(long millis) {
+            // deterministic: never actually sleep in the test
+          }
+        };
+    ReflectionTestUtils.setField(service, "running", true);
+
+    // Two transient failures (null) then a real token: the loop must not give up on the first null.
+    when(matrixSynapseService.getAdminToken()).thenReturn(null, null, "admin-token-123");
+
+    boolean acquired = (boolean) ReflectionTestUtils.invokeMethod(service, "bootstrapAdminToken");
+
+    assertThat(acquired).isTrue();
+    assertThat(ReflectionTestUtils.getField(service, "adminAccessToken"))
+        .isEqualTo("admin-token-123");
+    // Proves it did not stop after the first null: getAdminToken was polled repeatedly.
+    verify(matrixSynapseService, atLeast(3)).getAdminToken();
+  }
+
+  @Test
+  void bootstrapAdminToken_shouldStopWhenNotRunning() {
+    MatrixEventListenerService service = newService();
+    // running defaults to false -> the bootstrap loop must exit immediately without polling.
+    boolean acquired = (boolean) ReflectionTestUtils.invokeMethod(service, "bootstrapAdminToken");
+
+    assertThat(acquired).isFalse();
+  }
+
+  // ── classifyContent ────────────────────────────────────────────────────────
+
+  static Stream<Arguments> knownMsgTypes() {
+    return Stream.of(
+        Arguments.of("m.text", "TEXT"),
+        Arguments.of("m.image", "IMAGE"),
+        Arguments.of("m.file", "FILE"),
+        Arguments.of("m.audio", "AUDIO"),
+        Arguments.of("m.video", "VIDEO"),
+        Arguments.of("m.notice", "NOTICE"),
+        Arguments.of("m.emote", "EMOTE"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("knownMsgTypes")
+  void classifyContent_shouldMapKnownMsgTypesToContentClass(String msgtype, String expected) {
+    // Notification privacy metadata must classify Matrix message kinds for the UI layer.
+    var service = newService();
+    assertThat(invokeClassifyContent(service, msgtype)).isEqualTo(expected);
+  }
+
+  @Test
+  void classifyContent_shouldReturnUnknown_whenMsgtypeIsNull() {
+    // Events without a msgtype still need a safe fallback label for logging.
+    assertThat(invokeClassifyContent(newService(), null)).isEqualTo("UNKNOWN");
+  }
+
+  @Test
+  void classifyContent_shouldReturnUnknown_whenMsgtypeIsBlank() {
+    // Whitespace-only msgtypes must not be treated as a real content class.
+    assertThat(invokeClassifyContent(newService(), "   ")).isEqualTo("UNKNOWN");
+  }
+
+  @Test
+  void classifyContent_shouldReturnOther_whenMsgtypeIsUnrecognized() {
+    // Future Matrix msgtypes must bucket into OTHER until explicitly supported.
+    assertThat(invokeClassifyContent(newService(), "m.custom")).isEqualTo("OTHER");
+  }
+
+  // ── extractThreadRootId ────────────────────────────────────────────────────
+
+  @Test
+  void extractThreadRootId_shouldReturnNull_whenContentIsNull() {
+    // Non-thread messages must not fabricate a thread root id.
+    assertThat(invokeExtractThreadRootId(newService(), null)).isNull();
+  }
+
+  @Test
+  void extractThreadRootId_shouldReturnNull_whenRelatesToMissing() {
+    // Plain messages without m.relates_to are not thread replies.
+    assertThat(invokeExtractThreadRootId(newService(), Map.of("body", "hi"))).isNull();
+  }
+
+  @Test
+  void extractThreadRootId_shouldReturnNull_whenRelatesToIsNotAMap() {
+    // Malformed relates_to payloads must be ignored rather than crashing the sync loop.
+    assertThat(invokeExtractThreadRootId(newService(), Map.of("m.relates_to", "not-a-map")))
+        .isNull();
+  }
+
+  @Test
+  void extractThreadRootId_shouldReturnNull_whenRelTypeIsNotThread() {
+    // Only m.thread relations identify a thread root for reply notifications.
+    var content =
+        contentMap("m.relates_to", Map.of("rel_type", "m.reference", "event_id", "$root"));
+    assertThat(invokeExtractThreadRootId(newService(), content)).isNull();
+  }
+
+  @Test
+  void extractThreadRootId_shouldReturnEventId_whenValidThreadRelation() {
+    // Thread replies must carry the root event id so clients can open the correct thread.
+    var content =
+        contentMap("m.relates_to", Map.of("rel_type", "m.thread", "event_id", "$root-event"));
+    assertThat(invokeExtractThreadRootId(newService(), content)).isEqualTo("$root-event");
+  }
+
+  // ── extractMessageBody ───────────────────────────────────────────────────────
+
+  @Test
+  void extractMessageBody_shouldReturnBody_whenPresent() {
+    // Plain-text Matrix messages expose the user-visible text in the body field.
+    assertThat(invokeExtractMessageBody(newService(), Map.of("body", "hello"))).isEqualTo("hello");
+  }
+
+  @Test
+  void extractMessageBody_shouldReturnFormattedBody_whenBodyAbsent() {
+    // Rich-text fallbacks must still yield readable text for debug mirroring.
+    assertThat(invokeExtractMessageBody(newService(), Map.of("formatted_body", "<b>hello</b>")))
+        .isEqualTo("<b>hello</b>");
+  }
+
+  @Test
+  void extractMessageBody_shouldReturnThreadReplyMarker_whenOnlyRelatesToPresent() {
+    // Thread-only payloads still need a traceable placeholder for the Redis debug mirror.
+    var content = contentMap("m.relates_to", Map.of("event_id", "$parent"));
+    assertThat(invokeExtractMessageBody(newService(), content)).isEqualTo("thread-reply:$parent");
+  }
+
+  @Test
+  void extractMessageBody_shouldReturnNull_whenContentIsNull() {
+    // Empty events must not NPE the sync handler.
+    assertThat(invokeExtractMessageBody(newService(), null)).isNull();
+  }
+
+  // ── buildPrivacyEnvelope ─────────────────────────────────────────────────────
+
+  @Test
+  void buildPrivacyEnvelope_shouldFlagAttachment_whenMsgtypeIsImage() {
+    // Image messages must be flagged as attachments without logging the binary payload.
+    var envelope =
+        invokeBuildPrivacyEnvelope(
+            newService(),
+            Map.of("event_id", "$e1", "origin_server_ts", 1_700_000_000_000L),
+            "!room:matrix",
+            "@sender:matrix",
+            "m.image",
+            Map.of("body", "photo"));
+    assertThat(envelope.isHasAttachment()).isTrue();
+    assertThat(envelope.getContentClass()).isEqualTo("IMAGE");
+  }
+
+  @Test
+  void buildPrivacyEnvelope_shouldFlagAttachment_whenContentHasUrlKey() {
+    // Encrypted uploads reference media via url even when msgtype is non-standard.
+    var envelope =
+        invokeBuildPrivacyEnvelope(
+            newService(),
+            Map.of("event_id", "$e2"),
+            "!room:matrix",
+            "@sender:matrix",
+            "m.text",
+            Map.of("body", "see file", "url", "mxc://matrix/file"));
+    assertThat(envelope.isHasAttachment()).isTrue();
+  }
+
+  @Test
+  void buildPrivacyEnvelope_shouldFlagAttachment_whenContentHasFileKey() {
+    // File metadata objects also indicate an attachment for notification badges.
+    var envelope =
+        invokeBuildPrivacyEnvelope(
+            newService(),
+            Map.of("event_id", "$e3"),
+            "!room:matrix",
+            "@sender:matrix",
+            "m.text",
+            Map.of("body", "doc", "file", Map.of("mimetype", "application/pdf")));
+    assertThat(envelope.isHasAttachment()).isTrue();
+  }
+
+  @Test
+  void buildPrivacyEnvelope_shouldConvertNumericTimestamp() {
+    // Matrix server timestamps are numeric epoch millis used for notification ordering.
+    var envelope =
+        invokeBuildPrivacyEnvelope(
+            newService(),
+            Map.of("event_id", "$e4", "origin_server_ts", 1_234_567_890L),
+            "!room:matrix",
+            "@sender:matrix",
+            "m.text",
+            Map.of("body", "hi"));
+    assertThat(envelope.getTimestamp()).isEqualTo(1_234_567_890L);
+  }
+
+  @Test
+  void buildPrivacyEnvelope_shouldHandleNullEventId() {
+    // Partial events during sync must still produce a usable privacy envelope.
+    var envelope =
+        invokeBuildPrivacyEnvelope(
+            newService(),
+            new HashMap<String, Object>(),
+            "!room:matrix",
+            "@sender:matrix",
+            "m.text",
+            Map.of("body", "hi"));
+    assertThat(envelope.getMessageId()).isNull();
+    assertThat(envelope.getRoomId()).isEqualTo("!room:matrix");
+  }
+
+  // ── buildRecipientSet ────────────────────────────────────────────────────────
+
+  private static Session sessionWithParticipants(User user, Consultant consultant) {
+    var session = new Session();
+    session.setUser(user);
+    session.setConsultant(consultant);
+    return session;
+  }
+
+  @Test
+  void buildRecipientSet_shouldContainOnlyUser_whenConsultantMissing() {
+    // Ask-only sessions must still notify the advice seeker of new messages.
+    var user = new User();
+    user.setUserId("user-1");
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(user, null)))
+        .containsExactly("user-1");
+  }
+
+  @Test
+  void buildRecipientSet_shouldContainOnlyConsultant_whenUserMissing() {
+    // Consultant-only edge cases must still route notifications to the assigned consultant.
+    var consultant = new Consultant();
+    consultant.setId("consultant-1");
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(null, consultant)))
+        .containsExactly("consultant-1");
+  }
+
+  @Test
+  void buildRecipientSet_shouldContainBoth_whenUserAndConsultantPresent() {
+    // Standard counselling sessions notify both participants except the sender.
+    var user = new User();
+    user.setUserId("user-1");
+    var consultant = new Consultant();
+    consultant.setId("consultant-1");
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(user, consultant)))
+        .containsExactlyInAnyOrder("user-1", "consultant-1");
+  }
+
+  @Test
+  void buildRecipientSet_shouldIgnoreNullUser() {
+    // Detached session graphs must not NPE when the user association is missing.
+    var consultant = new Consultant();
+    consultant.setId("consultant-1");
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(null, consultant)))
+        .containsExactly("consultant-1");
+  }
+
+  @Test
+  void buildRecipientSet_shouldIgnoreNullConsultant() {
+    // Sessions awaiting assignment must still notify the asker.
+    var user = new User();
+    user.setUserId("user-1");
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(user, null)))
+        .containsExactly("user-1");
+  }
+
+  // ── registerRoom / unregisterRoom ───────────────────────────────────────────
+
+  @Test
+  void registerRoom_shouldPopulateBothMaps_whenRoomIdValid() {
+    // UI sync registration must index the room for session lookup and recipient fan-out.
+    var service = newService();
+    service.registerRoom(99L, "!room:matrix", Set.of("user-a", "user-b"));
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    @SuppressWarnings("unchecked")
+    var roomToUsers =
+        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
+
+    assertThat(roomToSession).containsEntry("!room:matrix", 99L);
+    assertThat(roomToUsers).containsEntry("!room:matrix", Set.of("user-a", "user-b"));
+  }
+
+  @Test
+  void registerRoom_shouldBeNoOp_whenRoomIdBlank() {
+    // Invalid room ids must not pollute the in-memory registration indexes.
+    var service = newService();
+    service.registerRoom(1L, "", Set.of("user-a"));
+    service.registerRoom(2L, null, Set.of("user-b"));
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    assertThat(roomToSession).isEmpty();
+  }
+
+  @Test
+  void unregisterRoom_shouldRemoveFromBothMaps() {
+    // Ended sessions must stop generating live events for that Matrix room.
+    var service = newService();
+    service.registerRoom(5L, "!room:matrix", Set.of("user-a"));
+    service.unregisterRoom("!room:matrix");
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    @SuppressWarnings("unchecked")
+    var roomToUsers =
+        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
+
+    assertThat(roomToSession).doesNotContainKey("!room:matrix");
+    assertThat(roomToUsers).doesNotContainKey("!room:matrix");
+  }
+
+  @Test
+  void registerRoom_shouldRemainConsistent_underConcurrentRegistration() throws Exception {
+    // Multiple clients registering the same room must not corrupt the shared listener maps.
+    var service = newService();
+    var start = new CountDownLatch(1);
+    var done = new CountDownLatch(2);
+    var executor = Executors.newFixedThreadPool(2);
+
+    Runnable register =
+        () -> {
+          try {
+            start.await();
+            service.registerRoom(10L, "!room:concurrent", Set.of("user-x"));
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          } finally {
+            done.countDown();
+          }
+        };
+
+    executor.submit(register);
+    executor.submit(register);
+    start.countDown();
+    assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+    executor.shutdownNow();
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (ConcurrentHashMap<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    @SuppressWarnings("unchecked")
+    var roomToUsers =
+        (ConcurrentHashMap<String, Set<String>>)
+            ReflectionTestUtils.getField(service, "roomToUsersMap");
+
+    assertThat(roomToSession).containsEntry("!room:concurrent", 10L);
+    assertThat(roomToUsers).containsKey("!room:concurrent");
+    assertThat(roomToUsers.get("!room:concurrent")).contains("user-x");
+  }
+
+  @Test
+  void unregisterRoom_shouldLeaveMapsEmpty_underConcurrentUnregister() throws Exception {
+    // Concurrent unregister calls for the same room must not leave stale recipient entries.
+    var service = newService();
+    service.registerRoom(11L, "!room:gone", Set.of("user-y"));
+
+    var start = new CountDownLatch(1);
+    var done = new CountDownLatch(2);
+    var executor = Executors.newFixedThreadPool(2);
+
+    Runnable unregister =
+        () -> {
+          try {
+            start.await();
+            service.unregisterRoom("!room:gone");
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          } finally {
+            done.countDown();
+          }
+        };
+
+    executor.submit(unregister);
+    executor.submit(unregister);
+    start.countDown();
+    assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+    executor.shutdownNow();
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    @SuppressWarnings("unchecked")
+    var roomToUsers =
+        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
+
+    assertThat(roomToSession).isEmpty();
+    assertThat(roomToUsers).isEmpty();
+  }
+
+  // ── safeContentLog ───────────────────────────────────────────────────────────
+
+  @Test
+  void safeContentLog_shouldNotThrow_whenEnvelopeIsNull() {
+    // Privacy logging must tolerate missing metadata during malformed sync events.
+    var service = newService();
+    assertThatCode(() -> invokeSafeContentLog(service, "matrix.message.received", null))
+        .doesNotThrowAnyException();
+    assertThat(logAppender.list)
+        .anyMatch(e -> e.getFormattedMessage().contains("matrix.message.received room=unknown"));
+  }
+
+  @Test
+  void safeContentLog_shouldLogEnvelopeFields_whenPopulated() {
+    // Operators need structured debug metadata without ever logging message plaintext.
+    var service = newService();
+    var envelope =
+        PrivacyEnvelope.builder()
+            .messageId("$evt")
+            .roomId("!room:matrix")
+            .senderId("@user:matrix")
+            .timestamp(99L)
+            .hasAttachment(true)
+            .contentClass("TEXT")
+            .build();
+
+    invokeSafeContentLog(service, "matrix.message.received", envelope);
+
+    assertThat(logAppender.list)
+        .anyMatch(
+            e ->
+                e.getFormattedMessage().contains("room=!room:matrix")
+                    && e.getFormattedMessage().contains("messageId=$evt")
+                    && e.getFormattedMessage().contains("contentClass=TEXT")
+                    && e.getFormattedMessage().contains("hasAttachment=true"));
+  }
+
+  private static Map<String, Object> contentMap(String key, Object value) {
+    Map<String, Object> content = new HashMap<>();
+    content.put(key, value);
+    return content;
+  }
+
+  private static String invokeClassifyContent(MatrixEventListenerService service, String msgtype) {
+    return (String) ReflectionTestUtils.invokeMethod(service, "classifyContent", msgtype);
+  }
+
+  private static String invokeExtractThreadRootId(
+      MatrixEventListenerService service, Map<String, Object> content) {
+    return (String) ReflectionTestUtils.invokeMethod(service, "extractThreadRootId", content);
+  }
+
+  private static String invokeExtractMessageBody(
+      MatrixEventListenerService service, Map<String, Object> content) {
+    return (String) ReflectionTestUtils.invokeMethod(service, "extractMessageBody", content);
+  }
+
+  private static PrivacyEnvelope invokeBuildPrivacyEnvelope(
+      MatrixEventListenerService service,
+      Map<String, Object> event,
+      String roomId,
+      String senderId,
+      String msgtype,
+      Map<String, Object> content) {
+    return (PrivacyEnvelope)
+        ReflectionTestUtils.invokeMethod(
+            service, "buildPrivacyEnvelope", event, roomId, senderId, msgtype, content);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Set<String> invokeBuildRecipientSet(
+      MatrixEventListenerService service, Session session) {
+    return (Set<String>) ReflectionTestUtils.invokeMethod(service, "buildRecipientSet", session);
+  }
+
+  private static void invokeSafeContentLog(
+      MatrixEventListenerService service, String marker, PrivacyEnvelope envelope) {
+    ReflectionTestUtils.invokeMethod(service, "safeContentLog", marker, envelope);
+  }
+}

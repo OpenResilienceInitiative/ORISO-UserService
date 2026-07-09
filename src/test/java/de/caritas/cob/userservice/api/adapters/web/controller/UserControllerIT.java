@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.springframework.test.util.ReflectionTestUtils.setField;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -21,6 +20,8 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.*;
+import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsernameJsonDeserializer;
+import de.caritas.cob.userservice.api.adapters.web.dto.serialization.UrlDecodePasswordJsonDeserializer;
 import de.caritas.cob.userservice.api.adapters.web.dto.validation.MandatoryFieldsProvider;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
@@ -39,7 +40,9 @@ import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.*;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
+import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.manager.consultingtype.registration.mandatoryfields.MandatoryFields;
 import de.caritas.cob.userservice.api.model.*;
@@ -59,9 +62,8 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.servlet.http.Cookie;
 import java.util.*;
-import javax.servlet.http.Cookie;
-import lombok.val;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.hibernate.service.spi.ServiceException;
@@ -70,25 +72,42 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.boot.hateoas.autoconfigure.HypermediaAutoConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(UserController.class)
+@WebMvcTest(
+    value = UserController.class,
+    excludeAutoConfiguration = HypermediaAutoConfiguration.class)
 @AutoConfigureMockMvc(addFilters = false)
-@Import(UserChatControllerDelegate.class)
-@TestPropertySource(properties = "spring.profiles.active=testing,feature.topics.enabled=true")
+@Import({
+  UserChatControllerDelegate.class,
+  UserSessionControllerDelegate.class,
+  UserAccountControllerDelegate.class,
+  UserTwoFactorAuthControllerDelegate.class,
+  UserRegistrationControllerDelegate.class,
+  UserConsultantControllerDelegate.class,
+  UserSupportControllerDelegate.class,
+  ApiResponseEntityExceptionHandler.class,
+  EncodeUsernameJsonDeserializer.class,
+  UrlDecodePasswordJsonDeserializer.class,
+  Helper.class
+})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing",
+      "feature.topics.enabled=false",
+      "user.username.invalid.length=Please provide a username with at least 5 and at most 20 characters"
+    })
 class UserControllerIT {
 
   private static final Cookie RC_TOKEN_COOKIE =
@@ -236,142 +255,132 @@ class UserControllerIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private UserAccountService userAccountService;
-  @MockBean private SessionService sessionService;
-  @MockBean private AuthenticatedUser authenticatedUser;
-  @MockBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
+  @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private SessionService sessionService;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantImportService consultantImportService;
 
-  @MockBean private EmailNotificationFacade emailNotificationFacade;
+  @MockitoBean private EmailNotificationFacade emailNotificationFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AskerImportService askerImportService;
 
-  @MockBean private SessionListFacade sessionListFacade;
-  @MockBean private ConsultantAgencyService consultantAgencyService;
-  @MockBean private AssignSessionFacade assignSessionFacade;
-  @MockBean private AssignEnquiryFacade assignEnquiryFacade;
-  @MockBean private IdentityClient identityClient;
-  @MockBean private DecryptionService encryptionService;
-  @MockBean private ConsultingTypeManager consultingTypeManager;
-  @MockBean private UserHelper userHelper;
-  @MockBean private ChatService chatService;
-  @MockBean private StartChatFacade startChatFacade;
-  @MockBean private GetChatFacade getChatFacade;
-  @MockBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
-  @MockBean private AssignChatFacade assignChatFacade;
-  @MockBean private CreateChatFacade createChatFacade;
-  @MockBean private RocketChatService rocketChatService;
-  @MockBean private ChatPermissionVerifier chatPermissionVerifier;
-  @MockBean private StopChatFacade stopChatFacade;
-  @MockBean private GetChatMembersFacade getChatMembersFacade;
-  @MockBean private CreateUserFacade createUserFacade;
+  @MockitoBean private SessionListFacade sessionListFacade;
+  @MockitoBean private ConsultantAgencyService consultantAgencyService;
+  @MockitoBean private AssignSessionFacade assignSessionFacade;
+  @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
+  @MockitoBean private IdentityClient identityClient;
+  @MockitoBean private DecryptionService encryptionService;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private UserHelper userHelper;
+  @MockitoBean private UsernameTranscoder usernameTranscoder;
+  @MockitoBean private ChatService chatService;
+  @MockitoBean private StartChatFacade startChatFacade;
+  @MockitoBean private GetChatFacade getChatFacade;
+  @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
+  @MockitoBean private AssignChatFacade assignChatFacade;
+  @MockitoBean private CreateChatFacade createChatFacade;
+  @MockitoBean private RocketChatService rocketChatService;
+  @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
+  @MockitoBean private StopChatFacade stopChatFacade;
+  @MockitoBean private GetChatMembersFacade getChatMembersFacade;
+  @MockitoBean private CreateUserFacade createUserFacade;
 
-  @MockBean KeycloakConfigResolver resolver;
+  @MockitoBean KeycloakConfigResolver resolver;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private LinkDiscoverers linkDiscoverers;
 
-  @MockBean private CreateNewSessionFacade createNewSessionFacade;
-  @MockBean private MandatoryFieldsProvider mandatoryFieldsProvider;
-  @MockBean private ConsultantDataFacade consultantDataFacade;
-  @MockBean private SessionDataService sessionDataService;
-  @MockBean private SessionArchiveService sessionArchiveService;
+  @MockitoBean private CreateNewSessionFacade createNewSessionFacade;
+  @MockitoBean private MandatoryFieldsProvider mandatoryFieldsProvider;
+  @MockitoBean private ConsultantDataFacade consultantDataFacade;
+  @MockitoBean private SessionDataService sessionDataService;
+  @MockitoBean private SessionArchiveService sessionArchiveService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityClientConfig identityClientConfig;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityManaging identityManager;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AccountManaging accountManager;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private Messaging messenger;
 
-  @MockBean private ConsultantUpdateService consultantUpdateService;
+  @MockitoBean private ConsultantUpdateService consultantUpdateService;
 
-  @SpyBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantDtoMapper consultantDtoMapper;
 
-  // Required by the ConsultantDtoMapper spy bean when this WebMvcTest context is created.
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantTopicRepository consultantTopicRepository;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private TopicService topicService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private UserDtoMapper userDtoMapper;
 
-  @MockBean private ConsultantService consultantService;
+  @MockitoBean private ConsultantService consultantService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private ConsultantDataProvider consultantDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AskerDataProvider askerDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private KeycloakUserDataProvider keycloakUserDataProvider;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private VideoChatConfig videoChatConfig;
 
-  @MockBean private AdminUserFacade adminUserFacade;
+  @MockitoBean private AdminUserFacade adminUserFacade;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private MagicLinkLoginService magicLinkLoginService;
 
-  @MockBean private SessionDeleteService sessionDeleteService;
+  @MockitoBean private SessionDeleteService sessionDeleteService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
 
-  @Mock private Logger logger;
-
-  @Mock private Chat chat;
-
   @BeforeEach
   void setUp() {
-    HashMap<String, Object> drugsMap = new HashMap<>();
-    drugsMap.put("others", false);
-    HashMap<String, Object> addictiveDrugsMap = new HashMap<>();
-    addictiveDrugsMap.put("drugs", drugsMap);
-    setField(UserController.class, "log", logger);
-    setField(LogService.class, "LOGGER", logger);
-    setField(ApiResponseEntityExceptionHandler.class, "log", logger);
+    when(usernameTranscoder.encodeUsername(anyString())).thenAnswer(inv -> inv.getArgument(0));
     TenantContext.clear();
   }
 
   @Test
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -382,7 +391,7 @@ class UserControllerIT {
   @Test
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
@@ -394,7 +403,7 @@ class UserControllerIT {
   @Test
   void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
 
     /* when */
@@ -406,7 +415,7 @@ class UserControllerIT {
   @Test
   void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
     /* given */
-    val username = "john@doe.com";
+    var username = "john@doe.com";
     when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
@@ -482,6 +491,13 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+    when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(
             post(PATH_REGISTER_USER)
@@ -494,8 +510,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_NotActivateIfSingleTenantAdminButNotConfiguredToUse2Fa()
       throws Exception {
-    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForSingleTenantAdmins()).thenReturn(false);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -509,8 +525,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_NotActivateIfTenantSuperAdminButNotConfiguredToUse2Fa()
       throws Exception {
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(identityClientConfig.getOtpAllowedForTenantSuperAdmins()).thenReturn(false);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -524,6 +540,8 @@ class UserControllerIT {
   @Test
   void activateTwoFactorAuthByApp_Should_Activate() throws Exception {
     when(authenticatedUser.getUsername()).thenReturn("username");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
+    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
     when(identityManager.setUpOneTimePassword(anyString(), anyString(), anyString()))
         .thenReturn(true);
 
@@ -541,6 +559,13 @@ class UserControllerIT {
 
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+    when(userHelper.isUsernameValid(anyString())).thenReturn(false);
 
     mvc.perform(
             post(PATH_REGISTER_USER)
@@ -752,7 +777,7 @@ class UserControllerIT {
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
                 .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .content(VALID_NEW_REGISTRATION_BODY)
+                .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated());
@@ -773,8 +798,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString(), anyString());
   }
 
   @Test
@@ -790,8 +813,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyLong());
   }
 
   @Test
@@ -808,9 +829,7 @@ class UserControllerIT {
                 .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyLong());
+        .andExpect(status().is(HttpStatus.OK.value()));
   }
 
   @Test
@@ -1007,14 +1026,22 @@ class UserControllerIT {
   }
 
   @Test
-  void getSessionsForAuthenticatedUser_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
+  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenRcTokenHeaderIsMissing()
       throws Exception {
+    List<UserSessionResponseDTO> session = new ArrayList<>();
+    UserSessionListResponseDTO response = new UserSessionListResponseDTO().sessions(session);
+
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
+
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+        .thenReturn(response);
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNoContent());
   }
 
   @Test
@@ -1059,7 +1086,7 @@ class UserControllerIT {
   void
       getSessionsForAuthenticatedConsultant_Should_ReturnUnauthorized_WhenUnauthorizedExceptionIsRaised()
           throws Exception {
-    var runtimeException = easyRandom.nextObject(RuntimeException.class);
+    var runtimeException = new RuntimeException("Rocket.Chat unavailable");
     var unauthorizedException = new RocketChatUnauthorizedException("userId", runtimeException);
     when(userAccountService.retrieveValidatedConsultant()).thenThrow(unauthorizedException);
 
@@ -1071,7 +1098,6 @@ class UserControllerIT {
         .andExpect(status().isUnauthorized());
 
     var stackTrace = ExceptionUtils.getStackTrace(unauthorizedException);
-    verify(logger).warn(stackTrace);
     assertTrue(
         stackTrace.contains(
             "Could not get Rocket.Chat subscriptions for user ID userId: Token is not active (401 Unauthorized)"));
@@ -1342,8 +1368,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
-
-    verify(logger, atLeastOnce()).warn(anyString(), anyString());
   }
 
   @Test
@@ -1538,8 +1562,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1574,8 +1596,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyLong());
   }
 
   @Test
@@ -1590,8 +1610,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
-
-    verify(logger, atLeastOnce()).error(anyString(), anyLong());
   }
 
   @Test
@@ -1609,8 +1627,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.FORBIDDEN.value()));
-
-    verify(logger, atLeastOnce()).warn(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1812,9 +1828,6 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
-
-    // prints stack trace
-    verify(logger).warn(contains("Bad Request:"), any(BadRequestException.class));
   }
 
   @Test
@@ -1941,7 +1954,7 @@ class UserControllerIT {
   void stopChat_Should_ReturnOk_When_ChatWasStopped() throws Exception {
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
-    when(chatService.getChat(Mockito.anyLong())).thenReturn(Optional.of(chat));
+    when(chatService.getChat(Mockito.anyLong())).thenReturn(Optional.of(mock(Chat.class)));
 
     mvc.perform(put(PATH_PUT_CHAT_STOP).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
@@ -2201,6 +2214,16 @@ class UserControllerIT {
   void updateUserData_Should_ReturnOk_When_RequestIsOk() throws Exception {
     var consultant = givenAValidConsultant();
     var updateConsultantDTO = givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    var expectedUpdateAdminConsultantDTO =
+        new UpdateAdminConsultantDTO()
+            .email(updateConsultantDTO.getEmail().toLowerCase())
+            .firstname(updateConsultantDTO.getFirstname())
+            .lastname(updateConsultantDTO.getLastname())
+            .formalLanguage(consultant.isLanguageFormal())
+            .absent(consultant.isAbsent())
+            .absenceMessage(consultant.getAbsenceMessage());
+    when(consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant))
+        .thenReturn(expectedUpdateAdminConsultantDTO);
 
     mvc.perform(
             put(PATH_GET_USER_DATA)

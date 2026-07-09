@@ -24,15 +24,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+// RC teardown phase 2: this scheduler IT never exercises Rocket.Chat (it only imports
+// RocketChatTestConfig for context and never calls it), so it runs in the production Matrix-only
+// mode (rocket-chat.enabled=false → DisabledRocketChatService is the active bean).
+@TestPropertySource(properties = {"spring.profiles.active=testing", "rocket-chat.enabled=false"})
 @AutoConfigureTestDatabase(replace = Replace.ANY)
 @Import({
   KeycloakTestConfig.class,
@@ -55,7 +58,7 @@ class DeleteUserAnonymousSchedulerIT {
   @Value("${user.anonymous.deleteworkflow.periodMinutes}")
   private long deletionPeriodInMinutes;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   private Session currentSession;
 

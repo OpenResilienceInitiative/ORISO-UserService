@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import jakarta.validation.constraints.NotNull;
 import java.util.Set;
-import javax.validation.constraints.NotNull;
 
 public interface IdentityClientConfig {
 

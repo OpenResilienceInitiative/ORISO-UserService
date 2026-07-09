@@ -124,7 +124,8 @@ components:
         - subdomain
       properties:
         id:
-          type: long
+          type: integer
+          format: int64
           example: 12132
         name:
           type: string
@@ -157,7 +158,8 @@ components:
         - subdomain
       properties:
         id:
-          type: long
+          type: integer
+          format: int64
           example: 12132
         name:
           type: string

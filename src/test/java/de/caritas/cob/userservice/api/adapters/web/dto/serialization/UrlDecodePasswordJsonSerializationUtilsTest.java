@@ -9,6 +9,7 @@ import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -30,7 +31,7 @@ public class UrlDecodePasswordJsonSerializationUtilsTest {
   public void setup() {
     PlainCredentialsHolder.clear();
     objectMapper = new ObjectMapper();
-    urlDecodePasswordJsonDeserializer = new UrlDecodePasswordJsonDeserializer();
+    urlDecodePasswordJsonDeserializer = new UrlDecodePasswordJsonDeserializer(new Helper());
   }
 
   @AfterEach

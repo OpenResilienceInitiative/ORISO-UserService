@@ -24,6 +24,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,6 +42,10 @@ public class CreateUserChatRelationFacade {
   private final @NonNull RollbackFacade rollbackFacade;
   private final AuditingHandler auditingHandler;
 
+  /** ADR-004: with Rocket.Chat disabled no Rocket.Chat account is created or logged in. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
+
   /**
    * Creates an user-chat/agency relation for the provided {@link User}. Either provide username and
    * password in {@link UserDTO} (new user account registrations) or valid {@link
@@ -52,6 +57,17 @@ public class CreateUserChatRelationFacade {
    */
   public void initializeUserChatAgencyRelation(
       UserDTO userDTO, User user, RocketChatCredentials rocketChatCredentials) {
+
+    if (!rocketChatEnabled) {
+      // ADR-004: Matrix-only - persist the user/agency relation without any Rocket.Chat
+      // account creation, login or rc_user_id update.
+      log.debug(
+          "Rocket.Chat is disabled - creating user-chat/agency relation for user {} without "
+              + "Rocket.Chat credentials",
+          user.getUserId());
+      createUserChatAgencyRelation(userDTO, user);
+      return;
+    }
 
     DataDTO rcUserCredentials = obtainValidUserCredentials(userDTO, user, rocketChatCredentials);
     updateRocketChatUserIdInDatabase(
