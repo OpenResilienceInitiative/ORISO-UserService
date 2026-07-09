@@ -160,7 +160,7 @@ class DeleteUserAnonymousServiceTest {
 
   private static List<LocalDateTime> createOverdueUpdateDates() {
     LocalDateTime now = LocalDateTime.now();
-    LocalDateTime oneDeletionPeriodAgo = now.minusMinutes(DELETION_PERIOD_MINUTES);
+    LocalDateTime oneDeletionPeriodAgo = now.minusMinutes(DELETION_PERIOD_MINUTES).minusSeconds(1);
     LocalDateTime timeLongInThePast = oneDeletionPeriodAgo.minusMinutes(10);
 
     return List.of(oneDeletionPeriodAgo, timeLongInThePast);
@@ -180,6 +180,7 @@ class DeleteUserAnonymousServiceTest {
 
     this.deleteUserAnonymousService.deleteInactiveAnonymousUsers();
 
+    verify(this.deleteUserAccountService, times(1)).performUserDeletion(user);
     verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(List.of(error));
     verify(this.deleteUserAccountService, times(1)).performUserDeletion(user);
   }
