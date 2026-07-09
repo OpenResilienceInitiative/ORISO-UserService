@@ -68,7 +68,7 @@ class MatrixRoomClientTest {
     var responseBody = new MatrixCreateRoomResponseDTO();
     responseBody.setRoomId(ROOM_ID);
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
@@ -88,7 +88,7 @@ class MatrixRoomClientTest {
   @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenMatrixRejectsRequest() {
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenThrow(
@@ -108,7 +108,7 @@ class MatrixRoomClientTest {
   @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenUnexpectedErrorOccurs() {
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenThrow(new RuntimeException("connection failed"));
