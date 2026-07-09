@@ -21,6 +21,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
@@ -91,11 +92,14 @@ public class AgencyService {
         return agencyControllerApi.getAgenciesByIds(agencyIds).stream()
             .map(this::fromOriginalAgency)
             .collect(Collectors.toList());
-      } catch (HttpClientErrorException.NotFound notFound) {
-        log.warn(
-            "AgencyService returned 404 for agency ids {}. Treating as missing agencies for local hybrid registration.",
-            agencyIds);
-        return emptyList();
+      } catch (HttpClientErrorException httpClientErrorException) {
+        if (HttpStatus.NOT_FOUND.equals(httpClientErrorException.getStatusCode())) {
+          log.warn(
+              "AgencyService returned 404 for agency ids {}. Treating as missing agencies for local hybrid registration.",
+              agencyIds);
+          return emptyList();
+        }
+        throw httpClientErrorException;
       }
     }
     return emptyList();

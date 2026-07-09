@@ -24,6 +24,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 class MultitenancyWithSingleDomainTenantResolverTest {
@@ -36,6 +38,7 @@ class MultitenancyWithSingleDomainTenantResolverTest {
   MultitenancyWithSingleDomainTenantResolver multitenancyWithSingleDomainTenantResolver;
 
   @Mock HttpServletRequest request;
+  @Mock ServletRequestAttributes requestAttributes;
 
   @Mock AgencyService agencyService;
 

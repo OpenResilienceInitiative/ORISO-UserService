@@ -14,6 +14,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.Lob;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
@@ -150,7 +151,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "public_slug_reviewed_at", columnDefinition = "datetime")
   private LocalDateTime publicSlugReviewedAt;
 
-  @Column(name = "absence_message")
   @Lob
   @Column(name = "absence_message", columnDefinition = "longtext")
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
