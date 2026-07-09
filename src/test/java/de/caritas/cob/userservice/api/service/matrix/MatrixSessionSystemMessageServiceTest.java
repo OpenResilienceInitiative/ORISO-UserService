@@ -336,7 +336,8 @@ class MatrixSessionSystemMessageServiceTest {
   @Test
   void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyCredentialsEmpty() {
     var session = sessionWithoutHumanMatrixIds();
-    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.empty());
 
     matrixSessionSystemMessageService.postUserLeftChatMessage(session);
 
@@ -355,7 +356,8 @@ class MatrixSessionSystemMessageServiceTest {
     session.setConsultant(consultant);
 
     when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
-    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .thenReturn(Optional.empty());
 
     matrixSessionSystemMessageService.postUserLeftChatMessage(session);
 

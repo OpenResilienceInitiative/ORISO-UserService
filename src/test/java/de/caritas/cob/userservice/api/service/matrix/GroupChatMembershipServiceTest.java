@@ -429,7 +429,9 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void resolveMatrixRoomId_Should_ReturnNull_When_SessionIsNull() {
-    assertNull(groupChatMembershipService.resolveMatrixRoomId((de.caritas.cob.userservice.api.model.Session) null));
+    assertNull(
+        groupChatMembershipService.resolveMatrixRoomId(
+            (de.caritas.cob.userservice.api.model.Session) null));
   }
 
   @Test
@@ -437,7 +439,8 @@ class GroupChatMembershipServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn(null);
 
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-        () -> groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+        () ->
+            groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
 
     verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
     assertTrue(
@@ -454,7 +457,8 @@ class GroupChatMembershipServiceTest {
         .thenThrow(new RuntimeException("synapse down"));
 
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(
-        () -> groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+        () ->
+            groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
 
     verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
   }
@@ -466,7 +470,8 @@ class GroupChatMembershipServiceTest {
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(
             "@group-chat-system:matrix.oriso.org"))
         .thenReturn(Optional.empty());
-    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@group-chat-system:matrix.oriso.org"))
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(
+            "@group-chat-system:matrix.oriso.org"))
         .thenReturn(Optional.of(user));
     when(user.getUserId()).thenReturn("group-chat-system");
 

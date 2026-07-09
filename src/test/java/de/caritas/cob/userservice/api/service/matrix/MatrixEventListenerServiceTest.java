@@ -7,7 +7,6 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -756,7 +755,8 @@ class MatrixEventListenerServiceTest {
   void getRecipientCandidatesForRoom_shouldLoadFromRepository_whenCacheEmpty() {
     var service = newService();
     var session =
-        sessionWithParticipants(userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
     session.setId(5L);
     when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
 
@@ -891,7 +891,8 @@ class MatrixEventListenerServiceTest {
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
-        .createThreadReplyNotificationFromRoom(anyString(), any(), anyString(), anyBoolean(), any());
+        .createThreadReplyNotificationFromRoom(
+            anyString(), any(), anyString(), anyBoolean(), any());
   }
 
   @Test
@@ -940,7 +941,8 @@ class MatrixEventListenerServiceTest {
 
     var syncResult =
         syncResultWithEvents(
-            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "mirror me", "$evt-m")));
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "mirror me", "$evt-m")));
 
     invokeProcessMatrixSyncEvents(service, syncResult);
 
@@ -1026,7 +1028,8 @@ class MatrixEventListenerServiceTest {
   void processMatrixSyncEvents_shouldResolveSessionFromRepository_whenRoomNotPreRegistered() {
     var service = newServiceWithSyncExecutor();
     var session =
-        sessionWithParticipants(userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
     session.setId(16L);
     when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
 
