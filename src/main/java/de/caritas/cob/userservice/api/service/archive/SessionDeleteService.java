@@ -17,6 +17,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +32,7 @@ public class SessionDeleteService {
 
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
+  @Transactional
   public void deleteSession(Long sessionId) {
     log.info("Deleting session with id {}", sessionId);
 
