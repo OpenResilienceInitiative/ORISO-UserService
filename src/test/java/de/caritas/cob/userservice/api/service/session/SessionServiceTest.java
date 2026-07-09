@@ -1118,21 +1118,59 @@ class SessionServiceTest {
 
   @Test
   void
-      getRegisteredEnquiriesForConsultant_Should_IncludeTopicBasedSessions_When_ConsultantHasTopics() {
+      getRegisteredEnquiriesForConsultant_Should_IncludeAnonymousStyleTopicBasedSessions_When_ConsultantHasTopics() {
     Consultant consultant = mock(Consultant.class);
     when(consultant.getConsultantAgencies()).thenReturn(null);
     when(consultant.getId()).thenReturn(CONSULTANT_ID);
     when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
         .thenReturn(List.of(42L));
+
+    Session topicBasedSession = easyRandom.nextObject(Session.class);
+    topicBasedSession.setPostcode("00000");
+    topicBasedSession.setMainTopicId(42L);
+    topicBasedSession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicBasedSession.setStatus(SessionStatus.NEW);
+    topicBasedSession.setConsultant(null);
+    topicBasedSession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
     when(sessionRepository
             .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
                 any(), any(), any()))
-        .thenReturn(SESSION_LIST_WITH_CONSULTANT);
+        .thenReturn(List.of(topicBasedSession));
 
     List<ConsultantSessionResponseDTO> result =
         sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getRegisteredEnquiriesForConsultant_Should_ExcludeRegularTopicOnlySessions_When_ConsultantHasNoSessionAgency() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(null);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session topicOnlySession = easyRandom.nextObject(Session.class);
+    topicOnlySession.setPostcode("10115");
+    topicOnlySession.setMainTopicId(42L);
+    topicOnlySession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicOnlySession.setStatus(SessionStatus.NEW);
+    topicOnlySession.setConsultant(null);
+    topicOnlySession.getUser().setUsername("regular-registered-user");
+    topicOnlySession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository
+            .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+                any(), any(), any()))
+        .thenReturn(List.of(topicOnlySession));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getRegisteredEnquiriesForConsultant(consultant);
+
+    assertThat(result).isEmpty();
   }
 
   @Test
