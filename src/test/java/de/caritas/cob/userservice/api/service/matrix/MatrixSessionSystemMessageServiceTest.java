@@ -293,6 +293,76 @@ class MatrixSessionSystemMessageServiceTest {
         () -> matrixSessionSystemMessageService.postUserLeftChatMessage(session));
   }
 
+  @Test
+  void postUserLeftChatMessage_shouldReloadUsernameFromSession_whenBlankOnUser() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "  ");
+    var persistedUser = new User();
+    persistedUser.setUsername("persisted.username");
+    var persisted = baseSession();
+    persisted.setUser(persistedUser);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(persisted));
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+
+    var bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService).sendMessage(anyString(), bodyCaptor.capture(), anyString());
+    assertThat(bodyCaptor.getValue()).contains("\"username\":\"persisted.username\"");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldUseEmptyUsername_whenReloadAlsoBlank() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "");
+    var persisted = baseSession();
+    var persistedUser = new User();
+    persistedUser.setUsername("");
+    persisted.setUser(persistedUser);
+
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(persisted));
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+
+    var bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService).sendMessage(anyString(), bodyCaptor.capture(), anyString());
+    assertThat(bodyCaptor.getValue()).contains("\"username\":\"\"");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyCredentialsEmpty() {
+    var session = sessionWithoutHumanMatrixIds();
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+
+    matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+
+    verify(agencyMatrixCredentialClient).fetchMatrixCredentials(AGENCY_ID);
+    verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldNotSendMessage_whenConsultantHasNoMatrixIdAfterReload() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    consultant.setMatrixUserId(null);
+
+    var session = baseSession();
+    session.setUser(new User());
+    session.setConsultant(consultant);
+
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+
+    matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+
+    verify(consultantService).getConsultant(CONSULTANT_ID);
+    verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
+  }
+
   private Session baseSession() {
     var session = new Session();
     session.setId(SESSION_ID);
