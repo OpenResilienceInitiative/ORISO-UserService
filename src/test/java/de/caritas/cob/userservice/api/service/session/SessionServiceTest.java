@@ -831,6 +831,31 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsByIds_should_not_find_registered_other_agency_session_by_topic_only() {
+    Session registeredSession = easyRandom.nextObject(Session.class);
+    registeredSession.setId(SESSION_ID);
+    registeredSession.setAgencyId(275L);
+    registeredSession.setConsultant(null);
+    registeredSession.setMainTopicId(42L);
+    registeredSession.setPostcode(POSTCODE);
+    registeredSession.setRegistrationType(REGISTERED);
+    registeredSession.setStatus(SessionStatus.NEW);
+
+    ConsultantAgency agency = new ConsultantAgency();
+    agency.setAgencyId(4711L);
+    var consultant = createConsultantWithAgencies(agency);
+
+    when(sessionRepository.findAllById(singleton(SESSION_ID)))
+        .thenReturn(singletonList(registeredSession));
+
+    var sessionResponse =
+        sessionService.getSessionsByIds(
+            consultant, singleton(SESSION_ID), singleton(UserRole.CONSULTANT.getValue()));
+
+    assertThat(sessionResponse).isEmpty();
+  }
+
+  @Test
   void getSessionsByUserAndGroupIds_should_find_session_for_anonymous_user_of_session() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
