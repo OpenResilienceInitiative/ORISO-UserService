@@ -270,22 +270,8 @@ public class SessionSupervisorFacade {
             consultantToken);
 
     // Invite supervisor to the CLIENT room as a read-only observer.
-    try {
-      matrixSynapseService.inviteUserToRoom(matrixRoomId, supervisorMatrixUserId, consultantToken);
-      log.info(
-          "Invited supervisor {} to Matrix room {} for session {}",
-          supervisorConsultant.getUsername(),
-          matrixRoomId,
-          session.getId());
-    } catch (Exception e) {
-      log.error(
-          "Failed to invite supervisor {} to Matrix room {}: {}",
-          supervisorConsultant.getUsername(),
-          matrixRoomId,
-          e.getMessage());
-      throw new InternalServerErrorException(
-          "Failed to invite supervisor to Matrix room: " + e.getMessage());
-    }
+    inviteSupervisorToClientRoom(
+        matrixRoomId, supervisorMatrixUserId, consultantToken, supervisorConsultant, session);
 
     // Set supervisor power level to 10 (read-only observer)
     boolean powerLevelSet =
@@ -562,6 +548,46 @@ public class SessionSupervisorFacade {
       throw new InternalServerErrorException("Failed to create user Matrix token");
     }
     matrixSynapseService.joinRoom(roomId, userToken);
+  }
+
+  private void inviteSupervisorToClientRoom(
+      String matrixRoomId,
+      String supervisorMatrixUserId,
+      String consultantToken,
+      Consultant supervisorConsultant,
+      Session session) {
+    try {
+      matrixSynapseService.inviteUserToRoom(matrixRoomId, supervisorMatrixUserId, consultantToken);
+      log.info(
+          "Invited supervisor {} to Matrix room {} for session {}",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          session.getId());
+    } catch (MatrixInviteUserException e) {
+      if (e.getMessage() != null && e.getMessage().contains("already in the room")) {
+        log.info(
+            "Supervisor {} already in Matrix room {} for session {}, continuing",
+            supervisorConsultant.getUsername(),
+            matrixRoomId,
+            session.getId());
+        return;
+      }
+      log.error(
+          "Failed to invite supervisor {} to Matrix room {}: {}",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          e.getMessage());
+      throw new InternalServerErrorException(
+          "Failed to invite supervisor to Matrix room: " + e.getMessage());
+    } catch (Exception e) {
+      log.error(
+          "Failed to invite supervisor {} to Matrix room {}: {}",
+          supervisorConsultant.getUsername(),
+          matrixRoomId,
+          e.getMessage());
+      throw new InternalServerErrorException(
+          "Failed to invite supervisor to Matrix room: " + e.getMessage());
+    }
   }
 
   /** Remove a user from a room if a room id is present; log but never fail the removal flow. */
