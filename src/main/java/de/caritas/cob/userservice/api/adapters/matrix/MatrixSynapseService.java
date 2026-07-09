@@ -455,7 +455,7 @@ public class MatrixSynapseService {
       }
 
       // Update display name using Synapse ADMIN v2 API
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
 
@@ -470,7 +470,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              URI.create(url), org.springframework.http.HttpMethod.PUT, request, String.class);
+              url, org.springframework.http.HttpMethod.PUT, request, String.class);
 
       log.info(
           "Successfully updated Matrix display name for user: {} to: {}",
@@ -499,7 +499,7 @@ public class MatrixSynapseService {
         return false;
       }
 
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_DEACTIVATE_USER, java.util.Map.of("userId", matrixUserId));
 
@@ -514,7 +514,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              URI.create(url), org.springframework.http.HttpMethod.POST, request, String.class);
+              url, org.springframework.http.HttpMethod.POST, request, String.class);
 
       log.info("Successfully deactivated Matrix user: {}", matrixUserId);
       return response.getStatusCode().is2xxSuccessful();
@@ -539,7 +539,7 @@ public class MatrixSynapseService {
         return false;
       }
 
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_PURGE_ROOM, java.util.Map.of("roomId", matrixRoomId));
 
@@ -554,7 +554,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<String> response =
           restTemplate.exchange(
-              URI.create(url), org.springframework.http.HttpMethod.DELETE, request, String.class);
+              url, org.springframework.http.HttpMethod.DELETE, request, String.class);
 
       log.info("Successfully purged Matrix room: {}", matrixRoomId);
       return response.getStatusCode().is2xxSuccessful();
@@ -783,7 +783,7 @@ public class MatrixSynapseService {
     }
 
     try {
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_ROOM_MEMBERS, java.util.Map.of("roomId", matrixRoomId));
 
@@ -792,10 +792,7 @@ public class MatrixSynapseService {
 
       ResponseEntity<java.util.Map> response =
           restTemplate.exchange(
-              URI.create(url),
-              org.springframework.http.HttpMethod.GET,
-              request,
-              java.util.Map.class);
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       var body = response.getBody();
       if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
@@ -842,10 +839,7 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              URI.create(url),
-              org.springframework.http.HttpMethod.PUT,
-              request,
-              java.util.Map.class);
+              url, org.springframework.http.HttpMethod.PUT, request, java.util.Map.class);
 
       return response.getBody();
     } catch (Exception ex) {
@@ -880,10 +874,7 @@ public class MatrixSynapseService {
 
       var response =
           matrixLongPollRestTemplate.exchange(
-              URI.create(url),
-              org.springframework.http.HttpMethod.GET,
-              request,
-              java.util.Map.class);
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
 
       if (response.getBody() != null && response.getBody().containsKey("chunk")) {
         @SuppressWarnings("unchecked")
@@ -933,7 +924,7 @@ public class MatrixSynapseService {
       }
       queryParams.put("filter", filter);
 
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(matrixConfig, ENDPOINT_SYNC, java.util.Map.of(), queryParams);
 
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
@@ -1249,7 +1240,10 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
         @SuppressWarnings("unchecked")
@@ -1379,7 +1373,7 @@ public class MatrixSynapseService {
     }
 
     try {
-      String url =
+      var url =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_PRESENCE, java.util.Map.of("userId", matrixUserId));
       HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));

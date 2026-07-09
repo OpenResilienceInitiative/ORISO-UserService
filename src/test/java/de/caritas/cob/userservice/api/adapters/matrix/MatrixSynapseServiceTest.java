@@ -119,20 +119,20 @@ class MatrixSynapseServiceTest {
     var rooms = Map.<String, Object>of("join", join);
     var responseBody = Map.<String, Object>of("next_batch", "s_token_42", "rooms", rooms);
     when(matrixLongPollRestTemplate.exchange(
-            any(String.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
-    var urlCaptor = ArgumentCaptor.forClass(String.class);
+    var urlCaptor = ArgumentCaptor.forClass(URI.class);
 
     var result = service.syncRoom(roomId, ACCESS_TOKEN, "alice", 30000);
 
     verify(matrixLongPollRestTemplate)
         .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
-    assertThat(urlCaptor.getValue()).startsWith(SYNC_URL + "?");
-    assertThat(urlCaptor.getValue()).contains("timeout=30000");
+    assertThat(urlCaptor.getValue().toString()).startsWith(SYNC_URL + "?");
+    assertThat(urlCaptor.getValue().toString()).contains("timeout=30000");
     // The JSON filter is URL-encoded (its braces survive as %7B/%7D) and the room id is present.
-    assertThat(urlCaptor.getValue()).contains("filter=");
-    assertThat(urlCaptor.getValue()).contains("timeline");
-    assertThat(urlCaptor.getValue())
+    assertThat(urlCaptor.getValue().toString()).contains("filter=");
+    assertThat(urlCaptor.getValue().toString()).contains("timeline");
+    assertThat(urlCaptor.getValue().toString())
         .contains(UriUtils.encodeQueryParam(roomId, StandardCharsets.UTF_8));
     // The parsed result reflects the body: the next_batch token and the single text message.
     assertThat(result).isNotNull();
@@ -823,7 +823,7 @@ class MatrixSynapseServiceTest {
     var encodedOnlineId = "%40online%3Amatrix.example.com";
     var encodedOfflineId = "%40offline%3Amatrix.example.com";
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.<String>argThat(
+            org.mockito.ArgumentMatchers.<URI>argThat(
                 uri -> uri != null && uri.toString().contains(encodedOnlineId)),
             eq(HttpMethod.GET),
             any(),
@@ -832,7 +832,7 @@ class MatrixSynapseServiceTest {
             ResponseEntity.ok(
                 Map.of("presence", "online", "currently_active", true, "last_active_ago", 0)));
     when(restTemplate.exchange(
-            org.mockito.ArgumentMatchers.<String>argThat(
+            org.mockito.ArgumentMatchers.<URI>argThat(
                 uri -> uri != null && uri.toString().contains(encodedOfflineId)),
             eq(HttpMethod.GET),
             any(),

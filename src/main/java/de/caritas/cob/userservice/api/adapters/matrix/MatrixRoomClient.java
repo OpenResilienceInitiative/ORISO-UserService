@@ -104,8 +104,7 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
       log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
 
-      var response =
-          restTemplate.postForEntity(URI.create(url), request, MatrixInviteUserResponseDTO.class);
+      var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
 
       log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
 
@@ -142,7 +141,7 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_JOIN_ROOM, Map.of("roomId", roomId));
       log.info("Accepting room invitation (joining room): {} at URL: {}", roomId, url);
 
-      var response = restTemplate.postForEntity(URI.create(url), request, Map.class);
+      var response = restTemplate.postForEntity(url, request, Map.class);
 
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully joined Matrix room: {}", roomId);
@@ -190,7 +189,7 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_LEAVE_ROOM, Map.of("roomId", roomId));
       log.info("Leaving Matrix room: {} at URL: {}", roomId, url);
 
-      var response = restTemplate.postForEntity(URI.create(url), request, Map.class);
+      var response = restTemplate.postForEntity(url, request, Map.class);
 
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully left Matrix room: {}", roomId);
@@ -243,7 +242,7 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_BAN_ROOM, Map.of("roomId", roomId));
       log.info("Banning Matrix user {} from room {}", userId, roomId);
 
-      var response = restTemplate.postForEntity(URI.create(url), request, Map.class);
+      var response = restTemplate.postForEntity(url, request, Map.class);
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully banned Matrix user {} from room {}", userId, roomId);
         return true;
@@ -294,7 +293,7 @@ public class MatrixRoomClient {
       var url = buildUrl(ENDPOINT_UNBAN_ROOM, Map.of("roomId", roomId));
       log.info("Unbanning Matrix user {} from room {}", userId, roomId);
 
-      var response = restTemplate.postForEntity(URI.create(url), request, Map.class);
+      var response = restTemplate.postForEntity(url, request, Map.class);
       if (response.getStatusCode().is2xxSuccessful()) {
         log.info("Successfully unbanned Matrix user {} from room {}", userId, roomId);
         return true;
@@ -334,13 +333,13 @@ public class MatrixRoomClient {
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     try {
-      String url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+      var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
 
       HttpHeaders headers = getClientHttpHeaders(accessToken);
       HttpEntity<Void> getRequest = new HttpEntity<>(headers);
 
       ResponseEntity<Map> currentResponse =
-          restTemplate.exchange(URI.create(url), HttpMethod.GET, getRequest, Map.class);
+          restTemplate.exchange(url, HttpMethod.GET, getRequest, Map.class);
 
       if (currentResponse.getBody() == null) {
         log.error("Failed to get current power levels for room {}", roomId);
@@ -357,7 +356,7 @@ public class MatrixRoomClient {
       powerLevels.put("users", updatedUsers);
 
       HttpEntity<Map<String, Object>> updateRequest = new HttpEntity<>(powerLevels, headers);
-      restTemplate.put(URI.create(url), updateRequest);
+      restTemplate.put(url, updateRequest);
 
       log.info("Set power level {} for user {} in room {}", powerLevel, userId, roomId);
       return true;
@@ -378,7 +377,7 @@ public class MatrixRoomClient {
 
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
-      String url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
+      var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
 
       Map<String, Object> membershipEvent = new HashMap<>();
       membershipEvent.put("membership", "leave");
@@ -386,7 +385,7 @@ public class MatrixRoomClient {
       HttpHeaders headers = getClientHttpHeaders(accessToken);
       HttpEntity<Map<String, Object>> request = new HttpEntity<>(membershipEvent, headers);
 
-      restTemplate.put(URI.create(url), request);
+      restTemplate.put(url, request);
 
       log.info("Removed user {} from room {}", userId, roomId);
       return true;
@@ -421,11 +420,11 @@ public class MatrixRoomClient {
     return new HashMap<>();
   }
 
-  private String buildUrl(String endpoint) {
+  private URI buildUrl(String endpoint) {
     return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint);
   }
 
-  private String buildUrl(String endpoint, Map<String, ?> uriVariables) {
+  private URI buildUrl(String endpoint, Map<String, ?> uriVariables) {
     return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint, uriVariables);
   }
 }
