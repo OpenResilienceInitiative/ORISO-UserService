@@ -163,14 +163,18 @@ class InactiveAccountNotificationServiceTest {
   }
 
   @Test
-  void scanAndNotifyInactiveAccounts_Should_notNotify_When_lastActivityExactlyAtCutoff() {
+  void scanAndNotifyInactiveAccounts_Should_notNotify_When_lastActivityJustAfterCutoff() {
     User user = new User("user-1", null, "user1", "u1@example.com", true);
     user.setTenantId(1L);
     LocalDateTime now = LocalDateTime.now();
     when(userRepository.findAllByDeleteDateIsNull()).thenReturn(singletonList(user));
-    // isInactive uses isBefore(cutoff) strictly — activity exactly at the threshold boundary
-    // (365 days ago, matching cutoff) must NOT be flagged.
-    when(askerActivityCalculator.lastActivity(user)).thenReturn(Optional.of(now.minusDays(365)));
+    // isInactive uses isBefore(cutoff) strictly. The production code computes its own
+    // independent `now` internally, so asserting exact equality with a `now` captured here
+    // is a race (whichever `now()` call resolves a few nanoseconds later wins the boundary).
+    // 1 second after our own `now - 365d` is unambiguously NOT before the production cutoff,
+    // regardless of that clock skew.
+    when(askerActivityCalculator.lastActivity(user))
+        .thenReturn(Optional.of(now.minusDays(365).plusSeconds(1)));
 
     service.scanAndNotifyInactiveAccounts();
 
