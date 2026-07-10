@@ -149,8 +149,14 @@ public class JoinAndLeaveChatFacade {
       deleteMessengerChat(chat.getGroupId());
     }
     if (chat.isRepetitive()) {
-      var rcGroupId = chatReCreator.recreateMessengerChat(chat);
-      chatReCreator.updateAsNextChat(chat, rcGroupId);
+      if (chat.nextStart() != null) {
+        var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
+        chatReCreator.updateAsNextChat(chat, matrixRoomId);
+      } else {
+        matrixChatShutdownService.shutdownRoom(chat);
+        chat.setActive(false);
+        chatService.saveChat(chat);
+      }
     } else {
       chatService.deleteChat(chat);
       matrixChatShutdownService.shutdownRoom(chat);

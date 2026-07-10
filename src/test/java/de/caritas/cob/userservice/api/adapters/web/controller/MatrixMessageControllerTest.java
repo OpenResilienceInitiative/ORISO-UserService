@@ -140,6 +140,14 @@ class MatrixMessageControllerTest {
   }
 
   @Test
+  void getCurrentUserMatrixToken_ShouldReturnBadRequest_WhenDeviceIdIsInvalid() {
+    var response = controller.getCurrentUserMatrixToken("bad/device");
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verifyNoInteractions(matrixSynapseService, consultantService, userService);
+  }
+
+  @Test
   void getCurrentUserMatrixToken_ShouldReturnOk_WhenTokenMintingSucceeds() {
     // Business reason: authenticated users need short-lived Matrix browser tokens for messaging
     // features.

@@ -71,6 +71,31 @@ class SelfHelpGroupContractTest {
   }
 
   @Test
+  void legacySeriesMigrationShouldAlignCurrentOccurrenceWithTheAdvancedStartDate()
+      throws IOException {
+    String changelog =
+        new String(
+            getClass()
+                .getResourceAsStream(
+                    "/db/changelog/changeset/0060_self_help_group_series/0060_changeSet.xml")
+                .readAllBytes());
+
+    assertThat(changelog)
+        .contains(
+            "TIMESTAMPDIFF(WEEK, initial_start_date, start_date)",
+            "repeat_count = current_occurrence_index + 12");
+    assertThat(changelog.indexOf("TIMESTAMPDIFF(WEEK, initial_start_date, start_date)"))
+        .isLessThan(changelog.indexOf("repeat_count = current_occurrence_index + 12"));
+
+    int alignmentChangeSetStart =
+        changelog.indexOf("<changeSet id=\"0060_align_legacy_repeating_chat_occurrence\"");
+    String alignmentChangeSet =
+        changelog.substring(
+            alignmentChangeSetStart, changelog.indexOf("</changeSet>", alignmentChangeSetStart));
+    assertThat(alignmentChangeSet).contains("columnName=\"is_repetitive\"");
+  }
+
+  @Test
   void ownerMutationsShouldUseAPessimisticSeriesLock() throws IOException {
     String repository =
         Files.readString(

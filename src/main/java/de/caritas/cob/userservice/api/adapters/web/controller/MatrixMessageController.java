@@ -52,6 +52,9 @@ public class MatrixMessageController {
   @GetMapping("/me/token")
   public ResponseEntity<?> getCurrentUserMatrixToken(
       @RequestParam(name = "deviceId") String deviceId) {
+    if (!MatrixIds.isDeviceId(deviceId)) {
+      return ResponseEntity.badRequest().body(Map.of("error", "Invalid Matrix device ID"));
+    }
     try {
       String matrixUserId = getCurrentMatrixUserId();
       if (matrixUserId == null || matrixUserId.isBlank()) {

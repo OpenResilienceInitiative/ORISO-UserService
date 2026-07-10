@@ -63,4 +63,48 @@
     <sql>UPDATE chat SET repeat_count = 12 WHERE is_repetitive = TRUE AND repeat_count = 1</sql>
     <rollback><sql>UPDATE chat SET repeat_count = 1 WHERE is_repetitive = TRUE AND repeat_count = 12</sql></rollback>
   </changeSet>
+
+  <changeSet id="0060_align_legacy_repeating_chat_occurrence" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="chat" columnName="is_repetitive"/>
+        <columnExists tableName="chat" columnName="initial_start_date"/>
+        <columnExists tableName="chat" columnName="start_date"/>
+        <columnExists tableName="chat" columnName="chat_interval"/>
+        <columnExists tableName="chat" columnName="current_occurrence_index"/>
+        <columnExists tableName="chat" columnName="repeat_count"/>
+      </and>
+    </preConditions>
+    <sql>
+      UPDATE chat
+      SET current_occurrence_index = GREATEST(
+        0,
+        TIMESTAMPDIFF(WEEK, initial_start_date, start_date)
+      )
+      WHERE is_repetitive = TRUE
+        AND chat_interval = 'WEEKLY'
+        AND current_occurrence_index = 0;
+
+      UPDATE chat
+      SET repeat_count = current_occurrence_index + 12
+      WHERE is_repetitive = TRUE
+        AND chat_interval = 'WEEKLY'
+        AND repeat_count = 12
+        AND current_occurrence_index &gt; 0;
+    </sql>
+    <rollback>
+      <sql>
+        UPDATE chat
+        SET repeat_count = 12
+        WHERE is_repetitive = TRUE
+          AND chat_interval = 'WEEKLY'
+          AND repeat_count = current_occurrence_index + 12;
+
+        UPDATE chat
+        SET current_occurrence_index = 0
+        WHERE is_repetitive = TRUE
+          AND chat_interval = 'WEEKLY';
+      </sql>
+    </rollback>
+  </changeSet>
 </databaseChangeLog>

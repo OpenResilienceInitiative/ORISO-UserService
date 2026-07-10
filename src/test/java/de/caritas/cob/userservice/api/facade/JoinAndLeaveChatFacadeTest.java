@@ -468,6 +468,7 @@ class JoinAndLeaveChatFacadeTest {
     Chat repetitiveChat = mock(Chat.class);
     when(repetitiveChat.isActive()).thenReturn(true);
     when(repetitiveChat.isRepetitive()).thenReturn(true);
+    when(repetitiveChat.nextStart()).thenReturn(LocalDateTime.now().plusWeeks(1));
     when(repetitiveChat.getGroupId()).thenReturn("groupId");
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(repetitiveChat));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
@@ -482,6 +483,30 @@ class JoinAndLeaveChatFacadeTest {
 
     verify(chatReCreator, times(1)).updateAsNextChat(repetitiveChat, "newGroupId");
     verify(chatService, never()).deleteChat(any());
+  }
+
+  @Test
+  void leaveChat_Should_CompleteFiniteSeries_When_NoNextOccurrenceRemains() {
+    Chat repetitiveChat = mock(Chat.class);
+    when(repetitiveChat.isActive()).thenReturn(true);
+    when(repetitiveChat.isRepetitive()).thenReturn(true);
+    when(repetitiveChat.nextStart()).thenReturn(null);
+    when(repetitiveChat.getGroupId()).thenReturn("groupId");
+    when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(repetitiveChat));
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(user.getRcUserId()).thenReturn(RC_USER_ID);
+    when(user.getMatrixUserId()).thenReturn(MATRIX_USER_ID);
+    when(groupChatMembershipService.hasRemainingHumanMembers(repetitiveChat, MATRIX_USER_ID))
+        .thenReturn(false);
+    when(rocketChatService.deleteGroupAsSystemUser("groupId")).thenReturn(true);
+
+    joinAndLeaveChatFacade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatReCreator, never()).recreateMessengerChat(any());
+    verify(chatReCreator, never()).updateAsNextChat(any(), any());
+    verify(matrixChatShutdownService).shutdownRoom(repetitiveChat);
+    verify(repetitiveChat).setActive(false);
+    verify(chatService).saveChat(repetitiveChat);
   }
 
   @Test

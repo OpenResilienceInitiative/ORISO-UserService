@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -402,10 +403,7 @@ public class MatrixSynapseService {
    * @return standard Matrix login response, or {@code null} when the login cannot be created
    */
   public java.util.Map<String, Object> loginBrowserDevice(String matrixUserId, String deviceId) {
-    if (matrixUserId == null
-        || matrixUserId.isBlank()
-        || deviceId == null
-        || !deviceId.matches("[A-Za-z0-9._=-]{1,255}")) {
+    if (matrixUserId == null || matrixUserId.isBlank() || !MatrixIds.isDeviceId(deviceId)) {
       return null;
     }
 
