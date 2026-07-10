@@ -456,4 +456,409 @@ class SessionSupervisorFacadeTest {
     other.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(7L).build()));
     return other;
   }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-10
+  // ---------------------------------------------------------------------------
+
+  private SessionSupervisor activeSupervisorRow(Long id) {
+    return SessionSupervisor.builder()
+        .id(id)
+        .session(session)
+        .supervisorConsultant(supervisor)
+        .addedByConsultant(addedBy)
+        .isActive(true)
+        .matrixRoomId(SIDE_ROOM)
+        .notes(
+            SupervisionNotes.encode(
+                SupervisionReason.PEER_SUPPORT, "x", SupervisionConsent.NOT_REQUIRED))
+        .build();
+  }
+
+  // --- removeSupervisor ---
+
+  @Test
+  void removeSupervisor_Should_throwNotFound_When_sessionNotFound() {
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.removeSupervisor(SESSION_ID, 1L, addedBy))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
+  }
+
+  @Test
+  void removeSupervisor_Should_throwForbidden_When_noPermission() {
+    Consultant stranger = new Consultant();
+    stranger.setId("con-stranger");
+    stranger.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(999L).build()));
+
+    assertThatThrownBy(() -> facade.removeSupervisor(SESSION_ID, 1L, stranger))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void removeSupervisor_Should_throwNotFound_When_supervisorNotFound() {
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.removeSupervisor(SESSION_ID, 1L, addedBy))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
+  }
+
+  @Test
+  void removeSupervisor_Should_throwBadRequest_When_supervisorBelongsToDifferentSession() {
+    Session otherSession = new Session();
+    otherSession.setId(999L);
+    SessionSupervisor mismatched =
+        SessionSupervisor.builder()
+            .id(1L)
+            .session(otherSession)
+            .supervisorConsultant(supervisor)
+            .isActive(true)
+            .build();
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(mismatched));
+
+    assertThatThrownBy(() -> facade.removeSupervisor(SESSION_ID, 1L, addedBy))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void removeSupervisor_Should_throwBadRequest_When_alreadyRemoved() {
+    SessionSupervisor inactive = activeSupervisorRow(1L);
+    inactive.setIsActive(false);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(inactive));
+
+    assertThatThrownBy(() -> facade.removeSupervisor(SESSION_ID, 1L, addedBy))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("already removed");
+  }
+
+  @Test
+  void removeSupervisor_Should_removeFromBothRoomsAndDeactivate_When_happyPath() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService).removeUserFromRoom(SIDE_ROOM, SUPERVISOR_MXID, "tok");
+    verify(matrixSynapseService).removeUserFromRoom(CLIENT_ROOM, SUPERVISOR_MXID, "tok");
+    assertThat(active.getIsActive()).isFalse();
+    assertThat(active.getRemovedDate()).isNotNull();
+    verify(sessionSupervisorRepository).save(active);
+  }
+
+  @Test
+  void removeSupervisor_Should_logWarn_When_removeFromRoomReturnsFalse() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(false);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_skipRoomRemoval_When_supervisorMatrixUserIdBlank() {
+    supervisor.setMatrixUserId("");
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_skipRoomRemoval_When_removedByConsultantHasNoMatrixId() {
+    addedBy.setMatrixUserId(null);
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void removeSupervisor_Should_skipRoomRemoval_When_consultantTokenNull() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+    assertThat(active.getIsActive()).isFalse();
+  }
+
+  @Test
+  void removeSupervisor_Should_skipRoomCall_When_roomIdBlank() {
+    SessionSupervisor active = activeSupervisorRow(1L);
+    active.setMatrixRoomId("");
+    session.setMatrixRoomId(null);
+    when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
+
+    facade.removeSupervisor(SESSION_ID, 1L, addedBy);
+
+    verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
+  }
+
+  // --- getSupervisors / getPendingConsentSupervisors ---
+
+  @Test
+  void getSupervisors_Should_delegateToRepository() {
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(activeSupervisorRow(1L)));
+
+    List<SessionSupervisor> result = facade.getSupervisors(SESSION_ID);
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getPendingConsentSupervisors_Should_returnOnlyPendingConsentRows() {
+    SessionSupervisor pending = pendingSupervisor(1L);
+    SessionSupervisor active = activeSupervisorRow(2L);
+    when(sessionSupervisorRepository.findBySessionId(SESSION_ID))
+        .thenReturn(List.of(pending, active));
+
+    List<SessionSupervisor> result = facade.getPendingConsentSupervisors(SESSION_ID);
+
+    assertThat(result).containsExactly(pending);
+  }
+
+  // --- hasPermissionToManageSupervisors: uncovered final branch ---
+
+  @Test
+  void addSupervisor_Should_throwForbidden_When_differentAgencyAndRestrictionDisabled() {
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", false);
+    Consultant differentAgency = new Consultant();
+    differentAgency.setId("con-4");
+    differentAgency.setMatrixUserId("@con4:oriso");
+    differentAgency.setConsultantAgencies(
+        Set.of(ConsultantAgency.builder().agencyId(999L).build()));
+
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, differentAgency, "PEER_SUPPORT", "justified"))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  // --- provisionSupervisorRooms: uncovered branches ---
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_consultantMatrixTokenNull() {
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);
+
+    assertThatThrownBy(() -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "r"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  @Test
+  void addSupervisor_Should_continueWithWarning_When_powerLevelNotSet() throws Exception {
+    when(matrixSynapseService.setUserPowerLevel(any(), any(), any(Integer.class), any()))
+        .thenReturn(false);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved).isNotNull();
+  }
+
+  @Test
+  void addSupervisor_Should_skipJoin_When_supervisorTokenNull() throws Exception {
+    // First call: side-room inviteAndJoin needs a non-null token to succeed.
+    // Second call: provisionSupervisorRooms' own final client-room join lookup — null here
+    // is the branch under test (join is skipped, no exception).
+    when(matrixSynapseService.loginAsUserAccessToken(SUPERVISOR_MXID))
+        .thenReturn("tok", (String) null);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    verify(matrixSynapseService, never()).joinRoom(eq(CLIENT_ROOM), any());
+    assertThat(saved).isNotNull();
+  }
+
+  @Test
+  void addSupervisor_Should_continue_When_supervisorJoinReturnsFalse() throws Exception {
+    when(matrixSynapseService.joinRoom(any(), any())).thenReturn(false);
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved).isNotNull();
+  }
+
+  // --- ensureSupervisionSideRoom: uncovered branches ---
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_createRoomThrows() throws Exception {
+    when(matrixSynapseService.createRoom(any(), any(), any()))
+        .thenThrow(new RuntimeException("matrix down"));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_createRoomReturnsNoRoomId()
+      throws Exception {
+    when(matrixSynapseService.createRoom(any(), any(), any()))
+        .thenReturn(ResponseEntity.ok(new MatrixCreateRoomResponseDTO()));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  @Test
+  void addSupervisor_Should_alsoInviteAssignedConsultant_When_differentFromAddedBy()
+      throws Exception {
+    Consultant assigned = new Consultant();
+    assigned.setId("con-assigned");
+    assigned.setMatrixUserId("@assigned:oriso");
+    session.setConsultant(assigned);
+    // addedBy is now a same-agency (not assigned) consultant — allow via restriction disabled.
+    ReflectionTestUtils.setField(facade, "restrictAddToAssignedConsultant", false);
+    addedBy.setConsultantAgencies(Set.of(ConsultantAgency.builder().agencyId(7L).build()));
+
+    facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    verify(matrixSynapseService).inviteUserToRoom(any(), eq("@assigned:oriso"), any());
+  }
+
+  // --- inviteAndJoin (side room): uncovered branches ---
+
+  @Test
+  void addSupervisor_Should_continue_When_sideRoomInviteAlreadyInRoom() throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(
+            new MatrixInviteUserException(
+                "Could not invite user: {\"errcode\":\"M_FORBIDDEN\",\"error\":\""
+                    + SUPERVISOR_MXID
+                    + " is already in the room.\"}"));
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+  }
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_sideRoomInviteFailsOtherMatrixError()
+      throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(new MatrixInviteUserException("some other Matrix failure"));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_sideRoomInviteThrowsGenericException()
+      throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(new RuntimeException("boom"));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_sideRoomUserTokenNull() {
+    when(matrixSynapseService.loginAsUserAccessToken(SUPERVISOR_MXID)).thenReturn(null);
+
+    // Supervisor token is used both for the side-room join (inviteAndJoin) and the client-room
+    // join later; a null token at the side-room stage must fail fast.
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  // --- inviteSupervisorToClientRoom: generic exception branch ---
+
+  @Test
+  void addSupervisor_Should_throwInternalServerError_When_clientRoomInviteThrowsGenericException()
+      throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(new RuntimeException("network blip"));
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+  }
+
+  // --- decideSupervisionConsent: uncovered guard branches ---
+
+  @Test
+  void decideSupervisionConsent_Should_throwBadRequest_When_sessionIsNull() {
+    SessionSupervisor noSession =
+        SessionSupervisor.builder()
+            .id(5L)
+            .session(null)
+            .supervisorConsultant(supervisor)
+            .isActive(false)
+            .notes(
+                SupervisionNotes.encode(
+                    SupervisionReason.SAFEGUARDING_U25, "x", SupervisionConsent.PENDING))
+            .build();
+    when(sessionSupervisorRepository.findById(5L)).thenReturn(Optional.of(noSession));
+
+    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 5L, true))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_throwBadRequest_When_sessionIdMismatch() {
+    Session otherSession = new Session();
+    otherSession.setId(777L);
+    SessionSupervisor mismatched =
+        SessionSupervisor.builder()
+            .id(6L)
+            .session(otherSession)
+            .supervisorConsultant(supervisor)
+            .isActive(false)
+            .notes(
+                SupervisionNotes.encode(
+                    SupervisionReason.SAFEGUARDING_U25, "x", SupervisionConsent.PENDING))
+            .build();
+    when(sessionSupervisorRepository.findById(6L)).thenReturn(Optional.of(mismatched));
+
+    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 6L, true))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_throwNotFound_When_supervisorNotFound() {
+    when(sessionSupervisorRepository.findById(123L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 123L, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
+  }
 }

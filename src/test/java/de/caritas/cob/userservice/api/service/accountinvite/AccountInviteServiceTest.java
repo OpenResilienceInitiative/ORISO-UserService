@@ -1,10 +1,15 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
@@ -15,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +28,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 
 @ExtendWith(MockitoExtension.class)
 class AccountInviteServiceTest {
@@ -184,5 +192,484 @@ class AccountInviteServiceTest {
     assertThat(invite.getEmailVerificationStatus()).isEqualTo(EmailVerificationStatus.PENDING);
     assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
     assertThat(invite.getTokenHash()).isNull();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-10
+  // ---------------------------------------------------------------------------
+
+  // --- createInvite guards ---
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_commandNull() {
+    assertThatThrownBy(() -> service.createInvite(null)).isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_targetRoleNull() {
+    var command =
+        new CreateAccountInviteCommand(null, 7L, "a@example.org", "A", "B", null, null, null);
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_recipientEmailBlank() {
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR, 7L, "   ", "A", "B", null, null, null);
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void createInvite_Should_defaultTwoFactorNotRequired_When_targetRoleNotCounsellor() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                7L,
+                "new@example.org",
+                null,
+                null,
+                null,
+                null,
+                null));
+
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.NOT_REQUIRED);
+    assertThat(invite.getFirstName()).isNull();
+  }
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_expiresInDaysOutOfRange() {
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR, 7L, "new@example.org", "A", "B", null, null, 400L);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- listInvites ---
+
+  @Test
+  void listInvites_Should_delegateToRepositoryWithClampedPageAndSize() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+
+    Page<AccountInvite> result =
+        service.listInvites(
+            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, -1, -1);
+
+    assertThat(result).isSameAs(page);
+    verify(accountInviteRepository)
+        .findAllByFilters(
+            eq(7L),
+            eq(AccountInviteTargetRole.COUNSELLOR),
+            eq(AccountInviteStatus.DRAFT),
+            argThat(pr -> pr.getPageNumber() == 0 && pr.getPageSize() == 20));
+  }
+
+  @Test
+  void listInvites_Should_clampSize_When_tooLarge() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+
+    service.listInvites(null, null, null, 2, 500);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(
+            eq(null),
+            eq(null),
+            eq(null),
+            argThat(pr -> pr.getPageNumber() == 2 && pr.getPageSize() == 100));
+  }
+
+  // --- revokeInvite ---
+
+  @Test
+  void revokeInvite_Should_setRevokedFields_When_notAccepted() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.EMAIL_SENT).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite result = service.revokeInvite(1L);
+
+    assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(result.getRevokedByUserId()).isEqualTo("admin-1");
+    assertThat(result.getRevokedAt()).isNotNull();
+  }
+
+  @Test
+  void revokeInvite_Should_throwBadRequest_When_alreadyAccepted() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.ACCEPTED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.revokeInvite(1L)).isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void revokeInvite_Should_throwNotFound_When_inviteMissing() {
+    when(accountInviteRepository.findById(99L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.revokeInvite(99L)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void revokeInvite_Should_throwBadRequest_When_inviteIdNull() {
+    assertThatThrownBy(() -> service.revokeInvite(null)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- acceptInvite ---
+
+  @Test
+  void acceptInvite_Should_throwBadRequest_When_tokenBlank() {
+    assertThatThrownBy(() -> service.acceptInvite("  ", "user-1"))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void acceptInvite_Should_throwNotFound_When_tokenNotFound() {
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void acceptInvite_Should_expireAndThrow_When_pastExpiry() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().minusDays(1))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
+        .isInstanceOf(BadRequestException.class);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
+  void acceptInvite_Should_throwBadRequest_When_statusNotActive() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.REVOKED).build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void acceptInvite_Should_activateInvite_When_emailSentAndNotExpired() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite result = service.acceptInvite("raw-token", "user-1");
+
+    assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThat(result.getAcceptedByUserId()).isEqualTo("user-1");
+    assertThat(result.getEmailVerificationStatus()).isEqualTo(EmailVerificationStatus.VERIFIED);
+  }
+
+  @Test
+  void acceptInvite_Should_activateInvite_When_statusDraftAndNoExpiry() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.DRAFT).expiresAt(null).build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite result = service.acceptInvite("raw-token", "user-1");
+
+    assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+  }
+
+  // --- resendInvite guards ---
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteAccepted() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.ACCEPTED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteRevoked() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.REVOKED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  // --- sendInvite (private, via public entry point) guards ---
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_inviteAccepted() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.ACCEPTED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L))
+        .thenReturn(Optional.of(InviteEmailTemplate.builder().id(20L).build()));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_inviteRevoked() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.REVOKED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L))
+        .thenReturn(Optional.of(InviteEmailTemplate.builder().id(20L).build()));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_keepExistingFutureExpiry_When_alreadySet() {
+    LocalDateTime future = LocalDateTime.now().plusDays(10);
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .status(AccountInviteStatus.DRAFT)
+            .expiresAt(future)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder().id(20L).subject("s").body("b").build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.sendInvite(new SendInviteCommand(1L, 20L, "https://x"));
+
+    assertThat(invite.getExpiresAt()).isEqualTo(future);
+  }
+
+  // --- findInvite / findTemplate guards ---
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_inviteIdNull() {
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(null, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwNotFound_When_inviteMissing() {
+    when(accountInviteRepository.findById(99L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(99L, 20L, "https://x")))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_templateIdNull() {
+    AccountInvite invite = AccountInvite.builder().id(1L).status(AccountInviteStatus.DRAFT).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, null, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwNotFound_When_templateMissing() {
+    AccountInvite invite = AccountInvite.builder().id(1L).status(AccountInviteStatus.DRAFT).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(99L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 99L, "https://x")))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  // --- calculateAccessGate additional branches ---
+
+  @Test
+  void calculateAccessGate_Should_returnBlockedInvite_When_inviteNull() {
+    assertThat(service.calculateAccessGate(null)).isEqualTo(AccountAccessGateStatus.BLOCKED_INVITE);
+  }
+
+  @Test
+  void calculateAccessGate_Should_returnBlockedInvite_When_statusNotAccepted() {
+    AccountInvite invite = AccountInvite.builder().status(AccountInviteStatus.DRAFT).build();
+
+    assertThat(service.calculateAccessGate(invite))
+        .isEqualTo(AccountAccessGateStatus.BLOCKED_INVITE);
+  }
+
+  @Test
+  void calculateAccessGate_Should_returnBlockedEmail_When_emailNotVerified() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .status(AccountInviteStatus.ACCEPTED)
+            .emailVerificationStatus(EmailVerificationStatus.PENDING)
+            .build();
+
+    assertThat(service.calculateAccessGate(invite))
+        .isEqualTo(AccountAccessGateStatus.BLOCKED_EMAIL);
+  }
+
+  @Test
+  void calculateAccessGate_Should_returnReady_When_emailNotRequired() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .status(AccountInviteStatus.ACCEPTED)
+            .emailVerificationStatus(EmailVerificationStatus.NOT_REQUIRED)
+            .twoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED)
+            .build();
+
+    assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
+  }
+
+  @Test
+  void calculateAccessGate_Should_returnReady_When_twoFactorActive() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .status(AccountInviteStatus.ACCEPTED)
+            .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
+            .twoFactorStatus(TwoFactorGateStatus.ACTIVE)
+            .build();
+
+    assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
+  }
+
+  @Test
+  void calculateAccessGate_Should_returnReady_When_twoFactorDisabledByPolicy() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .status(AccountInviteStatus.ACCEPTED)
+            .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
+            .twoFactorStatus(TwoFactorGateStatus.DISABLED_BY_POLICY)
+            .build();
+
+    assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
+  }
+
+  // --- waiveTwoFactor guards ---
+
+  @Test
+  void waiveTwoFactor_Should_throwBadRequest_When_inviteNull() {
+    assertThatThrownBy(() -> service.waiveTwoFactor(null, new WaiveTwoFactorCommand("reason")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void waiveTwoFactor_Should_throwBadRequest_When_commandNull() {
+    AccountInvite invite = AccountInvite.builder().build();
+
+    assertThatThrownBy(() -> service.waiveTwoFactor(invite, null))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void waiveTwoFactor_Should_throwBadRequest_When_reasonBlank() {
+    AccountInvite invite = AccountInvite.builder().build();
+
+    assertThatThrownBy(() -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("  ")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  // --- render / buildAcceptUrl via sendInvite ---
+
+  @Test
+  void sendInvite_Should_renderAllPlaceholders_And_stripTrailingSlashes() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .tenantId(9L)
+            .recipientEmail("a@example.org")
+            .firstName("Ada")
+            .lastName("Lovelace")
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .subject("{{firstName}} {{lastName}} {{email}} {{tenantId}}")
+            .body("Link: {{inviteLink}}")
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L, "https://app.oriso.org///"));
+
+    assertThat(result.delivery().getSubjectSnapshot()).isEqualTo("Ada Lovelace a@example.org 9");
+    assertThat(result.acceptUrl()).startsWith("https://app.oriso.org/").doesNotContain("///");
+  }
+
+  @Test
+  void sendInvite_Should_useDefaultAcceptUrl_When_baseUrlBlank() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L, "   "));
+
+    assertThat(result.acceptUrl()).startsWith("/account-invite/");
+  }
+
+  @Test
+  void render_Should_returnEmptyString_When_templateValueNull() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder().id(20L).subject(null).body(null).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L, "https://x"));
+
+    assertThat(result.delivery().getSubjectSnapshot()).isEmpty();
+    assertThat(result.delivery().getBodySnapshot()).isEmpty();
+  }
+
+  // --- hash() determinism ---
+
+  @Test
+  void hash_Should_beDeterministic_forSameInput() {
+    assertThat(AccountInviteService.hash("same-token"))
+        .isEqualTo(AccountInviteService.hash("same-token"));
+  }
+
+  @Test
+  void hash_Should_differ_forDifferentInput() {
+    assertThat(AccountInviteService.hash("token-a"))
+        .isNotEqualTo(AccountInviteService.hash("token-b"));
   }
 }
