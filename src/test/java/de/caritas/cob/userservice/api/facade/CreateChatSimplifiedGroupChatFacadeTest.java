@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -193,6 +194,21 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     verify(sessionService, times(2)).saveSession(any());
     // chatService.saveChat called twice: initial save + update with matrixRoomId
     verify(chatService, times(2)).saveChat(any());
+  }
+
+  @Test
+  void createSimplifiedGroupChat_Should_RemainInactiveUntilCounsellorOpensOccurrence()
+      throws Exception {
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+    Chat unsavedChat = mock(Chat.class);
+    doReturn(unsavedChat).when(chatConverter).convertToEntity(any(), any(), any());
+
+    createChatFacade.createChatV1(chatDto, consultant);
+
+    verify(unsavedChat).setActive(false);
   }
 
   // ---------------------------------------------------------------------------
@@ -401,7 +417,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   }
 
   @Test
-  void createSimplifiedGroupChat_Should_PersistCreatorWithSessionId_NotChatId() throws Exception {
+  void createSimplifiedGroupChatShouldPersistCreatorAsSeriesOwnerAndKeepLegacySessionId()
+      throws Exception {
     ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
@@ -415,5 +432,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     verify(groupChatParticipantRepository, times(1)).save(captor.capture());
     // creator participant must use sessionId (200L), not chatId (CHAT_ID=1L)
     assertThat(captor.getValue().getChatId()).isEqualTo(200L);
+    assertThat(captor.getValue().getSeriesId()).isEqualTo(CHAT_ID);
+    assertThat(captor.getValue().getRole()).isEqualTo(ParticipantRole.OWNER);
   }
 }

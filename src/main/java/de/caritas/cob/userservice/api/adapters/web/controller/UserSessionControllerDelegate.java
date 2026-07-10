@@ -334,7 +334,10 @@ class UserSessionControllerDelegate {
 
   private RocketChatCredentials buildUserRocketChatCredentials(User user, String rcToken) {
     var token = rcToken != null ? rcToken : DUMMY_ROCKET_CHAT_TOKEN;
-    var rcUserId = user.getRcUserId() != null ? user.getRcUserId() : DUMMY_ROCKET_CHAT_USER_ID;
+    var rcUserId =
+        user.getRcUserId() != null
+            ? user.getRcUserId()
+            : user.getMatrixUserId() != null ? user.getMatrixUserId() : DUMMY_ROCKET_CHAT_USER_ID;
     return RocketChatCredentials.builder()
         .rocketChatUserId(rcUserId)
         .rocketChatToken(token)

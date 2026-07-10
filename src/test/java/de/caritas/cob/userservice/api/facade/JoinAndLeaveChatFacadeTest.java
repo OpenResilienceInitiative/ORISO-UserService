@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
@@ -73,6 +74,8 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
+
+  @Mock private GroupChatRoleService groupChatRoleService;
 
   @Test
   void joinChat_Should_ThrowNotFoundException_WhenChatDoesNotExist() {
@@ -200,6 +203,24 @@ class JoinAndLeaveChatFacadeTest {
     joinAndLeaveChatFacade.joinChat(ACTIVE_CHAT.getId(), authenticatedUser);
 
     verify(rocketChatService, times(1)).addUserToGroup(RC_USER_ID, ACTIVE_CHAT.getGroupId());
+  }
+
+  @Test
+  void joinChat_Should_JoinMatrixUser_WhenRocketChatIdIsMissing()
+      throws RocketChatAddUserToGroupException {
+    Chat matrixChat = mock(Chat.class);
+    when(matrixChat.isActive()).thenReturn(true);
+    when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(matrixChat));
+    when(groupChatMembershipService.resolveMatrixRoomId(matrixChat))
+        .thenReturn("!room:matrix.oriso.org");
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(user.getMatrixUserId()).thenReturn(MATRIX_USER_ID);
+    when(groupChatMembershipService.addMemberToRoom(matrixChat, MATRIX_USER_ID)).thenReturn(true);
+
+    joinAndLeaveChatFacade.joinChat(CHAT_ID, authenticatedUser);
+
+    verify(groupChatMembershipService).addMemberToRoom(matrixChat, MATRIX_USER_ID);
+    verify(rocketChatService, never()).addUserToGroup(anyString(), anyString());
   }
 
   @Test
@@ -403,6 +424,27 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
+  void leaveChat_Should_UseMatrixIdentityWithoutRocketChatCredentials()
+      throws RocketChatRemoveUserFromGroupException {
+    Chat matrixChat = mock(Chat.class);
+    when(matrixChat.isActive()).thenReturn(true);
+    when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(matrixChat));
+    when(groupChatMembershipService.resolveMatrixRoomId(matrixChat))
+        .thenReturn("!room:matrix.oriso.org");
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(user.getMatrixUserId()).thenReturn(MATRIX_USER_ID);
+    when(groupChatMembershipService.hasRemainingHumanMembers(matrixChat, MATRIX_USER_ID))
+        .thenReturn(true);
+
+    joinAndLeaveChatFacade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatPermissionVerifier).verifyPermissionForChat(matrixChat);
+    verify(groupChatMembershipService).removeLeavingMemberFromRoom(matrixChat, MATRIX_USER_ID);
+    verify(chatService).deleteUserChatRelation(matrixChat, user);
+    verify(rocketChatService, never()).removeUserFromGroup(any(), any());
+  }
+
+  @Test
   void leaveChat_Should_DeleteChat_When_NoHumanMembersRemain() {
     Chat singleChat = mock(Chat.class);
     when(singleChat.isActive()).thenReturn(true);
@@ -477,7 +519,8 @@ class JoinAndLeaveChatFacadeTest {
             disabledRocketChatService,
             chatReCreator,
             groupChatMembershipService,
-            matrixChatShutdownService);
+            matrixChatShutdownService,
+            groupChatRoleService);
     when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(user.getRcUserId()).thenReturn(RC_USER_ID);

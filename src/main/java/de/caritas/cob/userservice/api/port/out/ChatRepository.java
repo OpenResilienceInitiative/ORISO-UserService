@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -15,7 +16,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
       value =
           "SELECT c.id, c.topic, c.consulting_type, c.initial_start_date, c.start_date, "
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
-              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, c.hint_message FROM chat c JOIN chat_agency ca ON c"
+              + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
+              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, "
+              + "c.hint_message, c.source_language, c.hint_message_translations, "
+              + "c.group_chat_rules_translations FROM chat c JOIN chat_agency ca ON c"
               + ".id = ca.chat_id JOIN user_agency ua ON ca.agency_id = ua.agency_id AND ua.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findByUserId(@Param(value = "user_id") String userId);
@@ -24,7 +28,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
       value =
           "SELECT c.id, c.topic, c.consulting_type, c.initial_start_date, c.start_date, "
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
-              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, c.hint_message FROM chat c "
+              + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
+              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, "
+              + "c.hint_message, c.source_language, c.hint_message_translations, "
+              + "c.group_chat_rules_translations FROM chat c "
               + "JOIN user_chat uc ON c.id = uc.chat_id AND uc.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findAssignedByUserId(@Param(value = "user_id") String userId);
@@ -52,4 +59,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   List<Chat> findByChatOwner(Consultant chatOwner);
 
   List<Chat> findAllByActiveIsTrue();
+
+  List<Chat> findAllByActiveIsFalseAndStartDateBetween(
+      LocalDateTime startInclusive, LocalDateTime endInclusive);
 }

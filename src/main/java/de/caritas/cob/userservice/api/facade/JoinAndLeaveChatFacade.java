@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
@@ -39,6 +40,7 @@ public class JoinAndLeaveChatFacade {
   private final ChatReCreator chatReCreator;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixChatShutdownService matrixChatShutdownService;
+  private final GroupChatRoleService groupChatRoleService;
 
   /**
    * Join a chat.
@@ -48,7 +50,25 @@ public class JoinAndLeaveChatFacade {
    */
   public void joinChat(Long chatId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(chatId);
-    String rcUserId = checkPermissionAndGetRcUserId(authenticatedUser, chat);
+    this.chatPermissionVerifier.verifyPermissionForChat(chat);
+
+    if (!isBlank(groupChatMembershipService.resolveMatrixRoomId(chat))) {
+      String matrixUserId = retrieveMatrixUserId(authenticatedUser);
+      if (isBlank(matrixUserId)
+          || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+        throw new InternalServerErrorException(
+            String.format(
+                "User with id %s could not join the Matrix group chat.",
+                authenticatedUser.getUserId()));
+      }
+      return;
+    }
+
+    String rcUserId = retrieveRcUserId(authenticatedUser);
+    if (isBlank(rcUserId)) {
+      throw new InternalServerErrorException(
+          String.format("User with id %s has no Rocket.Chat-ID.", authenticatedUser.getUserId()));
+    }
 
     try {
       rocketChatService.addUserToGroup(rcUserId, chat.getGroupId());
@@ -75,13 +95,7 @@ public class JoinAndLeaveChatFacade {
    */
   public void leaveChat(Long chatId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(chatId);
-    String rcUserId = checkPermissionAndGetRcUserId(authenticatedUser, chat);
-
-    try {
-      rocketChatService.removeUserFromGroup(rcUserId, chat.getGroupId());
-    } catch (RocketChatRemoveUserFromGroupException e) {
-      throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
-    }
+    this.chatPermissionVerifier.verifyPermissionForChat(chat);
 
     Optional<Consultant> leavingConsultant =
         consultantService.getConsultantViaAuthenticatedUser(authenticatedUser);
@@ -94,15 +108,46 @@ public class JoinAndLeaveChatFacade {
             .map(Consultant::getMatrixUserId)
             .or(() -> leavingUser.map(User::getMatrixUserId))
             .orElse(null);
+    boolean matrixChat = !isBlank(groupChatMembershipService.resolveMatrixRoomId(chat));
 
-    groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
-    leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
+    if (matrixChat) {
+      if (isBlank(leavingMatrixUserId)) {
+        throw new InternalServerErrorException(
+            String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
+      }
+      if (leavingConsultant.isPresent()) {
+        groupChatRoleService.leaveSeries(chat, leavingConsultant.get());
+      } else {
+        groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
+        leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
+      }
+    } else {
+      String rcUserId =
+          leavingConsultant
+              .map(Consultant::getRocketChatId)
+              .or(() -> leavingUser.map(User::getRcUserId))
+              .orElse(null);
+      if (isBlank(rcUserId)) {
+        throw new InternalServerErrorException(
+            String.format("User with id %s has no Rocket.Chat-ID.", authenticatedUser.getUserId()));
+      }
+      try {
+        rocketChatService.removeUserFromGroup(rcUserId, chat.getGroupId());
+      } catch (RocketChatRemoveUserFromGroupException e) {
+        throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
+      }
+
+      groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
+      leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
+    }
 
     if (groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)) {
       return;
     }
 
-    deleteMessengerChat(chat.getGroupId());
+    if (!matrixChat) {
+      deleteMessengerChat(chat.getGroupId());
+    }
     if (chat.isRepetitive()) {
       var rcGroupId = chatReCreator.recreateMessengerChat(chat);
       chatReCreator.updateAsNextChat(chat, rcGroupId);
@@ -135,18 +180,6 @@ public class JoinAndLeaveChatFacade {
     return chat;
   }
 
-  private String checkPermissionAndGetRcUserId(AuthenticatedUser authenticatedUser, Chat chat) {
-    this.chatPermissionVerifier.verifyPermissionForChat(chat);
-
-    String rcUserId = retrieveRcUserId(authenticatedUser);
-    if (isBlank(rcUserId)) {
-      throw new InternalServerErrorException(
-          String.format("User with id %s has no Rocket.Chat-ID.", authenticatedUser.getUserId()));
-    }
-
-    return rcUserId;
-  }
-
   private String retrieveRcUserId(AuthenticatedUser authenticatedUser) {
     final AtomicReference<String> rcUserId = new AtomicReference<>();
     consultantService
@@ -159,5 +192,19 @@ public class JoinAndLeaveChatFacade {
                     .ifPresent(user -> rcUserId.set(user.getRcUserId())));
 
     return rcUserId.get();
+  }
+
+  private String retrieveMatrixUserId(AuthenticatedUser authenticatedUser) {
+    final AtomicReference<String> matrixUserId = new AtomicReference<>();
+    consultantService
+        .getConsultantViaAuthenticatedUser(authenticatedUser)
+        .ifPresentOrElse(
+            consultant -> matrixUserId.set(consultant.getMatrixUserId()),
+            () ->
+                userService
+                    .getUserViaAuthenticatedUser(authenticatedUser)
+                    .ifPresent(user -> matrixUserId.set(user.getMatrixUserId())));
+
+    return matrixUserId.get();
   }
 }

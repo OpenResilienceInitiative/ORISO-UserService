@@ -56,6 +56,28 @@ class UserConsultantControllerDelegate {
         : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
+  ResponseEntity<List<ConsultantResponseDTO>> getTenantConsultants() {
+    var consultants =
+        consultantService.findActiveConsultantsForTenant(authenticatedUser.getTenantId()).stream()
+            .map(
+                consultant ->
+                    new ConsultantResponseDTO()
+                        .consultantId(consultant.getId())
+                        .firstName(consultant.getFirstName())
+                        .lastName(consultant.getLastName())
+                        .username(consultant.getUsername())
+                        .displayName(
+                            consultant.getDisplayName() != null
+                                    && !consultant.getDisplayName().isBlank()
+                                ? consultant.getDisplayName()
+                                : consultant.getFullName())
+                        .isSupervisor(consultant.isSupervisor()))
+            .toList();
+    return isNotEmpty(consultants)
+        ? new ResponseEntity<>(consultants, HttpStatus.OK)
+        : new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
   ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
       String query, Integer page, Integer perPage, String field, String order) {
     var decodedInfix = determineDecodedInfix(query).trim();

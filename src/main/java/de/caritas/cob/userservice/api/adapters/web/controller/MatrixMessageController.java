@@ -50,7 +50,8 @@ public class MatrixMessageController {
    * MariaDB.
    */
   @GetMapping("/me/token")
-  public ResponseEntity<?> getCurrentUserMatrixToken() {
+  public ResponseEntity<?> getCurrentUserMatrixToken(
+      @RequestParam(name = "deviceId") String deviceId) {
     try {
       String matrixUserId = getCurrentMatrixUserId();
       if (matrixUserId == null || matrixUserId.isBlank()) {
@@ -58,8 +59,7 @@ public class MatrixMessageController {
             .body(Map.of("error", "Matrix user not configured"));
       }
 
-      var tokenResponse =
-          matrixSynapseService.loginAsUser(matrixUserId, MATRIX_BROWSER_TOKEN_TTL_MS);
+      var tokenResponse = matrixSynapseService.loginBrowserDevice(matrixUserId, deviceId);
       if (tokenResponse == null || tokenResponse.get("access_token") == null) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
             .body(Map.of("error", "Matrix token unavailable"));
