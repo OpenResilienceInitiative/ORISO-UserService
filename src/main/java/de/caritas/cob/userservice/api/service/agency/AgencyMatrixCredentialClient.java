@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.agency;
 
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -24,6 +26,8 @@ public class AgencyMatrixCredentialClient {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
+  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityClientConfig identityClientConfig;
 
   @Value("${agency.service.api.url}")
   private String agencyServiceBaseUrl;
@@ -37,8 +41,7 @@ public class AgencyMatrixCredentialClient {
         String.format(
             "%s/internal/agencies/%d/matrix-service-account", agencyServiceBaseUrl, agencyId);
 
-    HttpHeaders headers = securityHeaderSupplier.getCsrfHttpHeaders();
-    tenantHeaderSupplier.addTenantHeader(headers);
+    HttpHeaders headers = technicalUserHeaders();
     // In single-domain multitenancy, non-auth internal calls can miss tenant context.
     // Passing agencyId lets AgencyService resolve the tenant from the target agency.
     headers.add("agencyId", String.valueOf(agencyId));
@@ -59,5 +62,14 @@ public class AgencyMatrixCredentialClient {
     }
 
     return Optional.empty();
+  }
+
+  private HttpHeaders technicalUserHeaders() {
+    var techUser = identityClientConfig.getTechnicalUser();
+    var keycloakLogin = identityClient.loginUser(techUser.getUsername(), techUser.getPassword());
+    var headers =
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.getAccessToken());
+    tenantHeaderSupplier.addTenantHeader(headers);
+    return headers;
   }
 }
