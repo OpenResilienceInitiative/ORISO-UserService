@@ -14,10 +14,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Objects;
@@ -38,6 +40,8 @@ class RocketChatRoomInformationProviderTest {
   @Mock private MatrixSynapseService matrixSynapseService;
 
   @Mock private ConsultantRepository consultantRepository;
+
+  @Mock private UserRepository userRepository;
 
   @org.junit.jupiter.api.BeforeEach
   void enableRocketChat() {
@@ -97,6 +101,22 @@ class RocketChatRoomInformationProviderTest {
     assertTrue(CollectionUtils.sizeIsEmpty(rocketChatRoomInformation.getReadMessages()));
     assertTrue(CollectionUtils.sizeIsEmpty(rocketChatRoomInformation.getLastMessagesRoom()));
     assertTrue(CollectionUtils.sizeIsEmpty(rocketChatRoomInformation.getRoomsForUpdate()));
+  }
+
+  @Test
+  void retrieveRocketChatInformation_Should_ResolveAskerMatrixRoomsFromLegacyCredentials() {
+    var credentials =
+        RocketChatCredentials.builder()
+            .rocketChatUserId("@asker:matrix.localhost")
+            .rocketChatToken("dummy-token")
+            .build();
+    when(matrixSynapseService.getJoinedRoomsForMatrixUser("@asker:matrix.localhost"))
+        .thenReturn(java.util.List.of("!room:matrix.localhost"));
+
+    var roomInformation =
+        rocketChatRoomInformationProvider.retrieveRocketChatInformation(credentials);
+
+    assertEquals(java.util.List.of("!room:matrix.localhost"), roomInformation.getUserRooms());
   }
 
   @Test

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -57,6 +58,52 @@ public class GroupChatMembershipService {
   public void removeLeavingMemberFromRoom(Chat chat, String leavingMatrixUserId) {
     var matrixRoomId = resolveMatrixRoomId(chat);
     removeMemberFromRoom(matrixRoomId, leavingMatrixUserId);
+  }
+
+  /**
+   * Invites a member to a group chat's Matrix room and accepts the invitation on their behalf.
+   *
+   * @return {@code true} only when the member is joined (or was already joined)
+   */
+  public boolean addMemberToRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    var ownerMatrixUserId =
+        chat == null || chat.getChatOwner() == null ? null : chat.getChatOwner().getMatrixUserId();
+    if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId) || isBlank(ownerMatrixUserId)) {
+      return false;
+    }
+
+    try {
+      var ownerToken = matrixSynapseService.loginAsUserAccessToken(ownerMatrixUserId);
+      if (isBlank(ownerToken)) {
+        return false;
+      }
+
+      try {
+        matrixSynapseService.inviteUserToRoom(matrixRoomId, memberMatrixUserId, ownerToken);
+      } catch (MatrixInviteUserException e) {
+        var message = e.getMessage();
+        if (message == null
+            || (!message.contains("already in the room") && !message.contains("already invited"))) {
+          log.warn(
+              "Could not invite member {} to Matrix room {}: {}",
+              memberMatrixUserId,
+              matrixRoomId,
+              message);
+          return false;
+        }
+      }
+
+      var memberToken = matrixSynapseService.loginAsUserAccessToken(memberMatrixUserId);
+      return !isBlank(memberToken) && matrixSynapseService.joinRoom(matrixRoomId, memberToken);
+    } catch (Exception e) {
+      log.warn(
+          "Could not join member {} to Matrix room {}: {}",
+          memberMatrixUserId,
+          matrixRoomId,
+          e.getMessage());
+      return false;
+    }
   }
 
   /**

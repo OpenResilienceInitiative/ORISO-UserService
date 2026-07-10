@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -58,6 +59,7 @@ class UserChatControllerDelegateTest {
   @Mock private Messaging messenger;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private GroupChatFeatureGate groupChatFeatureGate;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -87,6 +89,7 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
+    verify(groupChatFeatureGate).requireEnabled(consultant);
   }
 
   @Test

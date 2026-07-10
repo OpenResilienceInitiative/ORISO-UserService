@@ -17,5 +17,8 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
 
   List<EventNotification> findByRecipientUserIdAndReadDateIsNull(String recipientUserId);
 
+  boolean existsByRecipientUserIdAndDeduplicationKey(
+      String recipientUserId, String deduplicationKey);
+
   void deleteByRecipientUserId(String recipientUserId);
 }

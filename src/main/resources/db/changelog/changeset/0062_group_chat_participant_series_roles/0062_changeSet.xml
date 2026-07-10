@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+
+  <changeSet id="0062_group_chat_participant_series" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="group_chat_participant" columnName="series_id"/></not>
+    </preConditions>
+    <addColumn tableName="group_chat_participant">
+      <column name="series_id" type="BIGINT UNSIGNED"/>
+    </addColumn>
+    <rollback><dropColumn tableName="group_chat_participant" columnName="series_id"/></rollback>
+  </changeSet>
+
+  <changeSet id="0062_group_chat_participant_role" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="group_chat_participant" columnName="participant_role"/></not>
+    </preConditions>
+    <addColumn tableName="group_chat_participant">
+      <column name="participant_role" type="VARCHAR(16)" defaultValue="PARTICIPANT">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><dropColumn tableName="group_chat_participant" columnName="participant_role"/></rollback>
+  </changeSet>
+
+  <changeSet id="0062_backfill_group_chat_participant_series_roles" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="group_chat_participant" columnName="series_id"/>
+        <columnExists tableName="group_chat_participant" columnName="participant_role"/>
+        <columnExists tableName="session" columnName="rc_group_id"/>
+        <columnExists tableName="chat" columnName="rc_group_id"/>
+      </and>
+    </preConditions>
+    <sql><![CDATA[
+      UPDATE group_chat_participant gcp
+      JOIN session s ON s.id = gcp.chat_id
+      JOIN chat c ON c.rc_group_id = s.rc_group_id
+      SET gcp.series_id = c.id,
+          gcp.participant_role = CASE
+            WHEN gcp.consultant_id = c.consultant_id_owner THEN 'OWNER'
+            ELSE 'CO_MODERATOR'
+          END
+      WHERE gcp.series_id IS NULL
+        AND s.rc_group_id IS NOT NULL
+    ]]></sql>
+    <rollback>
+      <sql><![CDATA[
+        UPDATE group_chat_participant gcp
+        JOIN session s ON s.id = gcp.chat_id
+        JOIN chat c ON c.id = gcp.series_id AND c.rc_group_id = s.rc_group_id
+        SET gcp.series_id = NULL,
+            gcp.participant_role = 'PARTICIPANT'
+      ]]></sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0062_group_chat_participant_series_fk" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><foreignKeyConstraintExists foreignKeyName="fk_group_chat_participant_series"/></not>
+    </preConditions>
+    <addForeignKeyConstraint
+      baseTableName="group_chat_participant"
+      baseColumnNames="series_id"
+      referencedTableName="chat"
+      referencedColumnNames="id"
+      constraintName="fk_group_chat_participant_series"/>
+    <rollback>
+      <dropForeignKeyConstraint
+        baseTableName="group_chat_participant"
+        constraintName="fk_group_chat_participant_series"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0062_group_chat_participant_series_user_unique" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">
+        SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'group_chat_participant'
+        AND CONSTRAINT_NAME = 'uk_group_chat_participant_series_consultant'
+      </sqlCheck>
+    </preConditions>
+    <addUniqueConstraint
+      tableName="group_chat_participant"
+      columnNames="series_id, consultant_id"
+      constraintName="uk_group_chat_participant_series_consultant"/>
+    <rollback>
+      <dropUniqueConstraint
+        tableName="group_chat_participant"
+        constraintName="uk_group_chat_participant_series_consultant"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

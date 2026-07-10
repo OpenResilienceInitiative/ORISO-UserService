@@ -36,6 +36,8 @@ public interface ConsultantRepository
 
   List<Consultant> findByDeleteDateIsNull();
 
+  List<Consultant> findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(Long tenantId);
+
   List<Consultant> findAllByIdIn(List<String> ids);
 
   @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")

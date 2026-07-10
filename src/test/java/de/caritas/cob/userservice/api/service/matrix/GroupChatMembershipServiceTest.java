@@ -15,6 +15,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -201,6 +202,22 @@ class GroupChatMembershipServiceTest {
     groupChatMembershipService.removeLeavingMemberFromRoom(chatWithMatrixRoom(), LEAVER_MATRIX_ID);
 
     verify(matrixSynapseService).leaveRoom(MATRIX_ROOM_ID, "token");
+  }
+
+  @Test
+  void addMemberToRoom_Should_InviteAndJoinWithMatrixTokens() throws MatrixInviteUserException {
+    var owner = org.mockito.Mockito.mock(Consultant.class);
+    var chat = chatBuilder().matrixRoomId(MATRIX_ROOM_ID).chatOwner(owner).build();
+    when(owner.getMatrixUserId()).thenReturn(CONSULTANT_MATRIX_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenReturn("owner-token");
+    when(matrixSynapseService.loginAsUserAccessToken(ASKER_MATRIX_ID)).thenReturn("asker-token");
+    when(matrixSynapseService.joinRoom(MATRIX_ROOM_ID, "asker-token")).thenReturn(true);
+
+    assertTrue(groupChatMembershipService.addMemberToRoom(chat, ASKER_MATRIX_ID));
+
+    verify(matrixSynapseService).inviteUserToRoom(MATRIX_ROOM_ID, ASKER_MATRIX_ID, "owner-token");
+    verify(matrixSynapseService).joinRoom(MATRIX_ROOM_ID, "asker-token");
   }
 
   @Test

@@ -134,7 +134,7 @@ class MatrixMessageControllerTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId("")));
 
-    var response = controller.getCurrentUserMatrixToken();
+    var response = controller.getCurrentUserMatrixToken("ORISO_WEB_DEVICE_ONE");
 
     assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
   }
@@ -146,14 +146,15 @@ class MatrixMessageControllerTest {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
-    when(matrixSynapseService.loginAsUser(MATRIX_USER_ID, 55 * 60 * 1000L))
+    when(matrixSynapseService.loginBrowserDevice(MATRIX_USER_ID, "ORISO_WEB_DEVICE_ONE"))
         .thenReturn(Map.of("access_token", "abc", "user_id", MATRIX_USER_ID, "device_id", "dev1"));
 
-    var response = controller.getCurrentUserMatrixToken();
+    var response = controller.getCurrentUserMatrixToken("ORISO_WEB_DEVICE_ONE");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var body = assertInstanceOf(Map.class, response.getBody());
     assertEquals("abc", body.get("accessToken"));
+    assertEquals("dev1", body.get("deviceId"));
   }
 
   @Test
