@@ -295,6 +295,40 @@ class RedisMessageMirrorServiceTest {
     }
   }
 
+  @Test
+  void constructor_shouldLogDebugOnlyWarning() {
+    Logger ctorLogger = (Logger) LoggerFactory.getLogger(RedisMessageMirrorService.class);
+    ListAppender<ILoggingEvent> ctorAppender = new ListAppender<>();
+    ctorAppender.start();
+    ctorLogger.addAppender(ctorAppender);
+    try {
+      new RedisMessageMirrorService(redisTemplateProvider, objectMapper);
+      assertThat(ctorAppender.list)
+          .anyMatch(
+              e ->
+                  e.getLevel().toString().equals("WARN")
+                      && e.getFormattedMessage().contains("debug only"));
+    } finally {
+      ctorLogger.detachAppender(ctorAppender);
+    }
+  }
+
+  @Test
+  void mirrorOutgoingMessage_shouldIncludeRoomIdInPayload_whenEnabled() throws Exception {
+    ReflectionTestUtils.setField(service, "enabled", true);
+    when(redisTemplateProvider.getIfAvailable()).thenReturn(redisTemplate);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+    service.mirrorOutgoingMessage(
+        99L, "!room:custom.org", SENDER_USERNAME, false, SENSITIVE_MESSAGE, "$evt");
+
+    ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+    verify(valueOperations).set(anyString(), payloadCaptor.capture(), any(Duration.class));
+    JsonNode payload = objectMapper.readTree(payloadCaptor.getValue());
+    assertThat(payload.get("roomId").asText()).isEqualTo("!room:custom.org");
+    assertThat(payload.has("ts")).isTrue();
+  }
+
   private static String sha256Prefix(String input, int hexChars) throws NoSuchAlgorithmException {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
