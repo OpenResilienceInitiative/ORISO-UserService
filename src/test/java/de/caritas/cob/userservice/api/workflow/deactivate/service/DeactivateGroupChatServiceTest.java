@@ -103,6 +103,23 @@ class DeactivateGroupChatServiceTest {
         .execute(chat);
   }
 
+  @Test
+  void deactivateShouldUseThePlannedEndEvenWhenTheChatWasUpdatedRecently() {
+    setField(deactivateGroupChatService, "deactivatePeriodMinutes", 0L);
+    var chat = new Chat();
+    chat.setDuration(60);
+    chat.setActive(true);
+    chat.setStartDate(LocalDateTime.now().minusMinutes(61));
+    chat.setUpdateDate(LocalDateTime.now());
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.actionsRegistry.buildContainerForType(Chat.class))
+        .thenReturn(commandMockProvider.getActionContainer(Chat.class));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(chat);
+  }
+
   private static List<LocalDateTime> createOverdueUpdateDates() {
     LocalDateTime now = LocalDateTime.now();
     LocalDateTime oneDeletionPeriodAgo =

@@ -27,6 +27,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class EventNotificationService {
 
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
+
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
 
@@ -46,6 +48,7 @@ public class EventNotificationService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
+  private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
@@ -587,21 +590,87 @@ public class EventNotificationService {
     if (recipientUserId == null || recipientUserId.isBlank()) {
       return;
     }
-    var event =
-        EventNotification.builder()
-            .recipientUserId(recipientUserId)
-            .eventType(eventType)
-            .category(nonNull(category) ? category : CATEGORY_SYSTEM)
-            .title(nonNull(title) ? title : "Notification")
-            .text(nonNull(text) ? text : "")
-            .params(params)
-            .actionPath(actionPath)
-            .sourceSessionId(sourceSessionId)
-            .readDate(null)
-            .createDate(LocalDateTime.now())
-            .tenantId(tenantId)
-            .build();
-    eventNotificationRepository.save(event);
+    eventNotificationRepository.save(
+        buildEvent(
+            recipientUserId,
+            eventType,
+            category,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId,
+            null));
+  }
+
+  /** Persists an event at most once for a producer-owned key and recipient. */
+  @Transactional
+  public void createEventOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    if (recipientUserId == null
+        || recipientUserId.isBlank()
+        || deduplicationKey == null
+        || deduplicationKey.isBlank()
+        || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            recipientUserId, deduplicationKey)) {
+      return;
+    }
+
+    try {
+      deduplicationWriter.persistInNewTransaction(
+          buildEvent(
+              recipientUserId,
+              eventType,
+              category,
+              title,
+              text,
+              params,
+              actionPath,
+              sourceSessionId,
+              tenantId,
+              deduplicationKey));
+    } catch (DataIntegrityViolationException duplicate) {
+      // Another scheduler replica won the unique-key race. The desired event already exists.
+      log.debug(
+          "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+    }
+  }
+
+  private EventNotification buildEvent(
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId,
+      String deduplicationKey) {
+    return EventNotification.builder()
+        .recipientUserId(recipientUserId)
+        .eventType(eventType)
+        .category(nonNull(category) ? category : CATEGORY_SYSTEM)
+        .title(nonNull(title) ? title : "Notification")
+        .text(nonNull(text) ? text : "")
+        .params(params)
+        .actionPath(actionPath)
+        .sourceSessionId(sourceSessionId)
+        .deduplicationKey(deduplicationKey)
+        .readDate(null)
+        .createDate(LocalDateTime.now())
+        .tenantId(tenantId)
+        .build();
   }
 
   private NotificationItem toItem(EventNotification item) {
