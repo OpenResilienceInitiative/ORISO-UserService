@@ -1,217 +1,148 @@
 package de.caritas.cob.userservice.api.service.agency;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
-import java.nio.charset.StandardCharsets;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestClientException;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
-@ExtendWith(MockitoExtension.class)
 class AgencyMatrixCredentialClientTest {
 
-  private static final String AGENCY_SERVICE_BASE_URL = "http://agency-service";
   private static final Long AGENCY_ID = 42L;
-  private static final String MATRIX_USER_ID = "@agency:matrix.example.com";
-  private static final String MATRIX_PASSWORD = "matrix-password";
+  private static final String AGENCY_SERVICE_URL = "https://agency.example/service";
 
-  @InjectMocks private AgencyMatrixCredentialClient agencyMatrixCredentialClient;
-
-  @Mock private RestTemplate restTemplate;
-  @Mock private SecurityHeaderSupplier securityHeaderSupplier;
-  @Mock private TenantHeaderSupplier tenantHeaderSupplier;
+  private RestTemplate restTemplate;
+  private MockRestServiceServer mockServer;
+  private IdentityClient identityClient;
+  private IdentityClientConfig identityClientConfig;
+  private AgencyMatrixCredentialClient agencyMatrixCredentialClient;
 
   @BeforeEach
   void setUp() {
+    restTemplate = new RestTemplate();
+    mockServer = MockRestServiceServer.bindTo(restTemplate).build();
+    identityClient = mock(IdentityClient.class);
+    identityClientConfig = mock(IdentityClientConfig.class);
+
+    var securityHeaderSupplier = new SecurityHeaderSupplier(new AuthenticatedUser());
+    ReflectionTestUtils.setField(securityHeaderSupplier, "csrfHeaderProperty", "csrfHeader");
+    ReflectionTestUtils.setField(securityHeaderSupplier, "csrfCookieProperty", "csrfCookie");
+
+    var tenantHeaderSupplier = new TenantHeaderSupplier(new HttpHeadersResolver());
+    ReflectionTestUtils.setField(tenantHeaderSupplier, "multitenancy", false);
+
+    agencyMatrixCredentialClient =
+        new AgencyMatrixCredentialClient(
+            restTemplate,
+            securityHeaderSupplier,
+            tenantHeaderSupplier,
+            identityClient,
+            identityClientConfig);
     ReflectionTestUtils.setField(
-        agencyMatrixCredentialClient, "agencyServiceBaseUrl", AGENCY_SERVICE_BASE_URL);
+        agencyMatrixCredentialClient, "agencyServiceBaseUrl", AGENCY_SERVICE_URL);
   }
 
   @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_agencyIdIsNull() {
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(null);
+  void fetchMatrixCredentialsShouldAuthenticateAsTechnicalUser() throws Exception {
+    stubTechnicalUserLogin("technical-access-token");
 
-    assertThat(result).isEmpty();
-    verifyNoInteractions(restTemplate, securityHeaderSupplier, tenantHeaderSupplier);
-  }
+    var credentials = new AgencyMatrixCredentialsDTO();
+    credentials.setMatrixUserId("@agency:matrix");
+    credentials.setMatrixPassword("matrix-password");
 
-  @Test
-  void fetchMatrixCredentials_Should_returnCredentials_When_requestSucceeds() {
-    HttpHeaders headers = new HttpHeaders();
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(headers);
-    AgencyMatrixCredentialsDTO credentials = credentials();
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenReturn(ResponseEntity.ok(credentials));
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer technical-access-token"))
+        .andExpect(header("agencyId", "42"))
+        .andRespond(
+            withSuccess(
+                new ObjectMapper().writeValueAsString(credentials), MediaType.APPLICATION_JSON));
 
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
+    var result = agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
 
     assertThat(result).contains(credentials);
-    verify(tenantHeaderSupplier).addTenantHeader(headers);
-
-    ArgumentCaptor<HttpEntity<?>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
-    verify(restTemplate)
-        .exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            requestCaptor.capture(),
-            eq(AgencyMatrixCredentialsDTO.class));
-    assertThat(requestCaptor.getValue().getHeaders().getFirst("agencyId"))
-        .isEqualTo(String.valueOf(AGENCY_ID));
+    mockServer.verify();
   }
 
   @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_responseIsNotSuccessful() {
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenReturn(ResponseEntity.status(HttpStatus.NO_CONTENT).build());
-
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
-
-    assertThat(result).isEmpty();
+  void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyIdIsNull() {
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(null)).isEmpty();
   }
 
   @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_responseIsErrorWithBody() {
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenReturn(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(credentials()));
+  void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
+    var technicalUser = new TechnicalUserConfig();
+    technicalUser.setUsername("technical");
+    technicalUser.setPassword("secret");
 
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityClient.loginUser("technical", "secret"))
+        .thenThrow(new BadRequestException("Keycloak unavailable"));
 
-    assertThat(result).isEmpty();
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
   }
 
   @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_responseBodyIsNull() {
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenReturn(ResponseEntity.ok(null));
+  void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyHasNoMatrixCredentials() {
+    stubTechnicalUserLogin("technical-access-token");
 
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-    assertThat(result).isEmpty();
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
   }
 
   @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_agencyHasNoCredentials() {
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenThrow(
-            HttpClientErrorException.create(
-                HttpStatus.NOT_FOUND,
-                "Not Found",
-                HttpHeaders.EMPTY,
-                new byte[0],
-                StandardCharsets.UTF_8));
+  void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyServiceFails() {
+    stubTechnicalUserLogin("technical-access-token");
 
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
 
-    assertThat(result).isEmpty();
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
   }
 
-  @Test
-  void fetchMatrixCredentials_Should_returnEmpty_When_requestFails() {
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenThrow(new RestClientException("connection failed"));
+  private void stubTechnicalUserLogin(String accessToken) {
+    var technicalUser = new TechnicalUserConfig();
+    technicalUser.setUsername("technical");
+    technicalUser.setPassword("secret");
 
-    Optional<AgencyMatrixCredentialsDTO> result =
-        agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
+    var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setAccessToken(accessToken);
 
-    assertThat(result).isEmpty();
-  }
-
-  @Test
-  void fetchMatrixCredentials_Should_forwardTenantHeader_When_tenantSupplierAddsHeader() {
-    HttpHeaders headers = new HttpHeaders();
-    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(headers);
-    doAnswer(
-            invocation -> {
-              headers.add("tenantId", "7");
-              return null;
-            })
-        .when(tenantHeaderSupplier)
-        .addTenantHeader(headers);
-    when(restTemplate.exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            any(HttpEntity.class),
-            eq(AgencyMatrixCredentialsDTO.class)))
-        .thenReturn(ResponseEntity.ok(credentials()));
-
-    agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID);
-
-    ArgumentCaptor<HttpEntity<?>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
-    verify(restTemplate)
-        .exchange(
-            eq(expectedUrl()),
-            eq(HttpMethod.GET),
-            requestCaptor.capture(),
-            eq(AgencyMatrixCredentialsDTO.class));
-    assertThat(requestCaptor.getValue().getHeaders().getFirst("tenantId")).isEqualTo("7");
-  }
-
-  private static String expectedUrl() {
-    return AGENCY_SERVICE_BASE_URL + "/internal/agencies/" + AGENCY_ID + "/matrix-service-account";
-  }
-
-  private static AgencyMatrixCredentialsDTO credentials() {
-    AgencyMatrixCredentialsDTO credentials = new AgencyMatrixCredentialsDTO();
-    credentials.setMatrixUserId(MATRIX_USER_ID);
-    credentials.setMatrixPassword(MATRIX_PASSWORD);
-    return credentials;
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityClient.loginUser("technical", "secret")).thenReturn(loginResponse);
   }
 }
