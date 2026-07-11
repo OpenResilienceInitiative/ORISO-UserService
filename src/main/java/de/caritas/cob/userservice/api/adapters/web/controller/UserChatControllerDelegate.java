@@ -90,7 +90,7 @@ class UserChatControllerDelegate {
 
   ResponseEntity<Void> assignChat(String groupId) {
     if (groupId.matches("\\d+")) {
-      joinAndLeaveChatFacade.joinChat(Long.parseLong(groupId), authenticatedUser);
+      assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
     } else {
       assignChatFacade.assignChat(groupId, authenticatedUser);
     }

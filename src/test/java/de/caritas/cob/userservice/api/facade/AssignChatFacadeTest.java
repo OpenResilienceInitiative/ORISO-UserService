@@ -72,4 +72,15 @@ class AssignChatFacadeTest {
     verify(chatService)
         .saveUserChatRelation(UserChat.builder().user(USER).chat(ACTIVE_CHAT).build());
   }
+
+  @Test
+  void assignChatBySeriesId_Should_AddUserToChat() {
+    when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(USER));
+
+    assignChatFacade.assignChat(ACTIVE_CHAT.getId(), authenticatedUser);
+
+    verify(chatService)
+        .saveUserChatRelation(UserChat.builder().user(USER).chat(ACTIVE_CHAT).build());
+  }
 }

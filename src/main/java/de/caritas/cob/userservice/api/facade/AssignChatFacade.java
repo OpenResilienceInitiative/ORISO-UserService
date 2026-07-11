@@ -30,6 +30,19 @@ public class AssignChatFacade {
    */
   public void assignChat(String groupId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(groupId);
+    assignChat(chat, authenticatedUser);
+  }
+
+  /** Assigns a V2 chat resolved by its stable numeric Series id. */
+  public void assignChat(Long chatId, AuthenticatedUser authenticatedUser) {
+    Chat chat =
+        chatService
+            .getChat(chatId)
+            .orElseThrow(() -> new NotFoundException("Chat with id %s not found", chatId));
+    assignChat(chat, authenticatedUser);
+  }
+
+  private void assignChat(Chat chat, AuthenticatedUser authenticatedUser) {
     User user = getUser(authenticatedUser);
 
     chatService.saveUserChatRelation(UserChat.builder().user(user).chat(chat).build());
