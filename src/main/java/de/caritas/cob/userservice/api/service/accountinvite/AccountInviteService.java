@@ -191,6 +191,10 @@ public class AccountInviteService {
     return AccountAccessGateStatus.READY;
   }
 
+  public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
+    return waiveTwoFactor(findInvite(inviteId), command);
+  }
+
   public AccountInvite waiveTwoFactor(AccountInvite invite, WaiveTwoFactorCommand command) {
     if (invite == null) {
       throw new BadRequestException("Invite is required");
@@ -198,11 +202,44 @@ public class AccountInviteService {
     if (command == null || isBlank(command.reason())) {
       throw new BadRequestException("Waiver reason is required");
     }
+    LocalDateTime now = LocalDateTime.now();
     invite.setTwoFactorStatus(TwoFactorGateStatus.WAIVED);
     invite.setTwoFactorWaivedBy(authenticatedUser.getUserId());
-    invite.setTwoFactorWaivedAt(LocalDateTime.now());
+    invite.setTwoFactorWaivedAt(now);
     invite.setTwoFactorWaiverReason(command.reason());
+    invite.setUpdateDate(now);
+    accountInviteRepository.save(invite);
     return invite;
+  }
+
+  /** Marks pending invite gates as satisfied once the user has an OTP credential. */
+  public void markTwoFactorActive(String userId) {
+    transitionTwoFactorStatus(
+        userId, TwoFactorGateStatus.PENDING_SETUP, TwoFactorGateStatus.ACTIVE);
+  }
+
+  /** Re-opens the gate when the user deletes their OTP credential (waivers stay untouched). */
+  public void markTwoFactorPendingSetup(String userId) {
+    transitionTwoFactorStatus(
+        userId, TwoFactorGateStatus.ACTIVE, TwoFactorGateStatus.PENDING_SETUP);
+  }
+
+  private void transitionTwoFactorStatus(
+      String userId, TwoFactorGateStatus from, TwoFactorGateStatus to) {
+    if (isBlank(userId)) {
+      return;
+    }
+    var invites = accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(userId, from);
+    if (invites.isEmpty()) {
+      return;
+    }
+    LocalDateTime now = LocalDateTime.now();
+    invites.forEach(
+        invite -> {
+          invite.setTwoFactorStatus(to);
+          invite.setUpdateDate(now);
+        });
+    accountInviteRepository.saveAll(invites);
   }
 
   private InviteSendResult sendInvite(
