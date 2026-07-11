@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+
+  <changeSet id="0060_chat_repeat_count" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="chat" columnName="repeat_count"/></not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="repeat_count" type="INT" defaultValueNumeric="1">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><dropColumn tableName="chat" columnName="repeat_count"/></rollback>
+  </changeSet>
+
+  <changeSet id="0060_chat_current_occurrence_index" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="chat" columnName="current_occurrence_index"/></not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="current_occurrence_index" type="INT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><dropColumn tableName="chat" columnName="current_occurrence_index"/></rollback>
+  </changeSet>
+
+  <changeSet id="0060_chat_timezone" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="chat" columnName="timezone"/></not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="timezone" type="VARCHAR(100)" defaultValue="UTC">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><dropColumn tableName="chat" columnName="timezone"/></rollback>
+  </changeSet>
+
+  <changeSet id="0060_chat_modality" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="chat" columnName="modality"/></not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="modality" type="VARCHAR(16)" defaultValue="TEXT">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><dropColumn tableName="chat" columnName="modality"/></rollback>
+  </changeSet>
+
+  <changeSet id="0060_backfill_legacy_repeating_chats" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="chat" columnName="repeat_count"/>
+        <columnExists tableName="chat" columnName="is_repetitive"/>
+      </and>
+    </preConditions>
+    <sql>UPDATE chat SET repeat_count = 12 WHERE is_repetitive = TRUE AND repeat_count = 1</sql>
+    <rollback><sql>UPDATE chat SET repeat_count = 1 WHERE is_repetitive = TRUE AND repeat_count = 12</sql></rollback>
+  </changeSet>
+
+  <changeSet id="0060_align_legacy_repeating_chat_occurrence" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="chat" columnName="is_repetitive"/>
+        <columnExists tableName="chat" columnName="initial_start_date"/>
+        <columnExists tableName="chat" columnName="start_date"/>
+        <columnExists tableName="chat" columnName="chat_interval"/>
+        <columnExists tableName="chat" columnName="current_occurrence_index"/>
+        <columnExists tableName="chat" columnName="repeat_count"/>
+      </and>
+    </preConditions>
+    <sql>
+      UPDATE chat
+      SET current_occurrence_index = GREATEST(
+        0,
+        TIMESTAMPDIFF(WEEK, initial_start_date, start_date)
+      )
+      WHERE is_repetitive = TRUE
+        AND chat_interval = 'WEEKLY'
+        AND current_occurrence_index = 0;
+
+      UPDATE chat
+      SET repeat_count = current_occurrence_index + 12
+      WHERE is_repetitive = TRUE
+        AND chat_interval = 'WEEKLY'
+        AND repeat_count = 12
+        AND current_occurrence_index &gt; 0;
+    </sql>
+    <rollback>
+      <sql>
+        UPDATE chat
+        SET repeat_count = 12
+        WHERE is_repetitive = TRUE
+          AND chat_interval = 'WEEKLY'
+          AND repeat_count = current_occurrence_index + 12;
+
+        UPDATE chat
+        SET current_occurrence_index = 0
+        WHERE is_repetitive = TRUE
+          AND chat_interval = 'WEEKLY';
+      </sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

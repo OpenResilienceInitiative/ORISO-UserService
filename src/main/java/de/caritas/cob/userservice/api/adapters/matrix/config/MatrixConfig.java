@@ -17,6 +17,7 @@ public class MatrixConfig {
   private String serverName = "caritas.local";
   private String adminUsername;
   private String adminPassword;
+  private boolean encryptionEnabled = false;
 
   /**
    * When {@code true}, consultant live-chat availability is derived from real-time Matrix presence.

@@ -1,0 +1,419 @@
+package de.caritas.cob.userservice.api.admin.service.consultant.create;
+
+import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
+import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.google.common.collect.Lists;
+import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
+import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
+import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
+import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Set;
+import org.hibernate.validator.internal.util.CollectionHelper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+class CreateConsultantSagaTest {
+
+  private static final String KEYCLOAK_USER_ID = "keycloak-user-id";
+  private static final String ROCKET_CHAT_USER_ID = "rocket-chat-user-id";
+  private static final String VALID_USERNAME = "validUsername";
+  private static final String VALID_EMAIL = "valid@emailaddress.de";
+  private static final String VALID_PASSWORD = "ValidPass1!";
+
+  @InjectMocks private CreateConsultantSaga createConsultantSaga;
+
+  @Mock private IdentityClient identityClient;
+  @Mock private RocketChatService rocketChatService;
+  @Mock private ConsultantService consultantService;
+  @Mock private UserHelper userHelper;
+
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.consultant.validation
+          .UserAccountInputValidator
+      userAccountInputValidator;
+
+  @Mock private TenantAdminService tenantAdminService;
+  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private RollbackFacade rollbackFacade;
+  @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AppointmentService appointmentService;
+  @Mock private SessionService sessionService;
+
+  @BeforeEach
+  void setUp() {
+    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", false);
+    PlainCredentialsHolder.clear();
+    TenantContext.clear();
+  }
+
+  @AfterEach
+  void tearDown() {
+    PlainCredentialsHolder.clear();
+    TenantContext.clear();
+  }
+
+  @Test
+  void createNewConsultant_Should_returnResponse_When_happyPath() throws Exception {
+    stubHappyPath();
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response, notNullValue());
+    assertThat(response.getEmbedded(), notNullValue());
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
+    verify(appointmentService, never()).createConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_callAppointmentService_When_featureEnabled() throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    verify(appointmentService).createConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_rollback_When_appointmentServiceFails() throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
+    stubHappyPath();
+    when(authenticatedUser.getUserId()).thenReturn("admin-id");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("admin"));
+    doThrow(new RuntimeException("appointment down"))
+        .when(appointmentService)
+        .createConsultant(any());
+
+    var ex =
+        assertThrows(
+            DistributedTransactionException.class,
+            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is(
+            "DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE"));
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_throwBadRequest_When_passwordMissing() {
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setPassword(null);
+    stubKeycloakUserCreation();
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+  }
+
+  @Test
+  void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails() {
+    stubKeycloakUserCreation();
+    doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
+        .when(identityClient)
+        .updatePassword(anyString(), anyString());
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+    verify(identityClient, never()).updateRole(anyString(), anyString());
+  }
+
+  @Test
+  void createNewConsultant_Should_throwDistributedTransaction_When_roleUpdateFails()
+      throws Exception {
+    stubKeycloakUserCreation();
+    doThrow(new RuntimeException("role update failed"))
+        .when(identityClient)
+        .updateRole(anyString(), anyString());
+
+    assertThrows(
+        DistributedTransactionException.class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    verify(rocketChatService, never()).getUserID(anyString(), anyString(), anyBoolean());
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_throwDistributedTransaction_When_saveConsultantFails()
+      throws Exception {
+    stubKeycloakUserCreation();
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenReturn(ROCKET_CHAT_USER_ID);
+    doThrow(new RuntimeException("db down")).when(consultantService).saveConsultant(any());
+
+    assertThrows(
+        DistributedTransactionException.class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_useDummyRocketChatId_When_rocketChatCreationFails()
+      throws Exception {
+    stubKeycloakUserCreation();
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenThrow(new RuntimeException("rocket chat down"));
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getRocketChatId(), is("dummy-rc"));
+  }
+
+  @Test
+  void createNewConsultant_Should_addGroupChatRole_When_flagEnabled() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setIsGroupchatConsultant(true);
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
+    verify(identityClient).updateRole(KEYCLOAK_USER_ID, GROUP_CHAT_CONSULTANT.getValue());
+  }
+
+  @Test
+  void createNewConsultant_Should_throwBadRequest_When_importRecordHasNoPassword() {
+    ImportRecord importRecord = validImportRecord();
+    stubKeycloakUserCreation();
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            createConsultantSaga.createNewConsultant(
+                importRecord, CollectionHelper.asSet(CONSULTANT.getValue())));
+  }
+
+  @Test
+  void createNewConsultant_Should_assignSessions_When_enquiriesExist() throws Exception {
+    stubHappyPath();
+    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
+        .thenReturn(
+            Lists.newArrayList(
+                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-1"))));
+    when(sessionService.getArchivedSessionsForConsultant(any()))
+        .thenReturn(
+            Lists.newArrayList(
+                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-2"))));
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    verify(rocketChatService).addUserToGroup(ROCKET_CHAT_USER_ID, "group-1");
+    verify(rocketChatService).addUserToGroup(ROCKET_CHAT_USER_ID, "group-2");
+  }
+
+  @Test
+  void createNewConsultant_Should_continue_When_addUserToGroupFails() throws Exception {
+    stubHappyPath();
+    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
+        .thenReturn(
+            Lists.newArrayList(
+                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-1"))));
+    when(sessionService.getArchivedSessionsForConsultant(any())).thenReturn(Lists.newArrayList());
+    doThrow(new RocketChatAddUserToGroupException("add failed"))
+        .when(rocketChatService)
+        .addUserToGroup(anyString(), anyString());
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+  }
+
+  @Test
+  void rollbackCreateNewConsultant_Should_delegateToRollbackFacade() {
+    Consultant consultant = new Consultant();
+    consultant.setId(KEYCLOAK_USER_ID);
+
+    createConsultantSaga.rollbackCreateNewConsultant(consultant);
+
+    verify(rollbackFacade).rollbackConsultantAccount(consultant);
+  }
+
+  @Test
+  void createNewConsultant_Should_throwLicensesExceeded_When_multiTenancyEnabledAndLimitReached() {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    var tenant = new TenantDTO().licensing(new Licensing().allowedNumberOfUsers(1));
+    when(tenantAdminService.getTenantById(1L)).thenReturn(tenant);
+    when(consultantService.getNumberOfActiveConsultants(1L)).thenReturn(1L);
+
+    var ex =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(dto));
+
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0), is(NUMBER_OF_LICENSES_EXCEEDED.name()));
+    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+  }
+
+  @Test
+  void createNewConsultant_Should_throwBadRequest_When_superadminCreatesWithoutTenantId() {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(0L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(null);
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+  }
+
+  @Test
+  void createNewConsultant_Should_throwBadRequest_When_tenantIdDoesNotMatchContext() {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(2L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(99L);
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+  }
+
+  @Test
+  void createNewConsultant_Should_resolveTenantIdFromAccessToken_When_contextMissing()
+      throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    when(authenticatedUser.getAccessToken()).thenReturn(jwtWithTenantId(5L));
+    var tenant = new TenantDTO().licensing(new Licensing().allowedNumberOfUsers(10));
+    when(tenantAdminService.getTenantById(5L)).thenReturn(tenant);
+    when(consultantService.getNumberOfActiveConsultants(5L)).thenReturn(0L);
+    stubHappyPath();
+
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(null);
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    assertThat(dto.getTenantId(), is(5L));
+  }
+
+  @Test
+  void createNewConsultant_Should_throwDistributedTransaction_When_passwordUpdateThrowsGeneric()
+      throws Exception {
+    stubKeycloakUserCreation();
+    doThrow(new RuntimeException("keycloak down"))
+        .when(identityClient)
+        .updatePassword(anyString(), anyString());
+
+    var ex =
+        assertThrows(
+            DistributedTransactionException.class,
+            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_UPDATE_USER_PASSWORD_IN_KEYCLOAK"));
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  private void stubHappyPath() throws Exception {
+    stubKeycloakUserCreation();
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenReturn(ROCKET_CHAT_USER_ID);
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
+        .thenReturn(Lists.newArrayList());
+    when(sessionService.getArchivedSessionsForConsultant(any())).thenReturn(Lists.newArrayList());
+  }
+
+  private void stubKeycloakUserCreation() {
+    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              PlainCredentialsHolder.set(VALID_USERNAME, null);
+              KeycloakCreateUserResponseDTO response = new KeycloakCreateUserResponseDTO();
+              response.setUserId(KEYCLOAK_USER_ID);
+              return response;
+            });
+  }
+
+  private CreateConsultantDTO validCreateConsultantDto() {
+    CreateConsultantDTO dto = new CreateConsultantDTO();
+    dto.setUsername(VALID_USERNAME);
+    dto.setEmail(VALID_EMAIL);
+    dto.setPassword(VALID_PASSWORD);
+    dto.setFirstname("First");
+    dto.setLastname("Last");
+    dto.setIsGroupchatConsultant(false);
+    return dto;
+  }
+
+  private ImportRecord validImportRecord() {
+    ImportRecord importRecord = new ImportRecord();
+    importRecord.setUsername(VALID_USERNAME);
+    importRecord.setUsernameEncoded("encoded-" + VALID_USERNAME);
+    importRecord.setEmail(VALID_EMAIL);
+    importRecord.setFirstName("First");
+    importRecord.setLastName("Last");
+    return importRecord;
+  }
+
+  private String jwtWithTenantId(long tenantId) {
+    String header =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
+    String payload =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(
+                String.format("{\"tenantId\":%d}", tenantId).getBytes(StandardCharsets.UTF_8));
+    return header + "." + payload + ".signature";
+  }
+}

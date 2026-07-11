@@ -272,7 +272,10 @@ public class CreateChatFacade {
 
     // Create a Chat entity (needed for frontend - has topic field!)
     Chat chat = chatConverter.convertToEntity(chatDTO, consultant, agency);
-    chat.setActive(true); // Mark as active
+    // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor.
+    // Keeping it inactive here preserves the Waiting Area and makes the opened lifecycle event
+    // observable exactly once through StartChatFacade.
+    chat.setActive(false);
     chat = chatService.saveChat(chat);
     Long chatId = chat.getId();
     log.info("Created chat {} for group chat", chatId);
@@ -315,6 +318,8 @@ public class CreateChatFacade {
       // IMPORTANT: Add the CREATOR to group_chat_participant table!
       GroupChatParticipant creatorParticipant = new GroupChatParticipant();
       creatorParticipant.setChatId(sessionId); // consistent with other participants
+      creatorParticipant.setSeriesId(chatId);
+      creatorParticipant.setRole(GroupChatParticipant.ParticipantRole.OWNER);
       creatorParticipant.setConsultantId(consultant.getId());
       groupChatParticipantRepository.save(creatorParticipant);
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
@@ -343,6 +348,8 @@ public class CreateChatFacade {
           // Save participant in group_chat_participant table (for querying who's in the group)
           GroupChatParticipant gcp = new GroupChatParticipant();
           gcp.setChatId(sessionId); // Link to session ID
+          gcp.setSeriesId(chatId);
+          gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
           gcp.setConsultantId(participantId);
           groupChatParticipantRepository.save(gcp);
 

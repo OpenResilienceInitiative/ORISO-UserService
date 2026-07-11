@@ -52,6 +52,7 @@ class EventNotificationServiceTest {
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
+  @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
   @Captor private ArgumentCaptor<EventNotification> eventCaptor;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -664,6 +665,39 @@ class EventNotificationServiceTest {
         "user-1", "message.new", null, "Title", "Text", null, 1L, 1L);
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertEquals(EventNotificationService.CATEGORY_SYSTEM, eventCaptor.getValue().getCategory());
+  }
+
+  @Test
+  void createEventOnce_persistsTheDeduplicationKeyOnlyOnce() {
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            "consultant-1", "group-chat:reminder:42:0"))
+        .thenReturn(false, true);
+
+    eventNotificationService.createEventOnce(
+        "group-chat:reminder:42:0",
+        "consultant-1",
+        "group_chat.reminder",
+        EventNotificationService.CATEGORY_SYSTEM,
+        "Reminder",
+        "Soon",
+        "{\"seriesId\":42}",
+        null,
+        42L,
+        null);
+    eventNotificationService.createEventOnce(
+        "group-chat:reminder:42:0",
+        "consultant-1",
+        "group_chat.reminder",
+        EventNotificationService.CATEGORY_SYSTEM,
+        "Reminder",
+        "Soon",
+        "{\"seriesId\":42}",
+        null,
+        42L,
+        null);
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    assertThat(eventCaptor.getValue().getDeduplicationKey()).isEqualTo("group-chat:reminder:42:0");
   }
 
   // ---------------------------------------------------------------------------

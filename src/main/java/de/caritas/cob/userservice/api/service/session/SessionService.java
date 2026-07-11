@@ -418,6 +418,7 @@ public class SessionService {
         .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             topicIds, SessionStatus.NEW, RegistrationType.REGISTERED)
         .stream()
+        .filter(this::isAnonymousStyleRegistration)
         .filter(this::isVisibleRegisteredEnquiryForConsultant)
         .collect(Collectors.toList());
   }
@@ -742,6 +743,7 @@ public class SessionService {
    */
   private boolean isAllowedToAdviseByTopic(Consultant consultant, Session session) {
     return isTeamSessionOrNew(session)
+        && isAnonymousStyleRegistration(session)
         && nonNull(session.getMainTopicId())
         && consultantTopicRepository
             .findTopicIdsByConsultantId(consultant.getId())

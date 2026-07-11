@@ -2,8 +2,16 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -22,11 +30,13 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -57,9 +67,16 @@ class MatrixEventListenerServiceTest {
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionRepository sessionRepository;
+  @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
+
+  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
+  private static final String SENDER_MATRIX_ID = "@asker:matrix.oriso.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
+  private static final String ASKER_DOMAIN_ID = "asker-user-id";
+  private static final String CONSULTANT_DOMAIN_ID = "consultant-id";
 
   @BeforeEach
   void setUpLogging() {
@@ -76,15 +93,39 @@ class MatrixEventListenerServiceTest {
   }
 
   private MatrixEventListenerService newService() {
+    return newService(Optional.empty());
+  }
+
+  private MatrixEventListenerService newService(Optional<RedisMessageMirrorService> mirror) {
     return new MatrixEventListenerService(
         matrixSynapseService,
         sessionService,
         liveEventNotificationService,
         eventNotificationService,
-        Optional.empty(),
+        mirror,
         userRepository,
         consultantRepository,
         sessionRepository);
+  }
+
+  private MatrixEventListenerService newServiceWithSyncExecutor() {
+    var service = newService();
+    wireSynchronousExecutor(service);
+    return service;
+  }
+
+  private void wireSynchronousExecutor(MatrixEventListenerService service) {
+    ExecutorService syncExecutor = mock(ExecutorService.class);
+    lenient()
+        .doAnswer(
+            invocation -> {
+              Runnable task = invocation.getArgument(0);
+              task.run();
+              return null;
+            })
+        .when(syncExecutor)
+        .submit(any(Runnable.class));
+    ReflectionTestUtils.setField(service, "executorService", syncExecutor);
   }
 
   @Test
@@ -548,6 +589,707 @@ class MatrixEventListenerServiceTest {
                     && e.getFormattedMessage().contains("messageId=$evt")
                     && e.getFormattedMessage().contains("contentClass=TEXT")
                     && e.getFormattedMessage().contains("hasAttachment=true"));
+  }
+
+  // ── bootstrapAdminToken (exception path) ────────────────────────────────────
+
+  @Test
+  void bootstrapAdminToken_shouldRecoverAfterException_thenReturnToken() {
+    MatrixEventListenerService service =
+        new MatrixEventListenerService(
+            matrixSynapseService,
+            sessionService,
+            liveEventNotificationService,
+            eventNotificationService,
+            Optional.empty(),
+            userRepository,
+            consultantRepository,
+            sessionRepository) {
+          @Override
+          void sleep(long millis) {
+            // no-op
+          }
+        };
+    ReflectionTestUtils.setField(service, "running", true);
+
+    when(matrixSynapseService.getAdminToken())
+        .thenThrow(new RuntimeException("transient"))
+        .thenReturn("admin-token-after-error");
+
+    boolean acquired = (boolean) ReflectionTestUtils.invokeMethod(service, "bootstrapAdminToken");
+
+    assertThat(acquired).isTrue();
+    assertThat(ReflectionTestUtils.getField(service, "adminAccessToken"))
+        .isEqualTo("admin-token-after-error");
+    verify(matrixSynapseService, atLeast(2)).getAdminToken();
+  }
+
+  @Test
+  void bootstrapAdminToken_shouldReturnFalse_whenInterruptedDuringBackoff() {
+    MatrixEventListenerService service =
+        new MatrixEventListenerService(
+            matrixSynapseService,
+            sessionService,
+            liveEventNotificationService,
+            eventNotificationService,
+            Optional.empty(),
+            userRepository,
+            consultantRepository,
+            sessionRepository) {
+          @Override
+          void sleep(long millis) throws InterruptedException {
+            throw new InterruptedException("shutdown");
+          }
+        };
+    ReflectionTestUtils.setField(service, "running", true);
+    when(matrixSynapseService.getAdminToken()).thenReturn(null);
+
+    boolean acquired = (boolean) ReflectionTestUtils.invokeMethod(service, "bootstrapAdminToken");
+
+    assertThat(acquired).isFalse();
+    assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    Thread.interrupted();
+  }
+
+  // ── shutdown ───────────────────────────────────────────────────────────────
+
+  @Test
+  void shutdown_shouldStopExecutorWithoutThrowing() {
+    var service = newService();
+    var executor = Executors.newSingleThreadExecutor();
+    ReflectionTestUtils.setField(service, "executorService", executor);
+    ReflectionTestUtils.setField(service, "running", true);
+
+    assertThatCode(service::shutdown).doesNotThrowAnyException();
+    assertThat(executor.isShutdown()).isTrue();
+  }
+
+  // ── resolveDomainUserIdFromMatrixUserId ────────────────────────────────────
+
+  @Test
+  void resolveDomainUserIdFromMatrixUserId_shouldReturnNull_whenMatrixUserIdBlank() {
+    assertThat(invokeResolveDomainUserId(newService(), null)).isNull();
+    assertThat(invokeResolveDomainUserId(newService(), "  ")).isNull();
+    verifyNoInteractions(userRepository, consultantRepository);
+  }
+
+  @Test
+  void resolveDomainUserIdFromMatrixUserId_shouldPreferUserRepository() {
+    var user = new User();
+    user.setUserId(ASKER_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(user));
+
+    assertThat(invokeResolveDomainUserId(newService(), SENDER_MATRIX_ID))
+        .isEqualTo(ASKER_DOMAIN_ID);
+    verify(consultantRepository, never()).findByMatrixUserIdAndDeleteDateIsNull(anyString());
+  }
+
+  @Test
+  void resolveDomainUserIdFromMatrixUserId_shouldFallBackToConsultantRepository() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultant));
+
+    assertThat(invokeResolveDomainUserId(newService(), CONSULTANT_MATRIX_ID))
+        .isEqualTo(CONSULTANT_DOMAIN_ID);
+  }
+
+  @Test
+  void resolveDomainUserIdFromMatrixUserId_shouldReturnNull_whenUnknownMatrixUser() {
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.empty());
+
+    assertThat(invokeResolveDomainUserId(newService(), SENDER_MATRIX_ID)).isNull();
+  }
+
+  // ── resolveSessionIdForRoom / getRecipientCandidatesForRoom ────────────────
+
+  @Test
+  void resolveSessionIdForRoom_shouldReturnCachedValue_whenAlreadyRegistered() {
+    var service = newService();
+    service.registerRoom(77L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+
+    assertThat(invokeResolveSessionIdForRoom(service, MATRIX_ROOM_ID)).contains(77L);
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void resolveSessionIdForRoom_shouldLoadFromRepositoryAndCache_whenNotRegistered() {
+    var service = newService();
+    var session = sessionWithParticipants(userWithId(ASKER_DOMAIN_ID), null);
+    session.setId(88L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+
+    assertThat(invokeResolveSessionIdForRoom(service, MATRIX_ROOM_ID)).contains(88L);
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    assertThat(roomToSession).containsEntry(MATRIX_ROOM_ID, 88L);
+  }
+
+  @Test
+  void resolveSessionIdForRoom_shouldReturnEmpty_whenRoomUnknown() {
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
+
+    assertThat(invokeResolveSessionIdForRoom(newService(), MATRIX_ROOM_ID)).isEmpty();
+  }
+
+  @Test
+  void getRecipientCandidatesForRoom_shouldReturnCachedRecipients_whenRegistered() {
+    var service = newService();
+    service.registerRoom(1L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    assertThat(invokeGetRecipientCandidatesForRoom(service, MATRIX_ROOM_ID))
+        .containsExactlyInAnyOrder(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID);
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void getRecipientCandidatesForRoom_shouldLoadFromRepository_whenCacheEmpty() {
+    var service = newService();
+    var session =
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+    session.setId(5L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+
+    assertThat(invokeGetRecipientCandidatesForRoom(service, MATRIX_ROOM_ID))
+        .containsExactlyInAnyOrder(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID);
+  }
+
+  @Test
+  void getRecipientCandidatesForRoom_shouldReturnEmpty_whenSessionNotFound() {
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
+
+    assertThat(invokeGetRecipientCandidatesForRoom(newService(), MATRIX_ROOM_ID)).isEmpty();
+  }
+
+  // ── performMatrixSync ──────────────────────────────────────────────────────
+
+  @Test
+  void performMatrixSync_shouldAppendSinceToken_whenSyncTokenPresent() {
+    var service = newService();
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    ReflectionTestUtils.setField(service, "syncToken", "s0");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            eq("https://matrix.example/_matrix/client/r0/sync?since=s0&timeout=30000"),
+            eq("GET"),
+            eq("admin-token"),
+            eq(null)))
+        .thenReturn(Map.of("next_batch", "s1"));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result =
+        (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
+
+    assertThat(result).containsEntry("next_batch", "s1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s1");
+  }
+
+  @Test
+  void performMatrixSync_shouldOmitSinceToken_whenSyncTokenNull() {
+    var service = newService();
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            eq("https://matrix.example/_matrix/client/r0/sync?timeout=30000"),
+            eq("GET"),
+            eq("admin-token"),
+            eq(null)))
+        .thenReturn(Map.of());
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result =
+        (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
+
+    assertThat(result).isNotNull();
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isNull();
+  }
+
+  @Test
+  void performMatrixSync_shouldReturnNull_whenMatrixRequestThrows() {
+    var service = newService();
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(anyString(), anyString(), anyString(), eq(null)))
+        .thenThrow(new RuntimeException("sync failed"));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result =
+        (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
+
+    assertThat(result).isNull();
+    assertThat(logAppender.list)
+        .anyMatch(
+            e ->
+                e.getLevel().toString().equals("ERROR")
+                    && e.getFormattedMessage().contains("Matrix sync failed"));
+  }
+
+  // ── processMatrixSyncEvents ────────────────────────────────────────────────
+
+  @Test
+  void processMatrixSyncEvents_shouldReturnEarly_whenSyncResultNull() {
+    assertThatCode(() -> invokeProcessMatrixSyncEvents(newService(), null))
+        .doesNotThrowAnyException();
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldReturnEarly_whenRoomsKeyMissing() {
+    invokeProcessMatrixSyncEvents(newService(), Map.of("next_batch", "s1"));
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldReturnEarly_whenJoinKeyMissing() {
+    invokeProcessMatrixSyncEvents(newService(), Map.of("rooms", Map.of()));
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldSkipRoom_whenSessionCannotBeResolved() {
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hello", null)));
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
+
+    invokeProcessMatrixSyncEvents(newService(), syncResult);
+
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldTriggerDirectMessageNotification_onRegisteredRoomMessage() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    var sender = consultantWithId(CONSULTANT_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(sender));
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(
+                messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello counsellor", "$evt-direct")));
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    verify(eventNotificationService, never())
+        .createThreadReplyNotificationFromRoom(
+            anyString(), any(), anyString(), anyBoolean(), any());
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldTriggerThreadReplyNotification_whenThreadRelationPresent() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(11L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    var user = userWithId(ASKER_DOMAIN_ID);
+    user.setMatrixUserId(SENDER_MATRIX_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(user));
+
+    var content = new HashMap<String, Object>();
+    content.put("msgtype", "m.text");
+    content.put("body", "thread reply");
+    content.put("m.relates_to", Map.of("rel_type", "m.thread", "event_id", "$root-thread"));
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEventWithContent(SENDER_MATRIX_ID, content, "$evt-thread")));
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verify(eventNotificationService)
+        .createThreadReplyNotificationFromRoom(
+            eq(MATRIX_ROOM_ID),
+            eq(ASKER_DOMAIN_ID),
+            eq("$root-thread"),
+            eq(true),
+            any(PrivacyEnvelope.class));
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldMirrorMessage_whenRedisMirrorPresent() {
+    var service = newService(Optional.of(redisMessageMirrorService));
+    wireSynchronousExecutor(service);
+    service.registerRoom(12L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+
+    var user = userWithId(ASKER_DOMAIN_ID);
+    user.setMatrixUserId(SENDER_MATRIX_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(user));
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "mirror me", "$evt-m")));
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verify(redisMessageMirrorService)
+        .mirrorOutgoingMessage(
+            eq(12L),
+            eq(MATRIX_ROOM_ID),
+            eq(SENDER_MATRIX_ID),
+            eq(false),
+            eq("mirror me"),
+            eq("$evt-m"));
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldNotNotify_whenSenderIsOnlyRecipient() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(13L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+
+    var user = userWithId(ASKER_DOMAIN_ID);
+    user.setMatrixUserId(SENDER_MATRIX_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(user));
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "solo", "$evt-solo")));
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verify(liveEventNotificationService, never()).sendLiveDirectMessageEventToUsers(anyString());
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldNotNotify_whenMessageContentIsNull() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(14L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.room.message");
+    event.put("sender", CONSULTANT_MATRIX_ID);
+    event.put("event_id", "$evt-empty");
+    event.put("content", null);
+
+    invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
+
+    verifyNoInteractions(liveEventNotificationService, eventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldReturnEarly_whenJoinedRoomsNull() {
+    var rooms = new HashMap<String, Object>();
+    rooms.put("join", null);
+    var syncResult = new HashMap<String, Object>();
+    syncResult.put("rooms", rooms);
+
+    invokeProcessMatrixSyncEvents(newService(), syncResult);
+
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldSkipRoom_whenTimelineMissing() {
+    var service = newServiceWithSyncExecutor();
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(sessionWithId(15L)));
+
+    var roomData = Map.<String, Object>of();
+    var join = new HashMap<String, Object>();
+    join.put(MATRIX_ROOM_ID, roomData);
+    var rooms = new HashMap<String, Object>();
+    rooms.put("join", join);
+    var syncResult = new HashMap<String, Object>();
+    syncResult.put("rooms", rooms);
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldResolveSessionFromRepository_whenRoomNotPreRegistered() {
+    var service = newServiceWithSyncExecutor();
+    var session =
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+    session.setId(16L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "from repo", "$evt-repo")));
+
+    invokeProcessMatrixSyncEvents(service, syncResult);
+
+    verify(sessionRepository).findByMatrixRoomId(MATRIX_ROOM_ID);
+    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+  }
+
+  // ── processMatrixEvent (call events) ───────────────────────────────────────
+
+  @Test
+  void processMatrixEvent_shouldIgnoreUnknownEventTypes() {
+    var service = newService();
+    var event = Map.<String, Object>of("type", "m.room.member", "sender", SENDER_MATRIX_ID);
+
+    assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event))
+        .doesNotThrowAnyException();
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void processMatrixEvent_shouldReturnEarly_whenEventTypeNull() {
+    invokeProcessMatrixEvent(newService(), MATRIX_ROOM_ID, new HashMap<>());
+    verifyNoInteractions(liveEventNotificationService);
+  }
+
+  @Test
+  void handleCallInvite_shouldWarnAboutUnimplementedLiveEvent_whenRecipientsExist() {
+    var service = newService();
+    service.registerRoom(20L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.call.invite");
+    event.put("sender", CONSULTANT_MATRIX_ID);
+    event.put("content", Map.of("call_id", "call-1", "lifetime", 30_000));
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    assertThat(logAppender.list)
+        .anyMatch(
+            e ->
+                e.getLevel().toString().equals("WARN")
+                    && e.getFormattedMessage()
+                        .contains("videoCallRequest live event not yet implemented"));
+  }
+
+  @Test
+  void handleCallInvite_shouldReturnEarly_whenContentNull() {
+    var service = newService();
+    service.registerRoom(21L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.call.invite");
+    event.put("sender", CONSULTANT_MATRIX_ID);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    assertThat(logAppender.list)
+        .noneMatch(e -> e.getFormattedMessage().contains("videoCallRequest live event"));
+  }
+
+  @Test
+  void handleCallInvite_shouldReturnEarly_whenNoRegisteredRecipients() {
+    var service = newService();
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.call.invite");
+    event.put("sender", CONSULTANT_MATRIX_ID);
+    event.put("content", Map.of("call_id", "call-2", "lifetime", 10_000));
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    assertThat(logAppender.list)
+        .noneMatch(e -> e.getFormattedMessage().contains("videoCallRequest live event"));
+  }
+
+  @Test
+  void handleCallAnswerAndHangup_shouldLogWithoutThrowing() {
+    var service = newService();
+
+    var answer = Map.<String, Object>of("type", "m.call.answer", "sender", CONSULTANT_MATRIX_ID);
+    var hangup = Map.<String, Object>of("type", "m.call.hangup", "sender", CONSULTANT_MATRIX_ID);
+
+    assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, answer))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, hangup))
+        .doesNotThrowAnyException();
+
+    assertThat(logAppender.list).anyMatch(e -> e.getFormattedMessage().contains("Call answered"));
+    assertThat(logAppender.list).anyMatch(e -> e.getFormattedMessage().contains("Call ended"));
+  }
+
+  @Test
+  void handleRoomMessage_shouldSwallowNotificationErrors_withoutBreakingSync() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(30L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    org.mockito.Mockito.doThrow(new RuntimeException("live down"))
+        .when(liveEventNotificationService)
+        .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+
+    var syncResult =
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "boom", "$evt-err")));
+
+    assertThatCode(() -> invokeProcessMatrixSyncEvents(service, syncResult))
+        .doesNotThrowAnyException();
+    assertThat(logAppender.list)
+        .anyMatch(
+            e ->
+                e.getLevel().toString().equals("ERROR")
+                    && e.getFormattedMessage().contains("Failed to send LiveService notification"));
+  }
+
+  @Test
+  void buildRecipientSet_shouldIgnoreParticipantsWithNullIds() {
+    var user = mock(User.class);
+    when(user.getUserId()).thenReturn(null);
+    var consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn(null);
+
+    assertThat(invokeBuildRecipientSet(newService(), sessionWithParticipants(user, consultant)))
+        .isEmpty();
+  }
+
+  @Test
+  void extractThreadRootId_shouldReturnNull_whenThreadEventIdMissing() {
+    var content = contentMap("m.relates_to", Map.of("rel_type", "m.thread"));
+    assertThat(invokeExtractThreadRootId(newService(), content)).isNull();
+  }
+
+  @Test
+  void extractMessageBody_shouldPreferBody_overFormattedBody() {
+    var content = new HashMap<String, Object>();
+    content.put("body", "plain");
+    content.put("formatted_body", "<b>rich</b>");
+    assertThat(invokeExtractMessageBody(newService(), content)).isEqualTo("plain");
+  }
+
+  @Test
+  void buildPrivacyEnvelope_shouldClassifyFileAudioVideoAttachmentTypes() {
+    assertThat(
+            invokeBuildPrivacyEnvelope(
+                newService(),
+                Map.of("event_id", "$f"),
+                MATRIX_ROOM_ID,
+                SENDER_MATRIX_ID,
+                "m.file",
+                Map.of("body", "doc")))
+        .satisfies(
+            e -> {
+              assertThat(e.getContentClass()).isEqualTo("FILE");
+              assertThat(e.isHasAttachment()).isTrue();
+            });
+    assertThat(
+            invokeBuildPrivacyEnvelope(
+                newService(),
+                Map.of("event_id", "$a"),
+                MATRIX_ROOM_ID,
+                SENDER_MATRIX_ID,
+                "m.audio",
+                Map.of("body", "voice")))
+        .satisfies(
+            e -> {
+              assertThat(e.getContentClass()).isEqualTo("AUDIO");
+              assertThat(e.isHasAttachment()).isTrue();
+            });
+  }
+
+  private static Session sessionWithId(long sessionId) {
+    var session = new Session();
+    session.setId(sessionId);
+    return session;
+  }
+
+  private static User userWithId(String userId) {
+    var user = new User();
+    user.setUserId(userId);
+    return user;
+  }
+
+  private static Consultant consultantWithId(String consultantId) {
+    var consultant = new Consultant();
+    consultant.setId(consultantId);
+    return consultant;
+  }
+
+  private static Map<String, Object> messageEvent(
+      String sender, String msgtype, String body, String eventId) {
+    var content = new HashMap<String, Object>();
+    content.put("msgtype", msgtype);
+    content.put("body", body);
+    return messageEventWithContent(sender, content, eventId);
+  }
+
+  private static Map<String, Object> messageEventWithContent(
+      String sender, Map<String, Object> content, String eventId) {
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.room.message");
+    event.put("sender", sender);
+    event.put("content", content);
+    if (eventId != null) {
+      event.put("event_id", eventId);
+    }
+    return event;
+  }
+
+  private static Map<String, Object> syncResultWithEvents(
+      String roomId, List<Map<String, Object>> events) {
+    var timeline = Map.<String, Object>of("events", events);
+    var roomData = Map.<String, Object>of("timeline", timeline);
+    var join = Map.<String, Object>of(roomId, roomData);
+    var rooms = Map.<String, Object>of("join", join);
+    return Map.of("rooms", rooms);
+  }
+
+  private static void invokeProcessMatrixSyncEvents(
+      MatrixEventListenerService service, Map<String, Object> syncResult) {
+    ReflectionTestUtils.invokeMethod(service, "processMatrixSyncEvents", syncResult);
+  }
+
+  private static void invokeProcessMatrixEvent(
+      MatrixEventListenerService service, String roomId, Map<String, Object> event) {
+    ReflectionTestUtils.invokeMethod(service, "processMatrixEvent", roomId, event);
+  }
+
+  private static Optional<Long> invokeResolveSessionIdForRoom(
+      MatrixEventListenerService service, String roomId) {
+    return (Optional<Long>)
+        ReflectionTestUtils.invokeMethod(service, "resolveSessionIdForRoom", roomId);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Set<String> invokeGetRecipientCandidatesForRoom(
+      MatrixEventListenerService service, String roomId) {
+    return (Set<String>)
+        ReflectionTestUtils.invokeMethod(service, "getRecipientCandidatesForRoom", roomId);
+  }
+
+  private static String invokeResolveDomainUserId(
+      MatrixEventListenerService service, String matrixUserId) {
+    return (String)
+        ReflectionTestUtils.invokeMethod(
+            service, "resolveDomainUserIdFromMatrixUserId", matrixUserId);
   }
 
   private static Map<String, Object> contentMap(String key, Object value) {

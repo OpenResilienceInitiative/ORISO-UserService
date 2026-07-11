@@ -100,7 +100,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/askers/new",
                     "/conversations/askers/anonymous/new",
+                    "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
+                    "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/users/consultants/languages",
                     "/users/magic-link/request",
@@ -121,6 +123,9 @@ public class SecurityConfig {
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers("/users/notifications")
                 .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
@@ -148,7 +153,7 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/join",
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
-                    "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
+                    "/users/chat/{groupId}/assign",
                     "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
@@ -207,13 +212,17 @@ public class SecurityConfig {
                     "/users/sessions/consultants",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
+                    "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/conversations/consultants/**",
+                    "/service/conversations/consultants/**",
                     "/users/case-handover/reasons",
                     "/service/users/case-handover/reasons",
                     "/users/case-handover/candidates",
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/chat-series/**",
+                    "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
