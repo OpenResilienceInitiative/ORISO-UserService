@@ -296,6 +296,12 @@ public class SecurityConfig {
                     "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
                     "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/statistics/dashboard",
+                    "/service/useradmin/statistics/dashboard")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin", "/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
