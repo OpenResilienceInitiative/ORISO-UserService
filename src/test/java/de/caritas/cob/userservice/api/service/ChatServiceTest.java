@@ -130,6 +130,7 @@ class ChatServiceTest {
         .startDate(ACTIVE_CHAT.getStartDate())
         .duration(ACTIVE_CHAT.getDuration())
         .repetitive(ACTIVE_CHAT.isRepetitive())
+        .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
         .chatInterval(ACTIVE_CHAT.getChatInterval())
         .active(ACTIVE_CHAT.isActive())
         .maxParticipants(ACTIVE_CHAT.getMaxParticipants())
@@ -501,6 +502,31 @@ class ChatServiceTest {
   }
 
   @Test
+  void saveChatShouldDefaultLegacyGroupChatsToInternalGroup() {
+    Chat chat = new Chat();
+    when(chatRepository.save(chat)).thenReturn(chat);
+
+    chatService.saveChat(chat);
+
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP,
+        chat.getConversationType());
+  }
+
+  @Test
+  void saveChatShouldPreserveExplicitSelfHelpModality() {
+    Chat chat = new Chat();
+    chat.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+    when(chatRepository.save(chat)).thenReturn(chat);
+
+    chatService.saveChat(chat);
+
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP,
+        chat.getConversationType());
+  }
+
+  @Test
   void getChatSessionsByIds_Should_returnUserSessionsForGivenIds() {
     when(chatRepository.findAllById(Set.of(CHAT_ID))).thenReturn(List.of(activeChatWithAgency()));
 
@@ -508,6 +534,9 @@ class ChatServiceTest {
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP,
+        result.get(0).getChat().getConversationType());
   }
 
   @Test

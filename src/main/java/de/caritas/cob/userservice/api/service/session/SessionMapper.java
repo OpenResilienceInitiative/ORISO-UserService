@@ -58,6 +58,8 @@ public class SessionMapper {
         .agencyId(session.getAgencyId())
         .consultingType(session.getConsultingTypeId())
         .status(session.getStatus().getValue())
+        .conversationType(
+            session.getConversationType() == null ? null : session.getConversationType().name())
         .postcode(session.getPostcode())
         .groupId(session.getGroupId())
         .matrixRoomId(

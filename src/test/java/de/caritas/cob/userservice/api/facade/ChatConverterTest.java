@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -19,6 +20,16 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ChatConverterTest {
+
+  @Test
+  void convertToEntityShouldMarkAnExplicitOneOccurrenceSeriesAsSelfHelp() {
+    var request =
+        ChatDTO.builder().topic("One-off self-help group").repeatCount(1).repetitive(false).build();
+
+    var chat = new ChatConverter().convertToEntity(request, givenConsultant(), givenAgencyDTO());
+
+    assertThat(chat.getConversationType()).isEqualTo(ConversationType.SELF_HELP);
+  }
 
   @Test
   void convertToEntityPreservesMultilingualGroupChatAuthorContent() {

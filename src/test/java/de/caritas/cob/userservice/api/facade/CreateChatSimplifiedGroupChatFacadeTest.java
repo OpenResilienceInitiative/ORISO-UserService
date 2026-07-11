@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.Session;
@@ -209,6 +210,27 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV1(chatDto, consultant);
 
     verify(unsavedChat).setActive(false);
+  }
+
+  @Test
+  void createSimplifiedGroupChatShouldStampBothRowsAsSelfHelpForOneOccurrenceSeries()
+      throws Exception {
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    when(chatDto.getRepeatCount()).thenReturn(1);
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+
+    createChatFacade.createChatV1(chatDto, consultant);
+
+    ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
+    ArgumentCaptor<Chat> chatCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(sessionService, times(2)).saveSession(sessionCaptor.capture());
+    verify(chatService, times(2)).saveChat(chatCaptor.capture());
+    assertThat(sessionCaptor.getAllValues().get(0).getConversationType())
+        .isEqualTo(ConversationType.SELF_HELP);
+    assertThat(chatCaptor.getAllValues().get(0).getConversationType())
+        .isEqualTo(ConversationType.SELF_HELP);
   }
 
   // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.dto;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import java.time.LocalDate;
@@ -89,6 +90,9 @@ public class UserChatDTO {
 
   @ApiModelProperty(required = true, example = "false", position = 6)
   private boolean active;
+
+  @ApiModelProperty(example = "SELF_HELP")
+  private ConversationType conversationType;
 
   @ApiModelProperty(required = true, example = "0", position = 7)
   private Integer consultingType;

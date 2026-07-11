@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -60,6 +61,7 @@ class SessionRepositoryIT {
     assertEquals(sessionData.get(0), foundSession.getSessionData().get(0));
     assertEquals(sessionData.get(1), foundSession.getSessionData().get(1));
     assertFalse(foundSession.isTeamSession());
+    assertEquals(ConversationType.AGENCY_COUNSELLING, foundSession.getConversationType());
   }
 
   private void givenValidSession() {
@@ -70,6 +72,7 @@ class SessionRepositoryIT {
     session.setPostcode(RandomStringUtils.randomNumeric(5));
     session.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
     session.setStatus(easyRandom.nextObject(SessionStatus.class));
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
 
     var sessionData1 =
         new SessionData(

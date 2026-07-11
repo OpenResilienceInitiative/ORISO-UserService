@@ -1291,4 +1291,73 @@ class SessionServiceTest {
 
     assertThat(result).isEqualTo(SESSION.getGroupId());
   }
+
+  @Test
+  void saveSessionShouldDefaultRegisteredCounsellingToAgencyCounselling() {
+    var session =
+        Session.builder()
+            .registrationType(REGISTERED)
+            .postcode("10115")
+            .status(SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+  }
+
+  @Test
+  void saveSessionShouldDefaultAnonymousSessionsToLiveChat() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+  }
+
+  @Test
+  void saveSessionShouldDefaultTeamSessionsToInternalGroupBeforeRegistrationType() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(true)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP);
+  }
+
+  @Test
+  void saveSessionShouldPreserveAnExplicitModalityOverConflictingLegacyFields() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(true)
+            .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
 }

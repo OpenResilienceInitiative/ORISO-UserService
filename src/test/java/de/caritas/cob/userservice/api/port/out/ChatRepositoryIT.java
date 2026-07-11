@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import java.time.LocalDateTime;
 import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -111,6 +112,7 @@ class ChatRepositoryIT {
     var foundChat = foundOptionalChat.get();
     assertEquals(chat.isRepetitive(), foundChat.isRepetitive());
     assertEquals(chat.isActive(), foundChat.isActive());
+    assertEquals(ConversationType.SELF_HELP, foundChat.getConversationType());
   }
 
   private void givenAValidChat() {
@@ -121,6 +123,7 @@ class ChatRepositoryIT {
     chat.setStartDate(easyRandom.nextObject(LocalDateTime.class));
     chat.setDuration(easyRandom.nextInt());
     chat.setChatOwner(consultant);
+    chat.setConversationType(ConversationType.SELF_HELP);
   }
 
   private void givenAConsultant() {

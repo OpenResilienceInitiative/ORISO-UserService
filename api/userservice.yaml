@@ -2252,6 +2252,10 @@ components:
           type: integer
           example: 0
           description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE"
+        conversationType:
+          type: string
+          example: LIVE_CHAT
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         postcode:
           type: string
           minLength: 1
@@ -2513,6 +2517,10 @@ components:
         active:
           type: boolean
           example: false
+        conversationType:
+          type: string
+          example: SELF_HELP
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         consultingType:
           type: integer
           example: 0
