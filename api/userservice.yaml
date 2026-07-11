@@ -3001,9 +3001,11 @@ components:
       properties:
         oldPassword:
           type: string
+          format: password
           example: oldpass@w0rd
         newPassword:
           type: string
+          format: password
           example: newpass@w0rd
 
     ChatDTO:
@@ -3261,6 +3263,7 @@ components:
       properties:
         password:
           type: string
+          format: password
           example: p@ssw0rd
 
     RocketChatGroupIdDTO:
@@ -3288,10 +3291,12 @@ components:
       properties:
         secret:
           type: string
+          format: password
           minLength: 32
           maxLength: 32
         otp:
           type: string
+          format: password
           minLength: 6
           maxLength: 6
 
@@ -3311,6 +3316,7 @@ components:
           default: false
         secret:
           type: string
+          format: password
         qrCode:
           type: string
         type:
