@@ -155,6 +155,15 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
+  void assignChatShouldDelegateNumericSeriesIdToCanonicalJoinFlow() {
+    var response = delegate.assignChat("1013");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(joinAndLeaveChatFacade).joinChat(1013L, authenticatedUser);
+    verify(assignChatFacade, never()).assignChat(any(), any());
+  }
+
+  @Test
   void joinChatShouldDelegateAndReturnOk() {
     var response = delegate.joinChat(1L);
 
