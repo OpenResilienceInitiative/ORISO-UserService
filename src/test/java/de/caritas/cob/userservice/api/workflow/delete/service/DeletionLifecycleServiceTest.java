@@ -226,6 +226,39 @@ class DeletionLifecycleServiceTest {
     user.setDeletionPausedUntil(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
 
     service.normalizeUserLifecycle(user);
+
+    // Expired pause is logged but the pause field is NOT cleared here — the scheduler
+    // is responsible for clearing it. The account is NOT yet ready for hard delete
+    // because the read-only window is still open.
+    assertThat(service.isReadyForHardDelete(user)).isFalse();
+  }
+
+  @Test
+  void isReadyForHardDelete_Should_returnTrue_When_expiredPauseAndPastReadOnly() {
+    // Verifies the critical precondition: once BOTH the read-only window has elapsed
+    // AND any pause has expired, the account is eligible for permanent removal.
+    User user = newUser();
+    user.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC));
+    user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    user.setDeletionReadOnlyUntil(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+    user.setDeletionPausedUntil(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
+
+    assertThat(service.isReadyForHardDelete(user)).isTrue();
+  }
+
+  @Test
+  void normalizeUserLifecycle_Should_transitionToReadOnlySafeguard_When_statePendingDeletion() {
+    // PENDING_DELETION is a transient intermediate state. normalizeUserLifecycle must
+    // advance it to READ_ONLY_SAFEGUARD so the scheduler can eventually finalize it.
+    User user = newUser();
+    user.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC));
+    user.setDeletionLifecycleState(DeletionLifecycleState.PENDING_DELETION);
+
+    service.normalizeUserLifecycle(user);
+
+    assertThat(user.getDeletionLifecycleState())
+        .isEqualTo(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    assertThat(user.getDeletionReadOnlyUntil()).isNotNull();
   }
 
   @Test

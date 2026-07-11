@@ -551,6 +551,10 @@ class SessionSupervisorFacadeTest {
 
   @Test
   void removeSupervisor_Should_logWarn_When_removeFromRoomReturnsFalse() {
+    // ACCEPTED BEHAVIOUR: the supervisor row is always deactivated in the DB even when
+    // the Matrix room-removal call returns false (e.g. the user was already absent from
+    // the room). Matrix cleanup is best-effort; the authoritative access-control record
+    // is the DB row. An operator can re-run Matrix cleanup manually if required.
     SessionSupervisor active = activeSupervisorRow(1L);
     when(sessionSupervisorRepository.findById(1L)).thenReturn(Optional.of(active));
     when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("tok");
@@ -559,6 +563,8 @@ class SessionSupervisorFacadeTest {
     facade.removeSupervisor(SESSION_ID, 1L, addedBy);
 
     assertThat(active.getIsActive()).isFalse();
+    assertThat(active.getRemovedDate()).isNotNull();
+    verify(sessionSupervisorRepository).save(active);
   }
 
   @Test
@@ -814,6 +820,58 @@ class SessionSupervisorFacadeTest {
   }
 
   // --- decideSupervisionConsent: uncovered guard branches ---
+
+  @Test
+  void decideSupervisionConsent_Should_activateSupervisorAndProvisionMatrix_When_approved() {
+    SessionSupervisor pending =
+        SessionSupervisor.builder()
+            .id(7L)
+            .session(session)
+            .supervisorConsultant(supervisor)
+            .addedByConsultant(addedBy)
+            .isActive(false)
+            .matrixRoomId(null)
+            .notes(
+                SupervisionNotes.encode(
+                    SupervisionReason.SAFEGUARDING_U25,
+                    "needs oversight",
+                    SupervisionConsent.PENDING))
+            .build();
+    when(sessionSupervisorRepository.findById(7L)).thenReturn(Optional.of(pending));
+
+    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 7L, true);
+
+    assertThat(result.getIsActive()).isTrue();
+    assertThat(result.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    assertThat(SupervisionNotes.decode(result.getNotes()).consent)
+        .isEqualTo(SupervisionConsent.APPROVED.name());
+  }
+
+  @Test
+  void decideSupervisionConsent_Should_keepInactiveAndRecordDeclined_When_declined() {
+    SessionSupervisor pending =
+        SessionSupervisor.builder()
+            .id(8L)
+            .session(session)
+            .supervisorConsultant(supervisor)
+            .addedByConsultant(addedBy)
+            .isActive(false)
+            .matrixRoomId(null)
+            .notes(
+                SupervisionNotes.encode(
+                    SupervisionReason.SAFEGUARDING_U25,
+                    "needs oversight",
+                    SupervisionConsent.PENDING))
+            .build();
+    when(sessionSupervisorRepository.findById(8L)).thenReturn(Optional.of(pending));
+
+    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 8L, false);
+
+    assertThat(result.getIsActive()).isFalse();
+    assertThat(result.getMatrixRoomId()).isNull();
+    assertThat(SupervisionNotes.decode(result.getNotes()).consent)
+        .isEqualTo(SupervisionConsent.DECLINED.name());
+  }
 
   @Test
   void decideSupervisionConsent_Should_throwBadRequest_When_sessionIsNull() {

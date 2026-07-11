@@ -385,15 +385,15 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void acceptInvite_Should_activateInvite_When_statusDraftAndNoExpiry() {
+  void acceptInvite_Should_throwBadRequest_When_statusDraftAndNoExpiry() {
+    // DRAFT invites have never been delivered to the recipient, so accepting one would
+    // bypass email verification. acceptInvite() must reject any status other than EMAIL_SENT.
     AccountInvite invite =
         AccountInvite.builder().id(1L).status(AccountInviteStatus.DRAFT).expiresAt(null).build();
     when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-    AccountInvite result = service.acceptInvite("raw-token", "user-1");
-
-    assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
+        .isInstanceOf(BadRequestException.class);
   }
 
   // --- resendInvite guards ---
@@ -436,6 +436,19 @@ class AccountInviteServiceTest {
   void sendInvite_Should_throwBadRequest_When_inviteRevoked() {
     AccountInvite invite =
         AccountInvite.builder().id(1L).status(AccountInviteStatus.REVOKED).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L))
+        .thenReturn(Optional.of(InviteEmailTemplate.builder().id(20L).build()));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L, "https://x")))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_inviteSuperseded() {
+    // SUPERSEDED invites belong to a completed resend cycle and must never be re-sent.
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.SUPERSEDED).build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L))
         .thenReturn(Optional.of(InviteEmailTemplate.builder().id(20L).build()));

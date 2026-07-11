@@ -33,6 +33,10 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 @ExtendWith(MockitoExtension.class)
+// LENIENT is required: @BeforeEach registers default stubs for recipientResolver and
+// auditLogRepository that are only exercised when inactive accounts are actually found.
+// Tests that verify "no notification" paths (e.g. activity below threshold) do not reach
+// those call sites, so Mockito would otherwise report UnnecessaryStubbingException.
 @MockitoSettings(strictness = Strictness.LENIENT)
 class InactiveAccountNotificationServiceTest {
 

@@ -163,8 +163,10 @@ public class AccountInviteService {
       accountInviteRepository.save(invite);
       throw new BadRequestException("Account invite expired");
     }
-    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT
-        && invite.getStatus() != AccountInviteStatus.DRAFT) {
+    // Only EMAIL_SENT invites are eligible to be accepted: DRAFT invites have never been
+    // delivered to the recipient, so allowing them to be accepted would bypass the email
+    // verification step entirely.
+    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw new BadRequestException("Account invite is not active");
     }
 
