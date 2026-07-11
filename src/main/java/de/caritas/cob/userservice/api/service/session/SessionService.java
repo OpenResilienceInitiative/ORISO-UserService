@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -217,6 +218,7 @@ public class SessionService {
     var session =
         Session.builder()
             .user(user)
+            .tenantId(TenantContext.getCurrentTenant())
             .consultingTypeId(obtainCheckedConsultingTypeId(extendedConsultingTypeResponseDTO))
             .registrationType(registrationType)
             .postcode(userDto.getPostcode())
