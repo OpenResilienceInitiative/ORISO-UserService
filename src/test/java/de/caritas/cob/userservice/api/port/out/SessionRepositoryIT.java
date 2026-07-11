@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
+import jakarta.persistence.EntityManager;
 import java.util.List;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -33,6 +34,8 @@ class SessionRepositoryIT {
   @Autowired private SessionRepository underTest;
 
   @Autowired private UserRepository userRepository;
+
+  @Autowired private EntityManager entityManager;
 
   private User user;
 
@@ -64,6 +67,24 @@ class SessionRepositoryIT {
     assertEquals(ConversationType.AGENCY_COUNSELLING, foundSession.getConversationType());
   }
 
+  @Test
+  void saveShouldRepairANullConversationTypeDuringRollingDeployment() {
+    givenAUser();
+    givenValidSession();
+    session.setConversationType(null);
+    var persistedSession = underTest.save(session);
+    entityManager.flush();
+
+    persistedSession.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    underTest.save(persistedSession);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertEquals(
+        ConversationType.AGENCY_COUNSELLING,
+        underTest.findById(persistedSession.getId()).orElseThrow().getConversationType());
+  }
+
   private void givenValidSession() {
     session = new Session();
     session.setUser(user);
@@ -72,6 +93,7 @@ class SessionRepositoryIT {
     session.setPostcode(RandomStringUtils.randomNumeric(5));
     session.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
     session.setStatus(easyRandom.nextObject(SessionStatus.class));
+    session.setIsConsultantDirectlySet(false);
     session.setConversationType(ConversationType.AGENCY_COUNSELLING);
 
     var sessionData1 =

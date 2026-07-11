@@ -136,7 +136,7 @@ public class Session implements TenantAware {
   private RegistrationType registrationType;
 
   @Enumerated(EnumType.STRING)
-  @Column(name = "conversation_type", updatable = false, length = 32)
+  @Column(name = "conversation_type", length = 32)
   private ConversationType conversationType;
 
   @Column(name = "postcode", nullable = false)
