@@ -19,7 +19,7 @@ public class GroupChatFeatureGate {
       throw disabled();
     }
 
-    var tenant = tenantService.getRestrictedTenantData(consultant.getTenantId());
+    var tenant = tenantService.getRestrictedTenantDataFresh(consultant.getTenantId());
     if (tenant == null
         || tenant.getSettings() == null
         || !Boolean.TRUE.equals(tenant.getSettings().getFeatureGroupChatV2Enabled())) {
