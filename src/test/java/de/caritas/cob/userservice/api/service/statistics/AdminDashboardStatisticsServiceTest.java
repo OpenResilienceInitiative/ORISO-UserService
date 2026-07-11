@@ -33,6 +33,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.mock.env.MockEnvironment;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -51,6 +53,7 @@ class AdminDashboardStatisticsServiceTest {
   @Mock private AdminAgencyRepository adminAgencyRepository;
 
   private AuthenticatedUser authenticatedUser;
+  private MockEnvironment mockEnvironment;
   private AdminDashboardStatisticsService service;
 
   @BeforeEach
@@ -60,9 +63,14 @@ class AdminDashboardStatisticsServiceTest {
     authenticatedUser.setUsername("admin");
     authenticatedUser.setAccessToken("token");
     authenticatedUser.setTenantId(TENANT_ID);
+    mockEnvironment = new MockEnvironment();
     service =
         new AdminDashboardStatisticsService(
-            adminStatisticsRepository, adminAgencyRepository, authenticatedUser, clock);
+            adminStatisticsRepository,
+            adminAgencyRepository,
+            authenticatedUser,
+            clock,
+            mockEnvironment);
     TenantContext.clear();
   }
 
@@ -307,6 +315,55 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(dashboard.targets())
         .extracting(AdminDashboardStatisticsService.TargetStatistics::agencyId)
         .containsExactly(AGENCY_WITH_TEAM);
+  }
+
+  @Test
+  void buildDashboard_Should_SkipSuppression_When_DisabledOutsideProduction() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
+    ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.suppressionDisabled()).isTrue();
+    var singleCounselorAgency =
+        dashboard.targets().stream()
+            .filter(target -> Long.valueOf(AGENCY_WITH_SINGLE_COUNSELOR).equals(target.agencyId()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(singleCounselorAgency.suppressed()).isFalse();
+    assertThat(singleCounselorAgency.metrics()).isNotNull();
+    assertThat(singleCounselorAgency.metrics().activeCases()).isEqualTo(2);
+  }
+
+  @Test
+  void buildDashboard_Should_EnforceSuppression_When_DisabledButProdProfileActive() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
+    ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+    mockEnvironment.setActiveProfiles("prod");
+
+    var dashboard = service.buildDashboard();
+
+    // fail-closed: prod ignores the disable switch
+    assertThat(dashboard.suppressionDisabled()).isFalse();
+    var singleCounselorAgency =
+        dashboard.targets().stream()
+            .filter(target -> Long.valueOf(AGENCY_WITH_SINGLE_COUNSELOR).equals(target.agencyId()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(singleCounselorAgency.suppressed()).isTrue();
+    assertThat(singleCounselorAgency.metrics()).isNull();
   }
 
   @Test
