@@ -90,7 +90,11 @@ class UserChatControllerDelegate {
 
   ResponseEntity<Void> assignChat(String groupId) {
     if (groupId.matches("\\d+")) {
-      assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
+      try {
+        assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
+      } catch (NumberFormatException exception) {
+        throw new BadRequestException("Numeric chat id is outside the supported range.");
+      }
     } else {
       assignChatFacade.assignChat(groupId, authenticatedUser);
     }
