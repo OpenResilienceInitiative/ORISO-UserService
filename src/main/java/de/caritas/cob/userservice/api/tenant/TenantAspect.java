@@ -20,12 +20,14 @@ public class TenantAspect {
 
   @Before("execution(* de.caritas.cob.userservice.api.port..*(..)))")
   public void beforeQueryAspect() {
+    var session = entityManager.unwrap(Session.class);
 
     if (TenantContext.isTechnicalOrSuperAdminContext()) {
+      session.disableFilter("tenantFilter");
       return;
     }
 
-    var filter = entityManager.unwrap(Session.class).enableFilter("tenantFilter");
+    var filter = session.enableFilter("tenantFilter");
     filter.setParameter("tenantId", TenantContext.getCurrentTenant());
     filter.validate();
   }
