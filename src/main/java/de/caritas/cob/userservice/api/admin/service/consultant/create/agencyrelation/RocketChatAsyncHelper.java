@@ -90,6 +90,13 @@ public class RocketChatAsyncHelper {
     updateConsultantStatus(consultant, agency);
   }
 
+  /** Finalizes a relation that the caller has just persisted without an immediate re-query. */
+  @Transactional
+  public void finalizeConsultantAgencyRelation(
+      Consultant consultant, ConsultantAgency persistedRelation) {
+    updateConsultantStatus(consultant, persistedRelation);
+  }
+
   private void updateConsultantStatus(Consultant consultant, AgencyDTO agencyDTO) {
     ConsultantAgency consultantAgency =
         consultantAgencyRepository.findByConsultantIdAndAgencyIdAndStatusAndDeleteDateIsNull(
@@ -104,6 +111,10 @@ public class RocketChatAsyncHelper {
       return;
     }
 
+    updateConsultantStatus(consultant, consultantAgency);
+  }
+
+  private void updateConsultantStatus(Consultant consultant, ConsultantAgency consultantAgency) {
     consultantAgency.setStatus(ConsultantAgencyStatus.CREATED);
     consultantAgencyRepository.save(consultantAgency);
     List<ConsultantAgency> consultantAgencies =
