@@ -294,4 +294,125 @@ class GrantConsultantIdentityServiceTest {
 
     verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
   }
+
+  @Test
+  void skipAgencyAssignment_When_agencyIdsNull() throws Exception {
+    dto.setAgencyIds(null);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
+  }
+
+  @Test
+  void createRocketChatUser_When_adminHasNoRcUserId() throws Exception {
+    Admin admin = validAdmin();
+    admin.setRcUserId(null);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(userHelper.getRandomPassword()).thenReturn("randomPw");
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenReturn("new-rc-id");
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    verify(rocketChatService).getUserID(anyString(), anyString(), anyBoolean());
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getRocketChatId(), is("new-rc-id"));
+  }
+
+  @Test
+  void useDummyRocketChatId_When_rocketChatCreationFails() throws Exception {
+    Admin admin = validAdmin();
+    admin.setRcUserId(null);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(userHelper.getRandomPassword()).thenReturn("randomPw");
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenThrow(new RuntimeException("rocket chat down"));
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getRocketChatId(), is("dummy-rc"));
+  }
+
+  @Test
+  void continueWithoutMatrixUserId_When_matrixResponseMissingUserId() throws Exception {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    when(userHelper.getRandomPassword()).thenReturn("randomPw");
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(new MatrixCreateUserResponseDTO()));
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), nullValue());
+  }
+
+  @Test
+  void rollbackGroupChatRole_When_consultantSaveFailsAndGroupChatEnabled() throws Exception {
+    dto.setGroupchatConsultant(true);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThrows(
+        DistributedTransactionException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
+    verify(identityClient).removeRoleIfPresent(ADMIN_ID, GROUP_CHAT_CONSULTANT.getValue());
+  }
+
+  @Test
+  void rollbackGroupChatRole_When_agencyAssignmentFailsAndGroupChatEnabled() throws Exception {
+    dto.setGroupchatConsultant(true);
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    doThrow(new BadRequestException("invalid agency assignment"))
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(ADMIN_ID), any());
+
+    assertThrows(
+        BadRequestException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verify(identityClient).removeRoleIfPresent(ADMIN_ID, GROUP_CHAT_CONSULTANT.getValue());
+  }
 }

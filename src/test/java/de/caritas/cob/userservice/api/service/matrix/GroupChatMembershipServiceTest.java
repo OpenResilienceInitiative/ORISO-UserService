@@ -426,4 +426,57 @@ class GroupChatMembershipServiceTest {
     assertEquals("consultant-id", resolved.get(0).accountId());
     assertTrue(resolved.get(0).consultant());
   }
+
+  @Test
+  void resolveMatrixRoomId_Should_ReturnNull_When_SessionIsNull() {
+    assertNull(
+        groupChatMembershipService.resolveMatrixRoomId(
+            (de.caritas.cob.userservice.api.model.Session) null));
+  }
+
+  @Test
+  void removeMemberFromRoom_Should_WarnAndNotThrow_When_TokenMintingFails() {
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn(null);
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+    assertTrue(
+        logAppender.list.stream()
+            .anyMatch(
+                e ->
+                    e.getLevel().toString().equals("WARN")
+                        && e.getFormattedMessage().contains("Could not mint Matrix token")));
+  }
+
+  @Test
+  void removeMemberFromRoom_Should_NotThrow_When_MatrixCallFails() {
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            groupChatMembershipService.removeMemberFromRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).leaveRoom(anyString(), any());
+  }
+
+  @Test
+  void hasRemainingHumanMembers_Should_FilterExactGroupChatSystemPrefix() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.oriso.org")));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(
+            "@group-chat-system:matrix.oriso.org"))
+        .thenReturn(Optional.empty());
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(
+            "@group-chat-system:matrix.oriso.org"))
+        .thenReturn(Optional.of(user));
+    when(user.getUserId()).thenReturn("group-chat-system");
+
+    assertFalse(
+        groupChatMembershipService.hasRemainingHumanMembers(
+            chatWithMatrixRoom(), LEAVER_MATRIX_ID));
+  }
 }
