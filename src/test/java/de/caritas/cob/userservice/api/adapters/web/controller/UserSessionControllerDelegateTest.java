@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
@@ -56,6 +57,7 @@ class UserSessionControllerDelegateTest {
   @Mock private SessionService sessionService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private SessionListFacade sessionListFacade;
+  @Mock private AssignEnquiryFacade assignEnquiryFacade;
   @Mock private AssignSessionFacade assignSessionFacade;
   @Mock private ConsultantDataFacade consultantDataFacade;
   @Mock private SessionArchiveService sessionArchiveService;
@@ -562,20 +564,17 @@ class UserSessionControllerDelegateTest {
     // New enquiries may be assigned when the caller holds enquiry assignment authority.
     var session = newSession();
     var consultantToAssign = consultant("assigned-consultant-id");
-    var consultantToKeep = consultant("consultant-id");
     when(sessionService.getSession(1L)).thenReturn(Optional.of(session));
     when(authenticatedUser.getUserId()).thenReturn("consultant-id");
     when(authenticatedUser.getGrantedAuthorities())
         .thenReturn(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY));
     when(userAccountProvider.retrieveValidatedConsultantById("assigned-consultant-id"))
         .thenReturn(consultantToAssign);
-    when(consultantService.getConsultant("consultant-id"))
-        .thenReturn(Optional.of(consultantToKeep));
-
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignSessionFacade).assignSession(session, consultantToAssign, consultantToKeep);
+    verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultantToAssign);
+    verifyNoInteractions(assignSessionFacade, consultantService);
   }
 
   @Test
