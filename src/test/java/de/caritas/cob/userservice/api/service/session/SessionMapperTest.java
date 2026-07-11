@@ -22,7 +22,9 @@ class SessionMapperTest {
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
-    assertThat(sessionDTO.getConversationType(), is("LIVE_CHAT"));
+    assertThat(
+        sessionDTO.getConversationType().get(),
+        is(de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.LIVE_CHAT));
   }
 
   @Test
