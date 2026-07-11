@@ -48,19 +48,12 @@ import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.ObjectUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.client.RestTemplate;
 
 /** Service for Keycloak REST API calls. */
 @Service
@@ -68,14 +61,6 @@ import org.springframework.web.client.RestTemplate;
 @RequiredArgsConstructor
 public class KeycloakService implements IdentityClient {
 
-  private static final String KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
-  private static final String KEYCLOAK_GRANT_TYPE_PASSWORD = "password";
-  private static final String BODY_KEY_CLIENT_ID = "client_id";
-  private static final String BODY_KEY_GRANT_TYPE = "grant_type";
-  private static final String BODY_KEY_PASSWORD = "password";
-  private static final String BODY_KEY_USERNAME = "username";
-  private static final String ENDPOINT_OPENID_CONNECT_LOGIN = "/token";
-  private static final String ENDPOINT_OPENID_CONNECT_LOGOUT = "/logout";
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
   private static final String ENDPOINT_OTP_TEARDOWN = "/delete-otp/{username}";
@@ -87,18 +72,15 @@ public class KeycloakService implements IdentityClient {
   private static final String USERNAME_ATTRIBUTE = "username";
   private static final String LEGACY_USERNAME_ATTRIBUTE = "userName";
 
-  private final @NonNull RestTemplate restTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull KeycloakClient keycloakClient;
   private final @NonNull KeycloakMapper keycloakMapper;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull KeycloakAuthClient keycloakAuthClient;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
-
-  @Value("${keycloak.config.app-client-id}")
-  private String keycloakClientId;
 
   @Value("${api.error.keycloakError}")
   private String keycloakError;
@@ -154,53 +136,12 @@ public class KeycloakService implements IdentityClient {
    * @return {@link KeycloakLoginResponseDTO}
    */
   public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    // Keycloak stores decoded usernames; callers often pass the encoded form from MariaDB.
-    var entity = loginRequest(usernameTranscoder.decodeUsername(userName), password);
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
-
-    try {
-      return restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class).getBody();
-
-    } catch (RestClientResponseException exception) {
-      throw new BadRequestException(
-          String.format(
-              "Could not log in user %s into Keycloak: %s", userName, exception.getMessage()),
-          exception);
-    }
-  }
-
-  private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {
-    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
-    map.add(BODY_KEY_USERNAME, userName);
-    map.add(BODY_KEY_PASSWORD, password);
-    map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
-    map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_PASSWORD);
-
-    var httpHeaders = new HttpHeaders();
-    httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-    return new HttpEntity<>(map, httpHeaders);
+    return keycloakAuthClient.loginUser(userName, password);
   }
 
   @Override
   public boolean verifyIgnoringOtp(String username, String password) {
-    var entity = loginRequest(username, password);
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
-
-    ResponseEntity<KeycloakLoginResponseDTO> loginResponse;
-    try {
-      loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
-    } catch (HttpClientErrorException exception) {
-      return exception.getStatusCode().equals(HttpStatus.BAD_REQUEST)
-          && exception.getResponseBodyAsString().contains("Missing totp"); // but password correct
-    }
-
-    var responsePayload = loginResponse.getBody();
-    if (nonNull(responsePayload) && nonNull(responsePayload.getRefreshToken())) {
-      logoutUser(responsePayload.getRefreshToken());
-    }
-
-    return true;
+    return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }
 
   /**
@@ -211,51 +152,7 @@ public class KeycloakService implements IdentityClient {
    * @return true if logout was successful
    */
   public boolean logoutUser(final String refreshToken) {
-    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
-    map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
-    map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN);
-    map.add(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, refreshToken);
-
-    var httpHeaders = new HttpHeaders();
-    httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-    httpHeaders.add("Authorization", "Bearer " + authenticatedUser.getAccessToken());
-    HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(map, httpHeaders);
-
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGOUT);
-    try {
-      var response = restTemplate.postForEntity(url, request, Void.class);
-      return wasLogoutSuccessful(response);
-    } catch (Exception ex) {
-      log.error("Keycloak error: Could not log out user", ex);
-
-      return false;
-    }
-  }
-
-  private boolean wasLogoutSuccessful(ResponseEntity<Void> responseEntity) {
-    if (!responseEntity.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
-      log.error("Keycloak error: Could not log out user");
-
-      return false;
-    }
-    return true;
-  }
-
-  private static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
-
-    private static final String REDACTED = "[REDACTED]";
-
-    @Override
-    public String toString() {
-      var sanitized = new LinkedMultiValueMap<>(this);
-      if (sanitized.containsKey(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN)) {
-        sanitized.put(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, Collections.singletonList(REDACTED));
-      }
-      if (sanitized.containsKey(BODY_KEY_PASSWORD)) {
-        sanitized.put(BODY_KEY_PASSWORD, Collections.singletonList(REDACTED));
-      }
-      return sanitized.toString();
-    }
+    return keycloakAuthClient.logoutUser(refreshToken);
   }
 
   /**
@@ -928,7 +825,7 @@ public class KeycloakService implements IdentityClient {
    * @param sessionId Keycloak session ID
    */
   public void closeSession(String sessionId) {
-    keycloakClient.getRealmResource().deleteSession(sessionId, false);
+    keycloakAuthClient.closeSession(sessionId);
   }
 
   /**

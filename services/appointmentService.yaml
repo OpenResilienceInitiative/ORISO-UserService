@@ -502,7 +502,8 @@ components:
       type: object
       properties:
         id:
-          type: long
+          type: integer
+          format: int64
           example: 1
         userId:
           type: integer
@@ -839,7 +840,8 @@ components:
                 user:
                   type: string
                 bookingId:
-                  type: long
+                  type: integer
+                  format: int64
                 isInitialAppointment:
                   type: boolean
 
@@ -885,11 +887,13 @@ components:
         agencies:
           type: array
           items:
-            type: long
+            type: integer
+            format: int64
     AgencyMasterDataSyncRequestDTO:
       type: object
       properties:
         id:
-          type: long
+          type: integer
+          format: int64
         name:
           type: string

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,8 @@ import org.springframework.web.client.RestTemplate;
 public class MatrixRoomClient {
 
   private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
+  private static final String ROOM_ENCRYPTION_EVENT_TYPE = "m.room.encryption";
+  private static final String MEGOLM_ALGORITHM = "m.megolm.v1.aes-sha2";
   private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
   private static final String ENDPOINT_JOIN_ROOM = "/_matrix/client/r0/rooms/{roomId}/join";
   private static final String ENDPOINT_LEAVE_ROOM = "/_matrix/client/r0/rooms/{roomId}/leave";
@@ -44,6 +47,13 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
+    return createRoom(roomName, roomAlias, accessToken, false);
+  }
+
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
+      String roomName, String roomAlias, String accessToken, boolean encryptionEnabled)
+      throws MatrixCreateRoomException {
+
     try {
       var headers = getClientHttpHeaders(accessToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -54,8 +64,7 @@ public class MatrixRoomClient {
       roomCreateRequest.setPreset("private_chat");
       roomCreateRequest.setVisibility("private");
 
-      // Matrix E2EE is disabled because the frontend applies its own encryption layer.
-      roomCreateRequest.setInitialState(new java.util.ArrayList<>());
+      roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled));
 
       HttpEntity<MatrixCreateRoomRequestDTO> request = new HttpEntity<>(roomCreateRequest, headers);
 
@@ -86,6 +95,19 @@ public class MatrixRoomClient {
       throw new MatrixCreateRoomException(
           String.format("Could not create room (%s) in Matrix", roomName));
     }
+  }
+
+  private java.util.List<MatrixCreateRoomRequestDTO.InitialStateEvent> buildInitialState(
+      boolean encryptionEnabled) {
+    if (!encryptionEnabled) {
+      return java.util.List.of();
+    }
+
+    var encryptionEvent = new MatrixCreateRoomRequestDTO.InitialStateEvent();
+    encryptionEvent.setType(ROOM_ENCRYPTION_EVENT_TYPE);
+    encryptionEvent.setStateKey("");
+    encryptionEvent.setContent(Map.of("algorithm", MEGOLM_ALGORITHM));
+    return java.util.List.of(encryptionEvent);
   }
 
   public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoom(
@@ -332,7 +354,7 @@ public class MatrixRoomClient {
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     try {
-      String url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+      var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
 
       HttpHeaders headers = getClientHttpHeaders(accessToken);
       HttpEntity<Void> getRequest = new HttpEntity<>(headers);
@@ -376,7 +398,7 @@ public class MatrixRoomClient {
 
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
-      String url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
+      var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
 
       Map<String, Object> membershipEvent = new HashMap<>();
       membershipEvent.put("membership", "leave");
@@ -419,11 +441,11 @@ public class MatrixRoomClient {
     return new HashMap<>();
   }
 
-  private String buildUrl(String endpoint) {
+  private URI buildUrl(String endpoint) {
     return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint);
   }
 
-  private String buildUrl(String endpoint, Map<String, ?> uriVariables) {
+  private URI buildUrl(String endpoint, Map<String, ?> uriVariables) {
     return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint, uriVariables);
   }
 }

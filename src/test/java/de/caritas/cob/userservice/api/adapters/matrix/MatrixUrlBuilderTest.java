@@ -44,7 +44,8 @@ class MatrixUrlBuilderTest {
             "/_matrix/client/r0/rooms/{roomId}/messages",
             Map.of("roomId", "!room:example.org"));
 
-    assertThat(url).isEqualTo(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages");
+    assertThat(url.toString())
+        .isEqualTo(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages");
   }
 
   @Test
@@ -55,7 +56,7 @@ class MatrixUrlBuilderTest {
             "/_matrix/client/r0/presence/{userId}/status",
             Map.of("userId", "@user:example.org"));
 
-    assertThat(url)
+    assertThat(url.toString())
         .isEqualTo(BASE_URL + "/_matrix/client/r0/presence/%40user%3Aexample.org/status");
   }
 
@@ -67,7 +68,7 @@ class MatrixUrlBuilderTest {
             "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}",
             Map.of("roomId", "!room:example.org", "userId", "@user:example.org"));
 
-    assertThat(url)
+    assertThat(url.toString())
         .isEqualTo(
             BASE_URL
                 + "/_matrix/client/r0/rooms/%21room%3Aexample.org"
@@ -83,10 +84,10 @@ class MatrixUrlBuilderTest {
             Map.of("roomId", "!room:example.org"),
             Map.of("dir", "b", "limit", 100));
 
-    assertThat(url)
+    assertThat(url.toString())
         .startsWith(BASE_URL + "/_matrix/client/r0/rooms/%21room%3Aexample.org/messages?");
-    assertThat(url).contains("dir=b");
-    assertThat(url).contains("limit=100");
+    assertThat(url.toString()).contains("dir=b");
+    assertThat(url.toString()).contains("limit=100");
   }
 
   // ── JSON filter in query params must not throw ────────────────────────────
@@ -118,11 +119,11 @@ class MatrixUrlBuilderTest {
         MatrixUrlBuilder.buildUrl(
             matrixConfig(), "/_matrix/client/r0/sync", Map.of(), Map.of("filter", jsonFilter));
 
-    assertThat(url).contains("filter=");
+    assertThat(url.toString()).contains("filter=");
     // Braces must be percent-encoded in the query string.
-    assertThat(url).contains("%7B"); // { → %7B
-    assertThat(url).doesNotContain("{");
-    assertThat(url).doesNotContain("}");
+    assertThat(url.toString()).contains("%7B"); // { → %7B
+    assertThat(url.toString()).doesNotContain("{");
+    assertThat(url.toString()).doesNotContain("}");
   }
 
   @Test
@@ -135,7 +136,7 @@ class MatrixUrlBuilderTest {
         MatrixUrlBuilder.buildUrl(matrixConfig(), "/_matrix/client/r0/sync", Map.of(), queryParams);
 
     // Null optional sync cursors must not produce empty query parameters in the URL.
-    assertThat(url).isEqualTo(BASE_URL + "/_matrix/client/r0/sync?timeout=0");
-    assertThat(url).doesNotContain("since");
+    assertThat(url.toString()).isEqualTo(BASE_URL + "/_matrix/client/r0/sync?timeout=0");
+    assertThat(url.toString()).doesNotContain("since");
   }
 }

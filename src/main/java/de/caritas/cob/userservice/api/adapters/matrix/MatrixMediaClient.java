@@ -76,7 +76,7 @@ public class MatrixMediaClient {
   }
 
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    String url =
+    var url =
         MatrixUrlBuilder.buildUrl(
             matrixConfig,
             ENDPOINT_MEDIA_DOWNLOAD,

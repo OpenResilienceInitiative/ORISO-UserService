@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -146,6 +147,28 @@ class CreateSessionFacadeTest {
           assertThat(logCaptor.hasErrorLog(), is(true));
           verify(sessionService, times(1)).deleteSession(any());
           verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+        });
+  }
+
+  @Test
+  public void
+      createUserSession_Should_NotRollbackUserAccount_When_SessionWasPersistedBeforeSessionDataFailure() {
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          when(sessionService.getSessionsForUserId(USER_ID))
+              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+          when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+          when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+              .thenReturn(SESSION_WITHOUT_CONSULTANT);
+          doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
+              .when(sessionDataService)
+              .saveSessionData(any(Session.class), any());
+
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+
+          verify(rollbackFacade, never()).rollBackUserAccount(any());
         });
   }
 

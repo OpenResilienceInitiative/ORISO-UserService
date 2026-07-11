@@ -33,7 +33,11 @@ public class DeactivateGroupChatService {
   }
 
   private Predicate<Chat> isChatOutsideOfDeactivationTime(LocalDateTime deactivationTime) {
-    return chat -> chat.getUpdateDate().isBefore(deactivationTime.minusMinutes(chat.getDuration()));
+    return chat -> {
+      var plannedStart = chat.getStartDate() != null ? chat.getStartDate() : chat.getUpdateDate();
+      var plannedEnd = plannedStart.plusMinutes(chat.getDuration());
+      return !plannedEnd.isAfter(deactivationTime);
+    };
   }
 
   private void deactivateStaleActiveChat(Chat staleChat) {

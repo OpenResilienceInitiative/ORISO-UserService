@@ -15,7 +15,6 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -56,15 +55,18 @@ public class ConsultantDataProviderTest {
   @Mock private EmailNotificationMapper emailNotificationMapper;
 
   @Test
-  public void retrieveData_Should_ThrowInternalServerErrorException_When_NoAgenciesFound() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          Consultant consultant = Mockito.mock(Consultant.class);
-          when(consultant.getConsultantAgencies()).thenReturn(new HashSet<>());
+  public void retrieveData_Should_ReturnMinimalProfile_When_NoAgenciesFound() {
+    Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setConsultantAgencies(new HashSet<>());
+    when(agencyService.getAgencies(any())).thenReturn(List.of());
 
-          underTest.retrieveData(consultant);
-        });
+    var result = underTest.retrieveData(consultant);
+
+    assertNotNull(result);
+    assertEquals(consultant.getId(), result.getUserId());
+    assertTrue(result.getAgencies().isEmpty());
+    assertFalse(result.isHasAnonymousConversations());
+    Mockito.verifyNoInteractions(consultingTypeManager);
   }
 
   @Test

@@ -15,7 +15,13 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Size;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import lombok.AllArgsConstructor;
@@ -42,7 +48,18 @@ import org.hibernate.type.SqlTypes;
 public class Chat {
 
   public enum ChatInterval {
-    WEEKLY
+    DAILY,
+    WEEKLY,
+    BIWEEKLY,
+    MONTHLY,
+    QUARTERLY,
+    YEARLY
+  }
+
+  public enum ChatModality {
+    TEXT,
+    AUDIO,
+    VIDEO
   }
 
   @Id
@@ -74,6 +91,23 @@ public class Chat {
 
   @Column(name = "is_repetitive", nullable = false)
   private boolean repetitive;
+
+  @Builder.Default
+  @Column(name = "repeat_count", nullable = false)
+  private int repeatCount = 1;
+
+  @Builder.Default
+  @Column(name = "current_occurrence_index", nullable = false)
+  private int currentOccurrenceIndex = 0;
+
+  @Builder.Default
+  @Column(name = "timezone", nullable = false)
+  private String timezone = "UTC";
+
+  @Builder.Default
+  @Enumerated(EnumType.STRING)
+  @Column(name = "modality", nullable = false)
+  private ChatModality chatModality = ChatModality.TEXT;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "chat_interval")
@@ -114,6 +148,17 @@ public class Chat {
   @Column(name = "hint_message")
   private String hintMessage;
 
+  @Column(name = "source_language", length = 10)
+  private String sourceLanguage;
+
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(name = "hint_message_translations", columnDefinition = "json")
+  private Map<String, String> hintMessageTranslations;
+
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(name = "group_chat_rules_translations", columnDefinition = "json")
+  private Map<String, List<String>> groupChatRulesTranslations;
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {
@@ -133,15 +178,45 @@ public class Chat {
 
   @JsonIgnore
   public LocalDateTime nextStart() {
-    if (!repetitive) {
+    if (repeatCount <= 1 || currentOccurrenceIndex + 1 >= repeatCount) {
       return null;
     }
+    return occurrenceStart(currentOccurrenceIndex + 1);
+  }
 
-    if (!ChatInterval.WEEKLY.equals(chatInterval)) {
-      var message = "Repetitive chat with id %s does not have a valid interval.";
-      throw new InternalServerErrorException(String.format(message, id));
+  /** Returns a virtual occurrence calculated from the immutable series anchor. */
+  @JsonIgnore
+  public LocalDateTime occurrenceStart(int occurrenceIndex) {
+    if (occurrenceIndex < 0) {
+      throw new IllegalArgumentException("Occurrence index must not be negative");
     }
-
-    return startDate.plusWeeks(1);
+    if (initialStartDate == null) {
+      throw new InternalServerErrorException(
+          String.format("Chat with id %s does not have an initial start date.", id));
+    }
+    if (occurrenceIndex == 0) {
+      return initialStartDate;
+    }
+    if (chatInterval == null) {
+      throw new InternalServerErrorException(
+          String.format("Chat with id %s does not have a valid interval.", id));
+    }
+    ZoneId zoneId;
+    try {
+      zoneId = ZoneId.of(timezone == null ? "UTC" : timezone);
+    } catch (DateTimeException invalidPersistedTimezone) {
+      zoneId = ZoneOffset.UTC;
+    }
+    var localAnchor = initialStartDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId);
+    ZonedDateTime occurrence =
+        switch (chatInterval) {
+          case DAILY -> localAnchor.plusDays(occurrenceIndex);
+          case WEEKLY -> localAnchor.plusWeeks(occurrenceIndex);
+          case BIWEEKLY -> localAnchor.plusWeeks(2L * occurrenceIndex);
+          case MONTHLY -> localAnchor.plusMonths(occurrenceIndex);
+          case QUARTERLY -> localAnchor.plusMonths(3L * occurrenceIndex);
+          case YEARLY -> localAnchor.plusYears(occurrenceIndex);
+        };
+    return occurrence.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
   }
 }

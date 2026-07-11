@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -139,6 +140,22 @@ class SessionSupervisorFacadeTest {
     verify(matrixSynapseService, org.mockito.Mockito.atLeast(2))
         .inviteUserToRoom(rooms.capture(), eq(SUPERVISOR_MXID), any());
     assertThat(rooms.getAllValues()).contains(CLIENT_ROOM, SIDE_ROOM);
+  }
+
+  @Test
+  void addSupervisor_Should_continue_when_supervisorAlreadyInClientRoom() throws Exception {
+    when(matrixSynapseService.inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any()))
+        .thenThrow(
+            new MatrixInviteUserException(
+                "Could not invite user (@sup:oriso) to room (!clientroom:oriso) in Matrix: "
+                    + "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"@sup:oriso is already in the room.\"}"));
+
+    SessionSupervisor saved =
+        facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason");
+
+    assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    verify(matrixSynapseService).setUserPowerLevel(CLIENT_ROOM, SUPERVISOR_MXID, 10, "tok");
+    verify(sessionSupervisorRepository).save(any(SessionSupervisor.class));
   }
 
   @Test

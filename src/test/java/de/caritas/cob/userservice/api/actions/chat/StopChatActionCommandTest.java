@@ -7,6 +7,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_REPETIT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -124,12 +125,12 @@ class StopChatActionCommandTest {
   }
 
   @Test
-  void stopChat_Should_NotDeleteGroup_When_ChatIntervallIsNullOnRepetitiveChats() {
+  void stopChat_ShouldRejectInvalidFiniteSeriesBeforeDeletingItsRoom() {
     when(chat.isActive()).thenReturn(true);
     when(chat.getGroupId()).thenReturn(RC_GROUP_ID);
     when(chat.isRepetitive()).thenReturn(true);
 
-    stopChatActionCommand.execute(chat);
+    assertThrows(InternalServerErrorException.class, () -> stopChatActionCommand.execute(chat));
 
     verify(rocketChatService, times(0)).deleteGroupAsSystemUser(Mockito.any());
   }
@@ -144,6 +145,7 @@ class StopChatActionCommandTest {
             .startDate(CHAT_START_DATETIME)
             .duration(1)
             .repetitive(IS_REPETITIVE)
+            .repeatCount(2)
             .chatInterval(CHAT_INTERVAL_WEEKLY)
             .chatOwner(CONSULTANT)
             .build();
@@ -217,6 +219,37 @@ class StopChatActionCommandTest {
 
     stopChatActionCommand.execute(chat);
 
+    verify(rocketChatService).deleteGroupAsSystemUser(RC_GROUP_ID);
+    verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
+    verify(chatService).deleteChat(chat);
+  }
+
+  @Test
+  void stopChatShouldUseMatrixGroupIdAndNotCallRocketChatWhenDedicatedRoomIdIsMissing() {
+    when(chat.isActive()).thenReturn(true);
+    when(chat.isRepetitive()).thenReturn(false);
+    when(chat.getGroupId()).thenReturn(MATRIX_ROOM_ID);
+    when(chat.getMatrixRoomId()).thenReturn(null);
+    when(matrixSynapseService.purgeRoom(MATRIX_ROOM_ID)).thenReturn(true);
+
+    stopChatActionCommand.execute(chat);
+
+    verifyNoInteractions(rocketChatService);
+    verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
+    verify(chatService).deleteChat(chat);
+  }
+
+  @Test
+  void stopChatShouldAllowMatrixRoomIdWhenLegacyGroupIdIsMissing() {
+    when(chat.isActive()).thenReturn(true);
+    when(chat.isRepetitive()).thenReturn(false);
+    when(chat.getGroupId()).thenReturn(null);
+    when(chat.getMatrixRoomId()).thenReturn(MATRIX_ROOM_ID);
+    when(matrixSynapseService.purgeRoom(MATRIX_ROOM_ID)).thenReturn(true);
+
+    stopChatActionCommand.execute(chat);
+
+    verifyNoInteractions(rocketChatService);
     verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
     verify(chatService).deleteChat(chat);
   }
@@ -338,6 +371,32 @@ class StopChatActionCommandTest {
     assertEquals(CHAT_START_DATETIME, repetitiveChat.getStartDate());
   }
 
+  @Test
+  void stopFiniteSeriesShouldShutDownAndPersistItsLastOccurrence() {
+    var disabledRocketChatService =
+        new DisabledRocketChatService(
+            mock(RocketChatCredentialsProvider.class),
+            mock(RocketChatConfig.class),
+            mock(RocketChatMapper.class));
+    var command =
+        new StopChatActionCommand(
+            chatService,
+            disabledRocketChatService,
+            chatReCreator,
+            new MatrixChatShutdownService(matrixSynapseService));
+    var series = buildRepetitiveChatWithMatrixRoom();
+    series.setCurrentOccurrenceIndex(1);
+    when(matrixSynapseService.purgeRoom(MATRIX_ROOM_ID)).thenReturn(true);
+
+    command.execute(series);
+
+    assertFalse(series.isActive());
+    verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
+    verify(chatService).saveChat(series);
+    verify(chatService, never()).deleteChat(series);
+    verifyNoInteractions(chatReCreator);
+  }
+
   private Chat buildRepetitiveChatWithMatrixRoom() {
     var owner =
         Consultant.builder()
@@ -357,6 +416,7 @@ class StopChatActionCommandTest {
             .startDate(CHAT_START_DATETIME)
             .duration(1)
             .repetitive(IS_REPETITIVE)
+            .repeatCount(2)
             .chatInterval(CHAT_INTERVAL_WEEKLY)
             .chatOwner(owner)
             .build();

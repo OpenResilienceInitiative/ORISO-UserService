@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -96,6 +97,7 @@ class SessionServiceIT {
   }
 
   @Test
+  @Transactional
   void
       fetchSessionForConsultant_Should_Return_ValidConsultantSessionDTO_When_ConsultantIsAssigned() {
     givenAValidTopicServiceResponse();
@@ -173,7 +175,7 @@ class SessionServiceIT {
     session.setIsConsultantDirectlySet(false);
     sessionService.saveSession(session);
     assertThrows(
-        jakarta.ws.rs.BadRequestException.class,
+        BadRequestException.class,
         () -> {
           sessionService.findGroupIdByConsultantAndUser(
               "473f7c4b-f011-4fc2-847c-ceb636a5b399", "1da238c6-cd46-4162-80f1-bff74eafe77f");

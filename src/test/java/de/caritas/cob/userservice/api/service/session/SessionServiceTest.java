@@ -276,6 +276,22 @@ class SessionServiceTest {
   }
 
   @Test
+  void initializeSession_WithTopics_Should_SaveSessionBeforeCreatingSessionTopics() {
+    USER_DTO.setTopicIds(List.of(1L, 2L));
+    when(sessionRepository.save(any(Session.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+
+    Session savedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
+
+    verify(sessionRepository, times(2)).save(any(Session.class));
+    assertThat(savedSession.getSessionTopics()).hasSize(2);
+    assertThat(savedSession.getSessionTopics())
+        .allMatch(topic -> topic.getSession() == savedSession);
+  }
+
+  @Test
   void initializeSession_TeamSession_Should_ReturnSession() {
     when(sessionRepository.save(any())).thenReturn(SESSION);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
@@ -815,6 +831,31 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsByIds_should_not_find_registered_other_agency_session_by_topic_only() {
+    Session registeredSession = easyRandom.nextObject(Session.class);
+    registeredSession.setId(SESSION_ID);
+    registeredSession.setAgencyId(275L);
+    registeredSession.setConsultant(null);
+    registeredSession.setMainTopicId(42L);
+    registeredSession.setPostcode(POSTCODE);
+    registeredSession.setRegistrationType(REGISTERED);
+    registeredSession.setStatus(SessionStatus.NEW);
+
+    ConsultantAgency agency = new ConsultantAgency();
+    agency.setAgencyId(4711L);
+    var consultant = createConsultantWithAgencies(agency);
+
+    when(sessionRepository.findAllById(singleton(SESSION_ID)))
+        .thenReturn(singletonList(registeredSession));
+
+    var sessionResponse =
+        sessionService.getSessionsByIds(
+            consultant, singleton(SESSION_ID), singleton(UserRole.CONSULTANT.getValue()));
+
+    assertThat(sessionResponse).isEmpty();
+  }
+
+  @Test
   void getSessionsByUserAndGroupIds_should_find_session_for_anonymous_user_of_session() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
@@ -1077,21 +1118,59 @@ class SessionServiceTest {
 
   @Test
   void
-      getRegisteredEnquiriesForConsultant_Should_IncludeTopicBasedSessions_When_ConsultantHasTopics() {
+      getRegisteredEnquiriesForConsultant_Should_IncludeAnonymousStyleTopicBasedSessions_When_ConsultantHasTopics() {
     Consultant consultant = mock(Consultant.class);
     when(consultant.getConsultantAgencies()).thenReturn(null);
     when(consultant.getId()).thenReturn(CONSULTANT_ID);
     when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
         .thenReturn(List.of(42L));
+
+    Session topicBasedSession = easyRandom.nextObject(Session.class);
+    topicBasedSession.setPostcode("00000");
+    topicBasedSession.setMainTopicId(42L);
+    topicBasedSession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicBasedSession.setStatus(SessionStatus.NEW);
+    topicBasedSession.setConsultant(null);
+    topicBasedSession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
     when(sessionRepository
             .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
                 any(), any(), any()))
-        .thenReturn(SESSION_LIST_WITH_CONSULTANT);
+        .thenReturn(List.of(topicBasedSession));
 
     List<ConsultantSessionResponseDTO> result =
         sessionService.getRegisteredEnquiriesForConsultant(consultant);
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getRegisteredEnquiriesForConsultant_Should_ExcludeRegularTopicOnlySessions_When_ConsultantHasNoSessionAgency() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(null);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session topicOnlySession = easyRandom.nextObject(Session.class);
+    topicOnlySession.setPostcode("10115");
+    topicOnlySession.setMainTopicId(42L);
+    topicOnlySession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicOnlySession.setStatus(SessionStatus.NEW);
+    topicOnlySession.setConsultant(null);
+    topicOnlySession.getUser().setUsername("regular-registered-user");
+    topicOnlySession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository
+            .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+                any(), any(), any()))
+        .thenReturn(List.of(topicOnlySession));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getRegisteredEnquiriesForConsultant(consultant);
+
+    assertThat(result).isEmpty();
   }
 
   @Test

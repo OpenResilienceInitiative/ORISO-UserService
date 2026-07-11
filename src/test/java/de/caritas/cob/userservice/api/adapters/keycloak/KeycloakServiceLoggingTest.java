@@ -53,23 +53,26 @@ class KeycloakServiceLoggingTest {
 
   @BeforeEach
   void setUp() {
+    var keycloakAuthClient =
+        new KeycloakAuthClient(
+            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+    setField(keycloakAuthClient, "keycloakClientId", "app");
     keycloakService =
         new KeycloakService(
-            restTemplate,
             authenticatedUser,
             userAccountInputValidator,
             identityClientConfig,
             keycloakClient,
             keycloakMapper,
-            userHelper);
-    setField(keycloakService, "keycloakClientId", "app");
+            userHelper,
+            keycloakAuthClient);
 
     lenient().when(authenticatedUser.getAccessToken()).thenReturn("access-token");
     lenient()
         .when(identityClientConfig.getOpenIdConnectUrl(anyString()))
         .thenReturn("https://keycloak/logout");
 
-    logger = (Logger) LoggerFactory.getLogger(KeycloakService.class);
+    logger = (Logger) LoggerFactory.getLogger(KeycloakAuthClient.class);
     listAppender = new ListAppender<>();
     listAppender.start();
     logger.addAppender(listAppender);

@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.helper;
 
+import java.util.regex.Pattern;
+
 /**
  * Utility for parsing Matrix IDs.
  *
@@ -15,6 +17,8 @@ package de.caritas.cob.userservice.api.helper;
  * </pre>
  */
 public final class MatrixIds {
+
+  private static final Pattern DEVICE_ID_PATTERN = Pattern.compile("[A-Za-z0-9._=-]{1,255}");
 
   private MatrixIds() {
     throw new UnsupportedOperationException("Utility class — do not instantiate");
@@ -68,5 +72,10 @@ public final class MatrixIds {
   /** Returns {@code true} if the given ID starts with {@code @} (user ID sigil). */
   public static boolean isUserId(String id) {
     return id != null && id.startsWith("@");
+  }
+
+  /** Returns {@code true} for a non-blank Matrix device identifier safe for client login. */
+  public static boolean isDeviceId(String id) {
+    return id != null && DEVICE_ID_PATTERN.matcher(id).matches();
   }
 }

@@ -1175,6 +1175,14 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId> <!-- surefire plugin version managed by Spring Boot -->
 				<executions>
+					<!-- Surefire binds an implicit `default-test` execution to the `test` phase.
+					     Left enabled it runs the unit tests a SECOND time alongside the explicit
+					     `unit-tests` execution below, and it ignores `${skip.unit-tests}`.
+					     Disable it so `unit-tests` solely owns the phase. -->
+					<execution>
+						<id>default-test</id>
+						<phase>none</phase>
+					</execution>
 					<execution>
 						<id>unit-tests</id>
 						<phase>test</phase>

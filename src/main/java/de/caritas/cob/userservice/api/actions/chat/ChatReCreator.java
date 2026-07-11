@@ -45,9 +45,11 @@ public class ChatReCreator {
    * @param matrixRoomId the id of the freshly created Matrix room
    */
   public void updateAsNextChat(Chat chat, String matrixRoomId) {
+    var nextStart = chat.nextStart();
     chat.setGroupId(matrixRoomId);
     chat.setMatrixRoomId(matrixRoomId);
-    chat.setStartDate(chat.nextStart());
+    chat.setStartDate(nextStart);
+    chat.setCurrentOccurrenceIndex(chat.getCurrentOccurrenceIndex() + 1);
     chat.setUpdateDate(nowInUtc());
     chat.setActive(false);
 

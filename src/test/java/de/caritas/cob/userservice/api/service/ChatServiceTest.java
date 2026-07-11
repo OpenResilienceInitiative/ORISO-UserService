@@ -19,6 +19,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -33,9 +34,12 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDate;
@@ -65,6 +69,8 @@ class ChatServiceTest {
   @Mock private UserChatRepository chatUserRepository;
 
   @Mock private ConsultantService consultantService;
+
+  @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
 
   @Mock private AgencyService agencyService;
 
@@ -155,6 +161,18 @@ class ChatServiceTest {
   }
 
   @Test
+  void getChatsForUserId_Should_NotExposeNewSeriesBeforeExplicitDeepLinkJoin() {
+    Chat series = activeChatWithAgency();
+    when(chatRepository.findByUserId(USER_ID)).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId()))
+        .thenReturn(List.of(GroupChatParticipant.builder().consultantId("owner").build()));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
   void getChatsForUserId_Should_ReturnListOfUserSessionResponseDTOWithChats() {
     when(chatRepository.findByUserId(USER_ID)).thenReturn(singletonList(activeChatWithAgency()));
     when(consultantService.findConsultantsByAgencyIds(Mockito.any()))
@@ -183,9 +201,64 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.isRepetitive(), resultList.get(0).getChat().isRepetitive());
     assertEquals(ACTIVE_CHAT.isActive(), resultList.get(0).getChat().isActive());
     assertEquals(ACTIVE_CHAT.getGroupId(), resultList.get(0).getChat().getGroupId());
+    assertEquals(ACTIVE_CHAT.getRepeatCount(), resultList.get(0).getChat().getRepeatCount());
+    assertEquals(
+        ACTIVE_CHAT.getCurrentOccurrenceIndex(),
+        resultList.get(0).getChat().getCurrentOccurrenceIndex());
+    assertEquals(ACTIVE_CHAT.getChatInterval(), resultList.get(0).getChat().getChatInterval());
+    assertEquals(ACTIVE_CHAT.getChatModality(), resultList.get(0).getChat().getModality());
+    assertEquals(ACTIVE_CHAT.getTimezone(), resultList.get(0).getChat().getTimezone());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
     assertEquals(CONSULTANT.getRocketChatId(), resultList.get(0).getChat().getModerators()[0]);
+  }
+
+  @Test
+  void getChatsForUserId_Should_ExposeOnlyExplicitSeriesModeratorsForNewSeries() {
+    Chat series = activeChatWithAgency();
+    when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId()))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder()
+                    .consultantId("owner")
+                    .role(ParticipantRole.OWNER)
+                    .build(),
+                GroupChatParticipant.builder()
+                    .consultantId("co-mod")
+                    .role(ParticipantRole.CO_MODERATOR)
+                    .build(),
+                GroupChatParticipant.builder()
+                    .consultantId("participant")
+                    .role(ParticipantRole.PARTICIPANT)
+                    .build()));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertArrayEquals(new String[] {"owner", "co-mod"}, result.get(0).getChat().getModerators());
+  }
+
+  @Test
+  void getChatsForUserId_Should_ExposeExplicitParticipantRolesAndDisplayNames() {
+    Chat series = activeChatWithAgency();
+    when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId()))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder()
+                    .consultantId("owner")
+                    .role(ParticipantRole.OWNER)
+                    .build()));
+    Consultant owner = Mockito.mock(Consultant.class);
+    when(owner.getDisplayName()).thenReturn("Alice Owner");
+    when(consultantService.getConsultant("owner")).thenReturn(Optional.of(owner));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertThat(result.get(0).getChat().getParticipants(), hasSize(1));
+    assertEquals("owner", result.get(0).getChat().getParticipants().get(0).getConsultantId());
+    assertEquals("OWNER", result.get(0).getChat().getParticipants().get(0).getRole().getValue());
+    assertEquals("Alice Owner", result.get(0).getChat().getParticipants().get(0).getDisplayName());
   }
 
   @Test
@@ -282,8 +355,24 @@ class ChatServiceTest {
   }
 
   @Test
+  void getChatsForConsultant_Should_NotExposeNewSeriesToUninvitedAgencyConsultants() {
+    Consultant consultant = Mockito.mock(Consultant.class);
+    when(consultant.getId()).thenReturn("uninvited");
+    Chat series = activeChatWithAgency();
+    when(chatRepository.findByAgencyIds(Mockito.any())).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId()))
+        .thenReturn(
+            List.of(GroupChatParticipant.builder().consultantId("explicit-member").build()));
+
+    List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
   void getChat_Should_ReturnChatObject() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(ACTIVE_CHAT));
 
     Optional<Chat> result = chatService.getChat(CHAT_ID);
 
@@ -305,7 +394,7 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowBadRequestException_WhenChatDoesNotExist() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.empty());
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID)).thenReturn(Optional.empty());
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER);
@@ -317,7 +406,8 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowForbiddenException_WhenCallingConsultantNotOwnerOfChat() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(INACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(INACTIVE_CHAT));
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_3);
@@ -329,7 +419,8 @@ class ChatServiceTest {
 
   @Test
   void updateChat_Should_ThrowConflictException_WhenChatIsActive() {
-    when(chatRepository.findById(CHAT_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(ACTIVE_CHAT));
 
     try {
       chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
@@ -346,7 +437,8 @@ class ChatServiceTest {
     inactiveChat.setActive(false);
     inactiveChat.setChatOwner(CONSULTANT);
 
-    when(chatRepository.findById(Mockito.any())).thenReturn(Optional.of(inactiveChat));
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
 
     // when
     chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
@@ -378,9 +470,13 @@ class ChatServiceTest {
   @Test
   void deleteChat_Should_deleteChatInRepository() {
     Chat chat = new Chat();
+    chat.setId(CHAT_ID);
 
     chatService.deleteChat(chat);
 
+    var deletionOrder = inOrder(groupChatParticipantRepository, chatRepository);
+    deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
+    deletionOrder.verify(chatRepository).delete(chat);
     verify(chatRepository).delete(chat);
   }
 

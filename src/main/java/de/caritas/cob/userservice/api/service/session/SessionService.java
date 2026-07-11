@@ -233,8 +233,9 @@ public class SessionService {
             .isConsultantDirectlySet(false)
             .build();
 
-    session.setSessionTopics(createSessionTopics(userDto.getTopicIds(), session));
-    return saveSession(session);
+    Session savedSession = saveSession(session);
+    savedSession.setSessionTopics(createSessionTopics(userDto.getTopicIds(), savedSession));
+    return saveSession(savedSession);
   }
 
   private List<SessionTopic> createSessionTopics(
@@ -417,6 +418,7 @@ public class SessionService {
         .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             topicIds, SessionStatus.NEW, RegistrationType.REGISTERED)
         .stream()
+        .filter(this::isAnonymousStyleRegistration)
         .filter(this::isVisibleRegisteredEnquiryForConsultant)
         .collect(Collectors.toList());
   }
@@ -741,6 +743,7 @@ public class SessionService {
    */
   private boolean isAllowedToAdviseByTopic(Consultant consultant, Session session) {
     return isTeamSessionOrNew(session)
+        && isAnonymousStyleRegistration(session)
         && nonNull(session.getMainTopicId())
         && consultantTopicRepository
             .findTopicIdsByConsultantId(consultant.getId())
