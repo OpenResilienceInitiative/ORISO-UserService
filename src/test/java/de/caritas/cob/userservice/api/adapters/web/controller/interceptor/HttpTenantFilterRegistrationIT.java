@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.FilterChainProxy;
+import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.test.context.TestPropertySource;
 
 @SpringBootTest(classes = UserServiceApplication.class, webEnvironment = WebEnvironment.RANDOM_PORT)
@@ -30,7 +30,7 @@ class HttpTenantFilterRegistrationIT {
   }
 
   @Test
-  void httpTenantFilter_ShouldRunAfterBearerAuthentication() {
+  void httpTenantFilter_ShouldRunAfterRequestPrincipalIsAvailable() {
     List<Class<?>> securityFilterTypes =
         securityFilterChain.getFilterChains().stream()
             .flatMap(filterChain -> filterChain.getFilters().stream())
@@ -39,6 +39,6 @@ class HttpTenantFilterRegistrationIT {
 
     assertThat(securityFilterTypes).containsOnlyOnce(HttpTenantFilter.class);
     assertThat(securityFilterTypes.indexOf(HttpTenantFilter.class))
-        .isGreaterThan(securityFilterTypes.indexOf(BearerTokenAuthenticationFilter.class));
+        .isGreaterThan(securityFilterTypes.indexOf(SecurityContextHolderAwareRequestFilter.class));
   }
 }
