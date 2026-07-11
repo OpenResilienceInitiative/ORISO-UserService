@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class UserTwoFactorAuthControllerDelegateTest {
   @Mock private IdentityClientConfig identityClientConfig;
   @Mock private IdentityManaging identityManager;
   @Mock private AccountManaging accountManager;
+  @Mock private AccountInviteService accountInviteService;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private UsernameTranscoder usernameTranscoder;
 
@@ -104,6 +106,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(accountManager).patchUser(patchMap);
+    verify(accountInviteService).markTwoFactorActive(authenticatedUser.getUserId());
   }
 
   @Test
@@ -186,12 +189,14 @@ class UserTwoFactorAuthControllerDelegateTest {
   void activateTwoFactorAuthByAppShouldReturnOkWhenOtpIsAccepted() {
     allowOtpForCurrentRoles();
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn("user-1");
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, OTP, SECRET)).thenReturn(true);
 
     var response = delegate.activateTwoFactorAuthByApp(oneTimePassword());
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(accountInviteService).markTwoFactorActive("user-1");
   }
 
   @Test
@@ -204,17 +209,20 @@ class UserTwoFactorAuthControllerDelegateTest {
     var response = delegate.activateTwoFactorAuthByApp(oneTimePassword());
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    verifyNoInteractions(accountInviteService);
   }
 
   @Test
   void deactivateTwoFactorAuthByAppShouldDeleteOtpForAuthenticatedUser() {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn("user-1");
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
 
     var response = delegate.deactivateTwoFactorAuthByApp();
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(identityManager).deleteOneTimePassword(ENCODED_USERNAME);
+    verify(accountInviteService).markTwoFactorPendingSetup("user-1");
   }
 
   @Test

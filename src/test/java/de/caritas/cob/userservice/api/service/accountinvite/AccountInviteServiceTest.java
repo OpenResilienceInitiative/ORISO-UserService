@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -577,11 +579,72 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
   }
 
+  // --- two-factor gate transitions ---
+
+  @Test
+  void markTwoFactorActive_Should_transitionPendingInvitesToActive() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .acceptedByUserId("user-1")
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .build();
+    when(accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(
+            "user-1", TwoFactorGateStatus.PENDING_SETUP))
+        .thenReturn(List.of(invite));
+
+    service.markTwoFactorActive("user-1");
+
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.ACTIVE);
+    verify(accountInviteRepository).saveAll(List.of(invite));
+  }
+
+  @Test
+  void markTwoFactorPendingSetup_Should_reopenActiveGates() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .acceptedByUserId("user-1")
+            .twoFactorStatus(TwoFactorGateStatus.ACTIVE)
+            .build();
+    when(accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(
+            "user-1", TwoFactorGateStatus.ACTIVE))
+        .thenReturn(List.of(invite));
+
+    service.markTwoFactorPendingSetup("user-1");
+
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    verify(accountInviteRepository).saveAll(List.of(invite));
+  }
+
+  @Test
+  void markTwoFactorActive_Should_doNothing_When_userIdBlankOrNoMatches() {
+    service.markTwoFactorActive(" ");
+    verify(accountInviteRepository, never())
+        .findAllByAcceptedByUserIdAndTwoFactorStatus(any(), any());
+
+    when(accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(
+            "user-2", TwoFactorGateStatus.PENDING_SETUP))
+        .thenReturn(List.of());
+    service.markTwoFactorActive("user-2");
+    verify(accountInviteRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void waiveTwoFactor_Should_persistWaivedInvite() {
+    AccountInvite invite =
+        AccountInvite.builder().twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+
+    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
+
+    verify(accountInviteRepository).save(invite);
+  }
+
   // --- waiveTwoFactor guards ---
 
   @Test
   void waiveTwoFactor_Should_throwBadRequest_When_inviteNull() {
-    assertThatThrownBy(() -> service.waiveTwoFactor(null, new WaiveTwoFactorCommand("reason")))
+    assertThatThrownBy(
+            () -> service.waiveTwoFactor((AccountInvite) null, new WaiveTwoFactorCommand("reason")))
         .isInstanceOf(BadRequestException.class);
   }
 
