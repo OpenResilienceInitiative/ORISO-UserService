@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -30,6 +32,8 @@ class ChatRepositoryIT {
   @Autowired private ChatRepository underTest;
 
   @Autowired private ConsultantRepository consultantRepository;
+
+  @Autowired private EntityManager entityManager;
 
   private Consultant consultant;
 
@@ -111,6 +115,25 @@ class ChatRepositoryIT {
     var foundChat = foundOptionalChat.get();
     assertEquals(chat.isRepetitive(), foundChat.isRepetitive());
     assertEquals(chat.isActive(), foundChat.isActive());
+    assertEquals(ConversationType.SELF_HELP, foundChat.getConversationType());
+  }
+
+  @Test
+  void saveShouldRepairANullConversationTypeDuringRollingDeployment() {
+    givenAConsultant();
+    givenAValidChat();
+    chat.setConversationType(null);
+    var persistedChat = underTest.save(chat);
+    entityManager.flush();
+
+    persistedChat.setConversationType(ConversationType.INTERNAL_GROUP);
+    underTest.save(persistedChat);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertEquals(
+        ConversationType.INTERNAL_GROUP,
+        underTest.findById(persistedChat.getId()).orElseThrow().getConversationType());
   }
 
   private void givenAValidChat() {
@@ -121,6 +144,7 @@ class ChatRepositoryIT {
     chat.setStartDate(easyRandom.nextObject(LocalDateTime.class));
     chat.setDuration(easyRandom.nextInt());
     chat.setChatOwner(consultant);
+    chat.setConversationType(ConversationType.SELF_HELP);
   }
 
   private void givenAConsultant() {

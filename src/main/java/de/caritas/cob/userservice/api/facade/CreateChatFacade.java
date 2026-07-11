@@ -250,6 +250,7 @@ public class CreateChatFacade {
 
     // Get consulting type from agency
     AgencyDTO agency = agencyService.getAgency(agencyId);
+    Chat chat = chatConverter.convertToEntity(chatDTO, consultant, agency);
     session.setConsultingTypeId(agency.getConsultingType());
 
     session.setPostcode("00000"); // Dummy postcode for group chats
@@ -257,6 +258,7 @@ public class CreateChatFacade {
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setRegistrationType(RegistrationType.REGISTERED);
     session.setTeamSession(true); // Mark as group chat
+    session.setConversationType(chat.getConversationType());
     session.setLanguageCode(LanguageCode.de); // Default language
     session.setIsConsultantDirectlySet(false); // Not directly assigned
 
@@ -270,8 +272,7 @@ public class CreateChatFacade {
     Long sessionId = session.getId();
     log.info("Created session {} for group chat", sessionId);
 
-    // Create a Chat entity (needed for frontend - has topic field!)
-    Chat chat = chatConverter.convertToEntity(chatDTO, consultant, agency);
+    // Persist the Chat entity (needed for frontend - has topic field!)
     // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor.
     // Keeping it inactive here preserves the Waiting Area and makes the opened lifecycle event
     // observable exactly once through StartChatFacade.

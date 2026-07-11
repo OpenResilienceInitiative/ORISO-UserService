@@ -7,12 +7,25 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import java.time.LocalDateTime;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 
 class SessionMapperTest {
+
+  @Test
+  void convertToSessionDTOShouldProjectConversationType() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.LIVE_CHAT);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(
+        sessionDTO.getConversationType().get(),
+        is(de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.LIVE_CHAT));
+  }
 
   @Test
   void

@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.CreateEnquiryException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -160,5 +161,26 @@ class AnonymousConversationCreatorServiceTest {
     assertThat(session, instanceOf(Session.class));
     verify(liveEventNotificationService, times(1))
         .sendLiveNewAnonymousEnquiryEventToUsers(any(), any());
+  }
+
+  @Test
+  void createAnonymousConversationShouldStampLiveChatBeforeSaving() throws CreateEnquiryException {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(null);
+    when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
+    when(sessionService.initializeSession(
+            any(User.class),
+            any(UserDTO.class),
+            anyBoolean(),
+            any(RegistrationType.class),
+            any(SessionStatus.class)))
+        .thenReturn(session);
+    when(createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(any(), any(), any()))
+        .thenReturn(ROCKETCHAT_ID);
+
+    anonymousConversationCreatorService.createAnonymousConversation(
+        USER_DTO_SUCHT, easyRandom.nextObject(AnonymousUserCredentials.class));
+
+    assertThat(session.getConversationType(), org.hamcrest.Matchers.is(ConversationType.LIVE_CHAT));
   }
 }

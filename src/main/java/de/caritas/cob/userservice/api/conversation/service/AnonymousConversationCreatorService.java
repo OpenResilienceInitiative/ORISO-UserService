@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -56,6 +57,7 @@ public class AnonymousConversationCreatorService {
       session =
           sessionService.initializeSession(
               user, userDTO, false, RegistrationType.ANONYMOUS, SessionStatus.NEW);
+      session.setConversationType(ConversationType.LIVE_CHAT);
       consultantAgencies = obtainConsultants(session);
       String rcGroupId =
           createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(

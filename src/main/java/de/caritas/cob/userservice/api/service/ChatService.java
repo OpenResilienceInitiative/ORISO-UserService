@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -143,6 +144,9 @@ public class ChatService {
    * @return {@link Chat} (will never be null)
    */
   public Chat saveChat(Chat chat) {
+    if (chat.getConversationType() == null) {
+      chat.setConversationType(ConversationType.INTERNAL_GROUP);
+    }
     return chatRepository.save(chat);
   }
 
@@ -280,6 +284,7 @@ public class ChatService {
     result.setCurrentOccurrenceIndex(chat.getCurrentOccurrenceIndex());
     result.setChatInterval(chat.getChatInterval());
     result.setModality(chat.getChatModality());
+    result.setConversationType(chat.getConversationType());
     result.setTimezone(chat.getTimezone());
     result.setParticipants(getSeriesParticipants(chat));
     result.setSourceLanguage(chat.getSourceLanguage());
