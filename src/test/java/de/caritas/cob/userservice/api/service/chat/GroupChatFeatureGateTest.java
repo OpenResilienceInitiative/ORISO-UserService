@@ -30,7 +30,7 @@ class GroupChatFeatureGateTest {
   @Test
   void enabledTenantMayCreateSelfHelpGroupSeries() {
     when(consultant.getTenantId()).thenReturn(7L);
-    when(tenantService.getRestrictedTenantData(7L))
+    when(tenantService.getRestrictedTenantDataFresh(7L))
         .thenReturn(
             new RestrictedTenantDTO()
                 .id(7L)
@@ -43,7 +43,7 @@ class GroupChatFeatureGateTest {
   @Test
   void disabledTenantMayNotCreateSelfHelpGroupSeries() {
     when(consultant.getTenantId()).thenReturn(7L);
-    when(tenantService.getRestrictedTenantData(7L))
+    when(tenantService.getRestrictedTenantDataFresh(7L))
         .thenReturn(
             new RestrictedTenantDTO()
                 .id(7L)
