@@ -155,6 +155,31 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
+  void assignChatShouldDelegateNumericSeriesIdToV2AssignmentFlow() {
+    var response = delegate.assignChat("1013");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+    verify(joinAndLeaveChatFacade, never()).joinChat(any(), any());
+  }
+
+  @Test
+  void assignChatShouldRejectNumericSeriesIdAboveLongRange() {
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+        .isInstanceOf(BadRequestException.class);
+
+    verify(assignChatFacade, never()).assignChat(anyLong(), any());
+  }
+
+  @Test
+  void assignChatShouldAcceptLongMaxValue() {
+    var response = delegate.assignChat(String.valueOf(Long.MAX_VALUE));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(Long.MAX_VALUE, authenticatedUser);
+  }
+
+  @Test
   void joinChatShouldDelegateAndReturnOk() {
     var response = delegate.joinChat(1L);
 

@@ -89,7 +89,15 @@ class UserChatControllerDelegate {
   }
 
   ResponseEntity<Void> assignChat(String groupId) {
-    assignChatFacade.assignChat(groupId, authenticatedUser);
+    if (groupId.matches("\\d+")) {
+      try {
+        assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
+      } catch (NumberFormatException exception) {
+        throw new BadRequestException("Numeric chat id is outside the supported range.");
+      }
+    } else {
+      assignChatFacade.assignChat(groupId, authenticatedUser);
+    }
 
     return new ResponseEntity<>(HttpStatus.OK);
   }
