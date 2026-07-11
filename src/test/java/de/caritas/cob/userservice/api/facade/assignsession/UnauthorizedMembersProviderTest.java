@@ -8,6 +8,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.TEAM_SESSI
 import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.Mockito.when;
@@ -113,6 +114,17 @@ class UnauthorizedMembersProviderTest {
           assertNotEquals(consultantToRemove.getId(), consultant.getId());
           assertNotEquals(consultantToRemove.getRocketChatId(), consultant.getRocketChatId());
         });
+  }
+
+  @Test
+  void obtainConsultantsToRemoveShouldReturnEmptyWhenGroupHasNoMembers() {
+    var consultant = easyRandom.nextObject(Consultant.class);
+
+    var consultantsToRemove =
+        unauthorizedMembersProvider.obtainConsultantsToRemove(
+            RC_GROUP_ID, SESSION_WITH_ASKER_AND_CONSULTANT, consultant, List.of());
+
+    assertThat(consultantsToRemove, is(empty()));
   }
 
   @Test

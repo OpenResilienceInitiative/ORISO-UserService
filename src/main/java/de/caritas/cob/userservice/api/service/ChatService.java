@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatParticipantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
@@ -17,27 +18,30 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Chat service class */
 @Service
@@ -49,6 +53,7 @@ public class ChatService {
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
 
   private final @NonNull AgencyService agencyService;
 
@@ -67,7 +72,10 @@ public class ChatService {
         consultant.getUsername(),
         agencyIds);
 
-    var chats = chatRepository.findByAgencyIds(agencyIds);
+    var chats =
+        chatRepository.findByAgencyIds(agencyIds).stream()
+            .filter(chat -> isVisibleToConsultant(chat, consultant))
+            .toList();
     log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
     chats.forEach(
         chat ->
@@ -89,6 +97,13 @@ public class ChatService {
         .collect(Collectors.toList());
   }
 
+  private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
+    var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
+    return explicitParticipants.isEmpty()
+        || explicitParticipants.stream()
+            .anyMatch(participant -> consultant.getId().equals(participant.getConsultantId()));
+  }
+
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
       Chat chat, Set<ChatAgency> chatAgencies) {
     return new ConsultantSessionResponseDTO()
@@ -105,7 +120,17 @@ public class ChatService {
     return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
   }
 
-  private String[] getChatModerators(Set<ChatAgency> chatAgencies) {
+  private String[] getChatModerators(Chat chat, Set<ChatAgency> chatAgencies) {
+    var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
+    if (!explicitParticipants.isEmpty()) {
+      return explicitParticipants.stream()
+          .filter(
+              participant ->
+                  participant.getRole() == ParticipantRole.OWNER
+                      || participant.getRole() == ParticipantRole.CO_MODERATOR)
+          .map(participant -> participant.getConsultantId())
+          .toArray(String[]::new);
+    }
     return consultantService.findConsultantsByAgencyIds(chatAgencies).stream()
         .map(Consultant::getRocketChatId)
         .toArray(String[]::new);
@@ -166,10 +191,17 @@ public class ChatService {
    * @return list of user chats as {@link UserSessionResponseDTO}
    */
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
-    List<Chat> chats = chatRepository.findByUserId(userId);
+    List<Chat> chats =
+        chatRepository.findByUserId(userId).stream()
+            .filter(chat -> groupChatParticipantRepository.findBySeriesId(chat.getId()).isEmpty())
+            .toList();
     List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
-    var allChats =
-        Stream.concat(chats.stream(), assignedChats.stream()).collect(Collectors.toList());
+    var allChats = new ArrayList<>(chats);
+    assignedChats.stream()
+        .filter(
+            assigned ->
+                allChats.stream().noneMatch(existing -> existing.getId().equals(assigned.getId())))
+        .forEach(allChats::add);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(allChats);
     return allChats.stream()
         .map(
@@ -216,33 +248,62 @@ public class ChatService {
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
-    return new UserChatDTO(
-        chat.getId(),
-        chat.getTopic(),
-        LocalDate.of(
-            chat.getStartDate().getYear(),
-            chat.getStartDate().getMonth(),
-            chat.getStartDate().getDayOfMonth()),
-        LocalTime.of(
-            chat.getStartDate().getHour(),
-            chat.getStartDate().getMinute(),
-            chat.getStartDate().getSecond()),
-        chat.getDuration(),
-        isTrue(chat.isRepetitive()),
-        isTrue(chat.isActive()),
-        chat.getConsultingTypeId(),
-        null,
-        null,
-        false,
-        chat.getGroupId(),
-        null,
-        false,
-        getChatModerators(chatAgencies),
-        chat.getStartDate(),
-        null,
-        chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
-        agencies,
-        chat.getHintMessage());
+    var result =
+        new UserChatDTO(
+            chat.getId(),
+            chat.getTopic(),
+            LocalDate.of(
+                chat.getStartDate().getYear(),
+                chat.getStartDate().getMonth(),
+                chat.getStartDate().getDayOfMonth()),
+            LocalTime.of(
+                chat.getStartDate().getHour(),
+                chat.getStartDate().getMinute(),
+                chat.getStartDate().getSecond()),
+            chat.getDuration(),
+            isTrue(chat.isRepetitive()),
+            isTrue(chat.isActive()),
+            chat.getConsultingTypeId(),
+            null,
+            null,
+            false,
+            chat.getGroupId(),
+            null,
+            false,
+            getChatModerators(chat, chatAgencies),
+            chat.getStartDate(),
+            null,
+            chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
+            agencies,
+            chat.getHintMessage());
+    result.setRepeatCount(chat.getRepeatCount());
+    result.setCurrentOccurrenceIndex(chat.getCurrentOccurrenceIndex());
+    result.setChatInterval(chat.getChatInterval());
+    result.setModality(chat.getChatModality());
+    result.setTimezone(chat.getTimezone());
+    result.setParticipants(getSeriesParticipants(chat));
+    result.setSourceLanguage(chat.getSourceLanguage());
+    result.setHintMessageTranslations(chat.getHintMessageTranslations());
+    result.setGroupChatRulesTranslations(chat.getGroupChatRulesTranslations());
+    return result;
+  }
+
+  private List<GroupChatParticipantDTO> getSeriesParticipants(Chat chat) {
+    return groupChatParticipantRepository.findBySeriesId(chat.getId()).stream()
+        .map(
+            participant -> {
+              var displayName =
+                  consultantService
+                      .getConsultant(participant.getConsultantId())
+                      .map(Consultant::getDisplayName)
+                      .filter(name -> name != null && !name.isBlank())
+                      .orElse(participant.getConsultantId());
+              return new GroupChatParticipantDTO()
+                  .consultantId(participant.getConsultantId())
+                  .role(GroupChatParticipantDTO.RoleEnum.fromValue(participant.getRole().name()))
+                  .displayName(displayName);
+            })
+        .toList();
   }
 
   private Set<ChatAgency> loadChatAgencies(Long chatId) {
@@ -354,7 +415,9 @@ public class ChatService {
    *
    * @param chat the {@link Chat}
    */
+  @Transactional
   public void deleteChat(Chat chat) {
+    groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }
 
@@ -394,6 +457,9 @@ public class ChatService {
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
     chat.setHintMessage(chatDTO.getHintMessage());
+    chat.setSourceLanguage(chatDTO.getSourceLanguage());
+    chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
+    chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
 

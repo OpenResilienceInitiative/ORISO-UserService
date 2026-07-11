@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -123,6 +124,52 @@ class UserSessionListServiceTest {
             .get(0)
             .getChat()
             .isMessagesRead());
+  }
+
+  @Test
+  void retrieveSessionsForAuthenticatedUser_Should_NotEnrichNullSessionForGroupChat() {
+    ReflectionTestUtils.setField(userSessionListService, "featureTopicsEnabled", true);
+    userSessionListService.setSessionTopicEnrichmentService(sessionTopicEnrichmentService);
+    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
+    var roomInformation =
+        RocketChatRoomInformation.builder()
+            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
+            .lastMessagesRoom(emptyMap())
+            .build();
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
+        .thenReturn(roomInformation);
+
+    var result =
+        assertDoesNotThrow(
+            () ->
+                userSessionListService.retrieveSessionsForAuthenticatedUser(
+                    USER_ID, RC_CREDENTIALS));
+
+    assertEquals(USER_CHAT_RESPONSE_DTO_LIST.size(), result.size());
+    verify(sessionTopicEnrichmentService, Mockito.never()).enrichSessionWithTopicData(null);
+  }
+
+  @Test
+  void retrieveSessionsForGroupIds_Should_NotLoadSystemSessionForKnownChatRoom() {
+    var chatResponse = USER_CHAT_RESPONSE_DTO_LIST.getFirst();
+    when(chatService.getChatSessionsByGroupIds(Set.of(RC_GROUP_ID_4)))
+        .thenReturn(List.of(chatResponse));
+    var roomInformation =
+        RocketChatRoomInformation.builder()
+            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
+            .lastMessagesRoom(emptyMap())
+            .build();
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
+        .thenReturn(roomInformation);
+
+    var result =
+        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+            USER_ID, List.of(RC_GROUP_ID_4), RC_CREDENTIALS, Set.of("user"));
+
+    assertEquals(List.of(chatResponse), result);
+    verify(sessionService, Mockito.never())
+        .getSessionsByUserAndGroupIds(Mockito.anyString(), Mockito.anySet(), Mockito.anySet());
   }
 
   @Test

@@ -26,6 +26,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -69,6 +70,7 @@ import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
@@ -108,6 +110,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -124,9 +127,9 @@ import org.springframework.web.client.RestTemplate;
 class UserControllerChatE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
 
@@ -135,6 +138,8 @@ class UserControllerChatE2EIT {
   @Autowired private UsernameTranscoder usernameTranscoder;
 
   @Autowired private ConsultantRepository consultantRepository;
+
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @Autowired private UserRepository userRepository;
 
@@ -540,6 +545,28 @@ class UserControllerChatE2EIT {
     assertEquals(storedChatUser.getChat(), chat);
     assertEquals(storedChatUser.getUser(), user);
 
+    chatUserRepository.delete(storedChatUser);
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  @Transactional
+  void assignChat_Should_ReturnOK_When_GroupIdIsAMatrixRoomId() throws Exception {
+    givenAValidUser(true);
+    givenAValidConsultant();
+    var matrixRoomId = "!OxvwFBFfkXNNhHUBOk:matrix.localhost";
+    givenAValidChat(false, matrixRoomId);
+
+    mockMvc
+        .perform(
+            put("/users/chat/{groupId}/assign", matrixRoomId)
+                .with(jwt().authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT)))
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    var storedChatUser = chatUserRepository.findByChatAndUser(chat, user).orElseThrow();
     chatUserRepository.delete(storedChatUser);
   }
 
@@ -1435,11 +1462,17 @@ class UserControllerChatE2EIT {
   }
 
   private void givenAValidChat(boolean isRepetitive) {
+    givenAValidChat(isRepetitive, RC_GROUP_ID);
+  }
+
+  private void givenAValidChat(boolean isRepetitive, String groupId) {
     chat = easyRandom.nextObject(Chat.class);
     chat.setId(null);
-    chat.setGroupId(RC_GROUP_ID);
+    chat.setGroupId(groupId);
+    chat.setMatrixRoomId(groupId.startsWith("!") ? groupId : null);
     chat.setActive(true);
     chat.setRepetitive(isRepetitive);
+    chat.setSourceLanguage("de");
     chat.setChatOwner(consultant);
     chat.setConsultingTypeId(easyRandom.nextInt(128));
     chat.setDuration(easyRandom.nextInt(32768));
@@ -1447,7 +1480,8 @@ class UserControllerChatE2EIT {
     chat.setUpdateDate(CustomLocalDateTime.nowInUtc());
     chatRepository.save(chat);
 
-    var agencyId = consultant.getConsultantAgencies().iterator().next().getAgencyId();
+    var agencyId =
+        consultantAgencyRepository.findByConsultantId(consultant.getId()).getFirst().getAgencyId();
     chatAgency = new ChatAgency();
     chatAgency.setChat(chat);
     chatAgency.setAgencyId(agencyId);
@@ -1457,7 +1491,6 @@ class UserControllerChatE2EIT {
       userAgency = new UserAgency();
       userAgency.setUser(user);
       userAgency.setAgencyId(agencyId);
-      user.getUserAgencies().add(userAgency);
       userAgencyRepository.save(userAgency);
     }
   }

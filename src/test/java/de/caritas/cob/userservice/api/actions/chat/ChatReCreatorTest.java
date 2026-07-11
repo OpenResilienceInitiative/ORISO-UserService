@@ -110,6 +110,7 @@ class ChatReCreatorTest {
     assertEquals(NEW_MATRIX_ROOM_ID, chat.getGroupId());
     assertEquals(NEW_MATRIX_ROOM_ID, chat.getMatrixRoomId());
     assertEquals(START_DATE.plusWeeks(1), chat.getStartDate());
+    assertEquals(1, chat.getCurrentOccurrenceIndex());
     assertFalse(chat.isActive());
     assertNotNull(chat.getUpdateDate());
     verify(chatService).saveChat(chat);
@@ -134,6 +135,7 @@ class ChatReCreatorTest {
             .startDate(START_DATE)
             .duration(60)
             .repetitive(true)
+            .repeatCount(2)
             .chatInterval(ChatInterval.WEEKLY)
             .chatOwner(owner)
             .build();

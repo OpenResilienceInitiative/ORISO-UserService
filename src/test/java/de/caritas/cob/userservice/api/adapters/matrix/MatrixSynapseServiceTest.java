@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -18,6 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +35,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -319,6 +325,19 @@ class MatrixSynapseServiceTest {
 
     assertThat(service.unbanUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN)).isTrue();
     verify(matrixRoomClient).unbanUserFromRoom(MATRIX_ROOM_ID, MATRIX_USER_ID, ACCESS_TOKEN);
+  }
+
+  @Test
+  void createRoomShouldPassConfiguredEncryptionFlagToRoomClient() throws Exception {
+    matrixConfig.setEncryptionEnabled(true);
+    var expected = ResponseEntity.ok(new MatrixCreateRoomResponseDTO());
+    when(matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
+        .thenReturn(expected);
+
+    var result = matrixSynapseService().createRoom("Room name", "room-alias", ACCESS_TOKEN);
+
+    assertThat(result).isSameAs(expected);
+    verify(matrixRoomClient).createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
   }
 
   @Test
@@ -643,6 +662,123 @@ class MatrixSynapseServiceTest {
         .thenReturn(ResponseEntity.ok(Map.of("user_id", "@alice:example.org")));
 
     assertThat(matrixSynapseService().loginAsUserAccessToken("@alice:example.org")).isNull();
+  }
+
+  @Test
+  void loginBrowserDevice_rotatesTransientPasswordWithoutLoggingOutExistingDevices() {
+    // Browser E2EE requires a normal Matrix login whose access token is bound to a real device.
+    // The transient password must never become an application credential or invalidate another
+    // browser's encryption keys.
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    var updateUri = URI.create(MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40alice%3Aexample.org");
+    when(restTemplate.exchange(
+            eq(updateUri), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "access_token", "browser-token",
+                    "user_id", "@alice:example.org",
+                    "device_id", "ORISO_WEB_DEVICE_ONE")));
+    var updateRequest = ArgumentCaptor.forClass(HttpEntity.class);
+    var loginRequest = ArgumentCaptor.forClass(HttpEntity.class);
+
+    var result =
+        matrixSynapseService().loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE");
+
+    assertThat(result)
+        .containsEntry("access_token", "browser-token")
+        .containsEntry("device_id", "ORISO_WEB_DEVICE_ONE");
+    verify(restTemplate)
+        .exchange(eq(updateUri), eq(HttpMethod.PUT), updateRequest.capture(), eq(Map.class));
+    @SuppressWarnings("unchecked")
+    var updateBody = (Map<String, Object>) updateRequest.getValue().getBody();
+    assertThat(updateBody).containsEntry("logout_devices", false).containsKey("password");
+    assertThat(String.valueOf(updateBody.get("password"))).hasSizeGreaterThanOrEqualTo(32);
+
+    verify(restTemplate, times(2))
+        .postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"),
+            loginRequest.capture(),
+            eq(Map.class));
+    @SuppressWarnings("unchecked")
+    var browserLoginBody = (Map<String, Object>) loginRequest.getAllValues().get(1).getBody();
+    assertThat(browserLoginBody)
+        .containsEntry("type", "m.login.password")
+        .containsEntry("user", "@alice:example.org")
+        .containsEntry("device_id", "ORISO_WEB_DEVICE_ONE")
+        .containsEntry("initial_device_display_name", "ORISO Web");
+    assertThat(browserLoginBody.get("password")).isEqualTo(updateBody.get("password"));
+  }
+
+  @Test
+  void loginBrowserDevice_rejectsUnsafeDeviceIdWithoutCallingSynapse() {
+    assertThat(matrixSynapseService().loginBrowserDevice("@alice:example.org", "bad/device"))
+        .isNull();
+
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void loginBrowserDevice_serializesPasswordRotationAndLoginForTheSameUser() throws Exception {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    var service = matrixSynapseService();
+    ReflectionTestUtils.setField(service, "cachedAdminToken", MATRIX_ADMIN_TOKEN);
+    ReflectionTestUtils.setField(service, "adminTokenExpiry", Long.MAX_VALUE);
+    var updateUri = URI.create(MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40alice%3Aexample.org");
+    var updateCalls = new AtomicInteger();
+    var firstLoginEntered = new CountDownLatch(1);
+    var releaseFirstLogin = new CountDownLatch(1);
+    var secondUpdateEntered = new CountDownLatch(1);
+    when(restTemplate.exchange(
+            eq(updateUri), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenAnswer(
+            invocation -> {
+              if (updateCalls.incrementAndGet() == 2) {
+                secondUpdateEntered.countDown();
+              }
+              return ResponseEntity.ok(Map.of());
+            });
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenAnswer(
+            invocation -> {
+              if (firstLoginEntered.getCount() > 0) {
+                firstLoginEntered.countDown();
+                releaseFirstLogin.await(2, TimeUnit.SECONDS);
+              }
+              return ResponseEntity.ok(
+                  Map.of(
+                      "access_token", "browser-token",
+                      "device_id", "ORISO_WEB_DEVICE"));
+            });
+
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          executor.submit(
+              () -> service.loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE"));
+      assertThat(firstLoginEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      var second =
+          executor.submit(
+              () -> service.loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_TWO"));
+
+      assertThat(secondUpdateEntered.await(200, TimeUnit.MILLISECONDS))
+          .as("the second password rotation must wait until the first login completes")
+          .isFalse();
+
+      releaseFirstLogin.countDown();
+      assertThat(first.get(2, TimeUnit.SECONDS)).isNotNull();
+      assertThat(second.get(2, TimeUnit.SECONDS)).isNotNull();
+    } finally {
+      releaseFirstLogin.countDown();
+      executor.shutdownNow();
+    }
   }
 
   // -------------------------------------------------------------------------

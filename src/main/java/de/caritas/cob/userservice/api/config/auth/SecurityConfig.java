@@ -153,7 +153,7 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/join",
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
-                    "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
+                    "/users/chat/{groupId}/assign",
                     "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
@@ -221,6 +221,8 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/chat-series/**",
+                    "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
