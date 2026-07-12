@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -64,6 +65,8 @@ class AnonymousEnquiryConversationListProviderIT {
 
   @MockitoBean private UserAccountService userAccountProvider;
 
+  @MockitoBean private ConsultantTopicRepository consultantTopicRepository;
+
   @BeforeEach
   void setup() {
     Consultant consultant = mock(Consultant.class);
@@ -73,6 +76,8 @@ class AnonymousEnquiryConversationListProviderIT {
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
     AgencyDTO agencyDTO = new AgencyDTO().consultingType(CONSULTING_TYPE_ID_OFFENDER);
     when(this.agencyService.getAgencies(any())).thenReturn(singletonList(agencyDTO));
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
+        .thenReturn(java.util.List.of(11L));
   }
 
   @AfterEach
@@ -151,7 +156,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
           session.setStatus(SessionStatus.NEW);
-          session.setMainTopicId(null);
+          session.setMainTopicId(11L);
           session.setSessionTopics(Lists.newArrayList());
           session.setUpdateDate(LocalDateTime.now());
         });
