@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
@@ -91,18 +92,41 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     var pageable = PageRequest.of(requestedPage, pageableListRequest.getCount());
     var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
 
-    if (consultantTopicIds == null || consultantTopicIds.isEmpty()) {
-      return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
-          relatedConsultingTypes, SessionStatus.NEW, minUpdateDate, ANONYMOUS, pageable);
-    }
+    // The anonymous Live Chat queue is deliberately cross-agency AND cross-tenant: a consultant who
+    // is live for a topic/consulting type must see anonymous enquiries for that topic regardless of
+    // the asker's tenant. The consultant's own consulting types and topics were already resolved in
+    // the caller's tenant context; only the visibility query itself must bypass the tenant filter.
+    // Running it in technical context makes TenantAspect disable the Hibernate tenantFilter; the
+    // caller's tenant is restored afterwards so no other query in this request leaks. Registered
+    // (non-anonymous) session queries are unaffected and stay strictly tenant-isolated.
+    return runCrossTenant(
+        () -> {
+          if (consultantTopicIds == null || consultantTopicIds.isEmpty()) {
+            return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
+                relatedConsultingTypes, SessionStatus.NEW, minUpdateDate, ANONYMOUS, pageable);
+          }
+          return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopics(
+              relatedConsultingTypes,
+              new HashSet<>(consultantTopicIds),
+              SessionStatus.NEW,
+              minUpdateDate,
+              ANONYMOUS,
+              pageable);
+        });
+  }
 
-    return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopics(
-        relatedConsultingTypes,
-        new HashSet<>(consultantTopicIds),
-        SessionStatus.NEW,
-        minUpdateDate,
-        ANONYMOUS,
-        pageable);
+  private Page<Session> runCrossTenant(java.util.function.Supplier<Page<Session>> query) {
+    var callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return query.get();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
   }
 
   /** {@inheritDoc} */
