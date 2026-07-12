@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -347,6 +348,7 @@ class AgencyInviteLinkServiceTest {
             .build();
     AgencyDTO fallbackAgency = new AgencyDTO();
     fallbackAgency.setId(42L);
+    fallbackAgency.setTenantId(1L);
     when(repository.findByTokenAndStatus("tok2", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
     when(agencyService.getAgenciesByConsultingType(5))
@@ -355,6 +357,49 @@ class AgencyInviteLinkServiceTest {
     var ctx = service.redeem("tok2");
 
     assertThat(ctx.getAgencyId()).isEqualTo(42L);
+  }
+
+  @Test
+  void redeem_Should_SelectAgencyFromInviteTenantAndTopic() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("tenant-topic-link")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .consultingTypeId(1)
+            .topicId(11L)
+            .build();
+    AgencyDTO crossTenantAgency = new AgencyDTO().id(237L).tenantId(1L).topicIds(List.of(11L));
+    AgencyDTO wrongTopicAgency = new AgencyDTO().id(279L).tenantId(83L).topicIds(List.of(12L));
+    AgencyDTO matchingAgency = new AgencyDTO().id(280L).tenantId(83L).topicIds(List.of(11L));
+    when(repository.findByTokenAndStatus("tenant-topic-link", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(agencyService.getAgenciesByConsultingType(1))
+        .thenReturn(List.of(crossTenantAgency, wrongTopicAgency, matchingAgency));
+
+    var ctx = service.redeem("tenant-topic-link");
+
+    assertThat(ctx.getAgencyId()).isEqualTo(280L);
+  }
+
+  @Test
+  void redeem_Should_ThrowBadRequest_When_NoAgencyMatchesInviteTenantAndTopic() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("no-match-link")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .consultingTypeId(1)
+            .topicId(11L)
+            .build();
+    AgencyDTO crossTenantAgency = new AgencyDTO().id(237L).tenantId(1L).topicIds(List.of(11L));
+    when(repository.findByTokenAndStatus("no-match-link", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(agencyService.getAgenciesByConsultingType(1)).thenReturn(List.of(crossTenantAgency));
+
+    assertThatThrownBy(() -> service.redeem("no-match-link"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("No agency in the invite link tenant");
   }
 
   @Test

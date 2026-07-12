@@ -214,7 +214,19 @@ public class AgencyInviteLinkService {
       throw new BadRequestException(
           "No agency available for this invite link — set agencyId on the link or configure a topic fallback agency");
     }
-    return agencies.get(0).getId();
+    return agencies.stream()
+        .filter(agency -> Objects.equals(agency.getTenantId(), link.getTenantId()))
+        .filter(
+            agency ->
+                link.getTopicId() == null
+                    || (agency.getTopicIds() != null
+                        && agency.getTopicIds().contains(link.getTopicId())))
+        .map(AgencyDTO::getId)
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new BadRequestException(
+                    "No agency in the invite link tenant serves the configured consulting type and topic"));
   }
 
   // ---------------------------------------------------------------------------------------------
