@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -70,12 +71,15 @@ class AnonymousUserCreatorServiceTest {
   @Test
   void createAnonymousUser_Should_ReturnKeycloakCredentials_When_RocketChatIsDisabled() {
     ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
+    User user = mock(User.class);
     KeycloakCreateUserResponseDTO responseDTO =
         easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
     KeycloakLoginResponseDTO keycloakLoginResponseDTO =
         easyRandom.nextObject(KeycloakLoginResponseDTO.class);
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+    when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
+        .thenReturn(user);
 
     AnonymousUserCredentials credentials =
         anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
@@ -83,6 +87,7 @@ class AnonymousUserCreatorServiceTest {
     assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
     assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
     assertThat(credentials.getRocketChatCredentials(), is((Object) null));
+    verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
     verifyNoInteractions(rocketChatService);
     verifyNoInteractions(userService);
   }
@@ -104,6 +109,27 @@ class AnonymousUserCreatorServiceTest {
           verifyNoInteractions(rollbackFacade);
           verifyNoInteractions(rocketChatService);
         });
+  }
+
+  @Test
+  void createAnonymousUser_Should_RollBack_When_MatrixProvisioningFails() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
+    User user = mock(User.class);
+    KeycloakCreateUserResponseDTO responseDTO =
+        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
+    when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
+        .thenReturn(user);
+    doThrow(new InternalServerErrorException("Matrix provisioning failed"))
+        .when(createUserFacade)
+        .provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT));
+
+    verify(rollbackFacade).rollBackUserAccount(any());
+    verifyNoInteractions(rocketChatService);
   }
 
   @Test

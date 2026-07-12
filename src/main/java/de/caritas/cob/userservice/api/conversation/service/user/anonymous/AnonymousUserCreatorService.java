@@ -56,17 +56,21 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    createUserFacade.updateIdentityAndCreateAccount(response.getUserId(), userDto, UserRole.USER);
-
     KeycloakLoginResponseDTO kcLoginResponseDTO;
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
+      var user =
+          createUserFacade.updateIdentityAndCreateAccount(
+              response.getUserId(), userDto, UserRole.USER);
+      if (!rocketChatEnabled) {
+        createUserFacade.provisionMatrixUser(user, userDto.getUsername());
+      }
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
       if (rocketChatEnabled) {
         ensureRocketChatUserExists(userDto, response.getUserId());
         rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
       }
-    } catch (RocketChatLoginException | BadRequestException e) {
+    } catch (RocketChatLoginException | BadRequestException | InternalServerErrorException e) {
       rollBackAnonymousUserAccount(response.getUserId());
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
     }
