@@ -383,6 +383,26 @@ class AgencyInviteLinkServiceTest {
   }
 
   @Test
+  void redeem_Should_ThrowBadRequest_When_NoAgencyMatchesInviteTenantAndTopic() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("no-match-link")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .consultingTypeId(1)
+            .topicId(11L)
+            .build();
+    AgencyDTO crossTenantAgency = new AgencyDTO().id(237L).tenantId(1L).topicIds(List.of(11L));
+    when(repository.findByTokenAndStatus("no-match-link", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(agencyService.getAgenciesByConsultingType(1)).thenReturn(List.of(crossTenantAgency));
+
+    assertThatThrownBy(() -> service.redeem("no-match-link"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("No agency in the invite link tenant");
+  }
+
+  @Test
   void redeem_Should_ThrowBadRequest_When_LinkIsNotActive() {
     AgencyInviteLink inactiveLink =
         AgencyInviteLink.builder()
