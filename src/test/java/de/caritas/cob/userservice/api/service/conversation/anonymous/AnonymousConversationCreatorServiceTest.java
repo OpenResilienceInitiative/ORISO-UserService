@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -33,13 +34,16 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class AnonymousConversationCreatorServiceTest {
@@ -55,6 +59,46 @@ class AnonymousConversationCreatorServiceTest {
   @Mock TopicConsultantRoutingService topicConsultantRoutingService;
 
   EasyRandom easyRandom = new EasyRandom();
+
+  @BeforeEach
+  void enableRocketChatForLegacyTests() {
+    ReflectionTestUtils.setField(anonymousConversationCreatorService, "rocketChatEnabled", true);
+  }
+
+  @Test
+  void createAnonymousConversation_Should_CreateWaitingSession_When_RocketChatIsDisabled() {
+    ReflectionTestUtils.setField(anonymousConversationCreatorService, "rocketChatEnabled", false);
+    Session session = easyRandom.nextObject(Session.class);
+    session.setGroupId(null);
+    session.setMainTopicId(11L);
+    AnonymousUserCredentials credentials =
+        AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
+    when(userService.getUser(credentials.getUserId())).thenReturn(Optional.of(USER));
+    when(sessionService.initializeSession(
+            any(User.class),
+            any(UserDTO.class),
+            anyBoolean(),
+            any(RegistrationType.class),
+            any(SessionStatus.class)))
+        .thenReturn(session);
+    when(topicConsultantRoutingService.findEligibleConsultantIds(
+            session.getMainTopicId(), session.getConsultingTypeId()))
+        .thenReturn(List.of("consultant-id"));
+    when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of("consultant-id")))
+        .thenReturn(List.of());
+
+    Session created =
+        anonymousConversationCreatorService.createAnonymousConversation(
+            USER_DTO_SUCHT, credentials);
+
+    assertThat(created, is(session));
+    assertThat(created.getConversationType(), is(ConversationType.LIVE_CHAT));
+    assertThat(created.getGroupId(), is((Object) null));
+    verify(sessionService).saveSession(session);
+    verifyNoInteractions(createEnquiryMessageFacade);
+    verify(liveEventNotificationService)
+        .sendLiveNewAnonymousEnquiryEventToUsers(List.of("consultant-id"), session.getId());
+  }
 
   @Test
   void

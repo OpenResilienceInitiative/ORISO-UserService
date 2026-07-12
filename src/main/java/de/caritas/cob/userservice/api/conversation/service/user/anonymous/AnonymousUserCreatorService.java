@@ -22,6 +22,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +32,9 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AnonymousUserCreatorService {
 
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
+
   private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull RocketChatService rocketChatService;
@@ -39,7 +43,7 @@ public class AnonymousUserCreatorService {
   private final @NonNull UserHelper userHelper;
 
   /**
-   * Creates an anonymous user account in Keycloak, MariaDB and Rocket.Chat.
+   * Creates an anonymous user account in Keycloak and MariaDB, plus Rocket.Chat when enabled.
    *
    * @param userDto {@link UserDTO}
    * @return {@link AnonymousUserCredentials}
@@ -55,27 +59,35 @@ public class AnonymousUserCreatorService {
     createUserFacade.updateIdentityAndCreateAccount(response.getUserId(), userDto, UserRole.USER);
 
     KeycloakLoginResponseDTO kcLoginResponseDTO;
-    ResponseEntity<LoginResponseDTO> rcLoginResponseDto;
+    ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
-      ensureRocketChatUserExists(userDto, response.getUserId());
-      rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
+      if (rocketChatEnabled) {
+        ensureRocketChatUserExists(userDto, response.getUserId());
+        rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
+      }
     } catch (RocketChatLoginException | BadRequestException e) {
       rollBackAnonymousUserAccount(response.getUserId());
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
     }
 
-    var anonymousUserCredentials =
+    var credentialsBuilder =
         AnonymousUserCredentials.builder()
             .userId(response.getUserId())
             .accessToken(kcLoginResponseDTO.getAccessToken())
             .expiresIn(kcLoginResponseDTO.getExpiresIn())
             .refreshToken(kcLoginResponseDTO.getRefreshToken())
-            .refreshExpiresIn(kcLoginResponseDTO.getRefreshExpiresIn())
-            .rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto))
-            .build();
+            .refreshExpiresIn(kcLoginResponseDTO.getRefreshExpiresIn());
 
-    updateRocketChatUserIdInDatabase(anonymousUserCredentials);
+    if (rocketChatEnabled) {
+      credentialsBuilder.rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto));
+    }
+
+    var anonymousUserCredentials = credentialsBuilder.build();
+
+    if (rocketChatEnabled) {
+      updateRocketChatUserIdInDatabase(anonymousUserCredentials);
+    }
 
     return anonymousUserCredentials;
   }

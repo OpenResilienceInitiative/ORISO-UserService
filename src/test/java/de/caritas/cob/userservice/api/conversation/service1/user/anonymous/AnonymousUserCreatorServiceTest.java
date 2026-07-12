@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -41,6 +42,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -59,6 +61,31 @@ class AnonymousUserCreatorServiceTest {
   @Mock private UserHelper userHelper;
 
   EasyRandom easyRandom = new EasyRandom();
+
+  @BeforeEach
+  void enableRocketChatForLegacyTests() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", true);
+  }
+
+  @Test
+  void createAnonymousUser_Should_ReturnKeycloakCredentials_When_RocketChatIsDisabled() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
+    KeycloakCreateUserResponseDTO responseDTO =
+        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
+        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
+    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+
+    AnonymousUserCredentials credentials =
+        anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
+
+    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
+    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
+    assertThat(credentials.getRocketChatCredentials(), is((Object) null));
+    verifyNoInteractions(rocketChatService);
+    verifyNoInteractions(userService);
+  }
 
   @Test
   void
