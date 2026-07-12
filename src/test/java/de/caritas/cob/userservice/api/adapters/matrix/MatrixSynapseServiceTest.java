@@ -13,6 +13,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -696,24 +698,21 @@ class MatrixSynapseServiceTest {
         .containsEntry("device_id", "ORISO_WEB_DEVICE_ONE");
     verify(restTemplate)
         .exchange(eq(updateUri), eq(HttpMethod.PUT), updateRequest.capture(), eq(Map.class));
-    @SuppressWarnings("unchecked")
-    var updateBody = (Map<String, Object>) updateRequest.getValue().getBody();
-    assertThat(updateBody).containsEntry("logout_devices", false).containsKey("password");
-    assertThat(String.valueOf(updateBody.get("password"))).hasSizeGreaterThanOrEqualTo(32);
+    var updateBody = (MatrixPasswordUpdateRequestDTO) updateRequest.getValue().getBody();
+    assertThat(updateBody.isLogoutDevices()).isFalse();
+    assertThat(updateBody.getPassword()).hasSizeGreaterThanOrEqualTo(32);
 
     verify(restTemplate, times(2))
         .postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"),
             loginRequest.capture(),
             eq(Map.class));
-    @SuppressWarnings("unchecked")
-    var browserLoginBody = (Map<String, Object>) loginRequest.getAllValues().get(1).getBody();
-    assertThat(browserLoginBody)
-        .containsEntry("type", "m.login.password")
-        .containsEntry("user", "@alice:example.org")
-        .containsEntry("device_id", "ORISO_WEB_DEVICE_ONE")
-        .containsEntry("initial_device_display_name", "ORISO Web");
-    assertThat(browserLoginBody.get("password")).isEqualTo(updateBody.get("password"));
+    var browserLoginBody = (MatrixLoginRequestDTO) loginRequest.getAllValues().get(1).getBody();
+    assertThat(browserLoginBody.getType()).isEqualTo("m.login.password");
+    assertThat(browserLoginBody.getUser()).isEqualTo("@alice:example.org");
+    assertThat(browserLoginBody.getDeviceId()).isEqualTo("ORISO_WEB_DEVICE_ONE");
+    assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
+    assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
   }
 
   @Test

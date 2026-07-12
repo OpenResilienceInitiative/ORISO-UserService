@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -420,8 +422,9 @@ public class MatrixSynapseService {
       String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
       var adminHeaders = getClientHttpHeaders(adminToken);
       adminHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var updateBody =
-          java.util.Map.<String, Object>of("password", transientPassword, "logout_devices", false);
+      var updateBody = new MatrixPasswordUpdateRequestDTO();
+      updateBody.setPassword(transientPassword);
+      updateBody.setLogoutDevices(false);
       var updateUri =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
@@ -433,12 +436,12 @@ public class MatrixSynapseService {
 
       var loginHeaders = new HttpHeaders();
       loginHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var loginBody = new java.util.HashMap<String, Object>();
-      loginBody.put("type", "m.login.password");
-      loginBody.put("user", matrixUserId);
-      loginBody.put("password", transientPassword);
-      loginBody.put("device_id", deviceId);
-      loginBody.put("initial_device_display_name", "ORISO Web");
+      var loginBody = new MatrixLoginRequestDTO();
+      loginBody.setType("m.login.password");
+      loginBody.setUser(matrixUserId);
+      loginBody.setPassword(transientPassword);
+      loginBody.setDeviceId(deviceId);
+      loginBody.setInitialDeviceDisplayName("ORISO Web");
 
       var response =
           restTemplate.postForEntity(
@@ -728,12 +731,12 @@ public class MatrixSynapseService {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
 
-      var loginRequest = new java.util.HashMap<String, Object>();
-      loginRequest.put("type", "m.login.password");
-      loginRequest.put("user", username);
-      loginRequest.put("password", password);
+      var loginRequest = new MatrixLoginRequestDTO();
+      loginRequest.setType("m.login.password");
+      loginRequest.setUser(username);
+      loginRequest.setPassword(password);
 
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(loginRequest, headers);
+      HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
       var url = matrixConfig.getApiUrl(ENDPOINT_LOGIN);
       log.info("Logging in Matrix user: {} at URL: {}", username, url);
