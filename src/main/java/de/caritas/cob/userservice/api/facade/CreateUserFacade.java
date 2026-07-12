@@ -95,50 +95,11 @@ public class CreateUserFacade {
 
     // Create Matrix user with a random local Matrix password that is never persisted.
     // The plain username is needed for the Matrix localpart. Prefer the value captured during
-    // request deserialization, but fall back to deriving it from the persisted username. The
-    // ThreadLocal is populated by a Jackson deserializer and is not always available by the time
-    // we get here; relying on it alone left some askers without a Matrix account, which later
-    // makes their first enquiry fail with "Could not create Matrix room".
-    String plainUsername;
-    if (plainCreds != null && plainCreds.getUsername() != null) {
-      plainUsername = plainCreds.getUsername();
-    } else if (user != null && user.getUsername() != null) {
-      plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
-    } else {
-      plainUsername = null;
-    }
+    // request deserialization, but fall back to deriving it from the persisted username.
+    String plainUsername =
+        plainCreds != null && plainCreds.getUsername() != null ? plainCreds.getUsername() : null;
     try {
-      if (isNotBlank(plainUsername)) {
-        String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
-        var matrixResponse =
-            matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername);
-
-        log.info(
-            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
-            plainUsername,
-            matrixResponse.getStatusCode(),
-            matrixResponse.getBody() != null);
-
-        if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-          user.setMatrixUserId(matrixResponse.getBody().getUserId());
-          userService.saveUser(user);
-          log.info(
-              "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
-              plainUsername,
-              matrixResponse.getBody().getUserId());
-        } else {
-          log.warn(
-              "Matrix user creation response body is null or missing user_id for plain username: {}",
-              plainUsername);
-        }
-      } else {
-        log.warn("Plain username not resolvable, skipping Matrix user creation");
-      }
-    } catch (Exception e) {
-      log.error(
-          "Matrix user creation failed for plain username: {}, but continuing with registration",
-          plainUsername,
-          e);
+      user = ensureMatrixUser(user, plainUsername);
     } finally {
       // Clean up ThreadLocal to prevent memory leaks
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
@@ -199,6 +160,60 @@ public class CreateUserFacade {
           "AgencyId is null for user during registration. Will not send agency name to statistics");
       return StringUtils.EMPTY;
     }
+  }
+
+  /**
+   * Ensures the given account has a Matrix user, creating one with a random, never-persisted local
+   * password when missing. The plain username is the Matrix localpart: prefer {@code
+   * plainUsername}, otherwise decode it from the persisted username. Failures are logged and
+   * swallowed so account creation is never blocked; a persisted {@code matrixUserId} is set on
+   * success. Shared by registered and anonymous account creation so both paths provision Matrix
+   * identically.
+   *
+   * @param user the persisted user
+   * @param plainUsername the plain (decoded) username, or {@code null} to derive it
+   * @return the user, with {@code matrixUserId} set when creation succeeded
+   */
+  public User ensureMatrixUser(User user, String plainUsername) {
+    String resolvedPlainUsername = plainUsername;
+    if (isBlank(resolvedPlainUsername) && user != null && user.getUsername() != null) {
+      resolvedPlainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
+    }
+    try {
+      if (isNotBlank(resolvedPlainUsername)) {
+        String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
+        var matrixResponse =
+            matrixSynapseService.createUser(
+                resolvedPlainUsername, matrixPassword, resolvedPlainUsername);
+
+        log.info(
+            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
+            resolvedPlainUsername,
+            matrixResponse.getStatusCode(),
+            matrixResponse.getBody() != null);
+
+        if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
+          user.setMatrixUserId(matrixResponse.getBody().getUserId());
+          userService.saveUser(user);
+          log.info(
+              "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
+              resolvedPlainUsername,
+              matrixResponse.getBody().getUserId());
+        } else {
+          log.warn(
+              "Matrix user creation response body is null or missing user_id for plain username: {}",
+              resolvedPlainUsername);
+        }
+      } else {
+        log.warn("Plain username not resolvable, skipping Matrix user creation");
+      }
+    } catch (Exception e) {
+      log.error(
+          "Matrix user creation failed for plain username: {}, but continuing",
+          resolvedPlainUsername,
+          e);
+    }
+    return user;
   }
 
   /**

@@ -22,6 +22,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
@@ -31,12 +32,24 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AnonymousUserCreatorService {
 
+  /**
+   * Matrix migration placeholder — mirrors {@code CreateEnquiryMessageFacade}. Downstream room
+   * creation skips all Rocket.Chat operations when it sees this dummy user id.
+   */
+  private static final String MATRIX_MIGRATION_DUMMY_RC_USER_ID = "matrix-migration-dummy-user";
+
+  private static final String MATRIX_MIGRATION_DUMMY_RC_TOKEN = "matrix-migration-dummy-token";
+
   private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull UserService userService;
   private final @NonNull UserHelper userHelper;
+
+  /** ADR-004: with Rocket.Chat disabled no Rocket.Chat account is created or logged in. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   /**
    * Creates an anonymous user account in Keycloak, MariaDB and Rocket.Chat.
@@ -52,14 +65,26 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    createUserFacade.updateIdentityAndCreateAccount(response.getUserId(), userDto, UserRole.USER);
+    var createdUser =
+        createUserFacade.updateIdentityAndCreateAccount(
+            response.getUserId(), userDto, UserRole.USER);
+
+    // ADR-004 Matrix-only: anonymous askers need a Matrix account too, otherwise their first
+    // enquiry fails with "has no Matrix account". The registered path provisions Matrix inside
+    // createUserAccountWithInitializedConsultingType; the anonymous path calls only the inner
+    // account creation, so provision Matrix explicitly here when Rocket.Chat is disabled.
+    if (!rocketChatEnabled) {
+      createUserFacade.ensureMatrixUser(createdUser, userDto.getUsername());
+    }
 
     KeycloakLoginResponseDTO kcLoginResponseDTO;
-    ResponseEntity<LoginResponseDTO> rcLoginResponseDto;
+    ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
-      ensureRocketChatUserExists(userDto, response.getUserId());
-      rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
+      if (rocketChatEnabled) {
+        ensureRocketChatUserExists(userDto, response.getUserId());
+        rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
+      }
     } catch (RocketChatLoginException | BadRequestException e) {
       rollBackAnonymousUserAccount(response.getUserId());
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
@@ -72,12 +97,24 @@ public class AnonymousUserCreatorService {
             .expiresIn(kcLoginResponseDTO.getExpiresIn())
             .refreshToken(kcLoginResponseDTO.getRefreshToken())
             .refreshExpiresIn(kcLoginResponseDTO.getRefreshExpiresIn())
-            .rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto))
+            .rocketChatCredentials(
+                rocketChatEnabled
+                    ? obtainRocketChatCredentials(rcLoginResponseDto)
+                    : matrixMigrationDummyCredentials())
             .build();
 
-    updateRocketChatUserIdInDatabase(anonymousUserCredentials);
+    if (rocketChatEnabled) {
+      updateRocketChatUserIdInDatabase(anonymousUserCredentials);
+    }
 
     return anonymousUserCredentials;
+  }
+
+  private RocketChatCredentials matrixMigrationDummyCredentials() {
+    return RocketChatCredentials.builder()
+        .rocketChatUserId(MATRIX_MIGRATION_DUMMY_RC_USER_ID)
+        .rocketChatToken(MATRIX_MIGRATION_DUMMY_RC_TOKEN)
+        .build();
   }
 
   private void ensureRocketChatUserExists(UserDTO userDto, String keycloakUserId)
