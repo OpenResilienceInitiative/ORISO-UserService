@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user conversations (sessions). */
@@ -38,6 +39,10 @@ public class AnonymousConversationCreatorService {
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
+
+  /** ADR-004: with Rocket.Chat disabled no Rocket.Chat room is created for the waiting session. */
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   /**
    * Creates a new anonymous conversation session with the corresponding Rocket.Chat room.
@@ -59,10 +64,16 @@ public class AnonymousConversationCreatorService {
               user, userDTO, false, RegistrationType.ANONYMOUS, SessionStatus.NEW);
       session.setConversationType(ConversationType.LIVE_CHAT);
       consultantAgencies = obtainConsultants(session);
-      String rcGroupId =
-          createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
-              session, consultantAgencies, credentials.getRocketChatCredentials());
-      session.setGroupId(rcGroupId);
+      if (rocketChatEnabled) {
+        String rcGroupId =
+            createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
+                session, consultantAgencies, credentials.getRocketChatCredentials());
+        session.setGroupId(rcGroupId);
+      }
+      // ADR-004 Matrix-only: the waiting session has no agency and needs no room yet. The Matrix
+      // room is created when a live consultant accepts
+      // (AssignEnquiryFacade.assignAnonymousEnquiry),
+      // which is also when the agency/tenant binding and that agency's DSE apply.
       sessionService.saveSession(session);
 
     } catch (Exception ex) {

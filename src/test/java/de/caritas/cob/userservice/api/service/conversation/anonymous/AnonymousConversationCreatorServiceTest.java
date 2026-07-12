@@ -40,6 +40,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class AnonymousConversationCreatorServiceTest {
@@ -55,6 +56,10 @@ class AnonymousConversationCreatorServiceTest {
   @Mock TopicConsultantRoutingService topicConsultantRoutingService;
 
   EasyRandom easyRandom = new EasyRandom();
+
+  private void enableRocketChat() {
+    ReflectionTestUtils.setField(anonymousConversationCreatorService, "rocketChatEnabled", true);
+  }
 
   @Test
   void
@@ -110,6 +115,7 @@ class AnonymousConversationCreatorServiceTest {
   void
       createAnonymousConversation_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_CreateRcRoomFails()
           throws CreateEnquiryException {
+    enableRocketChat();
     assertThrows(
         InternalServerErrorException.class,
         () -> {
@@ -142,6 +148,7 @@ class AnonymousConversationCreatorServiceTest {
   @Test
   void createAnonymousConversation_Should_ReturnSessionAndTriggerLiveEvent()
       throws CreateEnquiryException {
+    enableRocketChat();
     when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
     when(sessionService.initializeSession(
             any(User.class),
@@ -165,6 +172,7 @@ class AnonymousConversationCreatorServiceTest {
 
   @Test
   void createAnonymousConversationShouldStampLiveChatBeforeSaving() throws CreateEnquiryException {
+    enableRocketChat();
     Session session = easyRandom.nextObject(Session.class);
     session.setConversationType(null);
     when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
@@ -182,5 +190,30 @@ class AnonymousConversationCreatorServiceTest {
         USER_DTO_SUCHT, easyRandom.nextObject(AnonymousUserCredentials.class));
 
     assertThat(session.getConversationType(), org.hamcrest.Matchers.is(ConversationType.LIVE_CHAT));
+  }
+
+  @Test
+  void createAnonymousConversation_Should_SkipRocketChatRoom_When_RocketChatDisabled()
+      throws CreateEnquiryException {
+    // ADR-004 Matrix-only: the waiting anonymous session needs no room; it is created on accept.
+    when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
+    when(sessionService.initializeSession(
+            any(User.class),
+            any(UserDTO.class),
+            anyBoolean(),
+            any(RegistrationType.class),
+            any(SessionStatus.class)))
+        .thenReturn(SESSION);
+
+    Session session =
+        anonymousConversationCreatorService.createAnonymousConversation(
+            USER_DTO_SUCHT, easyRandom.nextObject(AnonymousUserCredentials.class));
+
+    assertThat(session, instanceOf(Session.class));
+    verify(createEnquiryMessageFacade, times(0))
+        .createRocketChatRoomAndAddUsers(any(), any(), any());
+    verify(sessionService, times(1)).saveSession(any());
+    verify(liveEventNotificationService, times(1))
+        .sendLiveNewAnonymousEnquiryEventToUsers(any(), any());
   }
 }
