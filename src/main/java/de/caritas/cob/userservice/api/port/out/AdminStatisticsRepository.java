@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Session;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.data.jpa.repository.Query;
@@ -25,7 +26,16 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
   interface DailyCountProjection {
     Long getGroupId();
 
-    java.sql.Date getDay();
+    /**
+     * Backed by a native {@code CAST(... AS DATE)} projection. Declared as {@link LocalDate} rather
+     * than {@link java.sql.Date}: MariaDB's JDBC driver hands Spring's projection proxy a {@link
+     * LocalDate} for this column, and Spring Data has no registered converter from {@link
+     * LocalDate} to the concrete {@link java.sql.Date} class (only the reverse), which used to blow
+     * up with {@code UnsupportedOperationException: Cannot project java.time.LocalDate to
+     * java.sql.Date}. H2 (used by {@code AdminStatisticsRepositoryIT}) converts either type
+     * cleanly, which is why that divergence only surfaced against real MariaDB.
+     */
+    LocalDate getDay();
 
     Long getTotal();
   }

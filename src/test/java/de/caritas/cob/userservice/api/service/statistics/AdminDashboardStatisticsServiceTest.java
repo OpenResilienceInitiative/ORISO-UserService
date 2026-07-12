@@ -18,9 +18,9 @@ import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCo
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardScope;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetType;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.sql.Date;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -102,8 +102,8 @@ class AdminDashboardStatisticsServiceTest {
       }
 
       @Override
-      public Date getDay() {
-        return Date.valueOf(day);
+      public LocalDate getDay() {
+        return LocalDate.parse(day);
       }
 
       @Override

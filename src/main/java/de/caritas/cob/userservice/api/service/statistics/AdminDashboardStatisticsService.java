@@ -597,10 +597,7 @@ public class AdminDashboardStatisticsService {
       }
       result
           .computeIfAbsent(row.getGroupId(), key -> new TreeMap<>())
-          .merge(
-              row.getDay().toLocalDate().toString(),
-              row.getTotal() == null ? 0L : row.getTotal(),
-              Long::sum);
+          .merge(row.getDay().toString(), row.getTotal() == null ? 0L : row.getTotal(), Long::sum);
     }
     return result;
   }
