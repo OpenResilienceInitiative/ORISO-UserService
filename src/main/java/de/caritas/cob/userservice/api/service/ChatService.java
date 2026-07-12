@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -458,9 +459,17 @@ public class ChatService {
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
     chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
-    chat.setChatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null);
+    chat.setChatInterval(
+        isTrue(chatDTO.getRepetitive())
+            ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
+            : null);
+    chat.setRepeatCount(chatDTO.getRepeatCount() != null ? chatDTO.getRepeatCount() : 1);
+    chat.setChatModality(chatDTO.getModality() != null ? chatDTO.getModality() : ChatModality.TEXT);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
+    // The schedule anchor moved, so virtual occurrences must restart from index 0 —
+    // otherwise nextStart() would skip the first occurrences of the edited series.
+    chat.setCurrentOccurrenceIndex(0);
     chat.setHintMessage(chatDTO.getHintMessage());
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
