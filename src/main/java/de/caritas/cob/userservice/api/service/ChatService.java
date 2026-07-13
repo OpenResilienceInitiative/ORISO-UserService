@@ -28,9 +28,11 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -456,6 +458,18 @@ public class ChatService {
     }
 
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+    // one when the client sends it (validated like the create path), and preserve the existing
+    // zone when the DTO omits it rather than silently resetting to UTC.
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
+      try {
+        ZoneId.of(chatDTO.getTimezone());
+      } catch (DateTimeException invalidTimezone) {
+        throw new BadRequestException(
+            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
+      }
+      chat.setTimezone(chatDTO.getTimezone());
+    }
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a

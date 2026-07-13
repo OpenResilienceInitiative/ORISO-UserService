@@ -521,6 +521,66 @@ class ChatServiceTest {
   }
 
   @Test
+  void updateChat_Should_PersistTimezone_WhenProvided() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().timezone("Europe/Berlin").build();
+
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    // Recurrence (occurrenceStart) computes DST/monthly/yearly offsets in this zone.
+    assertEquals("Europe/Berlin", chatArgumentCaptor.getValue().getTimezone());
+  }
+
+  @Test
+  void updateChat_Should_PreserveExistingTimezone_WhenOmitted() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    inactiveChat.setTimezone("Europe/Berlin");
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().build(); // no timezone
+
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    assertEquals("Europe/Berlin", chatArgumentCaptor.getValue().getTimezone());
+  }
+
+  @Test
+  void updateChat_Should_RejectInvalidTimezone() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().timezone("Not/AZone").build();
+
+    assertThrows(
+        BadRequestException.class,
+        () -> chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT));
+    verify(chatRepository, Mockito.never()).save(Mockito.any(Chat.class));
+  }
+
+  private static ChatDTO.ChatDTOBuilder scheduleDtoBuilder() {
+    return ChatDTO.builder()
+        .topic(CHAT_TOPIC)
+        .startDate(CHAT_START_DATE)
+        .startTime(CHAT_START_TIME)
+        .duration(CHAT_DURATION)
+        .repetitive(true)
+        .chatInterval(ChatInterval.WEEKLY)
+        .repeatCount(4);
+  }
+
+  @Test
   void updateChat_Should_ResetOccurrenceIndex_WhenScheduleReAnchored() {
     // given a series that has already advanced past its first occurrence
     Chat inactiveChat = new Chat();
