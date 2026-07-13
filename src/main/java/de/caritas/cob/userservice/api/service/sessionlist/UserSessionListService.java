@@ -61,6 +61,7 @@ public class UserSessionListService {
   private void enrichSessionsWithTopics(List<UserSessionResponseDTO> mergedSessions) {
     mergedSessions.stream()
         .map(UserSessionResponseDTO::getSession)
+        .filter(java.util.Objects::nonNull)
         .forEach(sessionTopicEnrichmentService::enrichSessionWithTopicData);
   }
 
@@ -80,8 +81,19 @@ public class UserSessionListService {
       Set<String> roles) {
 
     var groupIds = new HashSet<>(rcGroupIds);
-    var sessions = sessionService.getSessionsByUserAndGroupIds(userId, groupIds, roles);
     var chats = chatService.getChatSessionsByGroupIds(groupIds);
+    var chatGroupIds =
+        chats.stream()
+            .map(UserSessionResponseDTO::getChat)
+            .filter(java.util.Objects::nonNull)
+            .map(UserChatDTO::getGroupId)
+            .filter(java.util.Objects::nonNull)
+            .collect(Collectors.toSet());
+    groupIds.removeAll(chatGroupIds);
+    var sessions =
+        groupIds.isEmpty()
+            ? List.<UserSessionResponseDTO>of()
+            : sessionService.getSessionsByUserAndGroupIds(userId, groupIds, roles);
 
     return mergeUserSessionsAndChats(sessions, chats, rocketChatCredentials);
   }

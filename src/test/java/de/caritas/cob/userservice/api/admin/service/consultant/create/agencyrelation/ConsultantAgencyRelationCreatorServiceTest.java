@@ -36,6 +36,7 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -149,6 +150,32 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   }
 
   @Test
+  void createNewConsultantAgency_Should_finalizeThePersistedRelationWithoutRequeryingIt() {
+    ReflectionTestUtils.setField(
+        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(83L);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgencyWithoutCaching(280L)).thenReturn(agency);
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+    when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        "consultant Id", new CreateConsultantAgencyDTO().agencyId(280L));
+
+    var persistedRelation = ArgumentCaptor.forClass(ConsultantAgency.class);
+    verify(consultantAgencyService).saveConsultantAgency(persistedRelation.capture());
+    verify(rocketChatAsyncHelper)
+        .finalizeConsultantAgencyRelation(consultant, persistedRelation.getValue());
+  }
+
+  @Test
   public void createNewConsultantAgency_Should_throwBadRequest_When_consultantDoesNotExist() {
     when(consultantRepository.findByIdAndDeleteDateIsNull("missing")).thenReturn(Optional.empty());
 
@@ -254,7 +281,10 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     verify(rocketChatAsyncHelper)
         .addConsultantToSessions(eq(consultant), eq(agencyDTO), any(), eq(4L));
-    verify(rocketChatAsyncHelper, never()).finalizeConsultantAgencyRelation(any(), any());
+    verify(rocketChatAsyncHelper, never())
+        .finalizeConsultantAgencyRelation(any(Consultant.class), any(AgencyDTO.class));
+    verify(rocketChatAsyncHelper, never())
+        .finalizeConsultantAgencyRelation(any(Consultant.class), any(ConsultantAgency.class));
   }
 
   @Test

@@ -92,6 +92,18 @@
   <include file="db/changelog/changeset/0057_case_handover_request/0057_changeSet.xml" />
   <include
     file="db/changelog/changeset/0058_adr008_supervision_sideroom_migration/0058_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0060_self_help_group_series/0060_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0061_chat_occurrence_exception/0061_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0062_group_chat_participant_series_roles/0062_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0063_event_notification_deduplication/0063_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0064_group_chat_author_content/0064_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0065_conversation_type/0065_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

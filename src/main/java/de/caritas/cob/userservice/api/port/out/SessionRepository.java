@@ -266,6 +266,31 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       Pageable pageable);
 
   /**
+   * Topic-only visibility for the anonymous Live Chat queue. A live consultant sees anonymous
+   * enquiries for the topics they are assigned to, independent of consulting type — the queue is
+   * topic-bound and deliberately cross-agency/cross-tenant. Used instead of the consulting-type
+   * variant so the queue never needs an authenticated AgencyService lookup to resolve the
+   * consultant's consulting types.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.mainTopicId IN :topicIds "
+          + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
+      Pageable pageable);
+
+  /**
    * Count live-chat enquiries that are visible in the consultant queue and were created before the
    * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
    * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,

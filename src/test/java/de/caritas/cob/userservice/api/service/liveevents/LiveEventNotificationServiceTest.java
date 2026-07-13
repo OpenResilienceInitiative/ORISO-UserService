@@ -108,6 +108,25 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
+  public void
+      sendLiveNewAnonymousEnquiryEventToUsers_Should_notPropagate_When_liveServiceUnreachable()
+          throws ApiException {
+    // A live event is best-effort: a transport failure (e.g. the live service host is unreachable,
+    // surfacing as an UnresolvedAddressException/ConnectException — NOT an ApiException) must never
+    // break the enquiry/session flow that fired it.
+    doThrow(new RuntimeException(new java.net.ConnectException("unreachable")))
+        .when(this.liveControllerApi)
+        .sendLiveEvent(any());
+
+    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
+      this.liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
+          asList("consultant-1"), 4711L);
+
+      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
+    }
+  }
+
+  @Test
   public void sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsersInsteadOfInitiatingUser()
       throws ApiException {
     List<String> userIds = asList("id1", "id2", "id3", "id4");

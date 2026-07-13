@@ -32,4 +32,11 @@ public class TenantService {
         .createControllerApi()
         .getRestrictedTenantDataByTenantId(tenantId);
   }
+
+  public RestrictedTenantDTO getRestrictedTenantDataFresh(Long tenantId) {
+    log.info("Calling tenant service for current tenant data for tenantId {}", tenantId);
+    return tenantServiceApiControllerFactory
+        .createControllerApi()
+        .getRestrictedTenantDataByTenantId(tenantId);
+  }
 }

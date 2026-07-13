@@ -31,9 +31,9 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 /** Provides the Keycloak/Spring Security configuration. */
@@ -105,6 +105,8 @@ public class SecurityConfig {
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/error-reports",
+                    "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
                     "/users/invitelinks/*/redeem")
@@ -153,7 +155,7 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/join",
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
-                    "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
+                    "/users/chat/{groupId}/assign",
                     "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
@@ -221,6 +223,8 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/chat-series/**",
+                    "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
@@ -362,7 +366,7 @@ public class SecurityConfig {
 
   @Bean
   public WebSecurityCustomizer webSecurityCustomizer() {
-    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/askers/new");
+    return web -> web.ignoring().requestMatchers("/actuator/**");
   }
 
   @Bean
@@ -386,7 +390,7 @@ public class SecurityConfig {
    */
   private void enableTenantFilterIfMultitenancyEnabled(HttpSecurity http) {
     if (multitenancy && tenantFilter != null) {
-      http.addFilterAfter(tenantFilter, BearerTokenAuthenticationFilter.class);
+      http.addFilterAfter(tenantFilter, SecurityContextHolderAwareRequestFilter.class);
     }
   }
 

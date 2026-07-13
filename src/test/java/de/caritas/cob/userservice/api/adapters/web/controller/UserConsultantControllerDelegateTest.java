@@ -85,6 +85,29 @@ class UserConsultantControllerDelegateTest {
   }
 
   @Test
+  void getTenantConsultantsUsesTheAuthenticatedTenantBoundary() {
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(authenticatedUser.getTenantId()).thenReturn(7L);
+    when(consultant.getId()).thenReturn("consultant-1");
+    when(consultant.getFirstName()).thenReturn("Ada");
+    when(consultant.getLastName()).thenReturn("Lovelace");
+    when(consultant.getUsername()).thenReturn("ada");
+    when(consultant.getDisplayName()).thenReturn("Ada L.");
+    when(consultantService.findActiveConsultantsForTenant(7L)).thenReturn(List.of(consultant));
+
+    var response = delegate.getTenantConsultants();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody())
+        .singleElement()
+        .satisfies(
+            item -> {
+              assertThat(item.getConsultantId()).isEqualTo("consultant-1");
+              assertThat(item.getDisplayName()).isEqualTo("Ada L.");
+            });
+  }
+
+  @Test
   void searchConsultantsShouldFilterAgenciesForRestrictedAdmin() {
     var resultMap = Map.<String, Object>of("consultants", List.of(), "totalElements", 1);
     var searchResult =
