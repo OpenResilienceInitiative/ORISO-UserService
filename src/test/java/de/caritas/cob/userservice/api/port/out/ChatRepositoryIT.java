@@ -8,6 +8,10 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import java.time.LocalDateTime;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.hibernate.Hibernate;
 import org.jeasy.random.EasyRandom;
@@ -19,6 +23,10 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.jdbc.Sql;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -30,6 +38,8 @@ class ChatRepositoryIT {
   @Autowired private ChatRepository underTest;
 
   @Autowired private ConsultantRepository consultantRepository;
+
+  @Autowired private PlatformTransactionManager transactionManager;
 
   private Consultant consultant;
 
@@ -111,6 +121,68 @@ class ChatRepositoryIT {
     var foundChat = foundOptionalChat.get();
     assertEquals(chat.isRepetitive(), foundChat.isRepetitive());
     assertEquals(chat.isActive(), foundChat.isActive());
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void activeChatSelectionShouldSerializeConcurrentDeactivationTransactions() throws Exception {
+    var transactions = new TransactionTemplate(transactionManager);
+    transactions.executeWithoutResult(
+        ignored -> {
+          givenAConsultant();
+          givenAValidChat();
+          chat.setActive(true);
+          chat = underTest.save(chat);
+        });
+
+    var firstSelectionCompleted = new CountDownLatch(1);
+    var releaseFirstTransaction = new CountDownLatch(1);
+    var secondSelectionStarted = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var firstWorker =
+          executor.submit(
+              () ->
+                  transactions.executeWithoutResult(
+                      ignored -> {
+                        var selectedChats = underTest.findAllByActiveIsTrue();
+                        assertEquals(1, selectedChats.size());
+                        firstSelectionCompleted.countDown();
+                        await(releaseFirstTransaction);
+                        selectedChats.get(0).setActive(false);
+                      }));
+
+      assertTrue(firstSelectionCompleted.await(5, TimeUnit.SECONDS));
+
+      var secondWorker =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      ignored -> {
+                        secondSelectionStarted.countDown();
+                        return underTest.findAllByActiveIsTrue().size();
+                      }));
+
+      assertTrue(secondSelectionStarted.await(5, TimeUnit.SECONDS));
+      org.junit.jupiter.api.Assertions.assertThrows(
+          TimeoutException.class, () -> secondWorker.get(250, TimeUnit.MILLISECONDS));
+
+      releaseFirstTransaction.countDown();
+      firstWorker.get(5, TimeUnit.SECONDS);
+      assertEquals(0, secondWorker.get(5, TimeUnit.SECONDS));
+    } finally {
+      releaseFirstTransaction.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      assertTrue(latch.await(5, TimeUnit.SECONDS));
+    } catch (InterruptedException interruptedException) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(interruptedException);
+    }
   }
 
   private void givenAValidChat() {
