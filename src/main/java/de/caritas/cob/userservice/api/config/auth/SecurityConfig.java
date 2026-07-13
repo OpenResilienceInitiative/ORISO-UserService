@@ -105,6 +105,8 @@ public class SecurityConfig {
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/error-reports",
+                    "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
                     "/users/invitelinks/*/redeem")
