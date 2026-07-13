@@ -458,12 +458,19 @@ public class ChatService {
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
-    chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
+    // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
+    // repetitive series without re-sending repeatCount does not silently drop it to a single
+    // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
+    int repeatCount =
+        chatDTO.getRepeatCount() != null
+            ? chatDTO.getRepeatCount()
+            : (isTrue(chatDTO.getRepetitive()) ? 12 : 1);
+    chat.setRepeatCount(repeatCount);
+    chat.setRepetitive(repeatCount > 1);
     chat.setChatInterval(
-        isTrue(chatDTO.getRepetitive())
+        repeatCount > 1
             ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
             : null);
-    chat.setRepeatCount(chatDTO.getRepeatCount() != null ? chatDTO.getRepeatCount() : 1);
     chat.setChatModality(chatDTO.getModality() != null ? chatDTO.getModality() : ChatModality.TEXT);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);

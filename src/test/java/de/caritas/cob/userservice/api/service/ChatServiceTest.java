@@ -490,6 +490,37 @@ class ChatServiceTest {
   }
 
   @Test
+  void updateChat_Should_ApplyCreatePathDefaults_WhenScheduleFieldsAreNull() {
+    // given a repetitive update that omits repeatCount / interval / modality
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto =
+        ChatDTO.builder()
+            .topic(CHAT_TOPIC)
+            .startDate(CHAT_START_DATE)
+            .startTime(CHAT_START_TIME)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .build();
+
+    // when
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    // then the defaults must match the create path (ChatConverter): 12 / WEEKLY / TEXT,
+    // NOT drop a repetitive series to a single occurrence.
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    Chat saved = chatArgumentCaptor.getValue();
+    assertEquals(12, saved.getRepeatCount());
+    assertEquals(ChatInterval.WEEKLY, saved.getChatInterval());
+    assertEquals(ChatModality.TEXT, saved.getChatModality());
+    assertTrue(saved.isRepetitive());
+  }
+
+  @Test
   void updateChat_Should_ResetOccurrenceIndex_WhenScheduleReAnchored() {
     // given a series that has already advanced past its first occurrence
     Chat inactiveChat = new Chat();
