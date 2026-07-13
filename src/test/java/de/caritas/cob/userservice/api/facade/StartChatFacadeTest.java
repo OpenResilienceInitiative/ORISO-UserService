@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
@@ -98,6 +99,19 @@ public class StartChatFacadeTest {
 
     verify(chat, times(1)).setActive(true);
     verify(chatService, times(1)).saveChat(chat);
+  }
+
+  @Test
+  public void startChat_Should_NotCallRocketChat_WhenGroupIdIsMatrixRoom() {
+    when(chat.isActive()).thenReturn(false);
+    when(chat.getGroupId()).thenReturn("!room:matrix.local");
+    when(chatPermissionVerifier.hasSameAgencyAssigned(chat, CONSULTANT)).thenReturn(true);
+
+    startChatFacade.startChat(chat, CONSULTANT);
+
+    verifyNoInteractions(rocketChatService);
+    verify(chat).setActive(true);
+    verify(chatService).saveChat(chat);
   }
 
   @Test

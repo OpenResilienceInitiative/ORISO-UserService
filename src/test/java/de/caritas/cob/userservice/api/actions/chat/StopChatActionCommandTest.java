@@ -222,6 +222,21 @@ class StopChatActionCommandTest {
   }
 
   @Test
+  void stopChatShouldUseMatrixGroupIdAndNotCallRocketChatWhenDedicatedRoomIdIsMissing() {
+    when(chat.isActive()).thenReturn(true);
+    when(chat.isRepetitive()).thenReturn(false);
+    when(chat.getGroupId()).thenReturn(MATRIX_ROOM_ID);
+    when(chat.getMatrixRoomId()).thenReturn(null);
+    when(matrixSynapseService.purgeRoom(MATRIX_ROOM_ID)).thenReturn(true);
+
+    stopChatActionCommand.execute(chat);
+
+    verifyNoInteractions(rocketChatService);
+    verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);
+    verify(chatService).deleteChat(chat);
+  }
+
+  @Test
   void stopChatShouldNotCallMatrixWhenChatHasNoMatrixRoomId() {
     when(chat.isActive()).thenReturn(true);
     when(chat.isRepetitive()).thenReturn(false);

@@ -38,6 +38,10 @@ public class EventNotificationService {
 
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
+  /** Canonical event types for self-help group occurrence lifecycle cards. */
+  public static final String EVENT_GROUP_CHAT_OPENED = "group_chat.opened";
+  public static final String EVENT_GROUP_CHAT_REMINDER = "group_chat.reminder";
+  public static final String EVENT_GROUP_CHAT_CANCELLED = "group_chat.cancelled";
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
 
@@ -204,6 +208,211 @@ public class EventNotificationService {
                     ex);
               }
             });
+  }
+
+  /**
+   * Persist a notification when a self-help group occurrence opens for joining.
+   *
+   * <p>The event is deliberately recipient-oriented: callers provide the set of users who are
+   * entitled to see the occurrence. This keeps room membership/series authorization at the
+   * lifecycle boundary while making fan-out (and duplicate membership rows) safe here.
+   *
+   * <p>Only opaque references and scheduling metadata are persisted. In particular, the series
+   * topic, agency name, participant names and any chat content must not be copied into a timeline
+   * event; the frontend resolves visible copy through its i18n descriptor registry.
+   */
+  @Transactional
+  public void createGroupChatOpenedNotifications(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatLifecycleNotifications(
+        EVENT_GROUP_CHAT_OPENED,
+        seriesId,
+        occurrenceIndex,
+        occurrenceStart,
+        roomRef,
+        callRoomId,
+        isVideo,
+        recipientUserIds);
+  }
+
+  /** Persist a neutral reminder for a self-help group occurrence. */
+  @Transactional
+  public void createGroupChatReminderNotifications(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatLifecycleNotifications(
+        EVENT_GROUP_CHAT_REMINDER,
+        seriesId,
+        occurrenceIndex,
+        occurrenceStart,
+        roomRef,
+        callRoomId,
+        isVideo,
+        recipientUserIds);
+  }
+
+  /** Persist a neutral cancellation for a self-help group occurrence. */
+  @Transactional
+  public void createGroupChatCancelledNotifications(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatLifecycleNotifications(
+        EVENT_GROUP_CHAT_CANCELLED,
+        seriesId,
+        occurrenceIndex,
+        occurrenceStart,
+        roomRef,
+        callRoomId,
+        isVideo,
+        recipientUserIds);
+  }
+
+  /**
+   * Singular aliases are convenient for lifecycle handlers that already iterate recipients, while
+   * retaining one implementation of validation, parameter construction and fan-out semantics.
+   */
+  @Transactional
+  public void createGroupChatOpenedNotification(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatOpenedNotifications(
+        seriesId, occurrenceIndex, occurrenceStart, roomRef, callRoomId, isVideo, recipientUserIds);
+  }
+
+  @Transactional
+  public void createGroupChatReminderNotification(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatReminderNotifications(
+        seriesId, occurrenceIndex, occurrenceStart, roomRef, callRoomId, isVideo, recipientUserIds);
+  }
+
+  @Transactional
+  public void createGroupChatCancelledNotification(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    createGroupChatCancelledNotifications(
+        seriesId, occurrenceIndex, occurrenceStart, roomRef, callRoomId, isVideo, recipientUserIds);
+  }
+
+  private void createGroupChatLifecycleNotifications(
+      String eventType,
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo,
+      Collection<String> recipientUserIds) {
+    if (seriesId == null || recipientUserIds == null || recipientUserIds.isEmpty()) {
+      return;
+    }
+
+    String params =
+        serializeParams(
+            buildGroupChatLifecycleParams(
+                seriesId, occurrenceIndex, occurrenceStart, roomRef, callRoomId, isVideo));
+    String title = groupChatLifecycleTitle(eventType);
+    String text = groupChatLifecycleText(eventType);
+    recipientUserIds.stream()
+        .filter(id -> id != null && !id.isBlank())
+        .distinct()
+        .forEach(
+            recipientUserId -> {
+              try {
+                createEvent(
+                    recipientUserId,
+                    eventType,
+                    CATEGORY_SYSTEM,
+                    title,
+                    text,
+                    params,
+                    null,
+                    null,
+                    null);
+              } catch (RuntimeException ex) {
+                // A timeline write must not prevent the occurrence state transition for other
+                // recipients. This mirrors request.new fan-out behavior.
+                log.warn(
+                    "Could not persist {} notification for recipient {} (series {})",
+                    eventType,
+                    recipientUserId,
+                    seriesId,
+                    ex);
+              }
+            });
+  }
+
+  private Map<String, Object> buildGroupChatLifecycleParams(
+      Long seriesId,
+      Integer occurrenceIndex,
+      LocalDateTime occurrenceStart,
+      String roomRef,
+      String callRoomId,
+      Boolean isVideo) {
+    Map<String, Object> params = new LinkedHashMap<>();
+    params.put("seriesId", seriesId);
+    if (occurrenceIndex != null) {
+      params.put("occurrenceIndex", occurrenceIndex);
+    }
+    if (occurrenceStart != null) {
+      params.put("occurrenceStart", occurrenceStart.toString());
+    }
+    putIfPresent(params, "roomRef", roomRef);
+    putIfPresent(params, "callRoomId", callRoomId);
+    if (isVideo != null) {
+      params.put("isVideo", isVideo);
+    }
+    return params;
+  }
+
+  private String groupChatLifecycleTitle(String eventType) {
+    return switch (eventType) {
+      case EVENT_GROUP_CHAT_OPENED -> "Group chat available";
+      case EVENT_GROUP_CHAT_REMINDER -> "Group chat reminder";
+      case EVENT_GROUP_CHAT_CANCELLED -> "Group chat cancelled";
+      default -> "Group chat update";
+    };
+  }
+
+  private String groupChatLifecycleText(String eventType) {
+    return switch (eventType) {
+      case EVENT_GROUP_CHAT_OPENED -> "A group chat is now available.";
+      case EVENT_GROUP_CHAT_REMINDER -> "A group chat is scheduled soon.";
+      case EVENT_GROUP_CHAT_CANCELLED -> "A group chat occurrence was cancelled.";
+      default -> "A group chat update is available.";
+    };
   }
 
   private String buildNewClientRequestParams(Session session) {

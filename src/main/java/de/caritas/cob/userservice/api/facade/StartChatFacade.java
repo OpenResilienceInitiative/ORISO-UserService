@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -36,10 +37,14 @@ public class StartChatFacade {
 
     checkConsultantsPermission(chat, consultant);
     checkIfChatIsAlreadyActive(chat);
-    checkRocketChatGroup(chat);
+    checkChatGroup(chat);
 
     try {
-      rocketChatService.addUserToGroup(consultant.getRocketChatId(), chat.getGroupId());
+      // Matrix-backed group chats already have their room and membership managed by Matrix.
+      // Keep the Rocket.Chat call for legacy chats only.
+      if (!isMatrixChat(chat)) {
+        rocketChatService.addUserToGroup(consultant.getRocketChatId(), chat.getGroupId());
+      }
       chat.setActive(true);
       chatService.saveChat(chat);
     } catch (RocketChatAddUserToGroupException e) {
@@ -63,10 +68,14 @@ public class StartChatFacade {
     }
   }
 
-  private void checkRocketChatGroup(Chat chat) {
-    if (isNull(chat.getGroupId())) {
+  private void checkChatGroup(Chat chat) {
+    if (isNull(chat.getGroupId()) && !isMatrixChat(chat)) {
       throw new InternalServerErrorException(
           String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
     }
+  }
+
+  private boolean isMatrixChat(Chat chat) {
+    return MatrixIds.isRoomId(chat.getGroupId()) || MatrixIds.isRoomId(chat.getMatrixRoomId());
   }
 }

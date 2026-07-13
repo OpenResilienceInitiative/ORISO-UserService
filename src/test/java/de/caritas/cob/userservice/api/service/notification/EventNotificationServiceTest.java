@@ -134,6 +134,85 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Self-help group occurrence lifecycle notifications
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void groupChatOpened_fansOutDistinctRecipientsWithMetadataOnlyParams() throws Exception {
+    LocalDateTime occurrenceStart = LocalDateTime.of(2026, 7, 10, 18, 30);
+
+    eventNotificationService.createGroupChatOpenedNotifications(
+        42L,
+        3,
+        occurrenceStart,
+        "!room:matrix.example",
+        "!call:matrix.example",
+        true,
+        Arrays.asList("user-a", "user-a", " ", null, "user-b"));
+
+    verify(eventNotificationRepository, times(2)).save(eventCaptor.capture());
+    EventNotification first = eventCaptor.getAllValues().get(0);
+    assertEquals(EventNotificationService.EVENT_GROUP_CHAT_OPENED, first.getEventType());
+    assertEquals(EventNotificationService.CATEGORY_SYSTEM, first.getCategory());
+    assertEquals("user-a", first.getRecipientUserId());
+    assertEquals("Group chat available", first.getTitle());
+    assertEquals("A group chat is now available.", first.getText());
+    assertNotNull(first.getParams());
+
+    JsonNode params = objectMapper.readTree(first.getParams());
+    assertEquals(42L, params.get("seriesId").asLong());
+    assertEquals(3, params.get("occurrenceIndex").asInt());
+    assertEquals(occurrenceStart.toString(), params.get("occurrenceStart").asText());
+    assertEquals("!room:matrix.example", params.get("roomRef").asText());
+    assertEquals("!call:matrix.example", params.get("callRoomId").asText());
+    assertTrue(params.get("isVideo").asBoolean());
+    // Topics, agency labels, participant names and message content never cross this boundary.
+    assertThat(first.getParams()).doesNotContain("topic", "agency", "participant", "message");
+  }
+
+  @Test
+  void groupChatReminder_andCancelled_useCanonicalTypesAndNeutralFallbackText() {
+    LocalDateTime occurrenceStart = LocalDateTime.of(2026, 7, 11, 9, 0);
+
+    eventNotificationService.createGroupChatReminderNotifications(
+        7L, 0, occurrenceStart, null, null, false, List.of("user-a"));
+    eventNotificationService.createGroupChatCancelledNotifications(
+        7L, 0, occurrenceStart, null, null, false, List.of("user-a"));
+
+    verify(eventNotificationRepository, times(2)).save(eventCaptor.capture());
+    EventNotification reminder = eventCaptor.getAllValues().get(0);
+    EventNotification cancelled = eventCaptor.getAllValues().get(1);
+    assertEquals(EventNotificationService.EVENT_GROUP_CHAT_REMINDER, reminder.getEventType());
+    assertEquals("Group chat reminder", reminder.getTitle());
+    assertEquals("A group chat is scheduled soon.", reminder.getText());
+    assertEquals(EventNotificationService.EVENT_GROUP_CHAT_CANCELLED, cancelled.getEventType());
+    assertEquals("Group chat cancelled", cancelled.getTitle());
+    assertEquals("A group chat occurrence was cancelled.", cancelled.getText());
+  }
+
+  @Test
+  void groupChatLifecycle_doesNothingForInvalidSeriesOrRecipients() {
+    eventNotificationService.createGroupChatOpenedNotifications(
+        null, 0, LocalDateTime.now(), "!room:matrix", null, null, List.of("user-a"));
+    eventNotificationService.createGroupChatReminderNotifications(
+        1L, 0, LocalDateTime.now(), "!room:matrix", null, null, null);
+
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void groupChatLifecycle_continuesFanoutWhenOnePersistenceFails() {
+    when(eventNotificationRepository.save(any()))
+        .thenThrow(new RuntimeException("DB error"))
+        .thenReturn(mock(EventNotification.class));
+
+    eventNotificationService.createGroupChatCancelledNotifications(
+        9L, 1, LocalDateTime.now(), null, null, null, List.of("user-a", "user-b"));
+
+    verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  // ---------------------------------------------------------------------------
   // createInquiryAcceptedNotification
   // ---------------------------------------------------------------------------
 

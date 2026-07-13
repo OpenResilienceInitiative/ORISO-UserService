@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import lombok.RequiredArgsConstructor;
@@ -35,16 +36,19 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
   public void execute(Chat chat) {
     checkActiveState(chat);
 
-    if (isNull(chat.getGroupId())) {
+    var matrixChat = isMatrixChat(chat);
+    if (isNull(chat.getGroupId()) && !matrixChat) {
       throw new InternalServerErrorException(
           String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
     }
 
     if (!chat.isRepetitive() || nonNull(chat.nextStart())) {
-      deleteMessengerChat(chat);
+      if (!matrixChat) {
+        deleteMessengerChat(chat);
+      }
       if (chat.isRepetitive()) {
-        var rcGroupId = chatReCreator.recreateMessengerChat(chat);
-        chatReCreator.updateAsNextChat(chat, rcGroupId);
+        var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
+        chatReCreator.updateAsNextChat(chat, matrixRoomId);
       } else {
         chatService.deleteChat(chat);
         matrixChatShutdownService.shutdownRoom(chat);
@@ -64,5 +68,9 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
       throw new InternalServerErrorException(
           String.format("Could not delete Rocket.Chat group with id %s", chat.getGroupId()));
     }
+  }
+
+  private boolean isMatrixChat(Chat chat) {
+    return MatrixIds.isRoomId(chat.getGroupId()) || MatrixIds.isRoomId(chat.getMatrixRoomId());
   }
 }
