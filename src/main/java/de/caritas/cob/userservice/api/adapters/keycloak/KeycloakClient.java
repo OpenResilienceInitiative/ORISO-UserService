@@ -89,6 +89,18 @@ public class KeycloakClient {
     return keycloak.tokenManager().getAccessTokenString();
   }
 
+  /**
+   * Forces a fresh admin token grant, bypassing the cached access token.
+   *
+   * <p>The keycloak-admin-client only refreshes its cached token when the token's own {@code exp}
+   * claim is close to expiry. It does not know that the underlying Keycloak session can be
+   * invalidated server-side earlier (e.g. by session-idle timeout), so a cached token can look
+   * valid locally while the admin REST API already rejects it with 401.
+   */
+  public void refreshAdminSession() {
+    keycloak.tokenManager().grantToken();
+  }
+
   @NonNull
   private HttpHeaders headersWithBearerToken(String bearerToken) {
     var httpHeaders = new HttpHeaders();
