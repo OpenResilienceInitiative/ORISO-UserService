@@ -245,24 +245,50 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
-  void addSupervisor_Should_computePendingConsent_for_safeguardingU25() {
-    SessionSupervisor saved =
-        facade.addSupervisor(
-            SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "minor at risk");
-
-    assertThat(saved.getNotes())
-        .contains(SupervisionConsent.PENDING.name())
-        .contains("SAFEGUARDING_U25")
-        .contains("minor at risk");
-  }
-
-  @Test
-  void addSupervisor_Should_computePendingConsent_for_clinicalOversight() {
+  void addSupervisor_Should_provisionImmediately_for_clinicalOversight() throws Exception {
+    // Post-consent-model change (grill 2026-07-13): supervision proceeds by default; the client's
+    // opt-out is the only gate. A formerly consent-required reason no longer parks the supervisor
+    // PENDING — it provisions the side room and activates immediately.
     SessionSupervisor saved =
         facade.addSupervisor(
             SESSION_ID, SUPERVISOR_ID, addedBy, "CLINICAL_OVERSIGHT", "stuck case");
 
-    assertThat(saved.getNotes()).contains(SupervisionConsent.PENDING.name());
+    verify(matrixSynapseService).createRoom(any(), any(), any());
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+    assertThat(saved.getIsActive()).isTrue();
+    assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    assertThat(saved.getNotes()).contains("CLINICAL_OVERSIGHT").contains("stuck case");
+  }
+
+  @Test
+  void addSupervisor_Should_provisionImmediately_for_safeguardingU25() throws Exception {
+    // The most sensitive reason (U25 minor safeguarding) also proceeds by default now — the
+    // safety boundary is the ADR-008 side room + the client opt-out, not a per-add consent park.
+    SessionSupervisor saved =
+        facade.addSupervisor(
+            SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "minor at risk");
+
+    verify(matrixSynapseService).createRoom(any(), any(), any());
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+    assertThat(saved.getIsActive()).isTrue();
+    assertThat(saved.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    assertThat(saved.getNotes()).contains("SAFEGUARDING_U25").contains("minor at risk");
+  }
+
+  @Test
+  void addSupervisor_Should_reject_when_clientHasOptedOutOfSupervision() throws Exception {
+    // The client's opt-out (grill 2026-07-13) is the gate: no supervisor may be attached and no
+    // Matrix access is provisioned while it is on.
+    session.setSupervisionOptedOut(true);
+
+    assertThatThrownBy(
+            () ->
+                facade.addSupervisor(
+                    SESSION_ID, SUPERVISOR_ID, addedBy, "CLINICAL_OVERSIGHT", "stuck case"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("opted out");
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
   }
 
   @Test
@@ -348,103 +374,6 @@ class SessionSupervisorFacadeTest {
         .isInstanceOf(ForbiddenException.class);
   }
 
-  // ---------------------------------------------------------------------------
-  // ADR-008 item 4: consent GATE — no room access until the client approves
-  // ---------------------------------------------------------------------------
-
-  @Test
-  void addSupervisor_Should_notProvisionAnyRoom_when_consentRequiredAndPending() throws Exception {
-    SessionSupervisor saved =
-        facade.addSupervisor(
-            SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "minor at risk");
-
-    // The consent gate: for a consent-required reason with no consent yet, the supervisor gets
-    // NO Matrix access at all — no side room, no client-room invite — until the client approves.
-    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
-    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
-    assertThat(saved.getIsActive()).isFalse();
-    assertThat(saved.getMatrixRoomId()).isNull();
-    assertThat(saved.getNotes()).contains(SupervisionConsent.PENDING.name());
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_provisionAndActivate_when_approved() throws Exception {
-    SessionSupervisor pending = pendingSupervisor(99L);
-    when(sessionSupervisorRepository.findById(99L)).thenReturn(Optional.of(pending));
-
-    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 99L, true);
-
-    // Approval runs the deferred provisioning: side room created + supervisor invited to the
-    // client room, and the row flips to active with APPROVED consent.
-    verify(matrixSynapseService).createRoom(any(), any(), any());
-    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
-    assertThat(result.getIsActive()).isTrue();
-    assertThat(result.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
-    assertThat(result.getNotes()).contains(SupervisionConsent.APPROVED.name());
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_recordDeclined_andNeverProvision_when_declined()
-      throws Exception {
-    SessionSupervisor pending = pendingSupervisor(98L);
-    when(sessionSupervisorRepository.findById(98L)).thenReturn(Optional.of(pending));
-
-    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 98L, false);
-
-    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
-    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
-    assertThat(result.getIsActive()).isFalse();
-    assertThat(result.getNotes()).contains(SupervisionConsent.DECLINED.name());
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_throwBadRequest_when_noPendingRequest() {
-    SessionSupervisor active =
-        SessionSupervisor.builder()
-            .id(97L)
-            .session(session)
-            .supervisorConsultant(supervisor)
-            .addedByConsultant(addedBy)
-            .isActive(true)
-            .matrixRoomId(SIDE_ROOM)
-            .notes(
-                SupervisionNotes.encode(
-                    SupervisionReason.PEER_SUPPORT, "x", SupervisionConsent.NOT_REQUIRED))
-            .build();
-    when(sessionSupervisorRepository.findById(97L)).thenReturn(Optional.of(active));
-
-    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 97L, true))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void addSupervisor_Should_throwBadRequest_when_aPendingRequestAlreadyExists() {
-    when(sessionSupervisorRepository.findBySessionId(SESSION_ID))
-        .thenReturn(List.of(pendingSupervisor(1L)));
-
-    assertThatThrownBy(
-            () ->
-                facade.addSupervisor(
-                    SESSION_ID, SUPERVISOR_ID, addedBy, "SAFEGUARDING_U25", "again"))
-        .isInstanceOf(BadRequestException.class)
-        .hasMessageContaining("already pending");
-  }
-
-  /** A PENDING-consent (inactive, no room) supervisor row for the mocked session/supervisor. */
-  private SessionSupervisor pendingSupervisor(Long id) {
-    return SessionSupervisor.builder()
-        .id(id)
-        .session(session)
-        .supervisorConsultant(supervisor)
-        .addedByConsultant(addedBy)
-        .isActive(false)
-        .matrixRoomId(null)
-        .notes(
-            SupervisionNotes.encode(
-                SupervisionReason.SAFEGUARDING_U25, "minor at risk", SupervisionConsent.PENDING))
-        .build();
-  }
-
   /**
    * A consultant in the SAME agency (7L) as the session but who is NOT the assigned consultant.
    * Used to exercise the ADR-008 authority flag: allowed when off, denied when on.
@@ -473,6 +402,42 @@ class SessionSupervisorFacadeTest {
             SupervisionNotes.encode(
                 SupervisionReason.PEER_SUPPORT, "x", SupervisionConsent.NOT_REQUIRED))
         .build();
+  }
+
+  // --- setSupervisionOptedOut (client opt-out toggle, grill 2026-07-13) ---
+
+  @Test
+  void setSupervisionOptedOut_Should_persistFlag_andDeactivateActiveSupervisors_when_optingOut() {
+    SessionSupervisor active = activeSupervisorRow(11L);
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(active));
+    when(matrixSynapseService.removeUserFromRoom(any(), any(), any())).thenReturn(true);
+
+    facade.setSupervisionOptedOut(SESSION_ID, true);
+
+    // The opt-out is persisted on the session...
+    assertThat(session.getSupervisionOptedOut()).isTrue();
+    verify(sessionRepository).save(session);
+    // ...and the active supervisor is deactivated and kicked from BOTH rooms.
+    assertThat(active.getIsActive()).isFalse();
+    assertThat(active.getRemovedDate()).isNotNull();
+    verify(matrixSynapseService).removeUserFromRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any());
+    verify(matrixSynapseService).removeUserFromRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
+  void setSupervisionOptedOut_Should_clearBlockButNeverReactivate_when_optingBackIn() {
+    session.setSupervisionOptedOut(true);
+
+    facade.setSupervisionOptedOut(SESSION_ID, false);
+
+    // Opting back in only clears the block for future adds...
+    assertThat(session.getSupervisionOptedOut()).isFalse();
+    verify(sessionRepository).save(session);
+    // ...it never resurrects a previously deactivated supervisor (no room re-provisioning, no
+    // reactivation) — an explicit re-add is required.
+    verify(sessionSupervisorRepository, never()).findBySessionIdAndIsActiveTrue(SESSION_ID);
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(any());
   }
 
   // --- removeSupervisor ---
@@ -615,7 +580,7 @@ class SessionSupervisorFacadeTest {
     verify(matrixSynapseService, never()).removeUserFromRoom(any(), any(), any());
   }
 
-  // --- getSupervisors / getPendingConsentSupervisors ---
+  // --- getSupervisors ---
 
   @Test
   void getSupervisors_Should_delegateToRepository() {
@@ -625,18 +590,6 @@ class SessionSupervisorFacadeTest {
     List<SessionSupervisor> result = facade.getSupervisors(SESSION_ID);
 
     assertThat(result).hasSize(1);
-  }
-
-  @Test
-  void getPendingConsentSupervisors_Should_returnOnlyPendingConsentRows() {
-    SessionSupervisor pending = pendingSupervisor(1L);
-    SessionSupervisor active = activeSupervisorRow(2L);
-    when(sessionSupervisorRepository.findBySessionId(SESSION_ID))
-        .thenReturn(List.of(pending, active));
-
-    List<SessionSupervisor> result = facade.getPendingConsentSupervisors(SESSION_ID);
-
-    assertThat(result).containsExactly(pending);
   }
 
   // --- hasPermissionToManageSupervisors: uncovered final branch ---
@@ -817,106 +770,5 @@ class SessionSupervisorFacadeTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
                 .class);
-  }
-
-  // --- decideSupervisionConsent: uncovered guard branches ---
-
-  @Test
-  void decideSupervisionConsent_Should_activateSupervisorAndProvisionMatrix_When_approved() {
-    SessionSupervisor pending =
-        SessionSupervisor.builder()
-            .id(7L)
-            .session(session)
-            .supervisorConsultant(supervisor)
-            .addedByConsultant(addedBy)
-            .isActive(false)
-            .matrixRoomId(null)
-            .notes(
-                SupervisionNotes.encode(
-                    SupervisionReason.SAFEGUARDING_U25,
-                    "needs oversight",
-                    SupervisionConsent.PENDING))
-            .build();
-    when(sessionSupervisorRepository.findById(7L)).thenReturn(Optional.of(pending));
-
-    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 7L, true);
-
-    assertThat(result.getIsActive()).isTrue();
-    assertThat(result.getMatrixRoomId()).isEqualTo(SIDE_ROOM);
-    assertThat(SupervisionNotes.decode(result.getNotes()).consent)
-        .isEqualTo(SupervisionConsent.APPROVED.name());
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_keepInactiveAndRecordDeclined_When_declined() {
-    SessionSupervisor pending =
-        SessionSupervisor.builder()
-            .id(8L)
-            .session(session)
-            .supervisorConsultant(supervisor)
-            .addedByConsultant(addedBy)
-            .isActive(false)
-            .matrixRoomId(null)
-            .notes(
-                SupervisionNotes.encode(
-                    SupervisionReason.SAFEGUARDING_U25,
-                    "needs oversight",
-                    SupervisionConsent.PENDING))
-            .build();
-    when(sessionSupervisorRepository.findById(8L)).thenReturn(Optional.of(pending));
-
-    SessionSupervisor result = facade.decideSupervisionConsent(SESSION_ID, 8L, false);
-
-    assertThat(result.getIsActive()).isFalse();
-    assertThat(result.getMatrixRoomId()).isNull();
-    assertThat(SupervisionNotes.decode(result.getNotes()).consent)
-        .isEqualTo(SupervisionConsent.DECLINED.name());
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_throwBadRequest_When_sessionIsNull() {
-    SessionSupervisor noSession =
-        SessionSupervisor.builder()
-            .id(5L)
-            .session(null)
-            .supervisorConsultant(supervisor)
-            .isActive(false)
-            .notes(
-                SupervisionNotes.encode(
-                    SupervisionReason.SAFEGUARDING_U25, "x", SupervisionConsent.PENDING))
-            .build();
-    when(sessionSupervisorRepository.findById(5L)).thenReturn(Optional.of(noSession));
-
-    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 5L, true))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_throwBadRequest_When_sessionIdMismatch() {
-    Session otherSession = new Session();
-    otherSession.setId(777L);
-    SessionSupervisor mismatched =
-        SessionSupervisor.builder()
-            .id(6L)
-            .session(otherSession)
-            .supervisorConsultant(supervisor)
-            .isActive(false)
-            .notes(
-                SupervisionNotes.encode(
-                    SupervisionReason.SAFEGUARDING_U25, "x", SupervisionConsent.PENDING))
-            .build();
-    when(sessionSupervisorRepository.findById(6L)).thenReturn(Optional.of(mismatched));
-
-    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 6L, true))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void decideSupervisionConsent_Should_throwNotFound_When_supervisorNotFound() {
-    when(sessionSupervisorRepository.findById(123L)).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> facade.decideSupervisionConsent(SESSION_ID, 123L, true))
-        .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
   }
 }

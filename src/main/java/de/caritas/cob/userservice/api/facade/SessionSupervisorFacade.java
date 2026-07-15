@@ -73,14 +73,13 @@ public class SessionSupervisorFacade {
   /**
    * Add a supervisor to a session. The supervisor must be from the same agency as the session.
    *
-   * <p>ADR-008 item 4 (DRAFT): {@code reasonCode} + {@code notes} (the justification) + the
-   * computed consent state are recorded together in the existing {@code notes} column via {@link
-   * SupervisionNotes}. {@code reasonCode} is OPTIONAL and fully backward-compatible: when a caller
-   * supplies one it is validated and consent is computed (the new explicit path); when it is
-   * absent/blank the legacy path applies (reason null, consent NOT_REQUIRED, justification stored
-   * as-is) so the running frontend — which does not yet send a reason — keeps working. The
-   * productionised version makes {@code reasonCode} required once the paired FE reason-picker
-   * ships.
+   * <p>{@code reasonCode} + {@code notes} (the justification) are recorded together in the existing
+   * {@code notes} column via {@link SupervisionNotes}. {@code reasonCode} is OPTIONAL and fully
+   * backward-compatible: when a caller supplies one it is validated; when it is absent/blank the
+   * legacy path applies (reason null, justification stored as-is) so the running frontend — which
+   * does not yet send a reason — keeps working. Per-reason consent state was retired by the grill
+   * 2026-07-13 opt-out model, so every add is recorded NOT_REQUIRED and supervision proceeds unless
+   * the client has opted out (see {@link #setSupervisionOptedOut}).
    *
    * @param sessionId the session ID
    * @param supervisorConsultantId the consultant ID to add as supervisor
@@ -96,9 +95,9 @@ public class SessionSupervisorFacade {
       Consultant addedByConsultant,
       String reasonCode,
       String notes) {
-    // ADR-008 item 4 (DRAFT): resolve the reason + consent. reasonCode is optional; the app's
-    // current supervisor modal does not send one yet, so a missing reason must NOT 400 (legacy
-    // path). A reason that is PRESENT but unknown is a client error.
+    // Resolve the reason. reasonCode is optional; the app's current supervisor modal does not send
+    // one yet, so a missing reason must NOT 400 (legacy path). A reason that is PRESENT but unknown
+    // is a client error.
     boolean reasonSupplied = reasonCode != null && !reasonCode.isBlank();
     SupervisionReason reason = null;
     if (reasonSupplied) {
@@ -110,14 +109,21 @@ public class SessionSupervisorFacade {
         throw new BadRequestException("A supervision justification is required");
       }
     }
-    SupervisionConsent consent = SupervisionConsent.initialFor(reason);
-    String encodedNotes = SupervisionNotes.encode(reason, notes, consent);
+    // Consent model (grill 2026-07-13): per-reason consent state was retired in favour of the
+    // client opt-out. Every add records NOT_REQUIRED; the reason + justification are still stored.
+    String encodedNotes = SupervisionNotes.encode(reason, notes, SupervisionConsent.NOT_REQUIRED);
 
     // Get session
     Session session =
         sessionRepository
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+
+    // Client opt-out gate (grill 2026-07-13): the ratsuchende can switch supervision off for their
+    // case; while it is off no supervisor may be attached and no Matrix access is provisioned.
+    if (Boolean.TRUE.equals(session.getSupervisionOptedOut())) {
+      throw new BadRequestException("The client has opted out of supervision for this session");
+    }
 
     // Verify addedByConsultant has permission (must be assigned consultant or from
     // same agency)
@@ -188,18 +194,6 @@ public class SessionSupervisorFacade {
           "Consultant adding supervisor does not have Matrix credentials");
     }
 
-    // ADR-008 item 4: never create a second PENDING-consent request for the same supervisor on
-    // the same session (the client would get duplicate disclosure prompts).
-    boolean pendingAlreadyExists =
-        sessionSupervisorRepository.findBySessionId(sessionId).stream()
-            .filter(s -> s.getSupervisorConsultant() != null)
-            .filter(s -> supervisorConsultantId.equals(s.getSupervisorConsultant().getId()))
-            .anyMatch(SessionSupervisorFacade::isPendingConsent);
-    if (pendingAlreadyExists) {
-      throw new BadRequestException(
-          "A supervision consent request for this consultant is already pending");
-    }
-
     SessionSupervisor.SessionSupervisorBuilder builder =
         SessionSupervisor.builder()
             .session(session)
@@ -208,22 +202,10 @@ public class SessionSupervisorFacade {
             .addedDate(LocalDateTime.now())
             .notes(encodedNotes);
 
-    if (consent == SupervisionConsent.PENDING) {
-      // CONSENT GATE (ADR-008 item 4): the ratsuchende's consent is required for this reason
-      // (SAFEGUARDING_U25 / CLINICAL_OVERSIGHT) and has NOT been given yet. Record the request but
-      // grant NO Matrix access — the supervisor is invited to NEITHER the client room nor the side
-      // room until the client approves via the consent endpoint. For minors' cases a supervisor
-      // must never observe before consent exists.
-      SessionSupervisor pending = builder.isActive(false).matrixRoomId(null).build();
-      SessionSupervisor saved = sessionSupervisorRepository.save(pending);
-      log.info(
-          "Recorded PENDING-consent supervisor {} for session {} (no Matrix access until approved)",
-          supervisorConsultant.getUsername(),
-          sessionId);
-      return saved;
-    }
-
-    // No consent required (or legacy no-reason path) — provision Matrix access immediately.
+    // Consent model (grill 2026-07-13, supersedes the ADR-008 item-4 per-reason PENDING gate):
+    // supervision proceeds by default for every reason; the ratsuchende's opt-out is the only
+    // gate (checked above). So there is no PENDING park — every add provisions Matrix access
+    // immediately.
     String sideRoomId =
         provisionSupervisorRooms(
             session, addedByConsultant, supervisorConsultant, supervisorMatrixUserId, matrixRoomId);
@@ -304,84 +286,6 @@ public class SessionSupervisorFacade {
   }
 
   /**
-   * The ratsuchende's decision on a PENDING supervision-consent request (ADR-008 item 4). On
-   * APPROVE the deferred Matrix provisioning runs and the supervisor becomes active; on DECLINE the
-   * request is recorded as declined and the supervisor never gets room access.
-   *
-   * @param sessionId the session the request belongs to
-   * @param supervisorId the pending {@link SessionSupervisor} row id
-   * @param approve true to approve (provision + activate), false to decline
-   * @return the updated {@link SessionSupervisor}
-   */
-  @Transactional
-  public SessionSupervisor decideSupervisionConsent(
-      Long sessionId, Long supervisorId, boolean approve) {
-    SessionSupervisor supervisor =
-        sessionSupervisorRepository
-            .findById(supervisorId)
-            .orElseThrow(() -> new NotFoundException("Supervisor not found: " + supervisorId));
-    if (supervisor.getSession() == null || !supervisor.getSession().getId().equals(sessionId)) {
-      throw new BadRequestException("Supervisor does not belong to this session");
-    }
-    if (!isPendingConsent(supervisor)) {
-      throw new BadRequestException("No pending supervision-consent request for this supervisor");
-    }
-
-    SupervisionNotes.Payload payload = SupervisionNotes.decode(supervisor.getNotes());
-    SupervisionReason reason = SupervisionReason.fromCode(payload.reasonCode).orElse(null);
-
-    if (approve) {
-      Session session = supervisor.getSession();
-      String sideRoomId =
-          provisionSupervisorRooms(
-              session,
-              supervisor.getAddedByConsultant(),
-              supervisor.getSupervisorConsultant(),
-              supervisor.getSupervisorConsultant().getMatrixUserId(),
-              session.getMatrixRoomId());
-      supervisor.setMatrixRoomId(sideRoomId);
-      supervisor.setIsActive(true);
-      supervisor.setNotes(
-          SupervisionNotes.encode(reason, payload.justification, SupervisionConsent.APPROVED));
-      log.info(
-          "Supervision consent APPROVED — activated supervisor {} for session {}",
-          supervisor.getSupervisorConsultant().getUsername(),
-          sessionId);
-    } else {
-      supervisor.setIsActive(false);
-      supervisor.setNotes(
-          SupervisionNotes.encode(reason, payload.justification, SupervisionConsent.DECLINED));
-      log.info(
-          "Supervision consent DECLINED for supervisor {} on session {}",
-          supervisor.getSupervisorConsultant().getUsername(),
-          sessionId);
-    }
-    return sessionSupervisorRepository.save(supervisor);
-  }
-
-  /**
-   * The supervision requests for a session that are still awaiting the ratsuchende's consent
-   * (ADR-008 item 4). Consent state is decoded from the {@code notes} JSON, not a column.
-   *
-   * @param sessionId the session ID
-   * @return the pending-consent supervisor rows
-   */
-  public List<SessionSupervisor> getPendingConsentSupervisors(Long sessionId) {
-    return sessionSupervisorRepository.findBySessionId(sessionId).stream()
-        .filter(SessionSupervisorFacade::isPendingConsent)
-        .collect(java.util.stream.Collectors.toList());
-  }
-
-  /** True when the row is an inactive, not-removed request whose recorded consent is PENDING. */
-  private static boolean isPendingConsent(SessionSupervisor supervisor) {
-    return Boolean.FALSE.equals(supervisor.getIsActive())
-        && supervisor.getRemovedDate() == null
-        && SupervisionConsent.PENDING
-            .name()
-            .equals(SupervisionNotes.decode(supervisor.getNotes()).consent);
-  }
-
-  /**
    * Remove a supervisor from a session.
    *
    * @param sessionId the session ID
@@ -455,6 +359,75 @@ public class SessionSupervisorFacade {
    */
   public List<SessionSupervisor> getSupervisors(Long sessionId) {
     return sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(sessionId);
+  }
+
+  /**
+   * The ratsuchende's supervision opt-out toggle (grill 2026-07-13, supersedes the per-reason
+   * consent gate). Persists the flag on the session. Switching it ON immediately deactivates every
+   * active supervisor and removes them from both the supervision side room and the client room, so
+   * a client who opts out is no longer observed. Switching it OFF only clears the block for future
+   * adds — it never resurrects a deactivated supervisor (an explicit re-add is required).
+   *
+   * <p>Client ownership is enforced by the controller (only the session's own asker may call this),
+   * mirroring the removed consent endpoint's guard.
+   *
+   * @param sessionId the session ID
+   * @param optedOut true to opt out of supervision, false to allow it again
+   */
+  @Transactional
+  public void setSupervisionOptedOut(Long sessionId, boolean optedOut) {
+    Session session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+
+    session.setSupervisionOptedOut(optedOut);
+    sessionRepository.save(session);
+
+    if (optedOut) {
+      deactivateAllActiveSupervisors(session);
+    }
+    log.info("Session {} supervision opt-out set to {}", sessionId, optedOut);
+  }
+
+  /**
+   * Deactivate every currently-active supervisor of a session and remove them from both the
+   * supervision side room and the client room. The assigned consultant (the room operator) performs
+   * the Matrix removals; if the session has no assigned consultant with Matrix credentials the rows
+   * are still deactivated (a later reconcile can clean the rooms).
+   */
+  private void deactivateAllActiveSupervisors(Session session) {
+    List<SessionSupervisor> active =
+        sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(session.getId());
+    if (active.isEmpty()) {
+      return;
+    }
+    Consultant operator = session.getConsultant();
+    String operatorToken =
+        operator != null && operator.getMatrixUserId() != null
+            ? matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId())
+            : null;
+    String clientRoomId = session.getMatrixRoomId();
+
+    for (SessionSupervisor supervisor : active) {
+      String supervisorMatrixUserId =
+          supervisor.getSupervisorConsultant() != null
+              ? supervisor.getSupervisorConsultant().getMatrixUserId()
+              : null;
+      if (operatorToken != null && supervisorMatrixUserId != null) {
+        removeFromRoomIfPresent(
+            supervisor.getMatrixRoomId(),
+            supervisorMatrixUserId,
+            operatorToken,
+            supervisor,
+            "supervision side");
+        removeFromRoomIfPresent(
+            clientRoomId, supervisorMatrixUserId, operatorToken, supervisor, "client");
+      }
+      supervisor.setIsActive(false);
+      supervisor.setRemovedDate(LocalDateTime.now());
+      sessionSupervisorRepository.save(supervisor);
+    }
   }
 
   /**
