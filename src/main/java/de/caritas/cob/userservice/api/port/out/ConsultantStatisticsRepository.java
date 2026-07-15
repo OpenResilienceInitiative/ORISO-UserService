@@ -11,7 +11,9 @@ import org.springframework.data.repository.query.Param;
  *
  * <p>All statistics are computed from the application-layer database only (KDG compliance) and are
  * strictly scoped to a single consultant id; callers must pass the id of the authenticated
- * consultant, never a client-supplied one.
+ * consultant, never a client-supplied one. Native queries are used because Hibernate tenant filters
+ * do not apply to aggregations (see {@code AdminStatisticsRepository}); therefore every query also
+ * carries an explicit tenant restriction.
  */
 public interface ConsultantStatisticsRepository extends Repository<Session, Long> {
 
@@ -24,10 +26,11 @@ public interface ConsultantStatisticsRepository extends Repository<Session, Long
       nativeQuery = true,
       value =
           "SELECT COUNT(*) FROM session s "
-              + "WHERE s.consultant_id = :consultantId "
+              + "WHERE s.consultant_id = :consultantId AND s.tenant_id = :tenantId "
               + "AND s.create_date >= :fromDate AND s.create_date < :toDate")
   long countAssignedSessionsCreatedInPeriod(
       @Param("consultantId") String consultantId,
+      @Param("tenantId") Long tenantId,
       @Param("fromDate") LocalDateTime fromDate,
       @Param("toDate") LocalDateTime toDate);
 
@@ -38,10 +41,11 @@ public interface ConsultantStatisticsRepository extends Repository<Session, Long
       nativeQuery = true,
       value =
           "SELECT COUNT(*) FROM session s "
-              + "WHERE s.consultant_id = :consultantId AND s.status = 2 "
-              + "AND s.update_date >= :fromDate AND s.update_date < :toDate")
+              + "WHERE s.consultant_id = :consultantId AND s.tenant_id = :tenantId "
+              + "AND s.status = 2 AND s.update_date >= :fromDate AND s.update_date < :toDate")
   long countActiveSessionsInPeriod(
       @Param("consultantId") String consultantId,
+      @Param("tenantId") Long tenantId,
       @Param("fromDate") LocalDateTime fromDate,
       @Param("toDate") LocalDateTime toDate);
 }

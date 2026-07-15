@@ -21,6 +21,7 @@ import org.springframework.test.context.TestPropertySource;
 class ConsultantStatisticsRepositoryIT {
 
   private static final String CONSULTANT_ID = "consultant-user-id";
+  private static final Long TENANT_ID = 1L;
   private static final LocalDateTime FROM = LocalDateTime.of(2026, 6, 1, 0, 0);
   private static final LocalDateTime TO = LocalDateTime.of(2026, 8, 1, 0, 0);
 
@@ -28,7 +29,8 @@ class ConsultantStatisticsRepositoryIT {
 
   @Test
   void allConsultantScopedQueriesShouldExecute() {
-    assertThat(underTest.countAssignedSessionsCreatedInPeriod(CONSULTANT_ID, FROM, TO)).isZero();
-    assertThat(underTest.countActiveSessionsInPeriod(CONSULTANT_ID, FROM, TO)).isZero();
+    assertThat(underTest.countAssignedSessionsCreatedInPeriod(CONSULTANT_ID, TENANT_ID, FROM, TO))
+        .isZero();
+    assertThat(underTest.countActiveSessionsInPeriod(CONSULTANT_ID, TENANT_ID, FROM, TO)).isZero();
   }
 }

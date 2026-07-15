@@ -1,17 +1,20 @@
 package de.caritas.cob.userservice.api.service.statistics;
 
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.ConsultantStatisticsRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Set;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ConsultantStatisticsServiceTest {
 
   private static final String CONSULTANT_ID = "consultant-user-id";
+  private static final Long TENANT_ID = 42L;
 
   @Mock private ConsultantStatisticsRepository consultantStatisticsRepository;
 
@@ -32,17 +36,34 @@ class ConsultantStatisticsServiceTest {
   void setUp() {
     authenticatedUser = new AuthenticatedUser();
     authenticatedUser.setUserId(CONSULTANT_ID);
-    authenticatedUser.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    authenticatedUser.setTenantId(TENANT_ID);
+    authenticatedUser.setGrantedAuthorities(Set.of(CONSULTANT_DEFAULT));
     service = new ConsultantStatisticsService(consultantStatisticsRepository, authenticatedUser);
   }
 
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
+
   @Test
-  void buildStatisticsShouldRejectNonConsultants() {
-    authenticatedUser.setRoles(Set.of(UserRole.USER.getValue()));
+  void buildStatisticsShouldRejectUsersWithoutConsultantDefaultAuthority() {
+    authenticatedUser.setGrantedAuthorities(Set.of("AUTHORIZATION_USER_DEFAULT"));
 
     assertThatThrownBy(() -> service.buildStatistics("2026-07-01", "2026-07-31"))
         .isInstanceOf(ForbiddenException.class);
     verifyNoInteractions(consultantStatisticsRepository);
+  }
+
+  @Test
+  void buildStatisticsShouldAllowGroupChatAndSupervisorConsultantsCarryingConsultantDefault() {
+    // group-chat-consultant / supervisor-consultant never hold the "consultant" role literal but
+    // both are granted CONSULTANT_DEFAULT and pass Spring Security's gate on this endpoint.
+    authenticatedUser.setGrantedAuthorities(Set.of(CONSULTANT_DEFAULT));
+
+    var statistics = service.buildStatistics("2026-07-01", "2026-07-31");
+
+    assertThat(statistics).isNotNull();
   }
 
   @Test
@@ -66,10 +87,10 @@ class ConsultantStatisticsServiceTest {
     var fromDateTime = LocalDateTime.of(2026, 7, 1, 0, 0);
     var toDateTime = LocalDateTime.of(2026, 8, 1, 0, 0);
     when(consultantStatisticsRepository.countAssignedSessionsCreatedInPeriod(
-            CONSULTANT_ID, fromDateTime, toDateTime))
+            CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
         .thenReturn(7L);
     when(consultantStatisticsRepository.countActiveSessionsInPeriod(
-            CONSULTANT_ID, fromDateTime, toDateTime))
+            CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
         .thenReturn(3L);
 
     var statistics = service.buildStatistics("2026-07-01", "2026-07-31");
@@ -85,15 +106,29 @@ class ConsultantStatisticsServiceTest {
     var fromDateTime = LocalDateTime.of(2026, 7, 11, 0, 0);
     var toDateTime = LocalDateTime.of(2026, 7, 12, 0, 0);
     when(consultantStatisticsRepository.countAssignedSessionsCreatedInPeriod(
-            CONSULTANT_ID, fromDateTime, toDateTime))
+            CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
         .thenReturn(1L);
     when(consultantStatisticsRepository.countActiveSessionsInPeriod(
-            CONSULTANT_ID, fromDateTime, toDateTime))
+            CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
         .thenReturn(0L);
 
     var statistics = service.buildStatistics("2026-07-11", "2026-07-11");
 
     assertThat(statistics.numberOfAssignedSessions()).isEqualTo(1L);
     assertThat(statistics.numberOfActiveSessions()).isZero();
+  }
+
+  @Test
+  void buildStatisticsShouldPreferTenantContextOverAuthenticatedUserTenantId() {
+    TenantContext.setCurrentTenant(7L);
+    var fromDateTime = LocalDateTime.of(2026, 7, 1, 0, 0);
+    var toDateTime = LocalDateTime.of(2026, 8, 1, 0, 0);
+
+    service.buildStatistics("2026-07-01", "2026-07-31");
+
+    verify(consultantStatisticsRepository)
+        .countAssignedSessionsCreatedInPeriod(CONSULTANT_ID, 7L, fromDateTime, toDateTime);
+    verify(consultantStatisticsRepository)
+        .countActiveSessionsInPeriod(CONSULTANT_ID, 7L, fromDateTime, toDateTime);
   }
 }
