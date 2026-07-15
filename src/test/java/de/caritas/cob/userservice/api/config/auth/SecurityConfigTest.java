@@ -13,7 +13,7 @@ import org.springframework.security.config.annotation.web.builders.WebSecurity;
 class SecurityConfigTest {
 
   @Test
-  void publicAskerRegistrationShouldPassThroughSecurityFilterChain() {
+  void usernameAvailabilityShouldPassThroughSecurityFilterChain() {
     var securityConfig = new SecurityConfig(mock(CsrfSecurityProperties.class), null, null);
     var webSecurity = mock(WebSecurity.class);
     var ignoredRequests = mock(WebSecurity.IgnoredRequestConfigurer.class);
@@ -24,7 +24,7 @@ class SecurityConfigTest {
     var ignoredPaths = ArgumentCaptor.forClass(String[].class);
     verify(ignoredRequests).requestMatchers(ignoredPaths.capture());
     assertThat(ignoredPaths.getValue())
-        .containsExactly("/actuator/**")
+        .containsExactly("/actuator/**", "/users/availability/**")
         .doesNotContain("/users/askers/new");
   }
 }
