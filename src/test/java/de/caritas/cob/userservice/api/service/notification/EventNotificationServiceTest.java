@@ -140,6 +140,61 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // createWaitingRoomClientJoinedNotifications (anonymous live-chat waiting room)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_persistsEventPerRecipient() throws Exception {
+    Session session = sessionMock();
+
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        session, List.of("consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(eventCaptor.capture());
+    EventNotification first = eventCaptor.getAllValues().get(0);
+    assertEquals("waiting_room.client.joined", first.getEventType());
+    assertEquals(EventNotificationService.CATEGORY_SYSTEM, first.getCategory());
+    assertEquals("consultant-a", first.getRecipientUserId());
+    assertEquals(Long.valueOf(100L), first.getSourceSessionId());
+    assertEquals("/sessions/consultant/sessionView/rc-group-1/100", first.getActionPath());
+    assertEquals("consultant-b", eventCaptor.getAllValues().get(1).getRecipientUserId());
+
+    JsonNode params = objectMapper.readTree(first.getParams());
+    assertEquals(100L, params.get("sessionId").asLong());
+    assertEquals(42L, params.get("agencyId").asLong());
+    assertEquals(1, params.get("consultingTypeId").asInt());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_skipsBlankAndDeduplicatesRecipients() {
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        sessionMock(), Arrays.asList("consultant-a", null, "  ", "consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_doesNothingForNullInputs() {
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        null, List.of("consultant-a"));
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(sessionMock(), null);
+
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_swallowsExceptionForOneRecipientAndContinues() {
+    when(eventNotificationRepository.save(any()))
+        .thenThrow(new RuntimeException("DB error"))
+        .thenReturn(mock(EventNotification.class));
+
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        sessionMock(), List.of("consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  // ---------------------------------------------------------------------------
   // createInquiryAcceptedNotification
   // ---------------------------------------------------------------------------
 

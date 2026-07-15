@@ -211,6 +211,49 @@ public class EventNotificationService {
             });
   }
 
+  /**
+   * WP-06 Slice 3 (Tier 3): persist a {@code waiting_room.client.joined} timeline event for each
+   * eligible consultant when a client enters the anonymous live-chat waiting room (a new anonymous
+   * enquiry). Mirrors the recipients already reached by the {@code NEW_ANONYMOUS_ENQUIRY} live
+   * event — the Activity Timeline is the consultant's inbox — and carries the same structured
+   * params (ADR-AT-01) plus a title/text fallback. Best-effort: a failed notification must never
+   * break anonymous-conversation creation, so per-recipient failures are swallowed and logged.
+   */
+  @Transactional
+  public void createWaitingRoomClientJoinedNotifications(
+      Session session, Collection<String> recipientConsultantIds) {
+    if (session == null || recipientConsultantIds == null) {
+      return;
+    }
+    String actionPath = buildSessionActionPath(session, null, true);
+    String params = buildNewClientRequestParams(session);
+    recipientConsultantIds.stream()
+        .filter(id -> id != null && !id.isBlank())
+        .distinct()
+        .forEach(
+            consultantId -> {
+              try {
+                createEvent(
+                    consultantId,
+                    "waiting_room.client.joined",
+                    CATEGORY_SYSTEM,
+                    "Client joined the waiting room",
+                    "A client is waiting in the live chat.",
+                    params,
+                    actionPath,
+                    session.getId(),
+                    session.getTenantId());
+              } catch (RuntimeException ex) {
+                log.warn(
+                    "Could not persist waiting_room.client.joined notification for consultant {} "
+                        + "(session {})",
+                    consultantId,
+                    session.getId(),
+                    ex);
+              }
+            });
+  }
+
   private String buildNewClientRequestParams(Session session) {
     Map<String, Object> params = baseParams(session);
     if (session.getAgencyId() != null) {
