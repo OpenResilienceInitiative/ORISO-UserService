@@ -14,4 +14,10 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
       Long sessionId, CaseHandoverRequest.Status status);
 
   Optional<CaseHandoverRequest> findByIdAndSessionId(Long id, Long sessionId);
+
+  List<CaseHandoverRequest> findBySessionId(Long sessionId);
+
+  List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);
+
+  List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
 }
