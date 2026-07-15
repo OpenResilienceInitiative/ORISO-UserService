@@ -109,6 +109,8 @@ public class SecurityConfig {
                     "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
+                    "/users/password-reset/request",
+                    "/users/password-reset/confirm",
                     "/users/invitelinks/*/redeem")
                 .permitAll()
                 .requestMatchers(
@@ -116,13 +118,21 @@ public class SecurityConfig {
                     "/users/magic-link/request",
                     "/service/users/magic-link/request",
                     "/users/magic-link/consume",
-                    "/service/users/magic-link/consume")
+                    "/service/users/magic-link/consume",
+                    "/users/password-reset/request",
+                    "/service/users/password-reset/request",
+                    "/users/password-reset/confirm",
+                    "/service/users/password-reset/confirm")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
+                .permitAll()
+                .requestMatchers(
+                    RegexRequestMatcher.regexMatcher(
+                        HttpMethod.POST, ".*/users/password-reset/(request|confirm)$"))
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)

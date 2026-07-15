@@ -20,6 +20,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -37,6 +39,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.util.List;
@@ -70,6 +73,7 @@ class UserRegistrationControllerDelegateTest {
   @Mock private UserHelper userHelper;
   @Mock private IdentityClient identityClient;
   @Mock private MagicLinkLoginService magicLinkLoginService;
+  @Mock private PasswordResetService passwordResetService;
   @Mock private SessionDeleteService sessionDeleteService;
 
   @InjectMocks private UserRegistrationControllerDelegate delegate;
@@ -348,6 +352,42 @@ class UserRegistrationControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     verify(createUserFacade).createUserAccountWithInitializedConsultingType(user);
+  }
+
+  @Test
+  void requestPasswordReset_returnsNoContent_and_delegatesToService() {
+    var request = new PasswordResetRequestDTO();
+    request.setUsername(USERNAME);
+    request.setLocale("de");
+
+    var response = delegate.requestPasswordReset(request);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(passwordResetService).requestPasswordReset(USERNAME, "de");
+  }
+
+  @Test
+  void confirmPasswordReset_returnsNoContent_When_TokenValid() {
+    var confirm = new PasswordResetConfirmDTO();
+    confirm.setToken("valid-token");
+    confirm.setNewPassword("NewPassw0rd!");
+    when(passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!")).thenReturn(true);
+
+    var response = delegate.confirmPasswordReset(confirm);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void confirmPasswordReset_returnsBadRequest_When_TokenInvalid() {
+    var confirm = new PasswordResetConfirmDTO();
+    confirm.setToken("bad-token");
+    confirm.setNewPassword("NewPassw0rd!");
+    when(passwordResetService.confirmPasswordReset("bad-token", "NewPassw0rd!")).thenReturn(false);
+
+    var response = delegate.confirmPasswordReset(confirm);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
   }
 
   @SuppressWarnings("unchecked")

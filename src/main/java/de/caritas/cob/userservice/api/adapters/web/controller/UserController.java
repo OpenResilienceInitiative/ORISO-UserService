@@ -29,6 +29,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDt
 import de.caritas.cob.userservice.api.adapters.web.dto.OccurrenceOverrideRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
@@ -107,6 +109,18 @@ public class UserController implements UsersApi {
   public ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(
       @Valid @RequestBody MagicLinkConsumeDTO consumeDTO) {
     return userRegistrationControllerDelegate.consumeMagicLink(consumeDTO);
+  }
+
+  @org.springframework.web.bind.annotation.PostMapping("/users/password-reset/request")
+  public ResponseEntity<Void> requestPasswordReset(
+      @Valid @RequestBody PasswordResetRequestDTO requestDTO) {
+    return userRegistrationControllerDelegate.requestPasswordReset(requestDTO);
+  }
+
+  @org.springframework.web.bind.annotation.PostMapping("/users/password-reset/confirm")
+  public ResponseEntity<Void> confirmPasswordReset(
+      @Valid @RequestBody PasswordResetConfirmDTO confirmDTO) {
+    return userRegistrationControllerDelegate.confirmPasswordReset(confirmDTO);
   }
 
   /**

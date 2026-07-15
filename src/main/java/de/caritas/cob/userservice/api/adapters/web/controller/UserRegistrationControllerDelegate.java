@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -24,6 +26,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.net.URLDecoder;
@@ -53,6 +56,7 @@ class UserRegistrationControllerDelegate {
   private final @NonNull UserHelper userHelper;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull MagicLinkLoginService magicLinkLoginService;
+  private final @NonNull PasswordResetService passwordResetService;
   private final @NonNull SessionDeleteService sessionDeleteService;
 
   @Value("${feature.topics.enabled}")
@@ -87,6 +91,18 @@ class UserRegistrationControllerDelegate {
         .consumeMagicLink(consumeDTO.getToken())
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.badRequest().build());
+  }
+
+  ResponseEntity<Void> requestPasswordReset(PasswordResetRequestDTO requestDTO) {
+    passwordResetService.requestPasswordReset(requestDTO.getUsername(), requestDTO.getLocale());
+    return ResponseEntity.noContent().build();
+  }
+
+  ResponseEntity<Void> confirmPasswordReset(PasswordResetConfirmDTO confirmDTO) {
+    boolean succeeded =
+        passwordResetService.confirmPasswordReset(
+            confirmDTO.getToken(), confirmDTO.getNewPassword());
+    return succeeded ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
   }
 
   ResponseEntity<Void> registerUser(UserDTO user) {
