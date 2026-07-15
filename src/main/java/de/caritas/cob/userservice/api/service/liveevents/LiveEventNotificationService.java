@@ -62,7 +62,11 @@ public class LiveEventNotificationService {
       LiveEventMessage liveEventMessage, Supplier<String> errorMessageSupplier) {
     try {
       this.liveServiceApiControllerFactory.createControllerApi().sendLiveEvent(liveEventMessage);
-    } catch (ApiException e) {
+    } catch (ApiException | RuntimeException e) {
+      // Live events are best-effort. Besides the declared ApiException, a transport failure (e.g.
+      // the live service host is unreachable → UnresolvedAddressException/ConnectException wrapped
+      // in a RuntimeException by the java.net.http client) must never break the enquiry/session
+      // flow that fired the event — online consultants reconcile via the next queue poll anyway.
       log.error("Internal Server Error: {}", errorMessageSupplier.get(), e);
     }
   }

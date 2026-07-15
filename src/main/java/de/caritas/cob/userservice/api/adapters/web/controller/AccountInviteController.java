@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -141,6 +142,21 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
+  @PreAuthorize(ADMIN_AUTH)
+  @PostMapping("/useradmin/account-invites/{inviteId}/waive-two-factor")
+  public ResponseEntity<AccountInviteResponseDTO> waiveTwoFactor(
+      @PathVariable Long inviteId,
+      @RequestBody(required = false) WaiveTwoFactorRequestDTO request) {
+    String reason = request == null ? null : request.reason;
+    AccountInvite invite =
+        accountInviteService.waiveTwoFactor(inviteId, new WaiveTwoFactorCommand(reason));
+    return ResponseEntity.ok(
+        AccountInviteResponseDTO.from(
+            invite,
+            latestDeliveryStatus(invite),
+            accountInviteService.calculateAccessGate(invite)));
+  }
+
   @PostMapping("/users/account-invites/{token}/accept")
   public ResponseEntity<AccountInviteResponseDTO> acceptInvite(
       @PathVariable String token, @RequestBody(required = false) AcceptInviteRequestDTO request) {
@@ -239,6 +255,10 @@ public class AccountInviteController {
   public static class SendInviteRequestDTO {
     public Long templateId;
     public String acceptBaseUrl;
+  }
+
+  public static class WaiveTwoFactorRequestDTO {
+    public String reason;
   }
 
   public static class AcceptInviteRequestDTO {

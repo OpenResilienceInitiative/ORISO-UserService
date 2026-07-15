@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
@@ -110,8 +111,10 @@ class ChatReCreatorTest {
     assertEquals(NEW_MATRIX_ROOM_ID, chat.getGroupId());
     assertEquals(NEW_MATRIX_ROOM_ID, chat.getMatrixRoomId());
     assertEquals(START_DATE.plusWeeks(1), chat.getStartDate());
+    assertEquals(1, chat.getCurrentOccurrenceIndex());
     assertFalse(chat.isActive());
     assertNotNull(chat.getUpdateDate());
+    assertEquals(ConversationType.SELF_HELP, chat.getConversationType());
     verify(chatService).saveChat(chat);
   }
 
@@ -134,7 +137,9 @@ class ChatReCreatorTest {
             .startDate(START_DATE)
             .duration(60)
             .repetitive(true)
+            .repeatCount(2)
             .chatInterval(ChatInterval.WEEKLY)
+            .conversationType(ConversationType.SELF_HELP)
             .chatOwner(owner)
             .build();
     chat.setActive(true);

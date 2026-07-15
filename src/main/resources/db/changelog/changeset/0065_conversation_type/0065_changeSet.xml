@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+
+  <changeSet id="0065_session_conversation_type" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="session" columnName="conversation_type"/></not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="conversation_type" type="VARCHAR(32)"/>
+    </addColumn>
+    <rollback><dropColumn tableName="session" columnName="conversation_type"/></rollback>
+  </changeSet>
+
+  <changeSet id="0065_chat_conversation_type" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="chat" columnName="conversation_type"/></not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="conversation_type" type="VARCHAR(32)"/>
+    </addColumn>
+    <rollback><dropColumn tableName="chat" columnName="conversation_type"/></rollback>
+  </changeSet>
+
+  <changeSet id="0065_backfill_session_conversation_type" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="session" columnName="conversation_type"/>
+        <columnExists tableName="session" columnName="is_team_session"/>
+        <columnExists tableName="session" columnName="registration_type"/>
+      </and>
+    </preConditions>
+    <sql>
+      UPDATE session
+      SET conversation_type = CASE
+        WHEN is_team_session = TRUE THEN 'INTERNAL_GROUP'
+        WHEN registration_type = 'ANONYMOUS' THEN 'LIVE_CHAT'
+        ELSE 'AGENCY_COUNSELLING'
+      END
+      WHERE conversation_type IS NULL
+    </sql>
+    <rollback><sql>UPDATE session SET conversation_type = NULL</sql></rollback>
+  </changeSet>
+
+  <changeSet id="0065_backfill_chat_conversation_type" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <and>
+        <columnExists tableName="chat" columnName="conversation_type"/>
+        <columnExists tableName="chat" columnName="is_repetitive"/>
+        <columnExists tableName="chat" columnName="repeat_count"/>
+        <columnExists tableName="chat" columnName="chat_interval"/>
+        <columnExists tableName="chat" columnName="source_language"/>
+      </and>
+    </preConditions>
+    <sql>
+      UPDATE chat
+      SET conversation_type = CASE
+        WHEN is_repetitive = TRUE
+          OR repeat_count &gt; 1
+          OR chat_interval IS NOT NULL
+          OR source_language IS NOT NULL
+          THEN 'SELF_HELP'
+        ELSE 'INTERNAL_GROUP'
+      END
+      WHERE conversation_type IS NULL
+    </sql>
+    <rollback><sql>UPDATE chat SET conversation_type = NULL</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

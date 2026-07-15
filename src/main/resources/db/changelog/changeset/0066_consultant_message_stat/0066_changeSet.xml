@@ -3,7 +3,7 @@
   xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
   <changeSet author="caritas" id="addConsultantMessageStatTable">
-    <sqlFile path="db/changelog/changeset/0060_consultant_message_stat/addConsultantMessageStatTable.sql"
+    <sqlFile path="db/changelog/changeset/0066_consultant_message_stat/addConsultantMessageStatTable.sql"
       stripComments="true"/>
   </changeSet>
 </databaseChangeLog>

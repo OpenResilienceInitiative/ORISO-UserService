@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -32,6 +33,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -41,6 +43,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -60,6 +63,35 @@ class AnonymousUserCreatorServiceTest {
 
   EasyRandom easyRandom = new EasyRandom();
 
+  @BeforeEach
+  void enableRocketChatForLegacyTests() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", true);
+  }
+
+  @Test
+  void createAnonymousUser_Should_ReturnKeycloakCredentials_When_RocketChatIsDisabled() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
+    User user = mock(User.class);
+    KeycloakCreateUserResponseDTO responseDTO =
+        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
+        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
+    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+    when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
+        .thenReturn(user);
+
+    AnonymousUserCredentials credentials =
+        anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
+
+    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
+    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
+    assertThat(credentials.getRocketChatCredentials(), is((Object) null));
+    verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+    verifyNoInteractions(rocketChatService);
+    verifyNoInteractions(userService);
+  }
+
   @Test
   void
       createAnonymousUser_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_KeycloakLoginFails() {
@@ -77,6 +109,27 @@ class AnonymousUserCreatorServiceTest {
           verifyNoInteractions(rollbackFacade);
           verifyNoInteractions(rocketChatService);
         });
+  }
+
+  @Test
+  void createAnonymousUser_Should_RollBack_When_MatrixProvisioningFails() {
+    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
+    User user = mock(User.class);
+    KeycloakCreateUserResponseDTO responseDTO =
+        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
+    when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
+        .thenReturn(user);
+    doThrow(new InternalServerErrorException("Matrix provisioning failed"))
+        .when(createUserFacade)
+        .provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT));
+
+    verify(rollbackFacade).rollBackUserAccount(any());
+    verifyNoInteractions(rocketChatService);
   }
 
   @Test

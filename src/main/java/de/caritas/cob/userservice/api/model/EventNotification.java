@@ -74,6 +74,10 @@ public class EventNotification implements TenantAware {
   @Column(name = "source_session_id")
   private Long sourceSessionId;
 
+  /** Stable producer-owned key used to make scheduled/lifecycle events idempotent per recipient. */
+  @Column(name = "deduplication_key", length = 191)
+  private String deduplicationKey;
+
   @Column(name = "read_date", columnDefinition = "datetime")
   private LocalDateTime readDate;
 

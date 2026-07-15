@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -39,6 +40,7 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -216,6 +218,7 @@ public class SessionService {
     var session =
         Session.builder()
             .user(user)
+            .tenantId(TenantContext.getCurrentTenant())
             .consultingTypeId(obtainCheckedConsultingTypeId(extendedConsultingTypeResponseDTO))
             .registrationType(registrationType)
             .postcode(userDto.getPostcode())
@@ -278,6 +281,14 @@ public class SessionService {
    * @return the {@link Session}
    */
   public Session saveSession(Session session) {
+    if (session.getConversationType() == null) {
+      session.setConversationType(
+          session.isTeamSession()
+              ? ConversationType.INTERNAL_GROUP
+              : session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
+                  ? ConversationType.LIVE_CHAT
+                  : ConversationType.AGENCY_COUNSELLING);
+    }
     return sessionRepository.save(session);
   }
 

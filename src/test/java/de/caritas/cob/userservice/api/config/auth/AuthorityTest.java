@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.config.auth;
 
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CREATE_NEW_CHAT;
@@ -32,13 +33,14 @@ class AuthorityTest {
         result,
         containsInAnyOrder(
             CONSULTANT_DEFAULT,
+            ASSIGN_CONSULTANT_TO_ENQUIRY,
             ASSIGN_CONSULTANT_TO_SESSION,
             VIEW_AGENCY_CONSULTANTS,
             CREATE_NEW_CHAT,
             START_CHAT,
             STOP_CHAT,
             UPDATE_CHAT));
-    assertEquals(7, result.size());
+    assertEquals(8, result.size());
   }
 
   @Test

@@ -3,25 +3,21 @@ package de.caritas.cob.userservice.api.conversation.provider;
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.ANONYMOUS_ENQUIRY;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +34,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
 
   private final @NonNull UserAccountService userAccountProvider;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
@@ -51,12 +46,11 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
   public ConsultantSessionListResponseDTO buildConversations(
       PageableListRequest pageableListRequest) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
-    Set<Integer> relatedConsultingTypes = retrieveRelatedConsultingTypes(consultant);
     List<Long> consultantTopicIds =
         consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
 
     Page<Session> anonymousSessionsOfConsultant =
-        queryForRelevantSessions(pageableListRequest, relatedConsultingTypes, consultantTopicIds);
+        queryForRelevantSessions(pageableListRequest, consultantTopicIds);
 
     List<ConsultantSessionResponseDTO> sessions =
         anonymousSessionsOfConsultant.stream()
@@ -73,36 +67,52 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
         .total((int) anonymousSessionsOfConsultant.getTotalElements());
   }
 
-  private Set<Integer> retrieveRelatedConsultingTypes(Consultant consultant) {
-    List<Long> consultantAgencyIds =
-        consultant.getConsultantAgencies().stream()
-            .map(ConsultantAgency::getAgencyId)
-            .collect(Collectors.toList());
-    return this.agencyService.getAgencies(consultantAgencyIds).stream()
-        .map(AgencyDTO::getConsultingType)
-        .collect(Collectors.toSet());
-  }
-
   private Page<Session> queryForRelevantSessions(
-      PageableListRequest pageableListRequest,
-      Set<Integer> relatedConsultingTypes,
-      List<Long> consultantTopicIds) {
+      PageableListRequest pageableListRequest, List<Long> consultantTopicIds) {
     var requestedPage = obtainPageByOffsetAndCount(pageableListRequest);
     var pageable = PageRequest.of(requestedPage, pageableListRequest.getCount());
-    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
 
+    // The anonymous Live Chat queue is topic-bound: a consultant sees anonymous enquiries for the
+    // topics they are assigned to. A consultant with no topic assignment cannot serve the topic
+    // queue, so return nothing without any cross-service lookup. This deliberately does NOT resolve
+    // the consultant's consulting types via AgencyService — the queue is topic-only, which also
+    // avoids an authenticated AgencyService call from this list path.
     if (consultantTopicIds == null || consultantTopicIds.isEmpty()) {
-      return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsWithoutTopic(
-          relatedConsultingTypes, SessionStatus.NEW, minUpdateDate, ANONYMOUS, pageable);
+      return Page.empty(pageable);
     }
 
-    return this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopics(
-        relatedConsultingTypes,
-        new HashSet<>(consultantTopicIds),
-        SessionStatus.NEW,
-        minUpdateDate,
-        ANONYMOUS,
-        pageable);
+    var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
+
+    // The queue is deliberately cross-agency AND cross-tenant: a consultant who is live for a topic
+    // must see anonymous enquiries for that topic regardless of the asker's tenant. The
+    // consultant's
+    // own topics were resolved in the caller's tenant context; only the visibility query itself
+    // must
+    // bypass the tenant filter. Running it in technical context makes TenantAspect disable the
+    // Hibernate tenantFilter; the caller's tenant is restored afterwards so no other query in this
+    // request leaks. Registered (non-anonymous) session queries stay strictly tenant-isolated.
+    return runCrossTenant(
+        () ->
+            this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+                new HashSet<>(consultantTopicIds),
+                SessionStatus.NEW,
+                minUpdateDate,
+                ANONYMOUS,
+                pageable));
+  }
+
+  private Page<Session> runCrossTenant(java.util.function.Supplier<Page<Session>> query) {
+    var callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return query.get();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
   }
 
   /** {@inheritDoc} */

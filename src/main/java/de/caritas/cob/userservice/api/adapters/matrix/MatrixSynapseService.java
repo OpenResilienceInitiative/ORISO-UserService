@@ -7,13 +7,17 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -67,6 +71,10 @@ public class MatrixSynapseService {
   // password reset) is not served indefinitely. Mirrors the impersonationTokenCache mechanism
   // below.
   private final java.util.Map<String, CachedAccessToken> accessTokenCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
+  private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
       new java.util.concurrent.ConcurrentHashMap<>();
 
   private static final long ACCESS_TOKEN_CACHE_TTL_MS = 50 * 60 * 1000L;
@@ -385,6 +393,83 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Creates a device-bound Matrix login for browser E2EE without persisting a Matrix password.
+   *
+   * <p>Synapse admin impersonation tokens deliberately have no device and therefore cannot upload
+   * encryption keys. A random password is rotated server-side, existing devices remain logged in,
+   * and the password is used exactly once for the standard client login that binds the returned
+   * token to {@code deviceId}.
+   *
+   * @param matrixUserId full local Matrix user ID
+   * @param deviceId stable browser device ID
+   * @return standard Matrix login response, or {@code null} when the login cannot be created
+   */
+  public java.util.Map<String, Object> loginBrowserDevice(String matrixUserId, String deviceId) {
+    if (matrixUserId == null || matrixUserId.isBlank() || !MatrixIds.isDeviceId(deviceId)) {
+      return null;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return null;
+    }
+
+    var browserLoginLock =
+        browserLoginLocks.computeIfAbsent(
+            matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
+    browserLoginLock.lock();
+    try {
+      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+      var adminHeaders = getClientHttpHeaders(adminToken);
+      adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+      var updateBody = new MatrixPasswordUpdateRequestDTO();
+      updateBody.setPassword(transientPassword);
+      updateBody.setLogoutDevices(false);
+      var updateUri =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      restTemplate.exchange(
+          updateUri,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(updateBody, adminHeaders),
+          java.util.Map.class);
+
+      var loginHeaders = new HttpHeaders();
+      loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+      var loginBody = new MatrixLoginRequestDTO();
+      loginBody.setType("m.login.password");
+      loginBody.setUser(matrixUserId);
+      loginBody.setPassword(transientPassword);
+      loginBody.setDeviceId(deviceId);
+      loginBody.setInitialDeviceDisplayName("ORISO Web");
+
+      var response =
+          restTemplate.postForEntity(
+              matrixConfig.getApiUrl(ENDPOINT_LOGIN),
+              new HttpEntity<>(loginBody, loginHeaders),
+              java.util.Map.class);
+      if (response.getBody() == null
+          || response.getBody().get("access_token") == null
+          || response.getBody().get("device_id") == null) {
+        return null;
+      }
+
+      @SuppressWarnings("unchecked")
+      var responseBody = (java.util.Map<String, Object>) response.getBody();
+      return responseBody;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix browser device login failed for user {} and device {}: {}",
+          matrixUserId,
+          deviceId,
+          ex.getMessage());
+      return null;
+    } finally {
+      browserLoginLock.unlock();
+    }
+  }
+
+  /**
    * Gets or creates an admin access token for administrative operations. Creates a technical admin
    * user if it doesn't exist.
    *
@@ -646,12 +731,12 @@ public class MatrixSynapseService {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
 
-      var loginRequest = new java.util.HashMap<String, Object>();
-      loginRequest.put("type", "m.login.password");
-      loginRequest.put("user", username);
-      loginRequest.put("password", password);
+      var loginRequest = new MatrixLoginRequestDTO();
+      loginRequest.setType("m.login.password");
+      loginRequest.setUser(username);
+      loginRequest.setPassword(password);
 
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(loginRequest, headers);
+      HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
       var url = matrixConfig.getApiUrl(ENDPOINT_LOGIN);
       log.info("Logging in Matrix user: {} at URL: {}", username, url);
@@ -722,7 +807,8 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
-    return matrixRoomClient.createRoom(roomName, roomAlias, accessToken);
+    return matrixRoomClient.createRoom(
+        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
   }
 
   /**
