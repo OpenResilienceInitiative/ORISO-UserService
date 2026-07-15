@@ -175,6 +175,33 @@ public class LiveEventNotificationServiceTest {
     assertEquals(EventType.NEW_ANONYMOUS_ENQUIRY, captor.getValue().getEventType());
   }
 
+  // WP-06 Activity Timeline: single-recipient live refresh nudge fired when an event_notification
+  // is persisted, so the Activity Timeline updates in real time instead of on the slow fallback
+  // poll. Reuses DIRECT_MESSAGE (no new live-service enum), carries only the recipient user id.
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_sendDirectMessageEventForRecipient()
+      throws ApiException {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("recipient-1");
+
+    verify(this.liveControllerApi, times(1))
+        .sendLiveEvent(
+            new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList("recipient-1")));
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsBlank() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("  ");
+
+    verifyNoInteractions(this.liveControllerApi);
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsNull() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser(null);
+
+    verifyNoInteractions(this.liveControllerApi);
+  }
+
   @Test
   public void sendAcceptAnonymousEnquiryEventToUser_Should_doNothing_When_userIdIsNull() {
     this.liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(null);
