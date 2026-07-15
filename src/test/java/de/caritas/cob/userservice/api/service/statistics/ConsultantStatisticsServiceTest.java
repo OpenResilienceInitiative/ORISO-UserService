@@ -28,6 +28,7 @@ class ConsultantStatisticsServiceTest {
   private static final Long TENANT_ID = 42L;
 
   @Mock private ConsultantStatisticsRepository consultantStatisticsRepository;
+  @Mock private ConsultantMessageStatService consultantMessageStatService;
 
   private AuthenticatedUser authenticatedUser;
   private ConsultantStatisticsService service;
@@ -38,7 +39,9 @@ class ConsultantStatisticsServiceTest {
     authenticatedUser.setUserId(CONSULTANT_ID);
     authenticatedUser.setTenantId(TENANT_ID);
     authenticatedUser.setGrantedAuthorities(Set.of(CONSULTANT_DEFAULT));
-    service = new ConsultantStatisticsService(consultantStatisticsRepository, authenticatedUser);
+    service =
+        new ConsultantStatisticsService(
+            consultantStatisticsRepository, consultantMessageStatService, authenticatedUser);
   }
 
   @AfterEach
@@ -92,6 +95,9 @@ class ConsultantStatisticsServiceTest {
     when(consultantStatisticsRepository.countActiveSessionsInPeriod(
             CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
         .thenReturn(3L);
+    when(consultantMessageStatService.countForConsultant(
+            CONSULTANT_ID, TENANT_ID, fromDateTime, toDateTime))
+        .thenReturn(5L);
 
     var statistics = service.buildStatistics("2026-07-01", "2026-07-31");
 
@@ -99,6 +105,7 @@ class ConsultantStatisticsServiceTest {
     assertThat(statistics.endDate()).isEqualTo("2026-07-31");
     assertThat(statistics.numberOfAssignedSessions()).isEqualTo(7L);
     assertThat(statistics.numberOfActiveSessions()).isEqualTo(3L);
+    assertThat(statistics.numberOfSentMessages()).isEqualTo(5L);
   }
 
   @Test

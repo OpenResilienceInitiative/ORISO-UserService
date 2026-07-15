@@ -92,6 +92,8 @@
   <include file="db/changelog/changeset/0057_case_handover_request/0057_changeSet.xml" />
   <include
     file="db/changelog/changeset/0058_adr008_supervision_sideroom_migration/0058_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0060_consultant_message_stat/0060_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

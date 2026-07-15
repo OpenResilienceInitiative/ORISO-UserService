@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +69,7 @@ class MatrixEventListenerServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
+  @Mock private ConsultantMessageStatService consultantMessageStatService;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -105,7 +107,8 @@ class MatrixEventListenerServiceTest {
         mirror,
         userRepository,
         consultantRepository,
-        sessionRepository);
+        sessionRepository,
+        consultantMessageStatService);
   }
 
   private MatrixEventListenerService newServiceWithSyncExecutor() {
@@ -163,7 +166,8 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -604,7 +608,8 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -635,7 +640,8 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -893,6 +899,7 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), anyBoolean(), any());
+    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 
   @Test
@@ -926,6 +933,7 @@ class MatrixEventListenerServiceTest {
             any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+    verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 
   @Test

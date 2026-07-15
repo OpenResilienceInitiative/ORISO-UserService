@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
@@ -35,6 +36,7 @@ public class MatrixEventListenerService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull ConsultantMessageStatService consultantMessageStatService;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -451,12 +453,21 @@ public class MatrixEventListenerService {
                   eventNotificationService.createMessageNotificationFromRoom(
                       roomId, senderDomainUserId, true, privacyEnvelope);
                 }
+                if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
+                  consultantMessageStatService.recordMessageSent(
+                      senderDomainUserId, mappedSessionId);
+                }
               } catch (Exception e) {
                 log.error("❌ Failed to send LiveService notification", e);
               }
             });
       }
     }
+  }
+
+  private boolean isConsultantMatrixUser(String matrixUserId) {
+    return matrixUserId != null
+        && consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId).isPresent();
   }
 
   private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {

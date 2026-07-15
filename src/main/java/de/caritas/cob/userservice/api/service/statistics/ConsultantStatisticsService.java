@@ -17,21 +17,24 @@ import org.springframework.stereotype.Service;
  * Builds the statistics shown on the consultant's own profile from the application-layer database
  * only (KDG compliance: no monitoring data, no message content). A consultant can only ever see
  * their own numbers: the consultant id is taken from the authenticated user, never from the
- * request. Upstream metrics without an app-layer source (sent messages, video call duration) are
- * intentionally not part of the response.
+ * request. Upstream metrics without an app-layer source (video call duration, appointments) are
+ * intentionally not part of the response. {@code numberOfSentMessages} is pseudonymized at rest
+ * (see {@link ConsultantMessageStatService}), never linked to the consultant id in the database.
  */
 @Service
 @RequiredArgsConstructor
 public class ConsultantStatisticsService {
 
   private final @NonNull ConsultantStatisticsRepository consultantStatisticsRepository;
+  private final @NonNull ConsultantMessageStatService consultantMessageStatService;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   public record ConsultantStatistics(
       String startDate,
       String endDate,
       long numberOfAssignedSessions,
-      long numberOfActiveSessions) {}
+      long numberOfActiveSessions,
+      long numberOfSentMessages) {}
 
   public ConsultantStatistics buildStatistics(String startDate, String endDate) {
     // SecurityConfig already gates this endpoint on CONSULTANT_DEFAULT; this check is
@@ -62,6 +65,8 @@ public class ConsultantStatisticsService {
         consultantStatisticsRepository.countAssignedSessionsCreatedInPeriod(
             consultantId, tenantId, fromDateTime, toDateTime),
         consultantStatisticsRepository.countActiveSessionsInPeriod(
+            consultantId, tenantId, fromDateTime, toDateTime),
+        consultantMessageStatService.countForConsultant(
             consultantId, tenantId, fromDateTime, toDateTime));
   }
 
