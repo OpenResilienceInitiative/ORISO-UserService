@@ -104,6 +104,8 @@
     file="db/changelog/changeset/0064_group_chat_author_content/0064_changeSet.xml" />
   <include
     file="db/changelog/changeset/0065_conversation_type/0065_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0066_consultant_message_stat/0066_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
