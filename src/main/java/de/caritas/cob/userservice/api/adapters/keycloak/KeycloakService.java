@@ -815,7 +815,15 @@ public class KeycloakService implements IdentityClient {
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
-    return keycloakClient.getUsersResource().search(username);
+    try {
+      return keycloakClient.getUsersResource().search(username);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while searching for username, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return keycloakClient.getUsersResource().search(username);
+    }
   }
 
   public UserRepresentation getById(String userId) {
