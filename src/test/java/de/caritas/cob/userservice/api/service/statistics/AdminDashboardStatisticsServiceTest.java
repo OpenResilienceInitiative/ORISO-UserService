@@ -42,7 +42,7 @@ class AdminDashboardStatisticsServiceTest {
 
   private static final long TENANT_ID = 5L;
   private static final long AGENCY_WITH_TEAM = 11L;
-  private static final long AGENCY_WITH_SINGLE_COUNSELOR = 12L;
+  private static final long AGENCY_WITH_FEW_COUNSELORS = 12L;
   private static final String ADMIN_USER_ID = "admin-user-id";
 
   // Fixed clock: Saturday, 2026-07-11 in Europe/Berlin
@@ -186,11 +186,11 @@ class AdminDashboardStatisticsServiceTest {
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 3), groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+            List.of(groupCount(AGENCY_WITH_TEAM, 5), groupCount(AGENCY_WITH_FEW_COUNSELORS, 4)));
     when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 7), groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
-    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(4L);
+            List.of(groupCount(AGENCY_WITH_TEAM, 7), groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(9L);
 
     var dashboard = service.buildDashboard();
 
@@ -201,23 +201,23 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(tenantRow.targetType()).isEqualTo(TargetType.TENANT);
     assertThat(tenantRow.tenantId()).isEqualTo(TENANT_ID);
     assertThat(tenantRow.agencyId()).isNull();
-    assertThat(tenantRow.counselorCount()).isEqualTo(4);
+    assertThat(tenantRow.counselorCount()).isEqualTo(9);
     assertThat(tenantRow.suppressed()).isFalse();
     // tenant total aggregates over ALL agencies, including individually suppressed ones
     assertThat(tenantRow.metrics().activeCases()).isEqualTo(9);
   }
 
   @Test
-  void buildDashboard_Should_SuppressSmallCellAgencies_When_LessThanTwoCounselors() {
+  void buildDashboard_Should_SuppressSmallCellAgencies_When_FewerThanFiveCounselors() {
     givenTenantAdmin();
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 3), groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+            List.of(groupCount(AGENCY_WITH_TEAM, 5), groupCount(AGENCY_WITH_FEW_COUNSELORS, 4)));
     when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 7), groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
-    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(4L);
+            List.of(groupCount(AGENCY_WITH_TEAM, 7), groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(9L);
 
     var dashboard = service.buildDashboard();
 
@@ -229,16 +229,17 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(teamAgency.suppressed()).isFalse();
     assertThat(teamAgency.metrics().activeCases()).isEqualTo(7);
 
-    var singleCounselorAgency =
+    // 4 counselors is one below the threshold of 5 and must still be suppressed
+    var belowThresholdAgency =
         dashboard.targets().stream()
-            .filter(target -> Long.valueOf(AGENCY_WITH_SINGLE_COUNSELOR).equals(target.agencyId()))
+            .filter(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
             .findFirst()
             .orElseThrow();
-    assertThat(singleCounselorAgency.suppressed()).isTrue();
-    assertThat(singleCounselorAgency.metrics()).isNull();
-    assertThat(singleCounselorAgency.sessionCountsByPeriod()).isNull();
-    assertThat(singleCounselorAgency.dailyNewSessions()).isEmpty();
-    assertThat(singleCounselorAgency.monthlyTopTopics()).isEmpty();
+    assertThat(belowThresholdAgency.suppressed()).isTrue();
+    assertThat(belowThresholdAgency.metrics()).isNull();
+    assertThat(belowThresholdAgency.sessionCountsByPeriod()).isNull();
+    assertThat(belowThresholdAgency.dailyNewSessions()).isEmpty();
+    assertThat(belowThresholdAgency.monthlyTopTopics()).isEmpty();
   }
 
   @Test
@@ -246,8 +247,8 @@ class AdminDashboardStatisticsServiceTest {
     givenTenantAdmin();
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 3)));
-    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(3L);
+        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 5)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(5L);
     // current month: topic 100 has 3 sessions, topic 200 has 1 → top topic 100 with 75%
     when(adminStatisticsRepository.countSessionTopicsByAgency(
             any(), any(LocalDateTime.class), any(LocalDateTime.class)))
@@ -277,8 +278,8 @@ class AdminDashboardStatisticsServiceTest {
     givenTenantAdmin();
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 2)));
-    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(2L);
+        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 5)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(5L);
     when(adminStatisticsRepository.countDailyNewSessionsByAgency(any(), any()))
         .thenReturn(
             List.of(
@@ -322,9 +323,9 @@ class AdminDashboardStatisticsServiceTest {
     givenTenantAdmin();
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 1)));
     when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
     when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
     ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
 
@@ -333,7 +334,7 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(dashboard.suppressionDisabled()).isTrue();
     var singleCounselorAgency =
         dashboard.targets().stream()
-            .filter(target -> Long.valueOf(AGENCY_WITH_SINGLE_COUNSELOR).equals(target.agencyId()))
+            .filter(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
             .findFirst()
             .orElseThrow();
     assertThat(singleCounselorAgency.suppressed()).isFalse();
@@ -346,9 +347,9 @@ class AdminDashboardStatisticsServiceTest {
     givenTenantAdmin();
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 1)));
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 1)));
     when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
-        .thenReturn(List.of(groupCount(AGENCY_WITH_SINGLE_COUNSELOR, 2)));
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
     when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
     ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
     mockEnvironment.setActiveProfiles("prod");
@@ -359,7 +360,7 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(dashboard.suppressionDisabled()).isFalse();
     var singleCounselorAgency =
         dashboard.targets().stream()
-            .filter(target -> Long.valueOf(AGENCY_WITH_SINGLE_COUNSELOR).equals(target.agencyId()))
+            .filter(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
             .findFirst()
             .orElseThrow();
     assertThat(singleCounselorAgency.suppressed()).isTrue();
@@ -375,7 +376,7 @@ class AdminDashboardStatisticsServiceTest {
 
     lenient()
         .when(adminStatisticsRepository.countConsultantsByTenant())
-        .thenReturn(List.of(groupCount(1L, 4), groupCount(2L, 1)));
+        .thenReturn(List.of(groupCount(1L, 5), groupCount(2L, 1)));
     lenient()
         .when(adminStatisticsRepository.countNewSessionsByTenant(any(), any()))
         .thenReturn(List.of());
