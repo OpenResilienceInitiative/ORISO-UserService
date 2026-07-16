@@ -59,18 +59,22 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
   }
 
   private Optional<Long> resolveTenantFromConsultantRequestParameter(HttpServletRequest request) {
-    // temporarily set technical tenant to be able to run query during tenant determination
+    // temporarily set technical tenant to be able to run query during tenant determination;
+    // always clear it again, even when the lookup throws
     TenantContext.setCurrentTenant(0L);
-    String consultantId = getConsultantId(request);
-    Optional<Consultant> consultant =
-        consultantService
-            .getConsultant(consultantId)
-            .or(() -> consultantService.getConsultantByPublicSlug(consultantId));
-    TenantContext.clear();
-    if (consultant.isPresent()) {
-      return Optional.of(consultant.get().getTenantId());
+    try {
+      String consultantId = getConsultantId(request);
+      Optional<Consultant> consultant =
+          consultantService
+              .getConsultant(consultantId)
+              .or(() -> consultantService.getConsultantByPublicSlug(consultantId));
+      if (consultant.isPresent()) {
+        return Optional.of(consultant.get().getTenantId());
+      }
+      return Optional.empty();
+    } finally {
+      TenantContext.clear();
     }
-    return Optional.empty();
   }
 
   private boolean requestParameterContainsConsultantId(HttpServletRequest request) {

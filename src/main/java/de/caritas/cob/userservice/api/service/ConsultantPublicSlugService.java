@@ -81,7 +81,7 @@ public class ConsultantPublicSlugService {
   }
 
   public String normalize(String rawSlug) {
-    return rawSlug == null ? null : rawSlug.trim().toLowerCase();
+    return rawSlug == null ? null : rawSlug.trim().toLowerCase(java.util.Locale.ROOT);
   }
 
   private String validateAvailableSlug(String rawSlug, String consultantId) {

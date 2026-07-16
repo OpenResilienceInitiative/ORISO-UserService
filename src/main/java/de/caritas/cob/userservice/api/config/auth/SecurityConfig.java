@@ -43,8 +43,19 @@ public class SecurityConfig {
 
   private static final String UUID_PATTERN =
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
+
+  /**
+   * A public consultant id is either a UUID or a public slug (lowercase words joined by single
+   * hyphens). The negative lookahead keeps the sibling literal routes under {@code
+   * /users/consultants/*} (search, absences, import, sessions, languages) out of the permitAll
+   * match — they carry their own role rules below and are also seeded as reserved slugs. Only
+   * non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex} constraints.
+   */
   private static final String PUBLIC_CONSULTANT_ID_PATTERN =
-      "(" + UUID_PATTERN + ")|([a-z]+(-[a-z]+)*)";
+      "(?:"
+          + UUID_PATTERN
+          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)[a-z]+(?:-[a-z]+)*)";
+
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
@@ -105,7 +116,7 @@ public class SecurityConfig {
                     "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
                     "/service/conversations/anonymous/availability",
-                    "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
                     "/users/consultants/languages",
                     "/error-reports",
                     "/service/error-reports",

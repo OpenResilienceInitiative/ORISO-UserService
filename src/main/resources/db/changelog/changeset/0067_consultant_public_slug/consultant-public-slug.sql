@@ -28,4 +28,9 @@ VALUES
   ('login', 'Reserved system route', 1, 'system', UTC_TIMESTAMP()),
   ('registration', 'Reserved system route', 1, 'system', UTC_TIMESTAMP()),
   ('support', 'Reserved support route', 1, 'system', UTC_TIMESTAMP()),
+  ('search', 'Reserved controller route under /users/consultants', 1, 'system', UTC_TIMESTAMP()),
+  ('absences', 'Reserved controller route under /users/consultants', 1, 'system', UTC_TIMESTAMP()),
+  ('import', 'Reserved controller route under /users/consultants', 1, 'system', UTC_TIMESTAMP()),
+  ('sessions', 'Reserved controller route under /users/consultants', 1, 'system', UTC_TIMESTAMP()),
+  ('languages', 'Reserved controller route under /users/consultants', 1, 'system', UTC_TIMESTAMP()),
   ('system', 'Reserved system route', 1, 'system', UTC_TIMESTAMP());
