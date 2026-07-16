@@ -70,7 +70,8 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .deleteDate(String.valueOf(consultant.getDeleteDate()))
         .status(String.valueOf(consultant.getStatus()))
         .tenantId(consultant.getTenantId() != null ? consultant.getTenantId().intValue() : null)
-        .isSupervisor(consultant.isSupervisor());
+        .isSupervisor(consultant.isSupervisor())
+        .assignedSupervisorId(consultant.getAssignedSupervisorId());
   }
 
   private HalLink buildSelfLink() {

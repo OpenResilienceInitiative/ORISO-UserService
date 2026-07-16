@@ -111,6 +111,7 @@ class AssignEnquiryFacadeTest {
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
+  @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
 
   private LogbackCaptor logCaptor;
 
@@ -443,6 +444,21 @@ class AssignEnquiryFacadeTest {
 
     verify(sessionToConsultantVerifier, never()).verifySessionIsNotInProgress(any());
     verify(sessionToConsultantVerifier, times(1)).verifyPreconditionsForAssignment(any(), eq(true));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Supervision (auto-assigned) — grill 2026-07-13
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assignRegisteredEnquiry_Should_attachStandingSupervisor_afterTheCaseIsAccepted() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // Accepting an Agency Counselling case hands off to the supervision module, which attaches the
+    // counsellor's standing supervisor (or does nothing if they have none).
+    verify(sessionSupervisorFacade)
+        .attachStandingSupervisorIfAssigned(
+            SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------
