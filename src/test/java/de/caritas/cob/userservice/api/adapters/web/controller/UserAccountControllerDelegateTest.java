@@ -501,15 +501,17 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void patchUser_emptyPatchResponse_throwsIllegalStateException() {
-    // A successful identity patch must return updated attributes.
+  void patchUser_emptyPatchResponse_throwsNotFoundException() {
+    // Orphaned Keycloak accounts (no user or consultant DB record) must yield 404, not 500.
     var patchUserDTO = new PatchUserDTO();
     var patchMap = Map.<String, Object>of("firstName", "Ada");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userDtoMapper.mapOf(patchUserDTO, authenticatedUser)).thenReturn(Optional.of(patchMap));
     when(accountManager.patchUser(patchMap)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.patchUser(patchUserDTO))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(NotFoundException.class)
+        .hasMessageContaining(USER_ID);
   }
 
   @Test
