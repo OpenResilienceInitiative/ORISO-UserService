@@ -1405,6 +1405,23 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void deleteUser_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    UsersResource usersResource = mock(UsersResource.class);
+    UserResource userResource = mock(UserResource.class);
+    org.mockito.Mockito.doThrow(mock(jakarta.ws.rs.NotAuthorizedException.class))
+        .doNothing()
+        .when(userResource)
+        .remove();
+    when(usersResource.get(any())).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.deleteUser(USER_ID);
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(userResource, times(2)).remove();
+  }
+
+  @Test
   public void ensureRole_Should_SkipUpdate_When_UserAlreadyHasRole() {
     UserResource userResource = givenUserResourceWithRealmRoles("consultant");
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);

@@ -181,6 +181,11 @@ public class SecurityConfig {
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/statistics/consultant",
+                    "/service/users/statistics/consultant")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
@@ -364,7 +369,7 @@ public class SecurityConfig {
 
   @Bean
   public WebSecurityCustomizer webSecurityCustomizer() {
-    return web -> web.ignoring().requestMatchers("/actuator/**");
+    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/availability/**");
   }
 
   @Bean

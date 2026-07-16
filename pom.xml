@@ -54,7 +54,6 @@
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
 		<testcontainers.version>1.17.6</testcontainers.version>
-		<sentry.version>8.46.0</sentry.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 
@@ -111,11 +110,6 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>io.sentry</groupId>
-			<artifactId>sentry-spring-boot-4-starter</artifactId>
-			<version>${sentry.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -336,11 +330,6 @@
 			<groupId>net.logstash.logback</groupId>
 			<artifactId>logstash-logback-encoder</artifactId>
 			<version>7.0.1</version>
-		</dependency>
-		<dependency>
-			<groupId>io.sentry</groupId>
-			<artifactId>sentry-logback</artifactId>
-			<version>${sentry.version}</version>
 		</dependency>
 
 		<dependency>
