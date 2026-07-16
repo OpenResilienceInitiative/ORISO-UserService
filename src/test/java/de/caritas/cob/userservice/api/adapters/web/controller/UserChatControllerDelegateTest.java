@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -58,6 +59,7 @@ class UserChatControllerDelegateTest {
   @Mock private Messaging messenger;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private GroupChatFeatureGate groupChatFeatureGate;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -87,6 +89,7 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
+    verify(groupChatFeatureGate).requireEnabled(consultant);
   }
 
   @Test
@@ -149,6 +152,31 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignChatFacade).assignChat("group-id", authenticatedUser);
+  }
+
+  @Test
+  void assignChatShouldDelegateNumericSeriesIdToV2AssignmentFlow() {
+    var response = delegate.assignChat("1013");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+    verify(joinAndLeaveChatFacade, never()).joinChat(any(), any());
+  }
+
+  @Test
+  void assignChatShouldRejectNumericSeriesIdAboveLongRange() {
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+        .isInstanceOf(BadRequestException.class);
+
+    verify(assignChatFacade, never()).assignChat(anyLong(), any());
+  }
+
+  @Test
+  void assignChatShouldAcceptLongMaxValue() {
+    var response = delegate.assignChat(String.valueOf(Long.MAX_VALUE));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(Long.MAX_VALUE, authenticatedUser);
   }
 
   @Test

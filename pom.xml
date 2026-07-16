@@ -54,7 +54,6 @@
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
 		<testcontainers.version>1.17.6</testcontainers.version>
-		<sentry.version>8.46.0</sentry.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 
@@ -113,11 +112,6 @@
 			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>io.sentry</groupId>
-			<artifactId>sentry-spring-boot-4-starter</artifactId>
-			<version>${sentry.version}</version>
-		</dependency>
-		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-configuration-processor</artifactId>
 		</dependency>
@@ -138,13 +132,33 @@
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-core</artifactId>
 		</dependency>
+		<!-- Traces + JVM/app metrics for SigNoz via OTLP. Replaces the previous
+			micrometer-tracing-bridge-otel + opentelemetry-exporter-zipkin combo:
+			no Zipkin collector runs anywhere, it only produced dead
+			ResourceAccessException/Connection-refused noise against localhost:9411
+			(ORISO-AGENCYSERVICE-1). This single Spring Boot 4 starter bundles the
+			OpenTelemetry SDK bean, the OTel tracing bridge, OTLP trace export and
+			OTLP metrics export - Boot 4 split these into separate autoconfigure
+			modules, and assembling them by hand (tracing-bridge-otel + the raw
+			OTLP exporter jars alone) leaves the actual OpenTelemetry SDK bean
+			missing, which fails context startup. Verified empirically: with this
+			starter and empty management.otlp.* endpoints, the app boots cleanly. -->
 		<dependency>
-			<groupId>io.micrometer</groupId>
-			<artifactId>micrometer-tracing-bridge-otel</artifactId>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-opentelemetry</artifactId>
 		</dependency>
+		<!-- io.opentelemetry:opentelemetry-proto requires protobuf-java 4.32.0+
+			generated code (io.grpc + com.google.protobuf.RuntimeVersion checks).
+			The firebase-admin -> grpc/google-cloud-core-grpc chain below pulls the
+			much older protobuf-java 3.17.3, and Maven's nearest-wins mediation
+			picked that older one, which crashed context startup with
+			NoClassDefFoundError: com/google/protobuf/RuntimeVersion$RuntimeDomain
+			(verified empirically). Declaring it directly here wins over the
+			transitive version regardless of tree depth. -->
 		<dependency>
-			<groupId>io.opentelemetry</groupId>
-			<artifactId>opentelemetry-exporter-zipkin</artifactId>
+			<groupId>com.google.protobuf</groupId>
+			<artifactId>protobuf-java</artifactId>
+			<version>4.32.0</version>
 		</dependency>
 
 		<!-- Spring actuator  -->
@@ -326,11 +340,6 @@
 			<groupId>net.logstash.logback</groupId>
 			<artifactId>logstash-logback-encoder</artifactId>
 			<version>7.0.1</version>
-		</dependency>
-		<dependency>
-			<groupId>io.sentry</groupId>
-			<artifactId>sentry-logback</artifactId>
-			<version>${sentry.version}</version>
 		</dependency>
 
 		<dependency>
@@ -1186,6 +1195,14 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId> <!-- surefire plugin version managed by Spring Boot -->
 				<executions>
+					<!-- Surefire binds an implicit `default-test` execution to the `test` phase.
+					     Left enabled it runs the unit tests a SECOND time alongside the explicit
+					     `unit-tests` execution below, and it ignores `${skip.unit-tests}`.
+					     Disable it so `unit-tests` solely owns the phase. -->
+					<execution>
+						<id>default-test</id>
+						<phase>none</phase>
+					</execution>
 					<execution>
 						<id>unit-tests</id>
 						<phase>test</phase>

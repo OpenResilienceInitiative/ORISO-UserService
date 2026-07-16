@@ -86,11 +86,11 @@ public class ConsultantAgencyRelationCreatorService {
 
   private void createNewConsultantAgency(
       ConsultantAgencyCreationInput input, Consumer<String> logMethod) {
-    prepareConsultantAgencyRelation(input);
-    completeConsultantAgencyAssigment(input, logMethod);
+    var persistedRelation = prepareConsultantAgencyRelation(input);
+    completeConsultantAgencyAssigment(input, logMethod, persistedRelation);
   }
 
-  public void prepareConsultantAgencyRelation(ConsultantAgencyCreationInput input) {
+  public ConsultantAgency prepareConsultantAgencyRelation(ConsultantAgencyCreationInput input) {
     var consultant = this.retrieveConsultant(input.getConsultantId());
 
     var agency = retrieveAgency(input.getAgencyId());
@@ -103,11 +103,19 @@ public class ConsultantAgencyRelationCreatorService {
             consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
 
     ensureConsultingTypeRoles(input, agency);
-    consultantAgencyService.saveConsultantAgency(buildConsultantAgency(consultant, agency.getId()));
+    return consultantAgencyService.saveConsultantAgency(
+        buildConsultantAgency(consultant, agency.getId()));
   }
 
   public void completeConsultantAgencyAssigment(
       ConsultantAgencyCreationInput input, Consumer<String> logMethod) {
+    completeConsultantAgencyAssigment(input, logMethod, null);
+  }
+
+  private void completeConsultantAgencyAssigment(
+      ConsultantAgencyCreationInput input,
+      Consumer<String> logMethod,
+      ConsultantAgency persistedRelation) {
 
     var consultant = this.retrieveConsultant(input.getConsultantId());
     var agency = retrieveAgency(input.getAgencyId());
@@ -121,9 +129,14 @@ public class ConsultantAgencyRelationCreatorService {
       rocketChatAsyncHelper.addConsultantToSessions(
           consultant, agency, logMethod, TenantContext.getCurrentTenant());
     } else {
-      // Matrix-only: no Rocket.Chat group assignments exist, so finalize synchronously in this
-      // transaction — the async variant cannot see the uncommitted consultant_agency row.
-      rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, agency);
+      if (persistedRelation == null) {
+        // Legacy two-step callers do not carry the prepared relation across requests.
+        rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, agency);
+      } else {
+        // The atomic create path already owns the persisted row. Carry it forward instead of
+        // relying on an immediate read-after-write query that may not see the row yet.
+        rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, persistedRelation);
+      }
     }
 
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {

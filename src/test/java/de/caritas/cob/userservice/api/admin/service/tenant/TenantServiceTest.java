@@ -148,6 +148,20 @@ class TenantServiceTest {
       assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
     }
 
+    @Test
+    void getRestrictedTenantDataFresh_afterCachedLookup_returnsCurrentApiValue() {
+      var disabled = new RestrictedTenantDTO().id(TENANT_ID).name("Disabled");
+      var enabled = new RestrictedTenantDTO().id(TENANT_ID).name("Enabled");
+      tenantControllerApi.tenantIdResult = disabled;
+
+      assertThat(cachedTenantService.getRestrictedTenantData(TENANT_ID)).isSameAs(disabled);
+
+      tenantControllerApi.tenantIdResult = enabled;
+
+      assertThat(cachedTenantService.getRestrictedTenantDataFresh(TENANT_ID)).isSameAs(enabled);
+      assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(2);
+    }
+
     // Each subdomain is a distinct cache entry for multitenancy routing.
     @Test
     void getRestrictedTenantData_differentSubdomains_callsApiForEach() {

@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ACTIVE_CHA
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,8 +13,8 @@ import de.caritas.cob.userservice.api.actions.ActionCommandMockProvider;
 import de.caritas.cob.userservice.api.actions.chat.StopChatActionCommand;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,7 +30,7 @@ class StopChatFacadeTest {
 
   @InjectMocks private StopChatFacade stopChatFacade;
 
-  @Mock private ChatPermissionVerifier chatPermissionVerifier;
+  @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @Mock private ActionsRegistry actionsRegistry;
 
@@ -43,7 +44,9 @@ class StopChatFacadeTest {
 
   @Test
   void stopChat_Should_ThrowRequestForbiddenException_When_ConsultantHasNoPermissionToStopChat() {
-    when(chatPermissionVerifier.hasSameAgencyAssigned(ACTIVE_CHAT, CONSULTANT)).thenReturn(false);
+    doThrow(new ForbiddenException("forbidden"))
+        .when(groupChatPermissionService)
+        .requireCanModerate(ACTIVE_CHAT, CONSULTANT);
 
     try {
       stopChatFacade.stopChat(ACTIVE_CHAT, CONSULTANT);
@@ -55,8 +58,6 @@ class StopChatFacadeTest {
 
   @Test
   void stopChat_Should_executeExpectedAction_When_ConsultantHasPermissionToStopChat() {
-    when(chatPermissionVerifier.hasSameAgencyAssigned(ACTIVE_CHAT, CONSULTANT)).thenReturn(true);
-
     stopChatFacade.stopChat(ACTIVE_CHAT, CONSULTANT);
 
     verify(this.mockProvider.getActionMock(StopChatActionCommand.class), times(1))

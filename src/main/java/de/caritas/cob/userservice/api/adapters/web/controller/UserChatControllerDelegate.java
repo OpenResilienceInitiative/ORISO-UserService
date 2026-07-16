@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +44,7 @@ class UserChatControllerDelegate {
   private final @NonNull Messaging messenger;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull GroupChatFeatureGate groupChatFeatureGate;
 
   ResponseEntity<CreateChatResponseDTO> createChatV1(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
@@ -53,6 +55,7 @@ class UserChatControllerDelegate {
 
   ResponseEntity<CreateChatResponseDTO> createChatV2(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    groupChatFeatureGate.requireEnabled(callingConsultant);
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }
@@ -86,7 +89,15 @@ class UserChatControllerDelegate {
   }
 
   ResponseEntity<Void> assignChat(String groupId) {
-    assignChatFacade.assignChat(groupId, authenticatedUser);
+    if (groupId.matches("\\d+")) {
+      try {
+        assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
+      } catch (NumberFormatException exception) {
+        throw new BadRequestException("Numeric chat id is outside the supported range.");
+      }
+    } else {
+      assignChatFacade.assignChat(groupId, authenticatedUser);
+    }
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

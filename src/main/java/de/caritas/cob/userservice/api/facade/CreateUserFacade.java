@@ -4,7 +4,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
@@ -121,33 +120,8 @@ public class CreateUserFacade {
       plainUsername = null;
     }
     try {
-      if (isNotBlank(plainUsername)) {
-        String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
-        var matrixResponse =
-            matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername);
-
-        log.info(
-            "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
-            plainUsername,
-            matrixResponse.getStatusCode(),
-            matrixResponse.getBody() != null);
-
-        if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-          user.setMatrixUserId(matrixResponse.getBody().getUserId());
-          userService.saveUser(user);
-          log.info(
-              "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
-              plainUsername,
-              matrixResponse.getBody().getUserId());
-        } else {
-          log.warn(
-              "Matrix user creation response body is null or missing user_id for plain username: {}",
-              plainUsername);
-        }
-      } else {
-        log.warn("Plain username not resolvable, skipping Matrix user creation");
-      }
-    } catch (Exception e) {
+      provisionMatrixUser(user, plainUsername);
+    } catch (InternalServerErrorException e) {
       log.error(
           "Matrix user creation failed for plain username: {}, but continuing with registration",
           plainUsername,
@@ -190,6 +164,38 @@ public class CreateUserFacade {
     }
 
     return registration.getSessionId();
+  }
+
+  /** Provisions and persists the Matrix identity needed by browser token bootstrap. */
+  public void provisionMatrixUser(User user, String plainUsername) {
+    try {
+      if (user == null || isBlank(plainUsername)) {
+        throw new IllegalArgumentException("Plain username or user not resolvable");
+      }
+
+      String matrixPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
+      var matrixResponse =
+          matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername);
+
+      log.info(
+          "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
+          plainUsername,
+          matrixResponse.getStatusCode(),
+          matrixResponse.getBody() != null);
+
+      if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
+        user.setMatrixUserId(matrixResponse.getBody().getUserId());
+        userService.saveUser(user);
+        log.info(
+            "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
+            plainUsername,
+            matrixResponse.getBody().getUserId());
+      } else {
+        throw new IllegalStateException("Matrix user creation response is missing user_id");
+      }
+    } catch (Exception e) {
+      throw new InternalServerErrorException("Could not provision Matrix user " + plainUsername, e);
+    }
   }
 
   private String getTenantName() {

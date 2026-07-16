@@ -68,7 +68,7 @@ class MatrixRoomClientTest {
     var responseBody = new MatrixCreateRoomResponseDTO();
     responseBody.setRoomId(ROOM_ID);
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             createRoomRequestCaptor.capture(),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenReturn(ResponseEntity.ok(responseBody));
@@ -86,9 +86,29 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void createRoom_WhenEncryptionEnabled_ShouldSendMegolmInitialState() throws Exception {
+    var responseBody = new MatrixCreateRoomResponseDTO();
+    responseBody.setRoomId(ROOM_ID);
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            createRoomRequestCaptor.capture(),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(responseBody));
+
+    matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true);
+
+    var initialState = createRoomRequestCaptor.getValue().getBody().getInitialState();
+    assertThat(initialState).hasSize(1);
+    var event = initialState.getFirst();
+    assertThat(event.getType()).isEqualTo("m.room.encryption");
+    assertThat(event.getStateKey()).isEmpty();
+    assertThat(event.getContent()).isEqualTo(Map.of("algorithm", "m.megolm.v1.aes-sha2"));
+  }
+
+  @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenMatrixRejectsRequest() {
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenThrow(
@@ -108,7 +128,7 @@ class MatrixRoomClientTest {
   @Test
   void createRoom_ShouldThrowMatrixCreateRoomException_WhenUnexpectedErrorOccurs() {
     when(restTemplate.postForEntity(
-            eq(API_URL + "/_matrix/client/r0/createRoom"),
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
             org.mockito.ArgumentMatchers.any(HttpEntity.class),
             eq(MatrixCreateRoomResponseDTO.class)))
         .thenThrow(new RuntimeException("connection failed"));

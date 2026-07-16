@@ -17,9 +17,11 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -42,6 +44,11 @@ class AnonymousUsernameRegistryTest {
     setField(anonymousUsernameRegistry, "usernamePrefix", "Ratsuchende_r ");
     // By default every candidate username is free in Keycloak; individual tests override this.
     when(identityClient.isUsernameAvailable(anyString())).thenReturn(true);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
   }
 
   @Test
@@ -245,5 +252,40 @@ class AnonymousUsernameRegistryTest {
     anonymousUsernameRegistry.removeRegistryIdByUsername(null);
     List<Integer> resultingRegistry = getIdRegistryField();
     assertThat(resultingRegistry, is(idRegistryListWithoutThree));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_TreatUsernameOfAnotherTenantAsOccupied() {
+    // The anonymous username namespace is global: Matrix user IDs are global and the anonymous
+    // live-chat queue is deliberately cross-tenant. The DB lookups are tenant-filtered, so a
+    // caller in tenant 83 must still see an anon user that belongs to tenant 1 - otherwise the
+    // name is handed out again and Matrix rejects it with M_USER_IN_USE (500 on invite redeem).
+    TenantContext.setCurrentTenant(83L);
+    setIdRegistryField(new LinkedList<>());
+    // Simulate the Hibernate tenantFilter: "Ratsuchende_r 1" is only visible cross-tenant.
+    when(userService.findUserByUsername(any()))
+        .thenAnswer(
+            invocation ->
+                TenantContext.isTechnicalOrSuperAdminContext()
+                        && "Ratsuchende_r 1".equals(invocation.getArgument(0))
+                    ? Optional.of(USER)
+                    : Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
+    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_RestoreCallerTenantAfterTheCrossTenantLookup() {
+    TenantContext.setCurrentTenant(83L);
+    setIdRegistryField(new LinkedList<>());
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    assertThat(TenantContext.getCurrentTenant(), is(83L));
   }
 }

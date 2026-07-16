@@ -89,6 +89,15 @@ components:
         content:
           $ref:
             '#/components/schemas/Content'
+        settings:
+          $ref:
+            '#/components/schemas/RestrictedTenantSettings'
+    RestrictedTenantSettings:
+      type: object
+      properties:
+        featureGroupChatV2Enabled:
+          type: boolean
+          default: false
     Licensing:
       type: object
       required:

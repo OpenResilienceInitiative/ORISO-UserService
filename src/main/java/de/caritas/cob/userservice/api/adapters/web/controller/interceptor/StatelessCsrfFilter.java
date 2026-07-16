@@ -111,6 +111,12 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
           && request.getRequestURI().toLowerCase().contains("/users/askers/new")) {
         return true;
       }
+      // Client-side error intake (OBS-P3) must accept crash reports from a browser that has no
+      // session/CSRF cookie yet, e.g. an error thrown before login completes.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/error-reports")) {
+        return true;
+      }
       List<String> csrfWhitelist =
           new ArrayList<>(Arrays.asList(csrfSecurityProperties.getWhitelist().getConfigUris()));
       csrfWhitelist.addAll(Arrays.asList(csrfSecurityProperties.getWhitelist().getAdminUris()));

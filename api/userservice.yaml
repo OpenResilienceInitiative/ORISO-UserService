@@ -1880,8 +1880,192 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat-series/{seriesId}/occurrences:
+    get:
+      tags:
+        - chat-series-controller
+      operationId: getChatSeriesOccurrences
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 50 }
+      responses:
+        '200':
+          description: Bounded virtual occurrence projection
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    seriesId: { type: integer, format: int64 }
+                    occurrenceIndex: { type: integer, format: int32 }
+                    originalStart: { type: string, format: date-time }
+                    start: { type: string, format: date-time }
+                    duration: { type: integer, format: int32 }
+                    capacity: { type: integer, format: int32 }
+                    modality: { type: string, enum: [TEXT, AUDIO, VIDEO] }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+  /users/chat-series/{seriesId}/occurrences/skip:
+    post:
+      tags: [chat-series-controller]
+      operationId: skipChatSeriesOccurrence
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: originalStartUtc
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+      responses:
+        '204': { description: Occurrence skipped }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not an Owner or Co-Moderator }
+  /users/chat-series/{seriesId}/occurrences/override:
+    put:
+      tags: [chat-series-controller]
+      operationId: overrideChatSeriesOccurrence
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OccurrenceOverrideRequest' }
+      responses:
+        '204': { description: Occurrence overridden }
+        '400': { description: Invalid occurrence override }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not an Owner or Co-Moderator }
+  /users/chat-series/{seriesId}/participants/{consultantId}/role:
+    put:
+      tags: [chat-series-controller]
+      operationId: changeChatSeriesParticipantRole
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: consultantId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoleRequest' }
+      responses:
+        '204': { description: Role changed }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not an Owner }
+  /users/chat-series/consultants:
+    get:
+      tags: [chat-series-controller]
+      operationId: getChatSeriesConsultants
+      summary: Returns active consultants in the authenticated consultant's tenant
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: Tenant consultant directory
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConsultantResponseDTO' }
+        '204': { description: No active consultants in this tenant }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+  /users/chat-series/{seriesId}/participants/{consultantId}:
+    delete:
+      tags: [chat-series-controller]
+      operationId: removeChatSeriesParticipant
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: consultantId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Participant removed and Matrix membership revoked }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not an Owner }
+        '409': { description: Target is still an Owner }
+  /users/chat-series/{seriesId}/transfer-ownership:
+    post:
+      tags: [chat-series-controller]
+      operationId: transferChatSeriesOwnership
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferOwnershipRequest' }
+      responses:
+        '204': { description: Primary ownership transferred }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not an Owner }
+
 components:
   schemas:
+    OccurrenceOverrideRequest:
+      type: object
+      required: [originalStartUtc]
+      properties:
+        originalStartUtc: { type: string, format: date-time }
+        overrideStartUtc: { type: string, format: date-time }
+        duration: { type: integer, minimum: 1 }
+        capacity: { type: integer, minimum: 1 }
+        modality: { type: string, enum: [TEXT, AUDIO, VIDEO] }
+    RoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [OWNER, CO_MODERATOR, PARTICIPANT] }
+    TransferOwnershipRequest:
+      type: object
+      required: [consultantId]
+      properties:
+        consultantId: { type: string }
     UserDTO:
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
@@ -2043,6 +2227,10 @@ components:
       type: object
       writeOnly: true
 
+    ConversationType:
+      type: string
+      enum: [AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP]
+
     SessionDTO:
       type: object
       required:
@@ -2067,6 +2255,12 @@ components:
           type: integer
           example: 0
           description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE"
+        conversationType:
+          allOf:
+            - $ref: '#/components/schemas/ConversationType'
+          nullable: true
+          example: LIVE_CHAT
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         postcode:
           type: string
           minLength: 1
@@ -2307,9 +2501,33 @@ components:
         repetitive:
           type: boolean
           example: false
+        repeatCount:
+          type: integer
+          minimum: 1
+          maximum: 365
+          example: 6
+        currentOccurrenceIndex:
+          type: integer
+          minimum: 0
+          example: 0
+        chatInterval:
+          type: string
+          enum: [DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, YEARLY]
+        modality:
+          type: string
+          enum: [TEXT, AUDIO, VIDEO]
+        timezone:
+          type: string
+          example: Europe/Berlin
         active:
           type: boolean
           example: false
+        conversationType:
+          allOf:
+            - $ref: '#/components/schemas/ConversationType'
+          nullable: true
+          example: SELF_HELP
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         consultingType:
           type: integer
           example: 0
@@ -2337,6 +2555,10 @@ components:
           type: array
           items:
             type: string
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupChatParticipantDTO'
         startDateWithTime:
           type: string
           format: date-time
@@ -2353,6 +2575,35 @@ components:
           type: string
           example: "Hint"
           maxLength: 300
+        sourceLanguage:
+          type: string
+          example: de
+          maxLength: 10
+        hintMessageTranslations:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 120
+        groupChatRulesTranslations:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 10
+            items:
+              type: string
+              maxLength: 120
+
+    GroupChatParticipantDTO:
+      type: object
+      required: [consultantId, role, displayName]
+      properties:
+        consultantId:
+          type: string
+        role:
+          type: string
+          enum: [OWNER, CO_MODERATOR, PARTICIPANT]
+        displayName:
+          type: string
 
     SessionUserDTO:
       type: object
@@ -2783,9 +3034,11 @@ components:
       properties:
         oldPassword:
           type: string
+          format: password
           example: oldpass@w0rd
         newPassword:
           type: string
+          format: password
           example: newpass@w0rd
 
     ChatDTO:
@@ -2818,10 +3071,43 @@ components:
         repetitive:
           type: boolean
           example: false
+        repeatCount:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 1
+        chatInterval:
+          type: string
+          enum: [DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, YEARLY]
+        modality:
+          type: string
+          enum: [TEXT, AUDIO, VIDEO]
+          default: TEXT
+        timezone:
+          type: string
+          example: Europe/Berlin
+          default: UTC
         hintMessage:
           type: string
           example: "Hint"
           maxLength: 300
+        sourceLanguage:
+          type: string
+          example: de
+          maxLength: 10
+        hintMessageTranslations:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 120
+        groupChatRulesTranslations:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 10
+            items:
+              type: string
+              maxLength: 120
 
     CreateChatResponseDTO:
       type: object
@@ -3010,6 +3296,7 @@ components:
       properties:
         password:
           type: string
+          format: password
           example: p@ssw0rd
 
     RocketChatGroupIdDTO:
@@ -3037,10 +3324,12 @@ components:
       properties:
         secret:
           type: string
+          format: password
           minLength: 32
           maxLength: 32
         otp:
           type: string
+          format: password
           minLength: 6
           maxLength: 6
 
@@ -3060,6 +3349,7 @@ components:
           default: false
         secret:
           type: string
+          format: password
         qrCode:
           type: string
         type:

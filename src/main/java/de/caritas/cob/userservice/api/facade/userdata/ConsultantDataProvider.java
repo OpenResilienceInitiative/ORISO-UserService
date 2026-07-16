@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailToggle;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailType;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -53,8 +52,13 @@ public class ConsultantDataProvider {
   @Transactional(readOnly = true)
   public UserDataResponseDTO retrieveData(Consultant consultant) {
     if (isEmpty(consultant.getConsultantAgencies())) {
-      throw new InternalServerErrorException(
-          String.format("No agency available for consultant %s", consultant.getId()));
+      // A consultant without an assigned agency must not break login: /users/data is the first
+      // call the app makes after authentication, so throwing here dropped the consultant on an
+      // error page and made the account look "unable to log in". Return the profile with an empty
+      // agency list instead — consistent with agencyDTOsOf() already degrading on agency errors.
+      log.warn(
+          "Consultant {} has no assigned agency; returning user data with an empty agency list.",
+          consultant.getId());
     }
 
     return userDataResponseDtoOf(consultant);

@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserMobileToken;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -65,6 +66,26 @@ class UserServiceTest {
 
     assertNotNull(result);
     assertEquals(USER, result);
+  }
+
+  @Test
+  void createUser_Should_PersistCurrentTenant() {
+    TenantContext.setCurrentTenant(83L);
+    when(userRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              User persistedUser = invocation.getArgument(0);
+              assertEquals(83L, persistedUser.getTenantId());
+              return persistedUser;
+            });
+
+    try {
+      var result = userService.createUser(USER_ID, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
+
+      assertEquals(83L, result.getTenantId());
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test

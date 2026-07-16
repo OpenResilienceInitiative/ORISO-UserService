@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -48,6 +50,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -95,6 +98,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
   void
       createNewConsultantAgency_Should_addConsultantToEnquiriesRocketChatGroups_When_ParamsAreValidAndMultitenancyEnabled() {
 
+    ReflectionTestUtils.setField(consultantAgencyRelationCreatorService, "rocketChatEnabled", true);
+
     Consultant consultant = createConsultantWithoutAgencyAndSession();
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
@@ -135,6 +140,41 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     assertEquals(1, agenciesForConsultant.get(0).getTenantId());
   }
 
+  @Test
+  void
+      createNewConsultantAgency_ShouldFinalizePersistedRelation_WhenMatrixOnlyAndMultitenancyEnabled() {
+    ReflectionTestUtils.setField(
+        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
+    TenantContext.setCurrentTenant(0L);
+    Consultant consultant = createConsultantWithoutAgencyAndSession();
+    consultant.setTenantId(83L);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    consultantRepository.save(consultant);
+
+    CreateConsultantAgencyDTO createConsultantAgencyDTO =
+        new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
+    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
+    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0);
+    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        consultant.getId(), createConsultantAgencyDTO);
+
+    ConsultantAgency relation =
+        consultantAgencyRepository
+            .findByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 15L)
+            .getFirst();
+    assertEquals(ConsultantAgencyStatus.CREATED, relation.getStatus());
+    assertEquals(
+        ConsultantStatus.CREATED,
+        consultantRepository
+            .findByIdAndDeleteDateIsNull(consultant.getId())
+            .orElseThrow()
+            .getStatus());
+  }
+
   private Consultant createConsultantWithoutAgencyAndSession() {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     consultant.setAppointments(null);
@@ -142,6 +182,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     consultant.setConsultantAgencies(null);
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
+    consultant.setConsultantTopics(null);
     consultant.setRocketChatId("RocketChatId");
     consultant.setDeleteDate(null);
     Set<Language> language = new HashSet<>();
@@ -176,6 +217,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     session.setSessionTopics(Lists.newArrayList());
     session.setLanguageCode(LanguageCode.de);
     session.setIsConsultantDirectlySet(false);
+    session.setTenantId(1L);
 
     return this.sessionRepository.save(session);
   }

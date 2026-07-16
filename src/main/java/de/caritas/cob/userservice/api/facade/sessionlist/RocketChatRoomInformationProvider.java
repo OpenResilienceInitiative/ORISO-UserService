@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ public class RocketChatRoomInformationProvider {
   private final RocketChatService rocketChatService;
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantRepository consultantRepository;
+  private final UserRepository userRepository;
 
   /** ADR-004: with Rocket.Chat disabled room information is always Matrix-derived. */
   @Value("${rocket-chat.enabled:false}")
@@ -37,10 +39,12 @@ public class RocketChatRoomInformationProvider {
   public RocketChatRoomInformationProvider(
       RocketChatService rocketChatService,
       MatrixSynapseService matrixSynapseService,
-      ConsultantRepository consultantRepository) {
+      ConsultantRepository consultantRepository,
+      UserRepository userRepository) {
     this.rocketChatService = requireNonNull(rocketChatService);
     this.matrixSynapseService = requireNonNull(matrixSynapseService);
     this.consultantRepository = requireNonNull(consultantRepository);
+    this.userRepository = requireNonNull(userRepository);
   }
 
   /**
@@ -178,10 +182,19 @@ public class RocketChatRoomInformationProvider {
     }
 
     try {
+      if (rcUserId.startsWith("@")) {
+        return matrixSynapseService.getJoinedRoomsForMatrixUser(rcUserId);
+      }
+
       // Try to find consultant by ID (rcUserId is actually Keycloak ID)
       var consultantOpt = consultantRepository.findById(rcUserId);
       if (consultantOpt.isPresent()) {
         return getMatrixRoomsForConsultant(consultantOpt.get());
+      }
+
+      var userOpt = userRepository.findByRcUserIdAndDeleteDateIsNull(rcUserId);
+      if (userOpt.isPresent() && !isBlank(userOpt.get().getMatrixUserId())) {
+        return matrixSynapseService.getJoinedRoomsForMatrixUser(userOpt.get().getMatrixUserId());
       }
 
       log.warn("Could not find Matrix credentials for user {}", rcUserId);

@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.support.ScopeNotActiveException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 
@@ -78,5 +80,45 @@ public class SecurityHeaderSupplierTest {
 
     assertThat(result.get("Authorization").get(0), is("Bearer " + "token"));
     assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+  }
+
+  @Test
+  public void getOptionalKeycloakAndCsrfHttpHeaders_Should_AddAuthorization_WhenTokenIsAvailable() {
+    when(authenticatedUser.getAccessToken()).thenReturn(BEARER_TOKEN);
+
+    HttpHeaders result = securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders();
+
+    assertThat(result.get("Authorization").get(0), is("Bearer " + BEARER_TOKEN));
+    assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+  }
+
+  @Test
+  public void
+      getOptionalKeycloakAndCsrfHttpHeaders_Should_ReturnCsrfOnly_WhenRequestScopeIsNotActive() {
+    when(authenticatedUser.getAccessToken()).thenThrow(scopeNotActiveException());
+
+    HttpHeaders result = securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders();
+
+    assertNull(result.get("Authorization"));
+    assertThat(result.get("Cookie").get(0), startsWith(CSRF_TOKEN_COOKIE_VALUE + "="));
+    assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+  }
+
+  @Test
+  public void getKeycloakAndCsrfHttpHeadersWithFallback_Should_UseFallback_WhenScopeIsNotActive() {
+    when(authenticatedUser.getAccessToken()).thenThrow(scopeNotActiveException());
+
+    HttpHeaders result =
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeadersWithFallback("technical-token");
+
+    assertThat(result.get("Authorization").get(0), is("Bearer technical-token"));
+    assertNotNull(result.get(CSRF_TOKEN_HEADER_VALUE));
+  }
+
+  private ScopeNotActiveException scopeNotActiveException() {
+    return new ScopeNotActiveException(
+        "scopedTarget.authenticatedUser",
+        "request",
+        new IllegalStateException("No thread-bound request found"));
   }
 }

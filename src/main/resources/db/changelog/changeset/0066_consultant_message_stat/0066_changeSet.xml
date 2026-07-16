@@ -2,12 +2,8 @@
 <databaseChangeLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
-  <changeSet author="oriso" id="consultantPublicSlug">
-    <rollback>
-      <sqlFile path="db/changelog/changeset/0055_consultant_public_slug/consultant-public-slug-rollback.sql"
-        stripComments="true"/>
-    </rollback>
-    <sqlFile path="db/changelog/changeset/0055_consultant_public_slug/consultant-public-slug.sql"
+  <changeSet author="caritas" id="addConsultantMessageStatTable">
+    <sqlFile path="db/changelog/changeset/0066_consultant_message_stat/addConsultantMessageStatTable.sql"
       stripComments="true"/>
   </changeSet>
 </databaseChangeLog>

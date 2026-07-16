@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -10,15 +11,15 @@ final class MatrixUrlBuilder {
 
   private MatrixUrlBuilder() {}
 
-  static String buildUrl(MatrixConfig matrixConfig, String endpoint) {
+  static URI buildUrl(MatrixConfig matrixConfig, String endpoint) {
     return buildUrl(matrixConfig, endpoint, Map.of(), Map.of());
   }
 
-  static String buildUrl(MatrixConfig matrixConfig, String endpoint, Map<String, ?> uriVariables) {
+  static URI buildUrl(MatrixConfig matrixConfig, String endpoint, Map<String, ?> uriVariables) {
     return buildUrl(matrixConfig, endpoint, uriVariables, Map.of());
   }
 
-  static String buildUrl(
+  static URI buildUrl(
       MatrixConfig matrixConfig,
       String endpoint,
       Map<String, ?> uriVariables,
@@ -44,7 +45,8 @@ final class MatrixUrlBuilder {
           }
         });
     // Components are already encoded (path via .encode(), query values via encodeQueryParam), so
-    // build with encoded=true and do not expand again.
-    return builder.build(true).toUriString();
+    // build with encoded=true and do not expand again. Return a URI (not a String) so RestTemplate
+    // does not apply a second round of percent-encoding to path segments.
+    return builder.build(true).toUri();
   }
 }

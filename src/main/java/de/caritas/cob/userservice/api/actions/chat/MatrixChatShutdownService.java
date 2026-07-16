@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.actions.chat;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,9 @@ public class MatrixChatShutdownService {
    */
   public void shutdownRoom(Chat chat) {
     var matrixRoomId = chat.getMatrixRoomId();
+    if (isBlank(matrixRoomId) && MatrixIds.isRoomId(chat.getGroupId())) {
+      matrixRoomId = chat.getGroupId();
+    }
     if (isBlank(matrixRoomId)) {
       log.debug("Chat {} has no Matrix room id; skipping Matrix room shutdown", chat.getId());
       return;

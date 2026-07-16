@@ -47,6 +47,9 @@ public class UnauthorizedMembersProvider {
       Consultant consultant,
       List<GroupMemberDTO> memberList,
       Consultant consultantToKeep) {
+    if (memberList.isEmpty()) {
+      return List.of();
+    }
     var authorizedMembers = obtainAuthorizedMembers(rcGroupId, session, consultant);
     if (nonNull(consultantToKeep)) {
       authorizedMembers.add(consultantToKeep.getRocketChatId());

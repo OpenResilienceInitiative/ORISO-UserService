@@ -3,10 +3,15 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -22,6 +27,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +49,7 @@ class AgencyInviteLinkServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private ConsultingTypeService consultingTypeService;
   @Mock private AgencyService agencyService;
+  @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
   @InjectMocks private AgencyInviteLinkService service;
 
@@ -250,6 +257,65 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getConsultingTypeId()).isEqualTo(2);
   }
 
+  @Test
+  void redeem_Should_CreateAnonymousTopicSession_When_LinkIsLiveChat() {
+    // A Live Chat link binds only to a topic. Redeem must create a real anonymous session for
+    // the link's topic — no agency/tenant binding at entry — and return it in the context.
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("live")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .topicId(11L)
+            .consultingTypeId(1)
+            .chatType(InviteLinkChatType.LIVE_CHAT.name())
+            .anonymity(InviteLinkAnonymity.FULL.name())
+            .build();
+    when(repository.findByTokenAndStatus("live", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    var createdSession =
+        new CreateAnonymousEnquiryResponseDTO().sessionId(9001L).userName("Anonymous-1");
+    when(createAnonymousEnquiryFacade.createAnonymousEnquiry(any(), eq(true)))
+        .thenReturn(createdSession);
+
+    RedeemContext ctx = service.redeem("live");
+
+    var dtoCaptor = org.mockito.ArgumentCaptor.forClass(CreateAnonymousEnquiryDTO.class);
+    verify(createAnonymousEnquiryFacade).createAnonymousEnquiry(dtoCaptor.capture(), eq(true));
+    assertThat(dtoCaptor.getValue().getMainTopicId()).isEqualTo(11L);
+    assertThat(dtoCaptor.getValue().getConsultingType()).isEqualTo(1);
+    assertThat(ctx.getSession()).isSameAs(createdSession);
+    assertThat(ctx.getSession().getSessionId()).isEqualTo(9001L);
+    assertThat(ctx.getTopicId()).isEqualTo(11L);
+    // No agency resolution at entry for a live-chat link.
+    assertThat(ctx.getAgencyId()).isNull();
+    verify(agencyService, org.mockito.Mockito.never()).getAgenciesByConsultingType(anyInt());
+  }
+
+  @Test
+  void redeem_Should_StayLegacy_When_LinkIsNotLiveChat() {
+    // A non-live-chat (registered) link keeps the legacy agency-resolution path with no session.
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("reg")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(1L)
+            .topicId(3L)
+            .agencyId(5L)
+            .consultingTypeId(2)
+            .chatType("REGISTERED")
+            .build();
+    when(repository.findByTokenAndStatus("reg", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+
+    RedeemContext ctx = service.redeem("reg");
+
+    assertThat(ctx.getSession()).isNull();
+    assertThat(ctx.getAgencyId()).isEqualTo(5L);
+    verify(createAnonymousEnquiryFacade, org.mockito.Mockito.never())
+        .createAnonymousEnquiry(any(), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
   // --- list ---
 
   @Test
@@ -347,6 +413,7 @@ class AgencyInviteLinkServiceTest {
             .build();
     AgencyDTO fallbackAgency = new AgencyDTO();
     fallbackAgency.setId(42L);
+    fallbackAgency.setTenantId(1L);
     when(repository.findByTokenAndStatus("tok2", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
     when(agencyService.getAgenciesByConsultingType(5))
@@ -355,6 +422,49 @@ class AgencyInviteLinkServiceTest {
     var ctx = service.redeem("tok2");
 
     assertThat(ctx.getAgencyId()).isEqualTo(42L);
+  }
+
+  @Test
+  void redeem_Should_SelectAgencyFromInviteTenantAndTopic() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("tenant-topic-link")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .consultingTypeId(1)
+            .topicId(11L)
+            .build();
+    AgencyDTO crossTenantAgency = new AgencyDTO().id(237L).tenantId(1L).topicIds(List.of(11L));
+    AgencyDTO wrongTopicAgency = new AgencyDTO().id(279L).tenantId(83L).topicIds(List.of(12L));
+    AgencyDTO matchingAgency = new AgencyDTO().id(280L).tenantId(83L).topicIds(List.of(11L));
+    when(repository.findByTokenAndStatus("tenant-topic-link", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(agencyService.getAgenciesByConsultingType(1))
+        .thenReturn(List.of(crossTenantAgency, wrongTopicAgency, matchingAgency));
+
+    var ctx = service.redeem("tenant-topic-link");
+
+    assertThat(ctx.getAgencyId()).isEqualTo(280L);
+  }
+
+  @Test
+  void redeem_Should_ThrowBadRequest_When_NoAgencyMatchesInviteTenantAndTopic() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("no-match-link")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .consultingTypeId(1)
+            .topicId(11L)
+            .build();
+    AgencyDTO crossTenantAgency = new AgencyDTO().id(237L).tenantId(1L).topicIds(List.of(11L));
+    when(repository.findByTokenAndStatus("no-match-link", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(agencyService.getAgenciesByConsultingType(1)).thenReturn(List.of(crossTenantAgency));
+
+    assertThatThrownBy(() -> service.redeem("no-match-link"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("No agency in the invite link tenant");
   }
 
   @Test

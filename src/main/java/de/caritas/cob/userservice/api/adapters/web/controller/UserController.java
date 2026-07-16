@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
@@ -25,12 +26,15 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.adapters.web.dto.OccurrenceOverrideRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.RoleRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TransferOwnershipRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -48,7 +52,10 @@ import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -61,12 +68,17 @@ import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import lombok.NonNull;
@@ -130,6 +142,10 @@ public class UserController implements UsersApi {
   private final @NonNull SessionDeleteService sessionDeleteService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NotNull ChatOccurrenceQueryService chatOccurrenceQueryService;
+  private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
+  private final @NotNull GroupChatRoleService groupChatRoleService;
+  private final @NotNull AuthenticatedUser authenticatedUser;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -518,6 +534,87 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<CreateChatResponseDTO> createChatV2(@RequestBody ChatDTO chatDTO) {
     return userChatControllerDelegate.createChatV2(chatDTO);
+  }
+
+  @Override
+  public ResponseEntity<List<GetChatSeriesOccurrences200ResponseInner>> getChatSeriesOccurrences(
+      Long seriesId, OffsetDateTime from, OffsetDateTime to, Integer limit) {
+    var occurrences =
+        chatOccurrenceQueryService.getOccurrences(
+            seriesId, toUtcLocalDateTime(from), toUtcLocalDateTime(to), limit);
+    return ResponseEntity.ok(
+        occurrences.stream()
+            .map(
+                occurrence ->
+                    new GetChatSeriesOccurrences200ResponseInner()
+                        .seriesId(occurrence.seriesId())
+                        .occurrenceIndex(occurrence.occurrenceIndex())
+                        .originalStart(occurrence.originalStart().atOffset(ZoneOffset.UTC))
+                        .start(occurrence.start().atOffset(ZoneOffset.UTC))
+                        .duration(occurrence.duration())
+                        .capacity(occurrence.capacity())
+                        .modality(
+                            GetChatSeriesOccurrences200ResponseInner.ModalityEnum.fromValue(
+                                occurrence.modality().name())))
+            .toList());
+  }
+
+  @Override
+  public ResponseEntity<Void> skipChatSeriesOccurrence(
+      Long seriesId, OffsetDateTime originalStartUtc) {
+    chatOccurrenceCommandService.skip(
+        seriesId, authenticatedUser.getUserId(), toUtcLocalDateTime(originalStartUtc));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> overrideChatSeriesOccurrence(
+      Long seriesId, OccurrenceOverrideRequest request) {
+    var overrideStart = request.getOverrideStartUtc();
+    var modality = request.getModality();
+    chatOccurrenceCommandService.override(
+        seriesId,
+        authenticatedUser.getUserId(),
+        toUtcLocalDateTime(request.getOriginalStartUtc()),
+        overrideStart == null ? null : toUtcLocalDateTime(overrideStart),
+        request.getDuration(),
+        request.getCapacity(),
+        modality == null ? null : ChatModality.valueOf(modality.getValue()));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> changeChatSeriesParticipantRole(
+      Long seriesId, String consultantId, RoleRequest request) {
+    groupChatRoleService.changeRole(
+        seriesId,
+        authenticatedUser.getUserId(),
+        consultantId,
+        ParticipantRole.valueOf(request.getRole().getValue()));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> removeChatSeriesParticipant(Long seriesId, String consultantId) {
+    groupChatRoleService.removeParticipant(seriesId, authenticatedUser.getUserId(), consultantId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<List<ConsultantResponseDTO>> getChatSeriesConsultants() {
+    return userConsultantControllerDelegate.getTenantConsultants();
+  }
+
+  @Override
+  public ResponseEntity<Void> transferChatSeriesOwnership(
+      Long seriesId, TransferOwnershipRequest request) {
+    groupChatRoleService.transferPrimaryOwnership(
+        seriesId, authenticatedUser.getUserId(), request.getConsultantId());
+    return ResponseEntity.noContent().build();
+  }
+
+  private static java.time.LocalDateTime toUtcLocalDateTime(OffsetDateTime value) {
+    return value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime();
   }
 
   /**

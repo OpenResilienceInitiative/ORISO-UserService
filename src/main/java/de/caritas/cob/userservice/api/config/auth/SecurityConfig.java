@@ -31,9 +31,9 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 /** Provides the Keycloak/Spring Security configuration. */
@@ -102,9 +102,13 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/askers/new",
                     "/conversations/askers/anonymous/new",
+                    "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
+                    "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/error-reports",
+                    "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
                     "/users/invitelinks/*/redeem")
@@ -123,6 +127,9 @@ public class SecurityConfig {
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers("/users/notifications")
                 .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
@@ -150,7 +157,7 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/join",
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
-                    "/users/chat/{groupId:[\\dA-Za-z-,]+}/assign",
+                    "/users/chat/{groupId}/assign",
                     "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
@@ -175,6 +182,11 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/statistics/consultant",
+                    "/service/users/statistics/consultant")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
@@ -209,13 +221,17 @@ public class SecurityConfig {
                     "/users/sessions/consultants",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
+                    "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/conversations/consultants/**",
+                    "/service/conversations/consultants/**",
                     "/users/case-handover/reasons",
                     "/service/users/case-handover/reasons",
                     "/users/case-handover/candidates",
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/chat-series/**",
+                    "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
@@ -291,6 +307,12 @@ public class SecurityConfig {
                     "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
                     "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/statistics/dashboard",
+                    "/service/useradmin/statistics/dashboard")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin", "/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
@@ -351,7 +373,7 @@ public class SecurityConfig {
 
   @Bean
   public WebSecurityCustomizer webSecurityCustomizer() {
-    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/askers/new");
+    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/availability/**");
   }
 
   @Bean
@@ -375,7 +397,7 @@ public class SecurityConfig {
    */
   private void enableTenantFilterIfMultitenancyEnabled(HttpSecurity http) {
     if (multitenancy && tenantFilter != null) {
-      http.addFilterAfter(tenantFilter, BearerTokenAuthenticationFilter.class);
+      http.addFilterAfter(tenantFilter, SecurityContextHolderAwareRequestFilter.class);
     }
   }
 

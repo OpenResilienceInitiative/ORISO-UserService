@@ -151,6 +151,11 @@ public class ConsultantService {
     return consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(agencyId);
   }
 
+  public List<Consultant> findActiveConsultantsForTenant(Long tenantId) {
+    return consultantRepository.findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(
+        tenantId);
+  }
+
   /**
    * Adds a mobile client token of the current authenticated consultant in database.
    *
