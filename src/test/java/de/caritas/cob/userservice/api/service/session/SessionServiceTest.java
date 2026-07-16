@@ -252,6 +252,17 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionForUpdate_Should_ReturnLockedSession() {
+    when(sessionRepository.findByIdForUpdate(ENQUIRY_ID)).thenReturn(Optional.of(SESSION));
+
+    Optional<Session> result = sessionService.getSessionForUpdate(ENQUIRY_ID);
+
+    assertTrue(result.isPresent());
+    assertEquals(SESSION, result.get());
+    verify(sessionRepository).findByIdForUpdate(ENQUIRY_ID);
+  }
+
+  @Test
   void updateConsultantAndStatusForSession_Should_SaveSession() {
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);

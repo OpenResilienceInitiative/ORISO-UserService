@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import jakarta.transaction.Transactional;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import lombok.NonNull;
@@ -157,8 +158,9 @@ class UserRegistrationControllerDelegate {
     return new ResponseEntity<>(response, response.getStatus());
   }
 
+  @Transactional
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
-    var session = sessionService.getSession(sessionId);
+    var session = sessionService.getSessionForUpdate(sessionId);
 
     // MATRIX MIGRATION: Removed groupId check - Matrix sessions don't have RocketChat groupId
     if (session.isEmpty()) {

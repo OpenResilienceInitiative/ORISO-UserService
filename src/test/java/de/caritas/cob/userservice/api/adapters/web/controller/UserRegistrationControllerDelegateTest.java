@@ -204,7 +204,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void acceptEnquiryShouldReturnInternalServerErrorWhenSessionIsMissing() {
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.empty());
 
     var response = delegate.acceptEnquiry(SESSION_ID);
 
@@ -216,7 +216,7 @@ class UserRegistrationControllerDelegateTest {
   void acceptEnquiryShouldAssignRegisteredEnquiry() {
     var session = new Session();
     var consultant = new Consultant();
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
 
     var response = delegate.acceptEnquiry(SESSION_ID);
