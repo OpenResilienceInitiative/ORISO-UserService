@@ -152,6 +152,7 @@ public class ConsultantUpdateService {
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
     }
+    applyStandingSupervisor(updateConsultantDTO, consultant);
     consultant.setUpdateDate(nowInUtc());
     if (updateConsultantDTO.getTermsAndConditionsConfirmation() != null
         && updateConsultantDTO.getTermsAndConditionsConfirmation()) {
@@ -163,6 +164,47 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): set or clear this counsellor's standing
+   * supervisor — the colleague auto-attached read-only to every case the counsellor accepts.
+   *
+   * <p>Omitted/null leaves the assignment untouched (mirroring the sibling {@code isSupervisor}
+   * convention); an empty string clears it. Clearing only stops FUTURE auto-attachment —
+   * supervisors already attached to in-flight cases stay until removed explicitly, since
+   * retroactively stripping oversight from live cases is not the admin's intent here.
+   *
+   * @throws BadRequestException if the target is not flagged {@code isSupervisor}, does not exist,
+   *     or is the counsellor themselves
+   */
+  private void applyStandingSupervisor(
+      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+    String assignedSupervisorId = updateConsultantDTO.getAssignedSupervisorId();
+    if (assignedSupervisorId == null) {
+      return;
+    }
+    if (assignedSupervisorId.isBlank()) {
+      consultant.setAssignedSupervisorId(null);
+      return;
+    }
+    if (assignedSupervisorId.equals(consultant.getId())) {
+      throw new BadRequestException("A consultant cannot be their own standing supervisor");
+    }
+    Consultant standingSupervisor =
+        this.consultantService
+            .getConsultant(assignedSupervisorId)
+            .orElseThrow(
+                () ->
+                    new BadRequestException(
+                        "Standing supervisor not found: " + assignedSupervisorId));
+    if (!standingSupervisor.isSupervisor()) {
+      throw new BadRequestException(
+          "Consultant "
+              + assignedSupervisorId
+              + " cannot be a standing supervisor (isSupervisor is false)");
+    }
+    consultant.setAssignedSupervisorId(assignedSupervisorId);
   }
 
   private Set<Language> languagesOf(

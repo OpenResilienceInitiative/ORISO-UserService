@@ -72,6 +72,96 @@ public class ConsultantUpdateServiceTest {
         });
   }
 
+  // --- Supervision (auto-assigned): standing supervisor assignment (grill 2026-07-13) ---
+
+  @Test
+  public void updateConsultant_Should_setStandingSupervisor_When_targetIsASupervisor() {
+    // The agency admin points a counsellor at their standing supervisor; from then on every case
+    // that counsellor accepts auto-attaches this colleague.
+    Consultant consultant = consultantWithId("counsellor-1");
+    Consultant standingSupervisor = consultantWithId("supervisor-1");
+    standingSupervisor.setSupervisor(true);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.getConsultant("supervisor-1"))
+        .thenReturn(Optional.of(standingSupervisor));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("supervisor-1");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant);
+
+    ArgumentCaptor<Consultant> saved = ArgumentCaptor.forClass(Consultant.class);
+    verify(this.consultantService).saveConsultant(saved.capture());
+    assertEquals("supervisor-1", saved.getValue().getAssignedSupervisorId());
+  }
+
+  @Test
+  public void updateConsultant_Should_throwBadRequest_When_standingSupervisorIsNotASupervisor() {
+    // is_supervisor is the capability gate: you cannot make an arbitrary colleague someone's
+    // standing supervisor.
+    Consultant consultant = consultantWithId("counsellor-1");
+    Consultant notASupervisor = consultantWithId("colleague-1");
+    notASupervisor.setSupervisor(false);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.getConsultant("colleague-1"))
+        .thenReturn(Optional.of(notASupervisor));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("colleague-1");
+
+    assertThrows(
+        BadRequestException.class,
+        () -> this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant));
+    verify(this.consultantService, Mockito.never()).saveConsultant(any());
+  }
+
+  @Test
+  public void updateConsultant_Should_throwBadRequest_When_assigningSelfAsStandingSupervisor() {
+    // Supervision is oversight BY A COLLEAGUE; supervising yourself is meaningless and would let a
+    // counsellor silently self-approve their own oversight.
+    Consultant consultant = consultantWithId("counsellor-1");
+    consultant.setSupervisor(true);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("counsellor-1");
+
+    assertThrows(
+        BadRequestException.class,
+        () -> this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant));
+    verify(this.consultantService, Mockito.never()).saveConsultant(any());
+  }
+
+  @Test
+  public void updateConsultant_Should_clearStandingSupervisor_When_assignedSupervisorIdIsBlank() {
+    // Clearing the standing assignment stops future auto-attachment; it does not detach the
+    // supervisors already on in-flight cases.
+    Consultant consultant = consultantWithId("counsellor-1");
+    consultant.setAssignedSupervisorId("supervisor-1");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant);
+
+    ArgumentCaptor<Consultant> saved = ArgumentCaptor.forClass(Consultant.class);
+    verify(this.consultantService).saveConsultant(saved.capture());
+    assertEquals(null, saved.getValue().getAssignedSupervisorId());
+  }
+
+  private Consultant consultantWithId(String id) {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setId(id);
+    consultant.setTenantId(1L);
+    consultant.setAssignedSupervisorId(null);
+    return consultant;
+  }
+
+  private UpdateAdminConsultantDTO updateDtoFor(Consultant consultant) {
+    UpdateAdminConsultantDTO dto = new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
+    dto.setIsGroupchatConsultant(null);
+    dto.setAssignedSupervisorId(null);
+    keepDisplayNameUnchanged(consultant, dto);
+    return dto;
+  }
+
   @Test
   public void updateConsultant_Should_callServicesCorrectly_When_givenConsultantDataIsValid() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);

@@ -71,6 +71,14 @@ public class SessionSupervisorFacade {
   private static final int SUPERVISOR_POWER_LEVEL = 10; // Read-only observer level
 
   /**
+   * The recorded justification for an auto-attached standing supervisor. addSupervisor requires a
+   * non-blank justification whenever a reason is supplied; for the standing assignment the reason
+   * IS the justification — the agency admin's configuration, not a per-case decision.
+   */
+  private static final String STANDING_SUPERVISION_JUSTIFICATION =
+      "Standing supervision assignment (agency-admin configured)";
+
+  /**
    * Add a supervisor to a session. The supervisor must be from the same agency as the session.
    *
    * <p>{@code reasonCode} + {@code notes} (the justification) are recorded together in the existing
@@ -359,6 +367,51 @@ public class SessionSupervisorFacade {
    */
   public List<SessionSupervisor> getSupervisors(Long sessionId) {
     return sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(sessionId);
+  }
+
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): attach the accepting counsellor's STANDING
+   * supervisor to a case they just took, with no manual per-session step. Does nothing when the
+   * counsellor has no standing supervisor ({@link Consultant#getAssignedSupervisorId()}
+   * null/blank).
+   *
+   * <p><strong>Best-effort by contract — this never throws.</strong> Standing supervision is
+   * read-only oversight layered on a case; it is never a precondition for handling that case. The
+   * accept path rolls the whole assignment back on any exception, so a supervision problem (the
+   * standing supervisor has left, lacks Matrix credentials, is in another agency, or the client has
+   * opted out) must degrade to "this case is unsupervised" — never to "the counsellor cannot accept
+   * the case". Failures are logged for the agency admin to notice and repoint the assignment.
+   *
+   * @param sessionId the just-accepted session
+   * @param acceptingConsultant the counsellor who accepted it (carries the standing assignment)
+   */
+  public void attachStandingSupervisorIfAssigned(Long sessionId, Consultant acceptingConsultant) {
+    String standingSupervisorId = acceptingConsultant.getAssignedSupervisorId();
+    if (standingSupervisorId == null || standingSupervisorId.isBlank()) {
+      return;
+    }
+    try {
+      addSupervisor(
+          sessionId,
+          standingSupervisorId,
+          acceptingConsultant,
+          SupervisionReason.CLINICAL_OVERSIGHT.name(),
+          STANDING_SUPERVISION_JUSTIFICATION);
+      log.info(
+          "Attached standing supervisor {} to session {} for counsellor {}",
+          standingSupervisorId,
+          sessionId,
+          acceptingConsultant.getId());
+    } catch (Exception e) {
+      // Deliberately swallowed — see the contract above. The case stays unsupervised.
+      log.warn(
+          "Could not attach standing supervisor {} to session {} for counsellor {}: {}. "
+              + "The case proceeds unsupervised.",
+          standingSupervisorId,
+          sessionId,
+          acceptingConsultant.getId(),
+          e.getMessage());
+    }
   }
 
   /**

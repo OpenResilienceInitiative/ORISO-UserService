@@ -404,6 +404,53 @@ class SessionSupervisorFacadeTest {
         .build();
   }
 
+  // --- attachStandingSupervisorIfAssigned (Supervision auto-assigned, grill 2026-07-13) ---
+
+  @Test
+  void attachStandingSupervisorIfAssigned_Should_attachStandingSupervisor_asClinicalOversight()
+      throws Exception {
+    // "Supervision (auto-assigned)": the accepting counsellor has a standing supervisor set by
+    // their agency admin, so accepting a case attaches that colleague read-only with no manual
+    // step.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    ArgumentCaptor<SessionSupervisor> saved = ArgumentCaptor.forClass(SessionSupervisor.class);
+    verify(sessionSupervisorRepository).save(saved.capture());
+    assertThat(saved.getValue().getIsActive()).isTrue();
+    assertThat(saved.getValue().getMatrixRoomId()).isEqualTo(SIDE_ROOM);
+    assertThat(saved.getValue().getSupervisorConsultant().getId()).isEqualTo(SUPERVISOR_ID);
+    assertThat(saved.getValue().getNotes()).contains("CLINICAL_OVERSIGHT");
+    verify(matrixSynapseService).inviteUserToRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
+  }
+
+  @Test
+  void attachStandingSupervisorIfAssigned_Should_doNothing_when_noStandingSupervisorAssigned()
+      throws Exception {
+    addedBy.setAssignedSupervisorId(null);
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    // The manual per-session add path is unaffected and untouched; nothing is attached.
+    verify(sessionSupervisorRepository, never()).save(any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void attachStandingSupervisorIfAssigned_Should_neverThrow_when_attachFails() throws Exception {
+    // CONTRACT: the accept path rolls the whole assignment back on any exception. A standing
+    // supervisor that cannot be attached (here: the client has opted out) must leave the case
+    // unsupervised, never block the counsellor from accepting it.
+    addedBy.setAssignedSupervisorId(SUPERVISOR_ID);
+    session.setSupervisionOptedOut(true);
+
+    facade.attachStandingSupervisorIfAssigned(SESSION_ID, addedBy);
+
+    verify(sessionSupervisorRepository, never()).save(any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
   // --- setSupervisionOptedOut (client opt-out toggle, grill 2026-07-13) ---
 
   @Test
