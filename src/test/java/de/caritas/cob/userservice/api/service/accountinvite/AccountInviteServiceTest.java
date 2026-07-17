@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +34,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class AccountInviteServiceTest {
@@ -40,6 +44,7 @@ class AccountInviteServiceTest {
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private TenantService tenantService;
 
   @InjectMocks private AccountInviteService service;
 
@@ -747,5 +752,135 @@ class AccountInviteServiceTest {
   void hash_Should_differ_forDifferentInput() {
     assertThat(AccountInviteService.hash("token-a"))
         .isNotEqualTo(AccountInviteService.hash("token-b"));
+  }
+
+  @Test
+  void createInvite_Should_ThrowBadRequest_When_TenantAdminTenantIdMatchesExistingTenant() {
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenReturn(new RestrictedTenantDTO().name("Existing Tenant"));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "owner@example.org",
+            "New",
+            "Owner",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_ThrowBadRequest_When_TenantAdminTenantIdUsedByActiveInvite() {
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
+            7L,
+            AccountInviteTargetRole.TENANT_ADMIN,
+            List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)))
+        .thenReturn(true);
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "owner@example.org",
+            "New",
+            "Owner",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_TenantIdOnlyUsedByTerminalInvite() {
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
+            7L,
+            AccountInviteTargetRole.TENANT_ADMIN,
+            List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)))
+        .thenReturn(false);
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "owner@example.org",
+            "New",
+            "Owner",
+            null,
+            null,
+            30L);
+
+    AccountInvite invite = service.createInvite(command);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(invite.getTenantId()).isEqualTo(7L);
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_NonTenantAdminRoleReusesCollidingTenantId() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "counsellor@example.org",
+            "New",
+            "Counsellor",
+            null,
+            null,
+            30L);
+
+    AccountInvite invite = service.createInvite(command);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verify(tenantService, never()).getRestrictedTenantData(any(Long.class));
+    verify(accountInviteRepository, never())
+        .existsByTenantIdAndTargetRoleAndStatusIn(any(), any(), any());
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_TenantAdminTenantIdIsFree() {
+    when(tenantService.getRestrictedTenantData(9L))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
+            9L,
+            AccountInviteTargetRole.TENANT_ADMIN,
+            List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)))
+        .thenReturn(false);
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            9L,
+            "owner2@example.org",
+            "New",
+            "Owner",
+            null,
+            null,
+            30L);
+
+    AccountInvite invite = service.createInvite(command);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(invite.getTenantId()).isEqualTo(9L);
   }
 }
