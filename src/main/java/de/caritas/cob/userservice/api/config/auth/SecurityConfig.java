@@ -277,6 +277,15 @@ public class SecurityConfig {
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Consultant deletion: restricted agency admins (Beratungsstellen-Admins) may
+                // delete consultants of their own agencies; the agency scoping is enforced in
+                // ConsultantAdminFacade#markConsultantForDeletion. Must stay above the
+                // /useradmin/** catch-all to take effect (first match wins).
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
+                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
@@ -309,7 +318,8 @@ public class SecurityConfig {
                     "/service/useradmin/statistics/dashboard")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers("/useradmin", "/useradmin/**")
+                .requestMatchers(
+                    "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -344,9 +354,6 @@ public class SecurityConfig {
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers("/userstatistics", "/userstatistics/**")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
-                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/actuator/health")
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/actuator/health/*")

@@ -676,6 +676,7 @@ class UserAdminControllerAuthorizationIT {
   @WithMockUser(authorities = {AuthorityValue.RESTRICTED_AGENCY_ADMIN})
   void deleteConsultant_Should_ReturnForbidden_When_userDoesNotHaveUserAdminAuthority()
       throws Exception {
+    // Non-UUID consultant ids stay governed by the /useradmin/** catch-all (USER_ADMIN only).
     mvc.perform(
             delete(DELETE_CONSULTANT_PATH)
                 .cookie(CSRF_COOKIE)
@@ -684,6 +685,38 @@ class UserAdminControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(consultantAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.RESTRICTED_AGENCY_ADMIN})
+  void
+      deleteConsultant_Should_ReturnOkAndCallConsultantAdmin_When_restrictedAgencyAdminAuthorityOnUuidPath()
+          throws Exception {
+    // DEL-GUARD-01: real consultant ids are UUIDs; restricted agency admins must be able to
+    // reach the endpoint (agency scoping is enforced in ConsultantAdminFacade).
+    mvc.perform(
+            delete(CONSULTANT_PATH + UUID.randomUUID())
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion(any(), any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void deleteConsultant_Should_NotBeDeniedBySecurity_When_userAdminUsesServicePrefixedPath()
+      throws Exception {
+    // DEL-GUARD-02: /service/useradmin/** used to fall through to denyAll (403). After the fix
+    // the security layer authorizes the request; no MVC mapping exists for the raw /service
+    // prefix inside the app, so 404 (not 403) proves the security gap is closed.
+    mvc.perform(
+            delete("/service" + CONSULTANT_PATH + UUID.randomUUID())
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNotFound());
   }
 
   @Test
