@@ -12,13 +12,17 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class AgencyVerifierTest {
@@ -26,6 +30,8 @@ class AgencyVerifierTest {
   @InjectMocks private AgencyVerifier agencyVerifier;
 
   @Mock private AgencyService agencyService;
+
+  @Mock private SessionRepository sessionRepository;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -85,5 +91,18 @@ class AgencyVerifierTest {
     UserDTO userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setConsultingType(String.valueOf(CONSULTING_TYPE_ID_SUCHT));
     agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+  }
+
+  @Test
+  void getVerifiedAgency_Should_UseRegistrationFallback_WhenRemoteAgencyIsMissing() {
+    ReflectionTestUtils.setField(agencyVerifier, "registrationAgencyFallbackConsultingTypeId", 1);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
+        .thenReturn(List.of());
+
+    AgencyDTO agency = agencyVerifier.getVerifiedAgency(AGENCY_ID, 1);
+
+    assertEquals(AGENCY_ID, agency.getId());
+    assertEquals(1, agency.getConsultingType());
   }
 }

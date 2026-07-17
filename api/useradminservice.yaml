@@ -1246,6 +1246,10 @@ components:
             type: integer
             format: int64
           example: [3, 7, 12]
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Optional public slug. Admin-created values go live immediately.
 
     IsGroupchatConsultant:
       type: boolean
@@ -1329,6 +1333,14 @@ components:
             type: integer
             format: int64
           example: [3, 7, 12]
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Optional public slug. Admin edits go live immediately; empty clears it.
+        rejectPendingPublicSlug:
+          type: boolean
+          example: false
+          description: If true, rejects the currently pending public slug without changing the active slug.
 
     ConsultantDTO:
       type: object
@@ -1386,6 +1398,15 @@ components:
           type: string
         publicName:
           type: string
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+        pendingPublicSlug:
+          type: string
+          example: nikunj-rohit
+        publicSlugStatus:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
         roleInOrg:
           type: string
         vacated:

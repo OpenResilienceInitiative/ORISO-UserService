@@ -70,6 +70,13 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .deleteDate(String.valueOf(consultant.getDeleteDate()))
         .status(String.valueOf(consultant.getStatus()))
         .tenantId(consultant.getTenantId() != null ? consultant.getTenantId().intValue() : null)
+        .publicSlug(consultant.getPublicSlug())
+        .pendingPublicSlug(consultant.getPendingPublicSlug())
+        .publicSlugStatus(
+            consultant.getPublicSlugStatus() != null
+                ? ConsultantDTO.PublicSlugStatusEnum.fromValue(
+                    consultant.getPublicSlugStatus().name())
+                : null)
         .isSupervisor(consultant.isSupervisor())
         .assignedSupervisorId(consultant.getAssignedSupervisorId());
   }

@@ -3110,6 +3110,22 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
+  void getConsultantPublicData_Should_ReturnOk_When_calledWithPublicSlugInsteadOfUuid()
+      throws Exception {
+    // review: the permitAll matcher must accept public slugs, not only UUIDs — otherwise a
+    // slug link is rejected by the security chain before ConsultantPublicSlugService runs
+    givenAValidConsultant();
+
+    mvc.perform(
+            get("/users/consultants/some-public-slug")
+                .contentType(MediaType.APPLICATION_JSON)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   void getConsultantPublicData_Should_ReturnOk_When_CsrfTokensAreGiven() throws Exception {
     givenAValidConsultant();
 

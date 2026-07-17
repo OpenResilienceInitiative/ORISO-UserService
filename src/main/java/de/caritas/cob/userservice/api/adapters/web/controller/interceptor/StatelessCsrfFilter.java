@@ -106,6 +106,11 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
           && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
         return true;
       }
+      // Registration is public and may be called with or without the /service prefix.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/users/askers/new")) {
+        return true;
+      }
       // Client-side error intake (OBS-P3) must accept crash reports from a browser that has no
       // session/CSRF cookie yet, e.g. an error thrown before login completes.
       if (request.getRequestURI() != null
