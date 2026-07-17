@@ -1378,6 +1378,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void findByUsername_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME))
+        .thenThrow(new jakarta.ws.rs.NotAuthorizedException("Bearer"))
+        .thenReturn(singletonList(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    List<UserRepresentation> result = keycloakService.findByUsername(USERNAME);
+
+    assertThat(result, is(singletonList(userRepresentation)));
+    verify(keycloakClient).refreshAdminSession();
+    verify(usersResource, times(2)).search(USERNAME);
+  }
+
+  @Test
   public void deleteUser_Should_RemoveUser_When_UserExists() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);

@@ -102,6 +102,11 @@ public class SessionService {
     return sessionRepository.findById(sessionId);
   }
 
+  /** Returns the session while holding a write lock for the surrounding transaction. */
+  public Optional<Session> getSessionForUpdate(Long sessionId) {
+    return sessionRepository.findByIdForUpdate(sessionId);
+  }
+
   /**
    * Returns the session only if the authenticated user is allowed to access it.
    *
