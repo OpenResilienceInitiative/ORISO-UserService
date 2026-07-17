@@ -86,6 +86,11 @@ public class PasswordResetService {
   /**
    * Validates the one-time token and, if valid, sets the new password in Keycloak.
    *
+   * <p>The token is only consumed once {@link KeycloakService#updatePassword} succeeds — if
+   * Keycloak rejects the password (e.g. policy violation), the token stays valid so the user can
+   * retry with a different password using the same emailed link, mirroring how {@link
+   * MagicLinkLoginService} restores its token on a failed exchange.
+   *
    * @return true if the password was updated, false if the token is missing/invalid/expired
    */
   public boolean confirmPasswordReset(String token, String newPassword) {
@@ -94,12 +99,13 @@ public class PasswordResetService {
     }
 
     cleanupExpiredTokens();
-    ResetTokenEntry entry = resetTokens.remove(token);
+    ResetTokenEntry entry = resetTokens.get(token);
     if (entry == null || entry.getExpiresAt().isBefore(Instant.now())) {
       return false;
     }
 
     keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
+    resetTokens.remove(token);
     return true;
   }
 

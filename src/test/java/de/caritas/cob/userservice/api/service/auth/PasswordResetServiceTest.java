@@ -2,8 +2,10 @@ package de.caritas.cob.userservice.api.service.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -194,6 +196,23 @@ class PasswordResetServiceTest {
     verify(keycloakService).updatePassword("user-keycloak-id", "NewPassw0rd!");
     // Token must be single-use.
     assertThat(tokens).doesNotContainKey("valid-token");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPassword() {
+    // If Keycloak rejects the new password (e.g. policy violation), the token must survive so
+    // the user can retry with a different password using the same emailed link — it must not be
+    // burned on a failed attempt.
+    ConcurrentHashMap<String, Object> tokens = injectToken("retry-token", 900);
+    doThrow(new RuntimeException("password policy violation"))
+        .when(keycloakService)
+        .updatePassword("user-keycloak-id", "weak");
+
+    assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
+        .isInstanceOf(RuntimeException.class);
+
+    assertThat(tokens).containsKey("retry-token");
   }
 
   @Test
