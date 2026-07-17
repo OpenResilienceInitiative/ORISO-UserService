@@ -135,6 +135,21 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean supervisor;
 
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): this counsellor's STANDING supervisor — the
+   * consultant id of the colleague who is automatically attached, read-only, to every Agency
+   * Counselling case this counsellor accepts. Set by an agency admin; at most one at a time (one
+   * supervisor may hold this relationship with many counsellors). Null = no standing supervision.
+   *
+   * <p>Deliberately a plain id, not a self-referencing {@code @ManyToOne} — the relationship is
+   * only ever resolved on the accept path, and a self-join on Consultant would add fetch/cycle
+   * hazards to a heavily-loaded entity for no gain. Distinct from {@link #supervisor} ({@code
+   * is_supervisor}), which is the capability flag "may this consultant BE a supervisor at all".
+   */
+  @Column(name = "assigned_supervisor_id")
+  @Size(max = 36)
+  private String assignedSupervisorId;
+
   @Column(name = "display_name")
   private String displayName;
 

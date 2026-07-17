@@ -1260,6 +1260,17 @@ components:
       example: true
       description: Flag that indicates if the consultant can be added as a supervisor
 
+    AssignedSupervisorId:
+      type: string
+      maxLength: 36
+      example: 8bb2b0a4-2c5b-4f5a-9c3a-1d2e3f4a5b6c
+      description: >-
+        Supervision (auto-assigned): the consultant id of this counsellor's standing supervisor,
+        who is automatically attached read-only to every case the counsellor accepts. At most one;
+        the target must itself have isSupervisor = true and may not be the counsellor themselves.
+        Omitted/null leaves the current assignment untouched; an empty string clears it (clearing
+        stops future auto-attachment and does not detach supervisors already on in-flight cases).
+
     UpdateAdminConsultantDTO:
       type: object
       required:
@@ -1313,6 +1324,8 @@ components:
           $ref: '#/components/schemas/IsGroupchatConsultant'
         isSupervisor:
           $ref: '#/components/schemas/IsSupervisor'
+        assignedSupervisorId:
+          $ref: '#/components/schemas/AssignedSupervisorId'
         topicIds:
           type: array
           description: replaces the full set of topics assigned to the consultant
@@ -1375,6 +1388,8 @@ components:
           $ref: '#/components/schemas/IsGroupchatConsultant'
         isSupervisor:
           $ref: '#/components/schemas/IsSupervisor'
+        assignedSupervisorId:
+          $ref: '#/components/schemas/AssignedSupervisorId'
         tenantId:
           type: integer
         tenantName:

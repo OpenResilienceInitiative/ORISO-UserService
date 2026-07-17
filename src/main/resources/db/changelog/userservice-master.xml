@@ -107,7 +107,9 @@
   <include
     file="db/changelog/changeset/0066_consultant_message_stat/0066_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0067_consultant_public_slug/0067_changeSet.xml" />
+    file="db/changelog/changeset/0067_session_supervision_opt_out/0067_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0068_consultant_assigned_supervisor/0068_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

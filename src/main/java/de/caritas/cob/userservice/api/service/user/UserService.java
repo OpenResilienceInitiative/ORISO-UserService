@@ -129,14 +129,20 @@ public class UserService {
   /**
    * Finds an user by the given username (searches for encoded and decoded version of it).
    *
+   * <p>user.username is not unique (generated anonymous usernames repeat across restarts), so the
+   * lookup returns the oldest matching row instead of failing on duplicates.
+   *
    * @param username the username to search for
    * @return {@link Optional} of {@link User}
    */
   public Optional<User> findUserByUsername(String username) {
-    return userRepository.findByUsernameInAndDeleteDateIsNull(
-        List.of(
-            usernameTranscoder.encodeUsername(username),
-            usernameTranscoder.decodeUsername(username)));
+    return userRepository
+        .findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
+            List.of(
+                usernameTranscoder.encodeUsername(username),
+                usernameTranscoder.decodeUsername(username)))
+        .stream()
+        .findFirst();
   }
 
   public Optional<User> findUserByEmail(String email) {

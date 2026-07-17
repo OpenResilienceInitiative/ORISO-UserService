@@ -208,10 +208,8 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/data",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent")
+                    "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(

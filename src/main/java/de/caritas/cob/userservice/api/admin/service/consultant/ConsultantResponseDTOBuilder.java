@@ -78,6 +78,7 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
                     consultant.getPublicSlugStatus().name())
                 : null)
         .isSupervisor(consultant.isSupervisor());
+        .assignedSupervisorId(consultant.getAssignedSupervisorId());
   }
 
   private HalLink buildSelfLink() {

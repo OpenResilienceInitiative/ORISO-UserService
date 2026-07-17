@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** {@link ConversationListProvider} to provide anonymous enquiry conversations. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AnonymousEnquiryConversationListProvider implements ConversationListProvider {
@@ -57,8 +59,20 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
             .map(session -> new SessionMapper().toConsultantSessionDto(session))
             .collect(Collectors.toList());
 
-    this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
-        sessions, pageableListRequest.getRcToken(), consultant);
+    // The queue must stay visible even when enrichment (chat room info, last message,
+    // topic details) fails — an un-enriched card can still be accepted, an empty queue
+    // cannot. Without this guard a single enrichment error 500s the endpoint and the
+    // frontend treats the anonymous feed as empty.
+    try {
+      this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
+          sessions, pageableListRequest.getRcToken(), consultant);
+    } catch (Exception e) {
+      log.error(
+          "Anonymous enquiry enrichment failed for consultant {} — returning {} un-enriched queue entries",
+          consultant.getId(),
+          sessions.size(),
+          e);
+    }
 
     return new ConsultantSessionListResponseDTO()
         .sessions(sessions)
