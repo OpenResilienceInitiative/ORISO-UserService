@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
@@ -55,6 +56,7 @@ class CaseHandoverServiceTest {
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   private Consultant requester;
   private Consultant previous;
@@ -136,6 +138,26 @@ class CaseHandoverServiceTest {
     verify(matrixSynapseService)
         .inviteUserToRoom("!room:matrix", "@requester:matrix", "previous-token");
     verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
+  }
+
+  @Test
+  void requestAccess_postsCaseHandoverSystemMessage_WhenGranted() throws Exception {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn("token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "token")).thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(
+            org.mockito.ArgumentMatchers.eq(session),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Other emergency"),
+            org.mockito.ArgumentMatchers.eq("Colleague is unavailable."),
+            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"));
   }
 
   @Test
