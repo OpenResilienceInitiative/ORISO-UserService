@@ -47,4 +47,27 @@ public class SessionTest {
 
     assertThat(equals, is(true));
   }
+
+  @Test
+  public void builder_Should_defaultSupervisionOptedOutToFalse() {
+    // The is_supervision_opted_out column is NOT NULL. A newly built session must therefore carry
+    // a non-null value, otherwise Hibernate inserts NULL and every session creation fails with a
+    // constraint violation. @Builder ignores plain field initializers, so this pins
+    // @Builder.Default.
+    Session session =
+        Session.builder()
+            .registrationType(Session.RegistrationType.REGISTERED)
+            .postcode("12345")
+            .status(Session.SessionStatus.NEW)
+            .build();
+
+    assertThat(session.getSupervisionOptedOut(), is(false));
+  }
+
+  @Test
+  public void noArgsConstructor_Should_defaultSupervisionOptedOutToFalse() {
+    Session session = new Session();
+
+    assertThat(session.getSupervisionOptedOut(), is(false));
+  }
 }
