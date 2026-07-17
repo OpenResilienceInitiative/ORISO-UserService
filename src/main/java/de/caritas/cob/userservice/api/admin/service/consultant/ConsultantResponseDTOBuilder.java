@@ -77,7 +77,7 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
                 ? ConsultantDTO.PublicSlugStatusEnum.fromValue(
                     consultant.getPublicSlugStatus().name())
                 : null)
-        .isSupervisor(consultant.isSupervisor());
+        .isSupervisor(consultant.isSupervisor())
         .assignedSupervisorId(consultant.getAssignedSupervisorId());
   }
 
