@@ -314,6 +314,52 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Checks whether a Matrix user with the given localpart already exists on this homeserver.
+   *
+   * <p>Matrix user IDs are global (not per-tenant), so this is the authoritative occupancy check
+   * for anonymous usernames: a localpart can be orphaned in Matrix (present here but absent from
+   * MariaDB and Keycloak, e.g. left behind by a rolled-back or externally cleaned-up account), and
+   * such an orphan still makes {@code createUser} fail with {@code M_USER_IN_USE}.
+   *
+   * @param localpart the Matrix localpart (the part before {@code :server}); it is lowercased,
+   *     because Synapse stores localparts in lower case
+   * @return {@code true} if the user exists, {@code false} if it does not (HTTP 404) or if
+   *     existence could not be determined (so callers still make forward progress rather than
+   *     looping forever when the admin API is unavailable)
+   */
+  public boolean userExists(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return false;
+    }
+    String matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user existence check of {}", matrixUserId);
+        return false;
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return false;
+    } catch (Exception ex) {
+      log.warn("Could not check Matrix user existence for {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
    * Creates a short-lived Matrix access token for a user via the Synapse admin API.
    *
    * @param matrixUserId full Matrix user ID, e.g. {@code @user:server}

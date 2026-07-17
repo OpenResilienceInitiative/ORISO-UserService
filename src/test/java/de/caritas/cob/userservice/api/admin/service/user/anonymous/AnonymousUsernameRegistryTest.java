@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.getField;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -36,6 +37,7 @@ class AnonymousUsernameRegistryTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private IdentityClient identityClient;
+  @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private UsernameTranscoder usernameTranscoder;
 
   @BeforeEach
@@ -270,6 +272,24 @@ class AnonymousUsernameRegistryTest {
                         && "Ratsuchende_r 1".equals(invocation.getArgument(0))
                     ? Optional.of(USER)
                     : Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
+    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_TreatUsernameOrphanedInMatrixAsOccupied() {
+    // A localpart can survive in Matrix while absent from MariaDB and Keycloak (a rolled-back or
+    // externally cleaned-up anonymous account). Matrix user IDs are global, so such an orphan must
+    // be skipped - otherwise createUser fails with M_USER_IN_USE and, because the generator is
+    // deterministic, every redeem retry collides on the same id (invite redeem 500 forever).
+    setIdRegistryField(new LinkedList<>());
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
+    when(matrixSynapseService.userExists("Ratsuchende_r 1")).thenReturn(true);
 
     anonymousUsernameRegistry.generateUniqueUsername();
 

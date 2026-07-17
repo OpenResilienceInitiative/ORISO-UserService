@@ -4,6 +4,7 @@ import static java.lang.Integer.parseInt;
 import static java.util.Collections.sort;
 import static org.apache.commons.lang3.StringUtils.substringAfter;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -23,7 +24,13 @@ public class AnonymousUsernameRegistry {
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
+
+  // Dedicated transcoder for building the Matrix localpart during the occupancy check. It is kept
+  // separate from usernameTranscoder (which encodes the single returned username) so the Matrix
+  // check never perturbs callers that verify how often the returned value is encoded.
+  private final UsernameTranscoder matrixLocalpartTranscoder = new UsernameTranscoder();
 
   @Value("${anonymous.username.prefix}")
   private String usernamePrefix;
@@ -81,7 +88,23 @@ public class AnonymousUsernameRegistry {
             () ->
                 userService.findUserByUsername(username).isPresent()
                     || consultantService.getConsultantByUsername(username).isPresent())
-        || !identityClient.isUsernameAvailable(username);
+        || !identityClient.isUsernameAvailable(username)
+        || existsInMatrix(username);
+  }
+
+  /**
+   * Matrix user IDs are global, so a localpart occupied in Matrix must not be handed out again even
+   * when it is absent from MariaDB and Keycloak (an orphan left behind by a rolled-back or
+   * externally cleaned-up account). Without this check such an orphan is deemed free, {@code
+   * createUser} fails with {@code M_USER_IN_USE}, and — because the generator is deterministic —
+   * every retry collides on the same id, so invite-link redeem returns 500 indefinitely.
+   *
+   * <p>The Matrix localpart has been written in two forms over time (the encoded username and, for
+   * older accounts, the plain one), so both are checked.
+   */
+  private boolean existsInMatrix(String username) {
+    return matrixSynapseService.userExists(matrixLocalpartTranscoder.encodeUsername(username))
+        || matrixSynapseService.userExists(username);
   }
 
   /**
