@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
@@ -56,6 +57,7 @@ class AnonymousConversationCreatorServiceTest {
   @Mock AgencyService agencyService;
   @Mock ConsultantAgencyService consultantAgencyService;
   @Mock LiveEventNotificationService liveEventNotificationService;
+  @Mock EventNotificationService eventNotificationService;
   @Mock TopicConsultantRoutingService topicConsultantRoutingService;
 
   EasyRandom easyRandom = new EasyRandom();
@@ -98,6 +100,9 @@ class AnonymousConversationCreatorServiceTest {
     verifyNoInteractions(createEnquiryMessageFacade);
     verify(liveEventNotificationService)
         .sendLiveNewAnonymousEnquiryEventToUsers(List.of("consultant-id"), session.getId());
+    // WP-06 Slice 3: the same recipients also get a waiting_room.client.joined timeline card.
+    verify(eventNotificationService)
+        .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
   }
 
   @Test
