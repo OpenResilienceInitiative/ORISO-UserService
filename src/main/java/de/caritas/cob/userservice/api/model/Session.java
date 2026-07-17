@@ -205,10 +205,15 @@ public class Session implements TenantAware {
    * The ratsuchende's supervision opt-out (grill 2026-07-13, supersedes the ADR-008 item-4 binary
    * per-reason consent flag). Supervision is allowed by default (false); when the client switches
    * this on, no supervisor may be attached to the case and any active supervisors are removed.
-   * Nullable + default false so a row predating the column reads as "not opted out".
+   *
+   * <p>The column is NOT NULL, so a new session must never leave this null:
+   * {@code @Builder.Default} (and the field initializer for the no-args constructor) keep it {@code
+   * false} at creation, since Hibernate includes the column in every INSERT and the DB default only
+   * applies to omitted columns.
    */
+  @Builder.Default
   @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
-  private Boolean supervisionOptedOut;
+  private Boolean supervisionOptedOut = false;
 
   @OneToMany(
       targetEntity = SessionTopic.class,
