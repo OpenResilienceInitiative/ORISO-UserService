@@ -10,11 +10,13 @@ import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentServ
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service class to enrich a session of an consultant with required Rocket.Chat data. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ConsultantSessionEnricher {
@@ -40,10 +42,26 @@ public class ConsultantSessionEnricher {
                 .rocketChatUserId(consultant.getRocketChatId())
                 .build());
 
+    // Enrichment is additive (read state, last message, topic details). One session that
+    // fails to enrich must not take the whole list down — a consultant seeing a session
+    // card without a last-message preview beats not seeing the session at all.
     consultantSessionResponseDTOs.forEach(
-        consultantSessionResponseDTO ->
+        consultantSessionResponseDTO -> {
+          try {
             this.enrichConsultantSession(
-                consultantSessionResponseDTO, rocketChatRoomInformation, consultant));
+                consultantSessionResponseDTO, rocketChatRoomInformation, consultant);
+          } catch (Exception e) {
+            var sessionId =
+                consultantSessionResponseDTO.getSession() != null
+                    ? consultantSessionResponseDTO.getSession().getId()
+                    : null;
+            log.error(
+                "Failed to enrich session {} for consultant {} — returning it un-enriched",
+                sessionId,
+                consultant.getId(),
+                e);
+          }
+        });
     return consultantSessionResponseDTOs;
   }
 

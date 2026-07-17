@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -31,12 +31,14 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 class MultitenancyWithSingleDomainTenantResolverTest {
 
   private static final String CONSULTANT_ID = "12345678-1234-1234-1234-123456789012";
+  private static final String CONSULTANT_SLUG = "changing-it";
   private static final long ANOTHER_TENANT = 2L;
 
   @InjectMocks
   MultitenancyWithSingleDomainTenantResolver multitenancyWithSingleDomainTenantResolver;
 
   @Mock HttpServletRequest request;
+  @Mock ServletRequestAttributes requestAttributes;
 
   @Mock AgencyService agencyService;
 
@@ -48,16 +50,9 @@ class MultitenancyWithSingleDomainTenantResolverTest {
 
   @Mock ApplicationSettingsService applicationSettingsService;
 
-  @Mock private ServletRequestAttributes requestAttributes;
-
   @BeforeEach
   public void initialize() {
     TenantContext.clear();
-  }
-
-  @AfterEach
-  public void tearDown() {
-    resetRequestAttributes();
   }
 
   @Test
@@ -85,12 +80,11 @@ class MultitenancyWithSingleDomainTenantResolverTest {
   void
       resolve_Should_GetTenantIdFromConsultant_When_FeatureMultitenancyWithSingleDomainIsEnabledAndNoAgencyIdIsProvidedAndUrlMatchesConsultantGetById() {
     // given
-    givenRequestContextIsSet();
     ReflectionTestUtils.setField(
         multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
 
     when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.empty());
-    when(request.getRequestURI()).thenReturn("/users/consultants/" + CONSULTANT_ID);
+    when(request.getRequestURI()).thenReturn("/service/users/consultants/" + CONSULTANT_ID);
 
     EasyRandom random = new EasyRandom();
     Consultant consultant = random.nextObject(Consultant.class);
@@ -105,9 +99,31 @@ class MultitenancyWithSingleDomainTenantResolverTest {
 
   @Test
   void
+      resolve_Should_GetTenantIdFromConsultantPublicSlug_When_FeatureMultitenancyWithSingleDomainIsEnabledAndNoAgencyIdIsProvidedAndUrlMatchesConsultantGetById() {
+    // given
+    ReflectionTestUtils.setField(
+        multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
+
+    when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.empty());
+    when(request.getRequestURI()).thenReturn("/service/users/consultants/" + CONSULTANT_SLUG);
+
+    EasyRandom random = new EasyRandom();
+    Consultant consultant = random.nextObject(Consultant.class);
+    consultant.setTenantId(ANOTHER_TENANT);
+    when(consultantService.getConsultant(CONSULTANT_SLUG)).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByPublicSlug(CONSULTANT_SLUG))
+        .thenReturn(Optional.of(consultant));
+    // when
+    assertThat(multitenancyWithSingleDomainTenantResolver.canResolve(request)).isTrue();
+    assertThat(multitenancyWithSingleDomainTenantResolver.resolve(request))
+        .isEqualTo(Optional.of(ANOTHER_TENANT));
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void
       resolve_Should_ResolveToEmptyTenant_When_FeatureMultitenancyWithSingleDomainIsEnabledAndNoAgencyIdIsProvidedAndUrlDoesNotMatchConsultantGetById() {
     // given
-    givenRequestContextIsSet();
     ReflectionTestUtils.setField(
         multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
 
@@ -123,6 +139,20 @@ class MultitenancyWithSingleDomainTenantResolverTest {
     assertThat(multitenancyWithSingleDomainTenantResolver.canResolve(request)).isFalse();
     assertThat(multitenancyWithSingleDomainTenantResolver.resolve(request)).isEmpty();
     assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void resolve_Should_FallbackToMainTenant_When_AgencyLookupFailsForProvidedAgencyIdInHeader() {
+    ReflectionTestUtils.setField(
+        multitenancyWithSingleDomainTenantResolver, "multitenancyWithSingleDomain", true);
+    when(headersResolver.findHeaderValue("agencyId")).thenReturn(Optional.of(1L));
+    when(agencyService.getAgency(1L))
+        .thenThrow(new HttpClientErrorException(org.springframework.http.HttpStatus.NOT_FOUND));
+    when(request.getRequestURI()).thenReturn("/users/askers/new");
+    when(applicationSettingsService.getApplicationSettings())
+        .thenReturn(new ApplicationSettingsDTO());
+
+    assertThat(multitenancyWithSingleDomainTenantResolver.resolve(request)).isEmpty();
   }
 
   @Test

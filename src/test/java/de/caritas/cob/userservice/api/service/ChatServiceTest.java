@@ -5,9 +5,13 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICA
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICATED_USER_3;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICATED_USER_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_DTO;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_DURATION;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_HINT_MESSAGE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID_3;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_START_DATE;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_START_TIME;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_TOPIC;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_V2;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.INACTIVE_CHAT;
@@ -26,12 +30,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -130,6 +137,7 @@ class ChatServiceTest {
         .startDate(ACTIVE_CHAT.getStartDate())
         .duration(ACTIVE_CHAT.getDuration())
         .repetitive(ACTIVE_CHAT.isRepetitive())
+        .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
         .chatInterval(ACTIVE_CHAT.getChatInterval())
         .active(ACTIVE_CHAT.isActive())
         .maxParticipants(ACTIVE_CHAT.getMaxParticipants())
@@ -450,6 +458,158 @@ class ChatServiceTest {
   }
 
   @Test
+  void updateChat_Should_PersistIntervalRepeatCountAndModality() {
+    // given
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto =
+        ChatDTO.builder()
+            .topic(CHAT_TOPIC)
+            .startDate(CHAT_START_DATE)
+            .startTime(CHAT_START_TIME)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .chatInterval(ChatInterval.MONTHLY)
+            .repeatCount(5)
+            .modality(ChatModality.VIDEO)
+            .build();
+
+    // when
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    // then
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    Chat saved = chatArgumentCaptor.getValue();
+    assertEquals(ChatInterval.MONTHLY, saved.getChatInterval());
+    assertEquals(5, saved.getRepeatCount());
+    assertEquals(ChatModality.VIDEO, saved.getChatModality());
+  }
+
+  @Test
+  void updateChat_Should_ApplyCreatePathDefaults_WhenScheduleFieldsAreNull() {
+    // given a repetitive update that omits repeatCount / interval / modality
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto =
+        ChatDTO.builder()
+            .topic(CHAT_TOPIC)
+            .startDate(CHAT_START_DATE)
+            .startTime(CHAT_START_TIME)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .build();
+
+    // when
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    // then the defaults must match the create path (ChatConverter): 12 / WEEKLY / TEXT,
+    // NOT drop a repetitive series to a single occurrence.
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    Chat saved = chatArgumentCaptor.getValue();
+    assertEquals(12, saved.getRepeatCount());
+    assertEquals(ChatInterval.WEEKLY, saved.getChatInterval());
+    assertEquals(ChatModality.TEXT, saved.getChatModality());
+    assertTrue(saved.isRepetitive());
+  }
+
+  @Test
+  void updateChat_Should_PersistTimezone_WhenProvided() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().timezone("Europe/Berlin").build();
+
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    // Recurrence (occurrenceStart) computes DST/monthly/yearly offsets in this zone.
+    assertEquals("Europe/Berlin", chatArgumentCaptor.getValue().getTimezone());
+  }
+
+  @Test
+  void updateChat_Should_PreserveExistingTimezone_WhenOmitted() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    inactiveChat.setTimezone("Europe/Berlin");
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().build(); // no timezone
+
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    assertEquals("Europe/Berlin", chatArgumentCaptor.getValue().getTimezone());
+  }
+
+  @Test
+  void updateChat_Should_RejectInvalidTimezone() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto = scheduleDtoBuilder().timezone("Not/AZone").build();
+
+    assertThrows(
+        BadRequestException.class,
+        () -> chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT));
+    verify(chatRepository, Mockito.never()).save(Mockito.any(Chat.class));
+  }
+
+  private static ChatDTO.ChatDTOBuilder scheduleDtoBuilder() {
+    return ChatDTO.builder()
+        .topic(CHAT_TOPIC)
+        .startDate(CHAT_START_DATE)
+        .startTime(CHAT_START_TIME)
+        .duration(CHAT_DURATION)
+        .repetitive(true)
+        .chatInterval(ChatInterval.WEEKLY)
+        .repeatCount(4);
+  }
+
+  @Test
+  void updateChat_Should_ResetOccurrenceIndex_WhenScheduleReAnchored() {
+    // given a series that has already advanced past its first occurrence
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    inactiveChat.setCurrentOccurrenceIndex(3);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+    ChatDTO scheduleDto =
+        ChatDTO.builder()
+            .topic(CHAT_TOPIC)
+            .startDate(CHAT_START_DATE)
+            .startTime(CHAT_START_TIME)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .chatInterval(ChatInterval.WEEKLY)
+            .repeatCount(4)
+            .build();
+
+    // when the schedule anchor is edited
+    chatService.updateChat(CHAT_ID, scheduleDto, AUTHENTICATED_USER_CONSULTANT);
+
+    // then the series restarts from the new anchor, not mid-way through
+    ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
+    verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
+    assertEquals(0, chatArgumentCaptor.getValue().getCurrentOccurrenceIndex());
+  }
+
+  @Test
   void saveChatAgencyRelation_Should_saveChatAgencyInRepository() {
     ChatAgency chatAgency = new ChatAgency();
 
@@ -501,6 +661,31 @@ class ChatServiceTest {
   }
 
   @Test
+  void saveChatShouldDefaultLegacyGroupChatsToInternalGroup() {
+    Chat chat = new Chat();
+    when(chatRepository.save(chat)).thenReturn(chat);
+
+    chatService.saveChat(chat);
+
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP,
+        chat.getConversationType());
+  }
+
+  @Test
+  void saveChatShouldPreserveExplicitSelfHelpModality() {
+    Chat chat = new Chat();
+    chat.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+    when(chatRepository.save(chat)).thenReturn(chat);
+
+    chatService.saveChat(chat);
+
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP,
+        chat.getConversationType());
+  }
+
+  @Test
   void getChatSessionsByIds_Should_returnUserSessionsForGivenIds() {
     when(chatRepository.findAllById(Set.of(CHAT_ID))).thenReturn(List.of(activeChatWithAgency()));
 
@@ -508,6 +693,9 @@ class ChatServiceTest {
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+    assertEquals(
+        de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP,
+        result.get(0).getChat().getConversationType());
   }
 
   @Test

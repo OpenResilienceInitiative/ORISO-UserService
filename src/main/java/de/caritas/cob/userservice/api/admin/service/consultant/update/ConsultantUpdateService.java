@@ -20,11 +20,13 @@ import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -41,6 +43,7 @@ public class ConsultantUpdateService {
 
   private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -60,6 +63,12 @@ public class ConsultantUpdateService {
   @Transactional
   public Consultant updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    return updateConsultant(consultantId, updateConsultantDTO, true);
+  }
+
+  @Transactional
+  public Consultant updateConsultant(
+      String consultantId, UpdateAdminConsultantDTO updateConsultantDTO, boolean adminEdit) {
     this.userAccountInputValidator.validateAbsence(
         new UpdateConsultantDTOAbsenceInputAdapter(updateConsultantDTO));
 
@@ -77,34 +86,42 @@ public class ConsultantUpdateService {
     String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
     String nextDisplayName =
         displayNameOf(updateConsultantDTO.getFirstname(), updateConsultantDTO.getLastname());
-    UserDTO userDTO = buildValidatedUserDTO(updateConsultantDTO, consultant);
-    this.identityClient.updateUserData(
-        consultant.getId(),
-        userDTO,
-        updateConsultantDTO.getFirstname(),
-        updateConsultantDTO.getLastname());
+    boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
+    boolean appointmentDataChanged =
+        identityDataChanged
+            || !Objects.equals(consultant.isAbsent(), updateConsultantDTO.getAbsent());
+
+    if (identityDataChanged) {
+      UserDTO userDTO = buildValidatedUserDTO(updateConsultantDTO, consultant);
+      this.identityClient.updateUserData(
+          consultant.getId(),
+          userDTO,
+          updateConsultantDTO.getFirstname(),
+          updateConsultantDTO.getLastname());
+    }
 
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && updateConsultantDTO.getIsGroupchatConsultant()) {
       identityClient.updateRole(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
     }
-    if ((updateConsultantDTO.getIsGroupchatConsultant() != null
-            && !updateConsultantDTO.getIsGroupchatConsultant())
-        || isNull(updateConsultantDTO.getIsGroupchatConsultant())) {
+    if (updateConsultantDTO.getIsGroupchatConsultant() != null
+        && !updateConsultantDTO.getIsGroupchatConsultant()) {
       identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
     }
 
     // MATRIX MIGRATION: RocketChat update is optional, don't block on errors
-    try {
-      this.rocketChatService.updateUser(
-          buildUserUpdateRequestDTO(consultant.getRocketChatId(), updateConsultantDTO));
-    } catch (Exception e) {
-      // RocketChat is being replaced by Matrix, so failures are non-blocking
-      // Silently continue - consultant update will succeed in database
+    if (identityDataChanged) {
+      try {
+        this.rocketChatService.updateUser(
+            buildUserUpdateRequestDTO(consultant.getRocketChatId(), updateConsultantDTO));
+      } catch (Exception e) {
+        // RocketChat is being replaced by Matrix, so failures are non-blocking
+        // Silently continue - consultant update will succeed in database
+      }
     }
 
     // MATRIX MIGRATION: Update Matrix user display name using ADMIN API (no password needed)
-    if (consultant.getMatrixUserId() != null) {
+    if (identityDataChanged && consultant.getMatrixUserId() != null) {
       try {
         String newDisplayName =
             updateConsultantDTO.getFirstname() + " " + updateConsultantDTO.getLastname();
@@ -114,10 +131,21 @@ public class ConsultantUpdateService {
       }
     }
 
-    var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant);
-    appointmentService.syncConsultantData(updatedConsultant);
-    emitCounselorRenameNotificationsIfNeeded(consultant, previousDisplayName, nextDisplayName);
+    var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
+    if (appointmentDataChanged) {
+      appointmentService.syncConsultantData(updatedConsultant);
+    }
+    if (identityDataChanged) {
+      emitCounselorRenameNotificationsIfNeeded(consultant, previousDisplayName, nextDisplayName);
+    }
     return updatedConsultant;
+  }
+
+  private boolean identityDataChanged(
+      Consultant consultant, UpdateAdminConsultantDTO updateConsultantDTO) {
+    return !Objects.equals(consultant.getFirstName(), updateConsultantDTO.getFirstname())
+        || !Objects.equals(consultant.getLastName(), updateConsultantDTO.getLastname())
+        || !Objects.equals(consultant.getEmail(), updateConsultantDTO.getEmail());
   }
 
   private UserDTO buildValidatedUserDTO(
@@ -139,7 +167,7 @@ public class ConsultantUpdateService {
   }
 
   private Consultant updateDatabaseConsultant(
-      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant, boolean adminEdit) {
     consultant.setFirstName(updateConsultantDTO.getFirstname());
     consultant.setLastName(updateConsultantDTO.getLastname());
     consultant.setEmail(updateConsultantDTO.getEmail());
@@ -152,6 +180,16 @@ public class ConsultantUpdateService {
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
     }
+    if (adminEdit) {
+      if (Boolean.TRUE.equals(updateConsultantDTO.getRejectPendingPublicSlug())) {
+        consultantPublicSlugService.rejectPendingSlug(consultant);
+      } else {
+        consultantPublicSlugService.applyAdminSlug(consultant, updateConsultantDTO.getPublicSlug());
+      }
+    } else {
+      consultantPublicSlugService.requestSlug(consultant, updateConsultantDTO.getPublicSlug());
+    }
+    applyStandingSupervisor(updateConsultantDTO, consultant);
     consultant.setUpdateDate(nowInUtc());
     if (updateConsultantDTO.getTermsAndConditionsConfirmation() != null
         && updateConsultantDTO.getTermsAndConditionsConfirmation()) {
@@ -163,6 +201,47 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): set or clear this counsellor's standing
+   * supervisor — the colleague auto-attached read-only to every case the counsellor accepts.
+   *
+   * <p>Omitted/null leaves the assignment untouched (mirroring the sibling {@code isSupervisor}
+   * convention); an empty string clears it. Clearing only stops FUTURE auto-attachment —
+   * supervisors already attached to in-flight cases stay until removed explicitly, since
+   * retroactively stripping oversight from live cases is not the admin's intent here.
+   *
+   * @throws BadRequestException if the target is not flagged {@code isSupervisor}, does not exist,
+   *     or is the counsellor themselves
+   */
+  private void applyStandingSupervisor(
+      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+    String assignedSupervisorId = updateConsultantDTO.getAssignedSupervisorId();
+    if (assignedSupervisorId == null) {
+      return;
+    }
+    if (assignedSupervisorId.isBlank()) {
+      consultant.setAssignedSupervisorId(null);
+      return;
+    }
+    if (assignedSupervisorId.equals(consultant.getId())) {
+      throw new BadRequestException("A consultant cannot be their own standing supervisor");
+    }
+    Consultant standingSupervisor =
+        this.consultantService
+            .getConsultant(assignedSupervisorId)
+            .orElseThrow(
+                () ->
+                    new BadRequestException(
+                        "Standing supervisor not found: " + assignedSupervisorId));
+    if (!standingSupervisor.isSupervisor()) {
+      throw new BadRequestException(
+          "Consultant "
+              + assignedSupervisorId
+              + " cannot be a standing supervisor (isSupervisor is false)");
+    }
+    consultant.setAssignedSupervisorId(assignedSupervisorId);
   }
 
   private Set<Language> languagesOf(

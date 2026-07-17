@@ -40,12 +40,38 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
+import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
+import de.caritas.cob.userservice.api.config.VideoChatConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
+import de.caritas.cob.userservice.api.facade.CreateUserFacade;
+import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
+import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
+import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
@@ -55,8 +81,11 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -76,13 +105,43 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController implements UsersApi {
 
   private final @NotNull UserAccountService userAccountProvider;
-  private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
+  private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
   private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
-  private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
-  private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserConsultantControllerDelegate userConsultantControllerDelegate;
   private final @NotNull UserSupportControllerDelegate userSupportControllerDelegate;
+  private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
+  private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
+  private final @NotNull CreateUserFacade createUserFacade;
+  private final @NotNull CreateNewSessionFacade createNewSessionFacade;
+  private final @NotNull ConsultantDataFacade consultantDataFacade;
+  private final @NotNull SessionDataService sessionDataService;
+  private final @NotNull SessionArchiveService sessionArchiveService;
+  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull IdentityManaging identityManager;
+  private final @NonNull AccountManaging accountManager;
+  private final @NonNull Messaging messenger;
+  private final @NonNull ConsultantDtoMapper consultantDtoMapper;
+  private final @NonNull UserDtoMapper userDtoMapper;
+  private final @NonNull ConsultantService consultantService;
+  private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
+  private final @NonNull ConsultantUpdateService consultantUpdateService;
+  private final @NonNull ConsultantDataProvider consultantDataProvider;
+  private final @NonNull AskerDataProvider askerDataProvider;
+  private final @NonNull VideoChatConfig videoChatConfig;
+  private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NotNull IdentityClient identityClient;
+  private final @NonNull MagicLinkLoginService magicLinkLoginService;
+  private final @NonNull ConsultantAgencyService consultantAgencyService;
+
+  private final @NotNull AdminUserFacade adminUserFacade;
+
+  @Value("${feature.topics.enabled}")
+  private boolean featureTopicsEnabled;
+
+  private final @NonNull SessionDeleteService sessionDeleteService;
+  private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NotNull ChatOccurrenceQueryService chatOccurrenceQueryService;
   private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
   private final @NotNull GroupChatRoleService groupChatRoleService;
@@ -95,7 +154,19 @@ public class UserController implements UsersApi {
 
   @GetMapping("/users/availability/{username}")
   public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
-    return userRegistrationControllerDelegate.usernameAvailability(username);
+    boolean usernameAvailable;
+    try {
+      usernameAvailable = identityClient.isUsernameAvailable(username);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not check username availability for {}. Treating it as available so registration is not blocked.",
+          username,
+          exception);
+      usernameAvailable = true;
+    }
+    return usernameAvailable
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(HttpStatus.CONFLICT).build();
   }
 
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
@@ -115,6 +186,9 @@ public class UserController implements UsersApi {
    * @param user the {@link UserDTO}
    * @return {@link ResponseEntity} with possible registration conflict information in header
    */
+  @org.springframework.web.bind.annotation.PostMapping(
+      value = {"/users/askers/new", "/service/users/askers/new"},
+      consumes = MediaType.APPLICATION_JSON_VALUE)
   @Override
   public ResponseEntity<Void> registerUser(@RequestBody UserDTO user) {
     return userRegistrationControllerDelegate.registerUser(user);
@@ -785,8 +859,18 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing all agencies of consultant
    */
   @Override
-  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(UUID consultantId) {
-    return userConsultantControllerDelegate.getConsultantPublicData(consultantId);
+  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(String consultantId) {
+    var consultantIdString = consultantId.trim();
+    var consultant =
+        consultantPublicSlugService
+            .resolveActiveConsultant(consultantIdString)
+            .orElseThrow(
+                () -> new NotFoundException("Consultant with id %s not found", consultantIdString));
+    var onlineAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant(consultant.getId());
+    var consultantDto =
+        consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
+
+    return new ResponseEntity<>(consultantDto, HttpStatus.OK);
   }
 
   @Override

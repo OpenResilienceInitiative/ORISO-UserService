@@ -109,4 +109,22 @@ public class ConsultantAgencyDeletionValidationServiceTest {
     assertDoesNotThrow(
         () -> this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency));
   }
+
+  @Test
+  public void
+      validateForDeletion_Should_markRelationDeletedInsteadOfThrowingNpe_When_agencyNoLongerExists() {
+    // DEL-GUARD-03 / #86: an orphaned consultant_agency relation pointing to a deleted agency
+    // must not block consultant deletion with an NPE/500.
+    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
+    consultantAgency.setDeleteDate(null);
+    when(this.consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(any()))
+        .thenReturn(singletonList(consultantAgency));
+    when(this.agencyService.getAgencyWithoutCaching(any())).thenReturn(null);
+
+    assertDoesNotThrow(
+        () -> this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency));
+
+    assertNotNull(consultantAgency.getDeleteDate());
+    org.mockito.Mockito.verify(this.consultantAgencyRepository).save(consultantAgency);
+  }
 }

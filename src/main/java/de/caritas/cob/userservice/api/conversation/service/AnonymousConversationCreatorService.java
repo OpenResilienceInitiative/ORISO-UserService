@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -16,18 +17,23 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user conversations (sessions). */
 @Service
 @RequiredArgsConstructor
 public class AnonymousConversationCreatorService {
+
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   private final @NonNull UserService userService;
   private final @NonNull SessionService sessionService;
@@ -36,10 +42,11 @@ public class AnonymousConversationCreatorService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
   /**
-   * Creates a new anonymous conversation session with the corresponding Rocket.Chat room.
+   * Creates a new anonymous waiting session and a Rocket.Chat room when that transport is enabled.
    *
    * @param userDTO {@link UserDTO}
    * @param credentials {@link AnonymousUserCredentials}
@@ -56,11 +63,14 @@ public class AnonymousConversationCreatorService {
       session =
           sessionService.initializeSession(
               user, userDTO, false, RegistrationType.ANONYMOUS, SessionStatus.NEW);
+      session.setConversationType(ConversationType.LIVE_CHAT);
       consultantAgencies = obtainConsultants(session);
-      String rcGroupId =
-          createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
-              session, consultantAgencies, credentials.getRocketChatCredentials());
-      session.setGroupId(rcGroupId);
+      if (rocketChatEnabled) {
+        String rcGroupId =
+            createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
+                session, consultantAgencies, credentials.getRocketChatCredentials());
+        session.setGroupId(rcGroupId);
+      }
       sessionService.saveSession(session);
 
     } catch (Exception ex) {
@@ -136,5 +146,10 @@ public class AnonymousConversationCreatorService {
 
     liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
         consultantIds, session.getId());
+
+    // WP-06 Slice 3: persist a `waiting_room.client.joined` timeline card for the same consultants
+    // the live event reaches, so a client entering the live-chat waiting room shows up in the
+    // Activity Timeline. Best-effort — must never break anonymous-conversation creation.
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(session, consultantIds);
   }
 }

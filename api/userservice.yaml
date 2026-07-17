@@ -990,11 +990,10 @@ paths:
       parameters:
         - name: consultantId
           in: path
-          description: Consultant Id
+          description: Consultant UUID or active public slug
           required: true
           schema:
             type: string
-            format: UUID
       responses:
         200:
           description: successful operation
@@ -2228,6 +2227,10 @@ components:
       type: object
       writeOnly: true
 
+    ConversationType:
+      type: string
+      enum: [AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP]
+
     SessionDTO:
       type: object
       required:
@@ -2252,6 +2255,12 @@ components:
           type: integer
           example: 0
           description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE"
+        conversationType:
+          allOf:
+            - $ref: '#/components/schemas/ConversationType'
+          nullable: true
+          example: LIVE_CHAT
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         postcode:
           type: string
           minLength: 1
@@ -2513,6 +2522,12 @@ components:
         active:
           type: boolean
           example: false
+        conversationType:
+          allOf:
+            - $ref: '#/components/schemas/ConversationType'
+          nullable: true
+          example: SELF_HELP
+          description: Stable ADR-006 modality. One of AGENCY_COUNSELLING, LIVE_CHAT, INTERNAL_GROUP, SELF_HELP.
         consultingType:
           type: integer
           example: 0
@@ -2715,6 +2730,17 @@ components:
         displayName:
           type: string
           example: Max M.
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Active public slug used for consultant registration links
+        pendingPublicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Consultant-requested slug waiting for admin approval
+        publicSlugStatus:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
         firstName:
           type: string
           example: Max
@@ -2871,6 +2897,10 @@ components:
           type: string
           format: email
           example: "maxmuster@mann.com"
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Optional public slug request. Letters and hyphens only.
         languages:
           type: array
           example: de, en
@@ -2982,6 +3012,9 @@ components:
           example: Mustermann
         displayName:
           type: string
+        publicSlug:
+          type: string
+          example: nikunj-rohit
         username:
           type: string
         isSupervisor:
@@ -3001,9 +3034,11 @@ components:
       properties:
         oldPassword:
           type: string
+          format: password
           example: oldpass@w0rd
         newPassword:
           type: string
+          format: password
           example: newpass@w0rd
 
     ChatDTO:
@@ -3261,6 +3296,7 @@ components:
       properties:
         password:
           type: string
+          format: password
           example: p@ssw0rd
 
     RocketChatGroupIdDTO:
@@ -3288,10 +3324,12 @@ components:
       properties:
         secret:
           type: string
+          format: password
           minLength: 32
           maxLength: 32
         otp:
           type: string
+          format: password
           minLength: 6
           maxLength: 6
 
@@ -3311,6 +3349,7 @@ components:
           default: false
         secret:
           type: string
+          format: password
         qrCode:
           type: string
         type:

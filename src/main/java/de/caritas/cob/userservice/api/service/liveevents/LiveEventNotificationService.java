@@ -52,6 +52,26 @@ public class LiveEventNotificationService {
     }
   }
 
+  /**
+   * WP-06 Activity Timeline: nudge a single recipient's client to refresh its notification feed the
+   * moment a timeline {@code event_notification} is persisted, so the Activity Timeline updates in
+   * real time instead of waiting for the slow fallback poll.
+   *
+   * <p>Reuses the {@code DIRECT_MESSAGE} event type the client already listens for — this avoids
+   * coupling a new live-service enum value across the separate live-service deployment — and
+   * carries only the recipient user id, never any notification content, keeping the privacy
+   * boundary intact (ADR-AT-01 / FE-H01). Best-effort like every live event.
+   *
+   * @param userId the recipient whose client should refresh its Activity Timeline
+   */
+  public void sendEventNotificationCreatedEventToUser(String userId) {
+    if (isNotBlank(userId)) {
+      var liveEventMessage =
+          new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList(userId));
+      sendLiveEventMessage(liveEventMessage);
+    }
+  }
+
   private void sendLiveEventMessage(LiveEventMessage liveEventMessage) {
     sendLiveEventMessage(
         liveEventMessage,
@@ -62,7 +82,11 @@ public class LiveEventNotificationService {
       LiveEventMessage liveEventMessage, Supplier<String> errorMessageSupplier) {
     try {
       this.liveServiceApiControllerFactory.createControllerApi().sendLiveEvent(liveEventMessage);
-    } catch (ApiException e) {
+    } catch (ApiException | RuntimeException e) {
+      // Live events are best-effort. Besides the declared ApiException, a transport failure (e.g.
+      // the live service host is unreachable → UnresolvedAddressException/ConnectException wrapped
+      // in a RuntimeException by the java.net.http client) must never break the enquiry/session
+      // flow that fired the event — online consultants reconcile via the next queue poll anyway.
       log.error("Internal Server Error: {}", errorMessageSupplier.get(), e);
     }
   }

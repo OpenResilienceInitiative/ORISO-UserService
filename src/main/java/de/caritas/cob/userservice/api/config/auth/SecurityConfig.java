@@ -31,9 +31,9 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
 
 /** Provides the Keycloak/Spring Security configuration. */
@@ -43,6 +43,19 @@ public class SecurityConfig {
 
   private static final String UUID_PATTERN =
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
+
+  /**
+   * A public consultant id is either a UUID or a public slug (lowercase words joined by single
+   * hyphens). The negative lookahead keeps the sibling literal routes under {@code
+   * /users/consultants/*} (search, absences, import, sessions, languages) out of the permitAll
+   * match — they carry their own role rules below and are also seeded as reserved slugs. Only
+   * non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex} constraints.
+   */
+  private static final String PUBLIC_CONSULTANT_ID_PATTERN =
+      "(?:"
+          + UUID_PATTERN
+          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)[a-z]+(?:-[a-z]+)*)";
+
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
@@ -103,8 +116,10 @@ public class SecurityConfig {
                     "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
                     "/service/conversations/anonymous/availability",
-                    "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/error-reports",
+                    "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
                     "/users/invitelinks/*/redeem")
@@ -179,6 +194,11 @@ public class SecurityConfig {
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/statistics/consultant",
+                    "/service/users/statistics/consultant")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
@@ -188,10 +208,8 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/data",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent")
+                    "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
@@ -272,6 +290,15 @@ public class SecurityConfig {
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Consultant deletion: restricted agency admins (Beratungsstellen-Admins) may
+                // delete consultants of their own agencies; the agency scoping is enforced in
+                // ConsultantAdminFacade#markConsultantForDeletion. Must stay above the
+                // /useradmin/** catch-all to take effect (first match wins).
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
+                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
@@ -298,7 +325,14 @@ public class SecurityConfig {
                     "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
                     "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
-                .requestMatchers("/useradmin", "/useradmin/**")
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/statistics/dashboard",
+                    "/service/useradmin/statistics/dashboard")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(
+                    "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -333,9 +367,6 @@ public class SecurityConfig {
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers("/userstatistics", "/userstatistics/**")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
-                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/actuator/health")
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/actuator/health/*")
@@ -358,7 +389,7 @@ public class SecurityConfig {
 
   @Bean
   public WebSecurityCustomizer webSecurityCustomizer() {
-    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/askers/new");
+    return web -> web.ignoring().requestMatchers("/actuator/**", "/users/availability/**");
   }
 
   @Bean
@@ -382,7 +413,7 @@ public class SecurityConfig {
    */
   private void enableTenantFilterIfMultitenancyEnabled(HttpSecurity http) {
     if (multitenancy && tenantFilter != null) {
-      http.addFilterAfter(tenantFilter, BearerTokenAuthenticationFilter.class);
+      http.addFilterAfter(tenantFilter, SecurityContextHolderAwareRequestFilter.class);
     }
   }
 

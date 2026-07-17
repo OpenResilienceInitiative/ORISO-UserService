@@ -188,7 +188,8 @@ class UserAccountControllerDelegate {
 
     Optional<Map<String, Object>> patchResponse = accountManager.patchUser(patchMap);
     if (patchResponse.isEmpty()) {
-      throw new IllegalStateException("patch response not valid");
+      throw new NotFoundException(
+          "User with id %s not found in user or consultant repository", userId);
     }
 
     userDtoMapper

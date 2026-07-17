@@ -21,6 +21,10 @@
               "message": "%message",
               "thread": "%thread",
               "stack": "%replace(%replace(%rEx){'\n','\\\\n'}){'\t','\\\\t'}"
+              },
+              "trace": {
+              "traceId": "%mdc{traceId:-null}",
+              "spanId": "%mdc{spanId:-null}"
               }
               }
             </pattern>
@@ -36,7 +40,7 @@
   <springProfile name="testing">
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
       <encoder>
-        <pattern>%date{ISO8601} %highlight(%-5level) [%X{X-Correlation-Id}] [%thread] %cyan(%logger[%method:%line]) - %msg %n</pattern>
+        <pattern>%date{ISO8601} %highlight(%-5level) [%X{CID}] [%thread] %cyan(%logger[%method:%line]) - %msg %n</pattern>
       </encoder>
     </appender>
     <root level="INFO">

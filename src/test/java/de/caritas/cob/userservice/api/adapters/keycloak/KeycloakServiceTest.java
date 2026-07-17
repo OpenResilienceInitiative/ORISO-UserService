@@ -1378,6 +1378,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void findByUsername_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(USERNAME))
+        .thenThrow(new jakarta.ws.rs.NotAuthorizedException("Bearer"))
+        .thenReturn(singletonList(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    List<UserRepresentation> result = keycloakService.findByUsername(USERNAME);
+
+    assertThat(result, is(singletonList(userRepresentation)));
+    verify(keycloakClient).refreshAdminSession();
+    verify(usersResource, times(2)).search(USERNAME);
+  }
+
+  @Test
   public void deleteUser_Should_RemoveUser_When_UserExists() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
@@ -1402,6 +1418,23 @@ public class KeycloakServiceTest {
 
     assertThat(
         logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
+  }
+
+  @Test
+  public void deleteUser_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    UsersResource usersResource = mock(UsersResource.class);
+    UserResource userResource = mock(UserResource.class);
+    org.mockito.Mockito.doThrow(mock(jakarta.ws.rs.NotAuthorizedException.class))
+        .doNothing()
+        .when(userResource)
+        .remove();
+    when(usersResource.get(any())).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.deleteUser(USER_ID);
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(userResource, times(2)).remove();
   }
 
   @Test

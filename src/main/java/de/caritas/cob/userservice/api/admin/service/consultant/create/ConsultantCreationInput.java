@@ -20,6 +20,10 @@ interface ConsultantCreationInput {
 
   String getEmail();
 
+  default String getPublicSlug() {
+    return null;
+  }
+
   String getPassword();
 
   boolean isAbsent();

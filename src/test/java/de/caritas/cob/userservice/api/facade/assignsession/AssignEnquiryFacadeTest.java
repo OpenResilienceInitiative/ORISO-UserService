@@ -111,6 +111,7 @@ class AssignEnquiryFacadeTest {
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
+  @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
 
   private LogbackCaptor logCaptor;
 
@@ -224,6 +225,34 @@ class AssignEnquiryFacadeTest {
     verify(userRepository).save(USER_WITH_RC_ID);
     assertEquals("@asker:matrix.example.com", USER_WITH_RC_ID.getMatrixUserId());
     verify(matrixSynapseService, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
+  }
+
+  @Test
+  void
+      assignEnquiry_Should_DeriveConstructedMxidServerPartFromConfiguredServerName_SoConfigChangesTheMxid()
+          throws MatrixCreateUserException {
+    // ADR-005 / DB-M04: AssignEnquiryFacade is the ONE place the service constructs a Matrix user
+    // ID. Its server part must come from the injected MatrixConfig, never a literal (and certainly
+    // never a bare IP). Inject a distinctive server name that production code could not plausibly
+    // hardcode and prove it flows verbatim into the constructed MXID — i.e. change the config,
+    // change the MXID.
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    when(matrixConfig.getServerName()).thenReturn("test.example.org");
+    USER_WITH_RC_ID.setMatrixUserId(null);
+    USER_WITH_RC_ID.setUsername("probeuser");
+    lenient()
+        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
+        .thenReturn(LIST_GROUP_MEMBER_DTO);
+    // Force the create path to fail so the MXID-construction fallback branch runs.
+    when(matrixSynapseService.createUser(eq("probeuser"), anyString(), eq("probeuser")))
+        .thenThrow(new MatrixCreateUserException("User ID already taken"));
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // The constructed candidate MXID must use the configured server name verbatim.
+    assertThat(USER_WITH_RC_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
+    verify(matrixSynapseService, atLeastOnce())
+        .loginAsUserAccessToken("@probeuser:test.example.org");
   }
 
   @Test
@@ -415,6 +444,21 @@ class AssignEnquiryFacadeTest {
 
     verify(sessionToConsultantVerifier, never()).verifySessionIsNotInProgress(any());
     verify(sessionToConsultantVerifier, times(1)).verifyPreconditionsForAssignment(any(), eq(true));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Supervision (auto-assigned) — grill 2026-07-13
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assignRegisteredEnquiry_Should_attachStandingSupervisor_afterTheCaseIsAccepted() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // Accepting an Agency Counselling case hands off to the supervision module, which attaches the
+    // counsellor's standing supervisor (or does nothing if they have none).
+    verify(sessionSupervisorFacade)
+        .attachStandingSupervisorIfAssigned(
+            SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ class AcceptAnonymousEnquiryFacadeTest {
   @Test
   void acceptAnonymousEnquiry_Should_useServicesCorrectly_When_sessionExists() {
     Session session = new EasyRandom().nextObject(Session.class);
-    when(this.sessionService.getSession(session.getId())).thenReturn(Optional.of(session));
+    when(this.sessionService.getSessionForUpdate(session.getId())).thenReturn(Optional.of(session));
 
     this.acceptAnonymousEnquiryFacade.acceptAnonymousEnquiry(session.getId());
 

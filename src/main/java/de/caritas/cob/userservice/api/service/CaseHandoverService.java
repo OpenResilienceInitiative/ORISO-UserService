@@ -24,11 +24,13 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,10 +60,70 @@ public class CaseHandoverService {
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
 
+  /**
+   * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
+   * vault doc "Case Handover — System-Benachrichtigungen & Rechtstexte (Entwurf)"; tr/uk are
+   * machine-drafted pending native review. {@code {{newAdvisor}}} is substituted at send time.
+   */
+  private static final Map<String, Map<String, String>> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES =
+      Map.of(
+          "COUNSELLOR_ASKED_FOR_ADVICE",
+          Map.of(
+              "de",
+              "Du hast zugestimmt: {{newAdvisor}} kann dieses Gespräch zeitweise mitlesen, um deine Berater:in fachlich zu unterstützen. Deine Berater:in bleibt für dich zuständig.",
+              "en",
+              "You have given your consent: {{newAdvisor}} can temporarily read this conversation to support your counsellor professionally. Your counsellor remains responsible for you.",
+              "tr",
+              "Onay verdiniz: {{newAdvisor}}, danışmanınıza mesleki destek sağlamak için bu görüşmeyi geçici olarak okuyabilir. Danışmanınız sizin için sorumlu olmaya devam eder.",
+              "uk",
+              "Ви надали згоду: {{newAdvisor}} може тимчасово читати цю розмову, щоб професійно підтримати вашого консультанта. Ваш консультант і надалі відповідає за вас."),
+          "COUNSELLOR_ON_HOLIDAY",
+          Map.of(
+              "de",
+              "Deine bisherige Berater:in ist zurzeit abwesend. Während dieser Zeit betreut {{newAdvisor}} deinen Fall.",
+              "en",
+              "Your previous counsellor is currently away. During this time, {{newAdvisor}} is looking after your case.",
+              "tr",
+              "Önceki danışmanınız şu anda izinde. Bu süre boyunca vakanızla {{newAdvisor}} ilgilenecek.",
+              "uk",
+              "Ваш попередній консультант наразі відсутній. У цей час вашою справою опікується {{newAdvisor}}."),
+          "OTHER_EMERGENCY",
+          Map.of(
+              "de",
+              "Aus einem dringenden Grund hat {{newAdvisor}} deinen Fall übernommen. Du musst nichts weiter tun.",
+              "en",
+              "For an urgent reason, {{newAdvisor}} has taken over your case. You don't need to do anything.",
+              "tr",
+              "Acil bir nedenden dolayı vakanızı {{newAdvisor}} devraldı. Herhangi bir şey yapmanız gerekmiyor.",
+              "uk",
+              "З невідкладної причини вашу справу перейняв(-ла) {{newAdvisor}}. Вам нічого не потрібно робити."),
+          "COUNSELLOR_IS_ILL",
+          Map.of(
+              "de",
+              "Deine bisherige Berater:in ist leider erkrankt. Damit du nicht warten musst, hat {{newAdvisor}} deinen Fall übernommen.",
+              "en",
+              "Your previous counsellor is unfortunately ill. So you don't have to wait, {{newAdvisor}} has taken over your case.",
+              "tr",
+              "Önceki danışmanınız maalesef hastalandı. Beklemek zorunda kalmamanız için vakanızı {{newAdvisor}} devraldı.",
+              "uk",
+              "На жаль, ваш попередній консультант захворів. Щоб вам не довелося чекати, вашу справу перейняв(-ла) {{newAdvisor}}."),
+          "COUNSELLOR_LEFT",
+          Map.of(
+              "de",
+              "Deine bisherige Berater:in ist nicht mehr in dieser Beratungsstelle tätig. Deine Beratung führt ab jetzt {{newAdvisor}} weiter.",
+              "en",
+              "Your previous counsellor no longer works at this counselling centre. From now on, {{newAdvisor}} will continue your counselling.",
+              "tr",
+              "Önceki danışmanınız artık bu danışma merkezinde çalışmıyor. Danışmanlığınıza bundan sonra {{newAdvisor}} devam edecek.",
+              "uk",
+              "Ваш попередній консультант більше не працює в цьому консультаційному центрі. Відтепер ваше консультування продовжить {{newAdvisor}}."));
+
   private static final List<CaseHandoverReason> DEFAULT_REASONS =
       List.of(
           CaseHandoverReason.builder()
               .code("COUNSELLOR_ASKED_FOR_ADVICE")
+              .clientNotificationTemplates(
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ASKED_FOR_ADVICE"))
               .label("Counsellor asked for advice")
               .clientConsentRequired(true)
               .accessAllowed(true)
@@ -71,6 +133,8 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("COUNSELLOR_ON_HOLIDAY")
+              .clientNotificationTemplates(
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ON_HOLIDAY"))
               .label("Counsellor is on holiday")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -80,6 +144,8 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("OTHER_EMERGENCY")
+              .clientNotificationTemplates(
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("OTHER_EMERGENCY"))
               .label("Other emergency")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -89,6 +155,8 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("COUNSELLOR_IS_ILL")
+              .clientNotificationTemplates(
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_IS_ILL"))
               .label("Counsellor is ill")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -98,6 +166,8 @@ public class CaseHandoverService {
               .build(),
           CaseHandoverReason.builder()
               .code("COUNSELLOR_LEFT")
+              .clientNotificationTemplates(
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_LEFT"))
               .label("Counsellor does not work here anymore")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -113,6 +183,7 @@ public class CaseHandoverService {
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   public List<CaseHandoverReason> listReasons() {
     List<CaseHandoverReasonPolicy> policies =
@@ -533,6 +604,7 @@ public class CaseHandoverService {
         .enabled(Boolean.TRUE.equals(policy.getEnabled()))
         .displayOrder(policy.getDisplayOrder())
         .policyAuthority(policy.getPolicyAuthority())
+        .clientNotificationTemplates(policy.getClientNotificationTemplates())
         .build();
   }
 
@@ -555,8 +627,29 @@ public class CaseHandoverService {
         reason.getPolicyAuthority() == null || reason.getPolicyAuthority().isBlank()
             ? POLICY_AUTHORITY
             : reason.getPolicyAuthority().trim());
+    policy.setClientNotificationTemplates(
+        sanitizeNotificationTemplates(reason.getClientNotificationTemplates()));
     policy.setUpdatedAt(now);
     return policy;
+  }
+
+  private Map<String, String> sanitizeNotificationTemplates(Map<String, String> templates) {
+    if (templates == null || templates.isEmpty()) {
+      return null;
+    }
+    Map<String, String> sanitized = new LinkedHashMap<>();
+    templates.forEach(
+        (language, template) -> {
+          if (language == null || template == null) {
+            return;
+          }
+          var languageKey = language.trim().toLowerCase();
+          var text = template.trim();
+          if (languageKey.matches("[a-z]{2}") && !text.isBlank()) {
+            sanitized.put(languageKey, text);
+          }
+        });
+    return sanitized.isEmpty() ? null : sanitized;
   }
 
   private String normalizeReasonCode(String reasonCode) {
@@ -622,6 +715,7 @@ public class CaseHandoverService {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
+    postGrantedChatSystemMessage(request, session, requesterName);
     String text =
         String.format(
             "%s took over your case. Reason: %s. Explanation: %s",
@@ -653,6 +747,52 @@ public class CaseHandoverService {
           session.getId(),
           session.getTenantId());
     }
+  }
+
+  /**
+   * Posts the designed in-chat system notification ("new counsellor took over your case") into the
+   * session's Matrix room. Emission failures must never fail the handover itself.
+   */
+  private void postGrantedChatSystemMessage(
+      CaseHandoverRequest request, Session session, String requesterName) {
+    try {
+      var description = resolveClientNotificationDescription(request, requesterName);
+      matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
+          session, requesterName, request.getReasonLabel(), request.getExplanation(), description);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Case-handover system message for session {} could not be posted: {}",
+          session.getId(),
+          exception.getMessage());
+    }
+  }
+
+  private String resolveClientNotificationDescription(
+      CaseHandoverRequest request, String requesterName) {
+    var reasonCode = normalizeReasonCode(request.getReasonCode());
+    Map<String, String> templates =
+        caseHandoverReasonPolicyRepository
+            .findById(reasonCode)
+            .map(CaseHandoverReasonPolicy::getClientNotificationTemplates)
+            .filter(map -> map != null && !map.isEmpty())
+            .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
+    if (templates == null || templates.isEmpty()) {
+      return null;
+    }
+    var language = resolveSessionLanguage(request.getSession());
+    var template =
+        templates.getOrDefault(
+            language,
+            templates.getOrDefault(
+                "de", templates.getOrDefault("en", templates.values().iterator().next())));
+    return template.replace("{{newAdvisor}}", requesterName);
+  }
+
+  private String resolveSessionLanguage(Session session) {
+    if (session == null || session.getLanguageCode() == null) {
+      return "de";
+    }
+    return session.getLanguageCode().name().toLowerCase(Locale.ROOT);
   }
 
   private void notifyPendingConsent(CaseHandoverRequest request) {
@@ -783,6 +923,7 @@ public class CaseHandoverService {
     private boolean enabled;
     private Integer displayOrder;
     private String policyAuthority;
+    private Map<String, String> clientNotificationTemplates;
   }
 
   @Data

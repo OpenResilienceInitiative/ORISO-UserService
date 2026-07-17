@@ -108,6 +108,25 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
+  public void
+      sendLiveNewAnonymousEnquiryEventToUsers_Should_notPropagate_When_liveServiceUnreachable()
+          throws ApiException {
+    // A live event is best-effort: a transport failure (e.g. the live service host is unreachable,
+    // surfacing as an UnresolvedAddressException/ConnectException — NOT an ApiException) must never
+    // break the enquiry/session flow that fired it.
+    doThrow(new RuntimeException(new java.net.ConnectException("unreachable")))
+        .when(this.liveControllerApi)
+        .sendLiveEvent(any());
+
+    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
+      this.liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
+          asList("consultant-1"), 4711L);
+
+      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
+    }
+  }
+
+  @Test
   public void sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsersInsteadOfInitiatingUser()
       throws ApiException {
     List<String> userIds = asList("id1", "id2", "id3", "id4");
@@ -154,6 +173,33 @@ public class LiveEventNotificationServiceTest {
     ArgumentCaptor<LiveEventMessage> captor = ArgumentCaptor.forClass(LiveEventMessage.class);
     verify(liveControllerApi, times(1)).sendLiveEvent(captor.capture());
     assertEquals(EventType.NEW_ANONYMOUS_ENQUIRY, captor.getValue().getEventType());
+  }
+
+  // WP-06 Activity Timeline: single-recipient live refresh nudge fired when an event_notification
+  // is persisted, so the Activity Timeline updates in real time instead of on the slow fallback
+  // poll. Reuses DIRECT_MESSAGE (no new live-service enum), carries only the recipient user id.
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_sendDirectMessageEventForRecipient()
+      throws ApiException {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("recipient-1");
+
+    verify(this.liveControllerApi, times(1))
+        .sendLiveEvent(
+            new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList("recipient-1")));
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsBlank() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("  ");
+
+    verifyNoInteractions(this.liveControllerApi);
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsNull() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser(null);
+
+    verifyNoInteractions(this.liveControllerApi);
   }
 
   @Test

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserMobileToken;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
@@ -73,6 +74,7 @@ public class UserService {
       boolean languageFormal,
       String preferredLanguage) {
     var user = new User(userId, oldId, username, email, languageFormal);
+    user.setTenantId(TenantContext.getCurrentTenant());
     auditingHandler.markCreated(user);
     if (nonNull(preferredLanguage)) {
       user.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
@@ -127,14 +129,20 @@ public class UserService {
   /**
    * Finds an user by the given username (searches for encoded and decoded version of it).
    *
+   * <p>user.username is not unique (generated anonymous usernames repeat across restarts), so the
+   * lookup returns the oldest matching row instead of failing on duplicates.
+   *
    * @param username the username to search for
    * @return {@link Optional} of {@link User}
    */
   public Optional<User> findUserByUsername(String username) {
-    return userRepository.findByUsernameInAndDeleteDateIsNull(
-        List.of(
-            usernameTranscoder.encodeUsername(username),
-            usernameTranscoder.decodeUsername(username)));
+    return userRepository
+        .findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
+            List.of(
+                usernameTranscoder.encodeUsername(username),
+                usernameTranscoder.decodeUsername(username)))
+        .stream()
+        .findFirst();
   }
 
   public Optional<User> findUserByEmail(String email) {

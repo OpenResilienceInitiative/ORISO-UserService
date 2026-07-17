@@ -51,6 +51,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.Subs
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
@@ -78,6 +79,9 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import jakarta.servlet.http.Cookie;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -274,6 +278,73 @@ class UserControllerChatE2EIT {
   private String giveValidCreateChatBodyWithAgency(ConsultantAgency consultantAgency) {
     return VALID_CREATE_CHAT_BODY_WITH_AGENCY_PLACEHOLDER.replace(
         "${AGENCY_ID}", consultantAgency.getAgencyId().toString());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.UPDATE_CHAT)
+  void updateChat_Should_PersistScheduleFieldsToDatabase_When_OwnerEditsInactiveSeries()
+      throws Exception {
+    // The owner is the mocked authenticatedUser; updateChat authorizes on chatOwner id.
+    givenAValidConsultant(true);
+
+    // Seed an INACTIVE repetitive series with a known "before" schedule, straight into H2 so
+    // the assertions below reload from the database rather than a mocked service result.
+    var beforeStart = LocalDateTime.of(2026, 1, 5, 18, 0);
+    var seededChat = easyRandom.nextObject(Chat.class);
+    seededChat.setId(null);
+    seededChat.setGroupId(RC_GROUP_ID);
+    seededChat.setMatrixRoomId(null);
+    seededChat.setActive(false); // updateChat rejects active chats with 409
+    seededChat.setChatOwner(consultant);
+    seededChat.setConsultingTypeId(easyRandom.nextInt(128));
+    seededChat.setMaxParticipants(easyRandom.nextInt(128));
+    seededChat.setUpdateDate(CustomLocalDateTime.nowInUtc());
+    seededChat.setSourceLanguage("de");
+    seededChat.setRepetitive(true);
+    seededChat.setRepeatCount(12);
+    seededChat.setChatInterval(Chat.ChatInterval.WEEKLY);
+    seededChat.setChatModality(Chat.ChatModality.TEXT);
+    seededChat.setTimezone("Europe/Berlin");
+    seededChat.setStartDate(beforeStart);
+    seededChat.setInitialStartDate(beforeStart);
+    seededChat.setCurrentOccurrenceIndex(5); // non-zero, must reset to 0 on re-anchor
+    chat = chatRepository.save(seededChat);
+
+    // "After" schedule: every field changed so a no-op update would fail every assertion.
+    var newStartDate = LocalDate.of(2026, 3, 2);
+    var newStartTime = LocalTime.of(20, 30);
+    var body = new ChatDTO();
+    body.setTopic("Edited self-help series");
+    body.setStartDate(newStartDate);
+    body.setStartTime(newStartTime);
+    body.setDuration(90);
+    body.setRepetitive(true);
+    body.setRepeatCount(6); // 12 -> 6
+    body.setChatInterval(Chat.ChatInterval.MONTHLY); // WEEKLY -> MONTHLY
+    body.setModality(Chat.ChatModality.VIDEO); // TEXT -> VIDEO
+    body.setTimezone("UTC"); // Europe/Berlin -> UTC
+
+    mockMvc
+        .perform(
+            put("/users/chat/{chatId}/update", chat.getId())
+                .with(jwt().authorities(new SimpleGrantedAuthority(AuthorityValue.UPDATE_CHAT)))
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("groupId", is(chat.getGroupId())));
+
+    var persisted = chatRepository.findById(chat.getId()).orElseThrow();
+    assertEquals(6, persisted.getRepeatCount());
+    assertTrue(persisted.isRepetitive());
+    assertEquals(Chat.ChatInterval.MONTHLY, persisted.getChatInterval());
+    assertEquals(Chat.ChatModality.VIDEO, persisted.getChatModality());
+    assertEquals("UTC", persisted.getTimezone());
+    assertEquals(LocalDateTime.of(newStartDate, newStartTime), persisted.getStartDate());
+    assertEquals(LocalDateTime.of(newStartDate, newStartTime), persisted.getInitialStartDate());
+    assertEquals(0, persisted.getCurrentOccurrenceIndex());
   }
 
   @Test

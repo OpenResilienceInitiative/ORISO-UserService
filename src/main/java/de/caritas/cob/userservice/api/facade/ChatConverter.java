@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -69,6 +70,12 @@ public class ChatConverter {
             .timezone(timezone)
             .chatModality(
                 nonNull(chatDTO.getModality()) ? chatDTO.getModality() : ChatModality.TEXT)
+            .conversationType(
+                nonNull(chatDTO.getRepeatCount())
+                        || nonNull(chatDTO.getChatInterval())
+                        || isTrue(chatDTO.getRepetitive())
+                    ? ConversationType.SELF_HELP
+                    : ConversationType.INTERNAL_GROUP)
             .updateDate(nowInUtc())
             .createDate(nowInUtc())
             .hintMessage(chatDTO.getHintMessage())

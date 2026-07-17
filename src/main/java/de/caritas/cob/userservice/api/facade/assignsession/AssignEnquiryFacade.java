@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveF
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -74,6 +75,14 @@ public class AssignEnquiryFacade {
   private final @NonNull EventNotificationService eventNotificationService;
 
   /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): attaches the accepting counsellor's standing
+   * supervisor once the case is theirs. Only the registered/Matrix path uses it — Live Chat ({@link
+   * #assignAnonymousEnquiry}) is out of scope for supervision per ADR-002 and has no Matrix room to
+   * observe.
+   */
+  private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
+
+  /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
    * consultants from the Rocket.Chat group which don't have the right to view this session anymore.
    *
@@ -94,6 +103,9 @@ public class AssignEnquiryFacade {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
+    // failure), so it is safe to layer standing supervision on top. This call never throws.
+    sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
     liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
         session.getUser().getUserId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);

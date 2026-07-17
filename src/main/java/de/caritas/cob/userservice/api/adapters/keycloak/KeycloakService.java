@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
@@ -725,6 +726,13 @@ public class KeycloakService implements IdentityClient {
       keycloakClient.getUsersResource().get(userId).remove();
     } catch (NotFoundException e) {
       log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
+              + " and retrying once",
+          userId);
+      keycloakClient.refreshAdminSession();
+      keycloakClient.getUsersResource().get(userId).remove();
     }
   }
 
@@ -807,7 +815,15 @@ public class KeycloakService implements IdentityClient {
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
-    return keycloakClient.getUsersResource().search(username);
+    try {
+      return keycloakClient.getUsersResource().search(username);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while searching for username, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return keycloakClient.getUsersResource().search(username);
+    }
   }
 
   public UserRepresentation getById(String userId) {

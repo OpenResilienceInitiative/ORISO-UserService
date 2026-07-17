@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -312,6 +314,52 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Checks whether a Matrix user with the given localpart already exists on this homeserver.
+   *
+   * <p>Matrix user IDs are global (not per-tenant), so this is the authoritative occupancy check
+   * for anonymous usernames: a localpart can be orphaned in Matrix (present here but absent from
+   * MariaDB and Keycloak, e.g. left behind by a rolled-back or externally cleaned-up account), and
+   * such an orphan still makes {@code createUser} fail with {@code M_USER_IN_USE}.
+   *
+   * @param localpart the Matrix localpart (the part before {@code :server}); it is lowercased,
+   *     because Synapse stores localparts in lower case
+   * @return {@code true} if the user exists, {@code false} if it does not (HTTP 404) or if
+   *     existence could not be determined (so callers still make forward progress rather than
+   *     looping forever when the admin API is unavailable)
+   */
+  public boolean userExists(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return false;
+    }
+    String matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user existence check of {}", matrixUserId);
+        return false;
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return false;
+    } catch (Exception ex) {
+      log.warn("Could not check Matrix user existence for {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
    * Creates a short-lived Matrix access token for a user via the Synapse admin API.
    *
    * @param matrixUserId full Matrix user ID, e.g. {@code @user:server}
@@ -420,8 +468,9 @@ public class MatrixSynapseService {
       String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
       var adminHeaders = getClientHttpHeaders(adminToken);
       adminHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var updateBody =
-          java.util.Map.<String, Object>of("password", transientPassword, "logout_devices", false);
+      var updateBody = new MatrixPasswordUpdateRequestDTO();
+      updateBody.setPassword(transientPassword);
+      updateBody.setLogoutDevices(false);
       var updateUri =
           MatrixUrlBuilder.buildUrl(
               matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
@@ -433,12 +482,12 @@ public class MatrixSynapseService {
 
       var loginHeaders = new HttpHeaders();
       loginHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var loginBody = new java.util.HashMap<String, Object>();
-      loginBody.put("type", "m.login.password");
-      loginBody.put("user", matrixUserId);
-      loginBody.put("password", transientPassword);
-      loginBody.put("device_id", deviceId);
-      loginBody.put("initial_device_display_name", "ORISO Web");
+      var loginBody = new MatrixLoginRequestDTO();
+      loginBody.setType("m.login.password");
+      loginBody.setUser(matrixUserId);
+      loginBody.setPassword(transientPassword);
+      loginBody.setDeviceId(deviceId);
+      loginBody.setInitialDeviceDisplayName("ORISO Web");
 
       var response =
           restTemplate.postForEntity(
@@ -728,12 +777,12 @@ public class MatrixSynapseService {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
 
-      var loginRequest = new java.util.HashMap<String, Object>();
-      loginRequest.put("type", "m.login.password");
-      loginRequest.put("user", username);
-      loginRequest.put("password", password);
+      var loginRequest = new MatrixLoginRequestDTO();
+      loginRequest.setType("m.login.password");
+      loginRequest.setUser(username);
+      loginRequest.setPassword(password);
 
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(loginRequest, headers);
+      HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
       var url = matrixConfig.getApiUrl(ENDPOINT_LOGIN);
       log.info("Logging in Matrix user: {} at URL: {}", username, url);

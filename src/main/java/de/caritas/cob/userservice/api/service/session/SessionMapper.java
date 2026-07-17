@@ -58,6 +58,11 @@ public class SessionMapper {
         .agencyId(session.getAgencyId())
         .consultingType(session.getConsultingTypeId())
         .status(session.getStatus().getValue())
+        .conversationType(
+            session.getConversationType() == null
+                ? null
+                : de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.fromValue(
+                    session.getConversationType().name()))
         .postcode(session.getPostcode())
         .groupId(session.getGroupId())
         .matrixRoomId(

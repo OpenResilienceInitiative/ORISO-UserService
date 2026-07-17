@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -68,6 +69,7 @@ class CreateConsultantSagaTest {
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
   @Mock private IdentityClient identityClient;
+  @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private RocketChatService rocketChatService;
   @Mock private ConsultantService consultantService;
   @Mock private UserHelper userHelper;
