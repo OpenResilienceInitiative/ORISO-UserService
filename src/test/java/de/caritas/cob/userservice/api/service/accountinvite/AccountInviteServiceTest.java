@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -770,12 +771,12 @@ class AccountInviteServiceTest {
             null,
             30L);
 
-    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
   }
 
   @Test
-  void createInvite_Should_ThrowBadRequest_When_TenantAdminTenantIdUsedByActiveInvite() {
+  void createInvite_Should_ThrowConflict_When_TenantAdminTenantIdUsedByActiveInvite() {
     when(tenantService.getRestrictedTenantData(7L))
         .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
     when(accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
@@ -795,7 +796,7 @@ class AccountInviteServiceTest {
             null,
             30L);
 
-    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
     verify(accountInviteRepository, never()).save(any());
   }
 
