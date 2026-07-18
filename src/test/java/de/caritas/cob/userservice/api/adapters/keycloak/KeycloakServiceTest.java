@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -339,6 +340,7 @@ public class KeycloakServiceTest {
   public void otpRequests_ShouldUseDecodedKeycloakUsername() {
     var encodedUsername = "enc.ORSXG5BAOVZWK4Q.";
     when(usernameTranscoder.decodeUsername(encodedUsername)).thenReturn(USERNAME);
+    when(identityClientConfig.getOtpUrl(anyString(), eq(USERNAME))).thenReturn("otp-url");
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     when(keycloakClient.get(anyString(), anyString(), eq(OtpInfoDTO.class)))
         .thenReturn(new ResponseEntity<>(OTP_INFO_DTO, HttpStatus.OK));
