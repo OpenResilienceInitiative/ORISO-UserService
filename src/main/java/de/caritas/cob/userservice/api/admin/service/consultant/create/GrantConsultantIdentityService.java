@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create;
 import static com.google.common.collect.Lists.newArrayList;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils.serializeToJsonString;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
@@ -190,9 +191,12 @@ public class GrantConsultantIdentityService {
       String rocketChatUserId,
       String matrixUserId) {
 
+    var now = nowInUtc();
     var consultant =
         Consultant.builder()
             .id(admin.getId())
+            .createDate(now)
+            .updateDate(now)
             .username(encodedUsername)
             .firstName(admin.getFirstName())
             .lastName(admin.getLastName())
