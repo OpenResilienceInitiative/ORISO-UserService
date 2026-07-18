@@ -3,6 +3,13 @@
   xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
   <changeSet author="oriso" id="consultantPublicSlug">
+    <!-- Environments that got the slug schema applied manually (pre-dev runs with
+         Liquibase disabled) must not fail on the non-idempotent ALTERs below. -->
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="consultant" columnName="public_slug"/>
+      </not>
+    </preConditions>
     <rollback>
       <sqlFile path="db/changelog/changeset/0067_consultant_public_slug/consultant-public-slug-rollback.sql"
         stripComments="true"/>
