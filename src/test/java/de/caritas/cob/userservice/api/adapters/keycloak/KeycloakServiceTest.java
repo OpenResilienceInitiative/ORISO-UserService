@@ -335,6 +335,29 @@ public class KeycloakServiceTest {
     assertDoesNotThrow(() -> keycloakService.deleteOtpCredential(USERNAME));
   }
 
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  public void otpRequests_ShouldUseDecodedKeycloakUsername() {
+    var encodedUsername = "enc.ORSXG5BAOVZWK4Q.";
+    when(usernameTranscoder.decodeUsername(encodedUsername)).thenReturn(USERNAME);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), any(), any()))
+        .thenReturn(new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK));
+
+    keycloakService.getOtpCredential(encodedUsername);
+    keycloakService.setUpOtpCredential(encodedUsername, "123456", "secret");
+    keycloakService.deleteOtpCredential(encodedUsername);
+    keycloakService.initiateEmailVerification(encodedUsername, "mail@example.com");
+    keycloakService.finishEmailVerification(encodedUsername, "123456");
+
+    verify(identityClientConfig).getOtpUrl("/fetch-otp-setup-info/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/setup-otp/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/delete-otp/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/send-verification-mail/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/setup-otp-mail/{username}", USERNAME);
+    verify(usernameTranscoder, times(5)).decodeUsername(encodedUsername);
+  }
+
   private void givenAKeycloakLoginUrl() {
     when(identityClientConfig.getOpenIdConnectUrl(anyString()))
         .thenReturn(
