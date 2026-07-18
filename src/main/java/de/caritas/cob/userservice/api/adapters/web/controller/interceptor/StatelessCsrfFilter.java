@@ -101,10 +101,14 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         return true;
       }
       // Password reset endpoints are public login bootstrap endpoints too (ORISO-Helm#72) and
-      // must work without a CSRF token — the requester has no session yet.
-      if (request.getRequestURI() != null
-          && request.getRequestURI().toLowerCase().contains("/users/password-reset/")) {
-        return true;
+      // must work without a CSRF token — the requester has no session yet. Scope the exemption to
+      // the two exact routes (optionally under a /service prefix), never an arbitrary substring.
+      if (request.getRequestURI() != null) {
+        String lowerUri = request.getRequestURI().toLowerCase();
+        if (lowerUri.endsWith("/users/password-reset/request")
+            || lowerUri.endsWith("/users/password-reset/confirm")) {
+          return true;
+        }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
       // hits it before any session / CSRF cookie exists.

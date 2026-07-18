@@ -130,10 +130,8 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
-                .requestMatchers(
-                    RegexRequestMatcher.regexMatcher(
-                        HttpMethod.POST, ".*/users/password-reset/(request|confirm)$"))
-                .permitAll()
+                // Password-reset request/confirm are already permitted by the exact requestMatchers
+                // above (with and without the /service prefix); no broad regex needed.
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
