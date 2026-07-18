@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -58,7 +59,8 @@ public class AccountInviteService {
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
-      throw new BadRequestException("tenantId " + command.tenantId() + " is already taken");
+      // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
+      throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
     }
 
     LocalDateTime now = LocalDateTime.now();
