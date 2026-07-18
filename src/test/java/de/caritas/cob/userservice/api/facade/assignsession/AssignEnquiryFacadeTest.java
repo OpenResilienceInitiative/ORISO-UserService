@@ -207,6 +207,22 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
+  void assignEnquiry_Should_EnsureAdminMembershipInNewMatrixRoom() {
+    // The notification listener syncs as the technical admin; the freshly created
+    // session room must contain the admin or message notifications never fire.
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    CONSULTANT_WITH_AGENCY.setMatrixUserId("@consultant:matrix.example.com");
+    lenient()
+        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
+        .thenReturn(LIST_GROUP_MEMBER_DTO);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(matrixSynapseService)
+        .ensureAdminInRoom(MATRIX_ROOM_ID, "@consultant:matrix.example.com");
+  }
+
+  @Test
   void assignEnquiry_Should_ResolveExistingUserMatrixAccount_WhenCreateFails()
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);

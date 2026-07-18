@@ -242,6 +242,16 @@ class DirectSessionMatrixRoomServiceTest {
   }
 
   @Test
+  void provisionRoomForDirectSession_Should_ensureAdminMembership_When_roomCreated()
+      throws Exception {
+    // The notification listener syncs as the technical admin; without membership in the
+    // freshly created room, message notifications for this session can never fire.
+    service.provisionRoomForDirectSession(session, consultant);
+
+    verify(matrixSynapseService).ensureAdminInRoom(ROOM_ID, CONSULTANT_MXID);
+  }
+
+  @Test
   void provisionRoomForDirectSession_Should_logErrorAndReturn_When_consultantTokenNull()
       throws Exception {
     when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);

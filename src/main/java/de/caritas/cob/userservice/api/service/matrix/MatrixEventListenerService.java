@@ -364,6 +364,10 @@ public class MatrixEventListenerService {
     // Handle different event types
     switch (eventType) {
       case "m.room.message":
+        // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
+        // (no msgtype/body), but sender + event id are cleartext, which is all the
+        // metadata-only notification pipeline needs (preview mode NONE).
+      case "m.room.encrypted":
         handleRoomMessage(roomId, event);
         break;
 
@@ -573,8 +577,10 @@ public class MatrixEventListenerService {
       String msgtype,
       Map<String, Object> content) {
     String contentClass = classifyContent(msgtype);
+    // msgtype is null for m.room.encrypted events (opaque payload); Set.of(...) is
+    // null-hostile, so guard before the membership check.
     boolean hasAttachment =
-        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+        (msgtype != null && Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype))
             || (content != null && (content.containsKey("url") || content.containsKey("file")));
 
     Long timestamp = null;
