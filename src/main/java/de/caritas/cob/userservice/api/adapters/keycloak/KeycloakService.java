@@ -193,7 +193,7 @@ public class KeycloakService implements IdentityClient {
   @Override
   public OtpInfoDTO getOtpCredential(String userName) {
     var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_INFO, userName);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
     var response = keycloakClient.get(bearerToken, requestUrl, OtpInfoDTO.class);
 
     return response.getBody();
@@ -203,7 +203,7 @@ public class KeycloakService implements IdentityClient {
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
     var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_SETUP, userName);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
     try {
       keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, OtpInfoDTO.class);
@@ -220,7 +220,7 @@ public class KeycloakService implements IdentityClient {
   @Override
   public void deleteOtpCredential(String userName) {
     var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
     keycloakClient.delete(bearerToken, requestUrl, Void.class);
   }
 
@@ -228,7 +228,7 @@ public class KeycloakService implements IdentityClient {
   public Optional<String> initiateEmailVerification(String username, String email) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
     var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
       keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, Success.class);
@@ -242,7 +242,7 @@ public class KeycloakService implements IdentityClient {
   public Map<String, String> finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
     var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
       var response =
@@ -252,6 +252,12 @@ public class KeycloakService implements IdentityClient {
     } catch (HttpClientErrorException exception) {
       return keycloakMapper.mapOf(exception);
     }
+  }
+
+  private String getOtpUrl(String endpoint, String username) {
+    var decodedUsername = usernameTranscoder.decodeUsername(username);
+    return identityClientConfig.getOtpUrl(
+        endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
   }
 
   /**

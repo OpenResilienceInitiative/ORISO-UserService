@@ -95,7 +95,8 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<Void> requestPasswordReset(PasswordResetRequestDTO requestDTO) {
-    passwordResetService.requestPasswordReset(requestDTO.getUsername(), requestDTO.getLocale());
+    passwordResetService.requestPasswordReset(
+        requestDTO.getUsername(), requestDTO.getLocale(), requestDTO.getApplication());
     return ResponseEntity.noContent().build();
   }
 

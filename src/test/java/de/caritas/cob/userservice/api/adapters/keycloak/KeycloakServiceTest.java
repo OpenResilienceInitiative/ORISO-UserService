@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -333,6 +334,29 @@ public class KeycloakServiceTest {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
 
     assertDoesNotThrow(() -> keycloakService.deleteOtpCredential(USERNAME));
+  }
+
+  @Test
+  public void otpRequests_ShouldUseDecodedKeycloakUsername() {
+    var encodedUsername = "enc.ORSXG5BAOVZWK4Q.";
+    when(usernameTranscoder.decodeUsername(encodedUsername)).thenReturn(USERNAME);
+    when(identityClientConfig.getOtpUrl(anyString(), eq(USERNAME))).thenReturn("otp-url");
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), anyString(), eq(OtpInfoDTO.class)))
+        .thenReturn(new ResponseEntity<>(OTP_INFO_DTO, HttpStatus.OK));
+
+    keycloakService.getOtpCredential(encodedUsername);
+    keycloakService.setUpOtpCredential(encodedUsername, "123456", "secret");
+    keycloakService.deleteOtpCredential(encodedUsername);
+    keycloakService.initiateEmailVerification(encodedUsername, "mail@example.com");
+    keycloakService.finishEmailVerification(encodedUsername, "123456");
+
+    verify(identityClientConfig).getOtpUrl("/fetch-otp-setup-info/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/setup-otp/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/delete-otp/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/send-verification-mail/{username}", USERNAME);
+    verify(identityClientConfig).getOtpUrl("/setup-otp-mail/{username}", USERNAME);
+    verify(usernameTranscoder, times(5)).decodeUsername(encodedUsername);
   }
 
   private void givenAKeycloakLoginUrl() {
