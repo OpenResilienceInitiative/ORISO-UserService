@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.User;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
@@ -151,10 +153,7 @@ public class AccountManager implements AccountManaging {
                     },
                     (existing, replacement) -> existing));
 
-    var consultantIdsWithAdminIdentity =
-        consultantIds.isEmpty()
-            ? java.util.Collections.<String>emptySet()
-            : adminRepository.findExistingIdsByIdIn(consultantIds);
+    var otherIdentityTypesByConsultantId = otherIdentityTypesOf(consultantIds);
 
     return userServiceMapper.mapOf(
         consultantPage,
@@ -162,7 +161,37 @@ public class AccountManager implements AccountManaging {
         agencies,
         consultingAgencies,
         tenantIdsToNameMap,
-        consultantIdsWithAdminIdentity);
+        otherIdentityTypesByConsultantId);
+  }
+
+  private Map<String, List<String>> otherIdentityTypesOf(List<String> consultantIds) {
+    if (consultantIds.isEmpty()) {
+      return java.util.Collections.emptyMap();
+    }
+    Map<String, List<String>> otherIdentityTypesById = new java.util.HashMap<>();
+    adminRepository
+        .findIdAndTypeByIdIn(consultantIds)
+        .forEach(
+            row -> {
+              var id = (String) row[0];
+              var types = otherIdentityTypesById.computeIfAbsent(id, key -> new ArrayList<>());
+              var typedValue = otherIdentityTypeOf((Admin.AdminType) row[1]);
+              if (typedValue != null) {
+                types.add(typedValue);
+              }
+            });
+    return otherIdentityTypesById;
+  }
+
+  private String otherIdentityTypeOf(Admin.AdminType adminType) {
+    if (adminType == null) {
+      return null;
+    }
+    return switch (adminType) {
+      case TENANT -> "TENANT_ADMIN";
+      case AGENCY -> "AGENCY_ADMIN";
+      default -> null;
+    };
   }
 
   @Override

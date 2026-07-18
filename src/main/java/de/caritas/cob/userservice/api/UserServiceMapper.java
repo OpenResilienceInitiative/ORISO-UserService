@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.User;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -109,7 +110,7 @@ public class UserServiceMapper {
       List<AgencyDTO> agencyDTOS,
       List<ConsultantAgencyBase> consultantAgencies,
       Map<Long, String> tenantIdsToNameMap,
-      Set<String> idsWithOtherIdentity) {
+      Map<String, List<String>> otherIdentityTypesById) {
 
     var agencyLookupMap =
         agencyDTOS.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
@@ -130,10 +131,20 @@ public class UserServiceMapper {
                   ? mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap)
                   : new ArrayList<Map<String, Object>>();
           var hasOtherIdentity =
-              nonNull(idsWithOtherIdentity)
-                  && idsWithOtherIdentity.contains(consultantBase.getId());
+              nonNull(otherIdentityTypesById)
+                  && otherIdentityTypesById.containsKey(consultantBase.getId());
+          var otherIdentityTypes =
+              hasOtherIdentity
+                  ? otherIdentityTypesById.get(consultantBase.getId())
+                  : Collections.<String>emptyList();
           var consultantMap =
-              mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap, hasOtherIdentity);
+              mapOf(
+                  consultantBase,
+                  fullConsultant,
+                  agencies,
+                  tenantIdsToNameMap,
+                  hasOtherIdentity,
+                  otherIdentityTypes);
           consultants.add(consultantMap);
         });
 
@@ -257,7 +268,8 @@ public class UserServiceMapper {
       Consultant fullConsultant,
       List<Map<String, Object>> agencies,
       Map<Long, String> tenantIdsToNameMap,
-      boolean hasOtherIdentity) {
+      boolean hasOtherIdentity,
+      List<String> otherIdentityTypes) {
     var status =
         isNull(fullConsultant) || isNull(fullConsultant.getStatus())
             ? ConsultantStatus.ERROR.toString()
@@ -309,6 +321,9 @@ public class UserServiceMapper {
             ? tenantIdsToNameMap.get(tenantId)
             : StringUtils.EMPTY);
     map.put("hasOtherIdentity", hasOtherIdentity);
+    map.put(
+        "otherIdentityTypes",
+        nonNull(otherIdentityTypes) ? otherIdentityTypes : Collections.emptyList());
     return map;
   }
 

@@ -52,33 +52,37 @@ class UserServiceMapperConsultantIdentityTest {
   }
 
   @Test
-  void mapOfConsultantShouldSetHasOtherIdentityTrueWhenFlagIsTrue() {
+  void mapOfConsultantShouldSetHasOtherIdentityTrueWhenOtherIdentityTypesPresent() {
     var map =
         userServiceMapper.mapOf(
             consultantBase("consultant-1"),
             null,
             Collections.emptyList(),
             Collections.emptyMap(),
-            true);
+            true,
+            List.of("TENANT_ADMIN"));
 
     assertThat(map).containsEntry("hasOtherIdentity", true);
+    assertThat(map).containsEntry("otherIdentityTypes", List.of("TENANT_ADMIN"));
   }
 
   @Test
-  void mapOfConsultantShouldSetHasOtherIdentityFalseWhenFlagIsFalse() {
+  void mapOfConsultantShouldSetHasOtherIdentityFalseWhenNoOtherIdentity() {
     var map =
         userServiceMapper.mapOf(
             consultantBase("consultant-1"),
             null,
             Collections.emptyList(),
             Collections.emptyMap(),
-            false);
+            false,
+            Collections.emptyList());
 
     assertThat(map).containsEntry("hasOtherIdentity", false);
+    assertThat(map).containsEntry("otherIdentityTypes", Collections.emptyList());
   }
 
   @Test
-  void mapOfConsultantPagedShouldFlagOnlyConsultantsWhoseIdIsInOtherIdentitySet() {
+  void mapOfConsultantPagedShouldFlagAndTypeOnlyConsultantsPresentInOtherIdentityMap() {
     var firstBase = consultantBase("consultant-1");
     var secondBase = consultantBase("consultant-2");
     var consultantPage =
@@ -91,7 +95,7 @@ class UserServiceMapperConsultantIdentityTest {
             Collections.emptyList(),
             Collections.emptyList(),
             Collections.emptyMap(),
-            java.util.Set.of("consultant-1"));
+            Map.of("consultant-1", List.of("TENANT_ADMIN")));
 
     @SuppressWarnings("unchecked")
     var consultants = (List<Map<String, Object>>) result.get("consultants");
@@ -107,6 +111,30 @@ class UserServiceMapperConsultantIdentityTest {
             .orElseThrow();
 
     assertThat(first).containsEntry("hasOtherIdentity", true);
+    assertThat(first).containsEntry("otherIdentityTypes", List.of("TENANT_ADMIN"));
     assertThat(second).containsEntry("hasOtherIdentity", false);
+    assertThat(second).containsEntry("otherIdentityTypes", Collections.emptyList());
+  }
+
+  @Test
+  void mapOfConsultantPagedShouldKeepHasOtherIdentityTrueWhenTypeListIsEmpty() {
+    // e.g. the other identity is an admin type not exposed as a typed value
+    var consultantPage =
+        new org.springframework.data.domain.PageImpl<ConsultantBase>(
+            List.of(consultantBase("consultant-1")));
+
+    var result =
+        userServiceMapper.mapOf(
+            consultantPage,
+            Collections.emptyList(),
+            Collections.emptyList(),
+            Collections.emptyList(),
+            Collections.emptyMap(),
+            Map.of("consultant-1", Collections.emptyList()));
+
+    @SuppressWarnings("unchecked")
+    var consultants = (List<Map<String, Object>>) result.get("consultants");
+    assertThat(consultants.get(0)).containsEntry("hasOtherIdentity", true);
+    assertThat(consultants.get(0)).containsEntry("otherIdentityTypes", Collections.emptyList());
   }
 }
