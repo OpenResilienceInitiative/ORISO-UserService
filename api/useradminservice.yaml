@@ -1418,6 +1418,15 @@ components:
           description: topics directly assigned to the consultant, enriched with names
           items:
             $ref: '#/components/schemas/ConsultantTopicDTO'
+        hasOtherIdentity:
+          type: boolean
+          description: true if this consultant also holds an admin identity on the same account
+        otherIdentityTypes:
+          type: array
+          description: which admin identities this consultant additionally holds
+          items:
+            type: string
+            enum: [TENANT_ADMIN, AGENCY_ADMIN]
 
     ConsultantTopicDTO:
       type: object
@@ -1544,6 +1553,9 @@ components:
           type: boolean
         adminRights:
           type: boolean
+        hasOtherIdentity:
+          type: boolean
+          description: true if this admin also holds a consultant identity on the same account
 
     AskerResponseDTO:
       type: object

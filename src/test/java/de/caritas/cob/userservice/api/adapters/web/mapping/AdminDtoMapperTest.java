@@ -44,6 +44,35 @@ class AdminDtoMapperTest {
     assertThat(result.getEmbedded().get(0).getEmbedded().getAdminRights()).isTrue();
   }
 
+  @Test
+  void adminSearchResultOf_Should_MapHasOtherIdentity_WhenFlagIsInMap() {
+    // given
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
+    var resultMap = resultMap();
+    ((Map<String, Object>) ((List<?>) resultMap.get("admins")).get(0))
+        .put("hasOtherIdentity", true);
+
+    // when
+    var result = adminDtoMapper.adminSearchResultOf(resultMap, "*", 1, 10, "FIRSTNAME", "ASC");
+
+    // then
+    assertThat(result.getEmbedded().get(0).getEmbedded().getHasOtherIdentity()).isTrue();
+  }
+
+  @Test
+  void adminSearchResultOf_Should_MapHasOtherIdentityFalse_WhenFlagIsAbsent() {
+    // given
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
+
+    // when
+    var result = adminDtoMapper.adminSearchResultOf(resultMap(), "*", 1, 10, "FIRSTNAME", "ASC");
+
+    // then
+    assertThat(result.getEmbedded().get(0).getEmbedded().getHasOtherIdentity()).isFalse();
+  }
+
   private Map<String, Object> resultMap() {
     Map<String, Object> adminMap = new HashMap<>();
     adminMap.put("id", "admin-id");
