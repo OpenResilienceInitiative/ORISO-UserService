@@ -255,7 +255,9 @@ public class KeycloakService implements IdentityClient {
   }
 
   private String getOtpUrl(String endpoint, String username) {
-    return identityClientConfig.getOtpUrl(endpoint, usernameTranscoder.decodeUsername(username));
+    var decodedUsername = usernameTranscoder.decodeUsername(username);
+    return identityClientConfig.getOtpUrl(
+        endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
   }
 
   /**
