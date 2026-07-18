@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import jakarta.annotation.PostConstruct;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
 import jakarta.mail.PasswordAuthentication;
@@ -25,6 +26,8 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +39,12 @@ import org.springframework.web.client.RestTemplate;
  * Self-service password reset, mirroring {@link MagicLinkLoginService}: generates our own one-time
  * token and sends our own branded, localized email directly via SMTP, instead of handing off to
  * Keycloak's hosted reset-credentials pages/theme (ORISO-Helm#72).
+ *
+ * <p><b>Known single-replica limitation:</b> reset tokens live only in this process's heap ({@link
+ * #resetTokens}). A restart or a crash invalidates every outstanding reset link, and the feature is
+ * <b>not safe to run with more than one replica</b> — a request handled by replica A stores the
+ * token in A's memory, so a confirm routed to replica B will not find it. This is a deliberate,
+ * documented deferral: a Redis/DB-backed store is intentionally out of scope for this change.
  */
 @Slf4j
 @Service
@@ -51,14 +60,41 @@ public class PasswordResetService {
 
   private final Map<String, ResetTokenEntry> resetTokens = new ConcurrentHashMap<>();
 
+  /**
+   * Runs the (potentially slow) account lookup + mail dispatch off the request thread so the HTTP
+   * response returns in near-constant time regardless of whether the account exists — mitigates
+   * timing-based account enumeration. Overridable in tests with a synchronous executor.
+   */
+  private Executor passwordResetExecutor =
+      Executors.newFixedThreadPool(
+          4,
+          runnable -> {
+            Thread thread = new Thread(runnable, "password-reset-dispatch");
+            thread.setDaemon(true);
+            return thread;
+          });
+
+  /** Seam for sending the reset mail; the default delivers via SMTP. Overridable in tests. */
+  private PasswordResetMailSender mailSender = this::sendViaSmtp;
+
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
 
-  @Value("${password.reset.frontend.base-url:https://app.oriso.org}")
+  @Value("${password.reset.frontend.base-url:}")
   private String passwordResetFrontendBaseUrl;
 
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
+
+  @PostConstruct
+  void logFeatureAvailability() {
+    if (isBlank(passwordResetFrontendBaseUrl)) {
+      log.warn(
+          "Self-service password reset is DISABLED: required property "
+              + "'password.reset.frontend.base-url' (env PASSWORD_RESET_FRONTEND_BASE_URL) is unset. "
+              + "Reset emails will not be sent until it is configured.");
+    }
+  }
 
   /**
    * Always completes without signalling whether the account exists, to avoid account enumeration.
@@ -69,18 +105,31 @@ public class PasswordResetService {
       return;
     }
 
-    Optional<AccountResetTarget> accountOptional = resolveAccount(usernameInput.trim());
-    if (accountOptional.isEmpty()) {
-      return;
-    }
+    String username = usernameInput.trim();
+    String resolvedLocale = resolveLocale(locale);
+    // Dispatch asynchronously so the response time does not reveal whether the account exists.
+    passwordResetExecutor.execute(() -> processPasswordResetRequest(username, resolvedLocale));
+  }
 
-    AccountResetTarget account = accountOptional.get();
-    if (isBlank(account.getEmail())
-        || (emailDummySuffix != null && account.getEmail().endsWith(emailDummySuffix))) {
-      return;
-    }
+  private void processPasswordResetRequest(String username, String locale) {
+    try {
+      Optional<AccountResetTarget> accountOptional = resolveAccount(username);
+      if (accountOptional.isEmpty()) {
+        return;
+      }
 
-    sendPasswordResetEmailSafely(account, resolveLocale(locale));
+      AccountResetTarget account = accountOptional.get();
+      if (isBlank(account.getEmail())
+          || (emailDummySuffix != null && account.getEmail().endsWith(emailDummySuffix))) {
+        return;
+      }
+
+      sendPasswordResetEmailSafely(account, locale);
+    } catch (RuntimeException ex) {
+      // Never leak PII (account id, email, raw message) — log the exception class only.
+      log.warn("Password reset request processing failed ({})", ex.getClass().getSimpleName());
+      log.debug("Password reset request processing failure detail", ex);
+    }
   }
 
   /**
@@ -99,13 +148,24 @@ public class PasswordResetService {
     }
 
     cleanupExpiredTokens();
-    ResetTokenEntry entry = resetTokens.get(token);
+    // Claim the token atomically (remove-first) so two concurrent confirmations cannot both
+    // succeed against the same token — this closes the double-confirm race.
+    ResetTokenEntry entry = resetTokens.remove(token);
     if (entry == null || entry.getExpiresAt().isBefore(Instant.now())) {
       return false;
     }
 
-    keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
-    resetTokens.remove(token);
+    try {
+      keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
+    } catch (RuntimeException ex) {
+      // Keycloak rejected the update (e.g. password policy violation). Re-insert the token so the
+      // user can retry with a different password using the same emailed link, mirroring how
+      // MagicLinkLoginService restores its token on a failed exchange. Note: there is a small
+      // window between the remove above and this re-insert during which a concurrent confirm would
+      // observe the token as absent — an acceptable trade for guaranteed single-use on success.
+      resetTokens.put(token, entry);
+      throw ex;
+    }
     return true;
   }
 
@@ -137,51 +197,87 @@ public class PasswordResetService {
   }
 
   private void sendPasswordResetEmailSafely(AccountResetTarget target, String locale) {
-    try {
-      var smtpSettingsOptional = resolveGlobalSmtpSettings();
-      if (smtpSettingsOptional.isEmpty()) {
-        return;
-      }
-      var smtpSettings = smtpSettingsOptional.get();
-      String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
-      String resetUrl = buildResetFrontendUrl(oneTimeToken);
-      EmailContent content = EMAIL_CONTENT.get(locale);
-
-      Properties props = new Properties();
-      props.put("mail.smtp.auth", "true");
-      props.put("mail.smtp.host", smtpSettings.getHost());
-      props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-      if (smtpSettings.isSecure()) {
-        props.put("mail.smtp.ssl.enable", "true");
-      } else {
-        props.put("mail.smtp.starttls.enable", "true");
-      }
-
-      jakarta.mail.Session session =
-          jakarta.mail.Session.getInstance(
-              props,
-              new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                  return new PasswordAuthentication(
-                      smtpSettings.getUsername(), smtpSettings.getPassword());
-                }
-              });
-
-      Message message = new MimeMessage(session);
-      message.setFrom(new InternetAddress(smtpSettings.getFrom()));
-      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
-      message.setSubject(content.getSubject());
-      message.setContent(
-          buildHtml(content, resetUrl, smtpSettings.getEmailThemeColor()),
-          "text/html; charset=UTF-8");
-      Transport.send(message);
-    } catch (Exception ex) {
+    // Fail closed: without an explicitly configured frontend base URL we cannot build a usable
+    // reset link, so the feature stays disabled instead of emailing a wrong/production URL.
+    if (isBlank(passwordResetFrontendBaseUrl)) {
       log.warn(
-          "Password reset email dispatch failed for account {}, reason: {}",
-          target.getKeycloakUserId(),
-          ex.getMessage());
+          "Password reset email not sent: 'password.reset.frontend.base-url' is not configured.");
+      return;
     }
+
+    var smtpSettingsOptional = resolveGlobalSmtpSettings();
+    if (smtpSettingsOptional.isEmpty()) {
+      return;
+    }
+    var smtpSettings = smtpSettingsOptional.get();
+
+    // Bound the in-memory token map: purge expired entries before inserting a new one.
+    cleanupExpiredTokens();
+    String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+    String resetUrl = buildResetFrontendUrl(oneTimeToken);
+    EmailContent content = EMAIL_CONTENT.get(locale);
+
+    try {
+      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings, content);
+    } catch (Exception ex) {
+      // Do not leave a token behind for a mail that never went out, and never log PII (account id,
+      // recipient, or the raw exception message) — record the exception class only.
+      resetTokens.remove(oneTimeToken);
+      log.warn("Password reset email dispatch failed ({})", ex.getClass().getSimpleName());
+      log.debug("Password reset email dispatch failure detail", ex);
+    }
+  }
+
+  private void sendViaSmtp(
+      String recipient,
+      String locale,
+      String resetUrl,
+      GlobalSmtpSettings smtpSettings,
+      EmailContent content)
+      throws Exception {
+    Properties props = new Properties();
+    props.put("mail.smtp.auth", "true");
+    props.put("mail.smtp.host", smtpSettings.getHost());
+    props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
+    if (smtpSettings.isSecure()) {
+      props.put("mail.smtp.ssl.enable", "true");
+    } else {
+      props.put("mail.smtp.starttls.enable", "true");
+    }
+
+    jakarta.mail.Session session =
+        jakarta.mail.Session.getInstance(
+            props,
+            new Authenticator() {
+              @Override
+              protected PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(
+                    smtpSettings.getUsername(), smtpSettings.getPassword());
+              }
+            });
+
+    Message message = new MimeMessage(session);
+    message.setFrom(new InternetAddress(smtpSettings.getFrom()));
+    message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
+    message.setSubject(content.getSubject());
+    message.setContent(
+        buildHtml(content, resetUrl, smtpSettings.getEmailThemeColor()),
+        "text/html; charset=UTF-8");
+    Transport.send(message);
+  }
+
+  /**
+   * Seam so tests can capture the recipient, locale and reset URL without opening an SMTP socket.
+   */
+  @FunctionalInterface
+  interface PasswordResetMailSender {
+    void send(
+        String recipient,
+        String locale,
+        String resetUrl,
+        GlobalSmtpSettings smtpSettings,
+        EmailContent content)
+        throws Exception;
   }
 
   private String buildHtml(EmailContent content, String resetUrl, String emailThemeColor) {
@@ -217,6 +313,8 @@ public class PasswordResetService {
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
+    // Cap at one outstanding token per account: a fresh request supersedes any previous link.
+    resetTokens.values().removeIf(entry -> entry.getKeycloakUserId().equals(keycloakUserId));
     String token =
         UUID.randomUUID().toString().replace("-", "")
             + UUID.randomUUID().toString().replace("-", "");
@@ -339,7 +437,7 @@ public class PasswordResetService {
   }
 
   @lombok.Value
-  private static class GlobalSmtpSettings {
+  static class GlobalSmtpSettings {
     String host;
     Integer port;
     boolean secure;
@@ -350,7 +448,7 @@ public class PasswordResetService {
   }
 
   @lombok.Value
-  private static class EmailContent {
+  static class EmailContent {
     String subject;
     String intro;
     String linkLabel;
