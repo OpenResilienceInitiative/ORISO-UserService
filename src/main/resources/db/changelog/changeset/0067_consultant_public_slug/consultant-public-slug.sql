@@ -11,7 +11,7 @@ CREATE TABLE reserved_public_slug (
   id BIGINT NOT NULL AUTO_INCREMENT,
   slug VARCHAR(128) NOT NULL,
   reason VARCHAR(512) NULL,
-  active TINYINT NOT NULL DEFAULT 1,
+  active TINYINT(1) NOT NULL DEFAULT 1,
   created_by VARCHAR(64) NULL,
   created_at DATETIME NULL,
   updated_by VARCHAR(64) NULL,
