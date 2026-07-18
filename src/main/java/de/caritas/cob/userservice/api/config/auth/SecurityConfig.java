@@ -181,6 +181,13 @@ public class SecurityConfig {
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
+                .hasAnyAuthority(
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/users/system-notification-emails/test")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
