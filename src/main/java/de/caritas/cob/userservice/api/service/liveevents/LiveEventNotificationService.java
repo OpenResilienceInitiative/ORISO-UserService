@@ -113,7 +113,13 @@ public class LiveEventNotificationService {
   }
 
   private boolean notInitiatingUser(String userId) {
-    return !userId.equals(this.authenticatedUser.getUserId());
+    try {
+      return !userId.equals(this.authenticatedUser.getUserId());
+    } catch (RuntimeException noRequestContext) {
+      // AuthenticatedUser is request-scoped; on background threads (e.g. the Matrix
+      // sync loop) there is no web request and thus no initiator to exclude.
+      return true;
+    }
   }
 
   private void triggerDirectMessageLiveEvent(List<String> userIds, String rcGroupId) {

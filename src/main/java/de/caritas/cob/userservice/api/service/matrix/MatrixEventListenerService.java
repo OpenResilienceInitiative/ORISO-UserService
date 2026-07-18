@@ -448,8 +448,15 @@ public class MatrixEventListenerService {
         // Trigger notification asynchronously to not block sync loop
         executorService.submit(
             () -> {
+              // The live STOMP push is best-effort; the persisted feed entry is the
+              // source of truth for the notification timeline. Isolate the failure
+              // domains so a live-send problem cannot swallow the notification row.
               try {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+              } catch (Exception e) {
+                log.error("❌ Failed to send LiveService notification", e);
+              }
+              try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
                       roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
@@ -462,7 +469,7 @@ public class MatrixEventListenerService {
                       senderDomainUserId, mappedSessionId);
                 }
               } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
+                log.error("❌ Failed to create event notification from room", e);
               }
             });
       }

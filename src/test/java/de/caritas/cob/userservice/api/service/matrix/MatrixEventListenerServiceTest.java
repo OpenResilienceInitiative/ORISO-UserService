@@ -1169,6 +1169,30 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void handleRoomMessage_shouldStillCreateNotificationRow_whenLiveSendFails() {
+    // The live STOMP push is an optimisation; the persisted feed entry is the
+    // source of truth for the Zeitstrahl. A live-send failure (e.g. the
+    // request-scoped AuthenticatedUser being unavailable on the sync-loop
+    // thread) must not prevent the notification row from being written.
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(33L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    org.mockito.Mockito.doThrow(new IllegalStateException("No thread-bound request found"))
+        .when(liveEventNotificationService)
+        .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+
+    var event = messageEvent(SENDER_MATRIX_ID, "m.text", "hello", "$evt-live-down");
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+  }
+
+  @Test
   void buildRecipientSet_shouldIgnoreParticipantsWithNullIds() {
     var user = mock(User.class);
     when(user.getUserId()).thenReturn(null);

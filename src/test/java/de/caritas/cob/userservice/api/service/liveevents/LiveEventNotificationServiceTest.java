@@ -141,6 +141,23 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
+  public void sendLiveDirectMessageEventToUsers_Should_sendToAllUsers_When_noRequestContextIsBound()
+      throws ApiException {
+    // Called from the Matrix sync-loop background thread there is no web request, so the
+    // request-scoped AuthenticatedUser proxy throws. The event must still go out (to
+    // everyone — without an initiator there is nobody to exclude).
+    List<String> userIds = asList("id1", "id2");
+    when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
+    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.authenticatedUser.getUserId())
+        .thenThrow(new IllegalStateException("No thread-bound request found"));
+
+    this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
+
+    verify(this.liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(userIds));
+  }
+
+  @Test
   public void sendLiveDirectMessageEventToUsers_Should_sendNothing_When_noIdsAreProvided() {
     when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
 
