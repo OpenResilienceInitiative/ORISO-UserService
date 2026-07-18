@@ -8,4 +8,5 @@ public class PasswordResetRequestDTO {
 
   @NotBlank private String username;
   private String locale;
+  private PasswordResetApplication application = PasswordResetApplication.APP;
 }

@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -363,7 +364,21 @@ class UserRegistrationControllerDelegateTest {
     var response = delegate.requestPasswordReset(request);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
-    verify(passwordResetService).requestPasswordReset(USERNAME, "de");
+    verify(passwordResetService).requestPasswordReset(USERNAME, "de", PasswordResetApplication.APP);
+  }
+
+  @Test
+  void requestPasswordReset_delegatesAdminApplicationToService() {
+    var request = new PasswordResetRequestDTO();
+    request.setUsername(USERNAME);
+    request.setLocale("en");
+    request.setApplication(PasswordResetApplication.ADMIN);
+
+    var response = delegate.requestPasswordReset(request);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(passwordResetService)
+        .requestPasswordReset(USERNAME, "en", PasswordResetApplication.ADMIN);
   }
 
   @Test

@@ -11,10 +11,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -40,6 +43,7 @@ class PasswordResetServiceTest {
 
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
+  @Mock private AdminRepository adminRepository;
   @Mock private KeycloakService keycloakService;
   @Mock private RestTemplate restTemplate;
 
@@ -54,6 +58,8 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "");
     ReflectionTestUtils.setField(
         passwordResetService, "passwordResetFrontendBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(
+        passwordResetService, "passwordResetAdminFrontendBaseUrl", "https://admin.oriso.org/admin");
     // Run dispatch synchronously so request-flow assertions are deterministic.
     ReflectionTestUtils.setField(
         passwordResetService, "passwordResetExecutor", (Executor) Runnable::run);
@@ -142,6 +148,68 @@ class PasswordResetServiceTest {
     assertThat(mail.resetUrl())
         .startsWith("https://app.oriso.org/password-reset/confirm?token=")
         .matches("https://app\\.oriso\\.org/password-reset/confirm\\?token=[0-9a-f]{64}");
+  }
+
+  @Test
+  void requestPasswordReset_Should_SendAdminMailToAdminFrontend_When_ApplicationIsAdmin() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    Admin admin =
+        Admin.builder()
+            .id("admin-keycloak-id")
+            .username("admin@example.com")
+            .firstName("Ada")
+            .lastName("Admin")
+            .email("admin@example.com")
+            .type(Admin.AdminType.SUPER)
+            .build();
+    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(
+            "admin@example.com", "admin@example.com"))
+        .thenReturn(Optional.of(admin));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+
+    passwordResetService.requestPasswordReset(
+        "admin@example.com", "en", PasswordResetApplication.ADMIN);
+
+    assertThat(sentMails).hasSize(1);
+    assertThat(sentMails.get(0).recipient()).isEqualTo("admin@example.com");
+    assertThat(sentMails.get(0).resetUrl())
+        .matches("https://admin\\.oriso\\.org/admin/password-reset/confirm\\?token=[0-9a-f]{64}");
+    verify(userService, never()).findUserByUsername(anyString());
+    verify(consultantService, never()).findConsultantByUsernameOrEmail(anyString(), anyString());
+  }
+
+  @Test
+  void requestPasswordReset_Should_NotFallBackToAppAccounts_When_AdminIsUnknown() {
+    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase("app-user", "app-user"))
+        .thenReturn(Optional.empty());
+
+    passwordResetService.requestPasswordReset("app-user", "de", PasswordResetApplication.ADMIN);
+
+    assertThat(sentMails).isEmpty();
+    verify(userService, never()).findUserByUsername(anyString());
+    verify(consultantService, never()).findConsultantByUsernameOrEmail(anyString(), anyString());
+  }
+
+  @Test
+  void requestPasswordReset_Should_NotSendAdminMail_When_AdminFrontendBaseUrlUnset() {
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetAdminFrontendBaseUrl", "");
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    Admin admin =
+        Admin.builder()
+            .id("admin-keycloak-id")
+            .username("admin")
+            .firstName("Ada")
+            .lastName("Admin")
+            .email("admin@example.com")
+            .type(Admin.AdminType.SUPER)
+            .build();
+    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase("admin", "admin"))
+        .thenReturn(Optional.of(admin));
+
+    passwordResetService.requestPasswordReset("admin", "de", PasswordResetApplication.ADMIN);
+
+    assertThat(sentMails).isEmpty();
+    verify(restTemplate, never()).getForObject(anyString(), any());
   }
 
   @Test
