@@ -51,6 +51,9 @@ public class TutorialStatisticsService {
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {
       var tenantId = resolveTenantId();
+      if (tenantId == null) {
+        throw new ForbiddenException("No tenant context available for tutorial statistics");
+      }
       return build(
           TutorialStatisticsScope.TENANT, tutorialStatisticsRepository.countByTenant(tenantId));
     }

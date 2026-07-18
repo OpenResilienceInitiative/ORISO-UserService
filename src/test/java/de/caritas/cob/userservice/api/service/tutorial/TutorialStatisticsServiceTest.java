@@ -160,6 +160,15 @@ class TutorialStatisticsServiceTest {
   }
 
   @Test
+  void tenantAdmin_withoutResolvableTenant_isForbidden() {
+    authenticatedUser.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    authenticatedUser.setTenantId(null);
+
+    assertThatThrownBy(() -> service.getStatistics()).isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(tutorialStatisticsRepository);
+  }
+
+  @Test
   void agencyAdmin_isForbidden() {
     authenticatedUser.setRoles(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue()));
 
