@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import java.util.Optional;
@@ -26,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
@@ -72,6 +75,16 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
 
+    if (request.getTeamDiscussion() != null && request.getTeamDiscussion()) {
+      // US#473: team-discussion rooms have no session recipient pair — dedicated hybrid fan-out.
+      teamDiscussionNotificationService.createTeamDiscussionNotification(
+          request.getRoomId(),
+          authenticatedUser.getUserId(),
+          request.getSenderDisplayName(),
+          request.getMentionedUserIds());
+      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
@@ -107,6 +120,60 @@ public class EventNotificationController {
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
+  /**
+   * US#473: mirrors the user's per-conversation notification level (All / Mentions / Muted /
+   * Snoozed) so the server-side fan-out can honour it.
+   */
+  @PatchMapping("/conversation-level")
+  public ResponseEntity<Void> updateConversationLevel(
+      @RequestBody ConversationLevelRequestDTO request) {
+    if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
+      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+    }
+    NotificationRoomLevel.Level level;
+    try {
+      level =
+          request.getLevel() != null
+              ? NotificationRoomLevel.Level.valueOf(request.getLevel().toUpperCase())
+              : NotificationRoomLevel.Level.ALL;
+    } catch (IllegalArgumentException ex) {
+      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+    }
+    teamDiscussionNotificationService.updateConversationLevel(
+        authenticatedUser.getUserId(), request.getRoomId(), level, request.getSnoozedUntil());
+    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
+  public static class ConversationLevelRequestDTO {
+    @NotBlank private String roomId;
+    private String level;
+    private java.time.LocalDateTime snoozedUntil;
+
+    public String getRoomId() {
+      return roomId;
+    }
+
+    public void setRoomId(String roomId) {
+      this.roomId = roomId;
+    }
+
+    public String getLevel() {
+      return level;
+    }
+
+    public void setLevel(String level) {
+      this.level = level;
+    }
+
+    public java.time.LocalDateTime getSnoozedUntil() {
+      return snoozedUntil;
+    }
+
+    public void setSnoozedUntil(java.time.LocalDateTime snoozedUntil) {
+      this.snoozedUntil = snoozedUntil;
+    }
+  }
+
   public static class MessageEventRequestDTO {
     @NotBlank private String roomId;
     private String messagePreview;
@@ -115,6 +182,24 @@ public class EventNotificationController {
     private Boolean supervisorMessage;
     private String senderDisplayName;
     private String threadParentPreview;
+    private Boolean teamDiscussion;
+    private java.util.List<String> mentionedUserIds;
+
+    public Boolean getTeamDiscussion() {
+      return teamDiscussion;
+    }
+
+    public void setTeamDiscussion(Boolean teamDiscussion) {
+      this.teamDiscussion = teamDiscussion;
+    }
+
+    public java.util.List<String> getMentionedUserIds() {
+      return mentionedUserIds;
+    }
+
+    public void setMentionedUserIds(java.util.List<String> mentionedUserIds) {
+      this.mentionedUserIds = mentionedUserIds;
+    }
 
     public String getRoomId() {
       return roomId;

@@ -904,6 +904,14 @@ public class EventNotificationService {
     return value.startsWith("enc.") || value.matches("^[A-Za-z0-9+/=]{25,}$");
   }
 
+  /**
+   * Public room-level probe for sibling producers (US#473 team-discussion fan-out): true when the
+   * recipient is actively viewing the room and the notification should be dropped.
+   */
+  public boolean isNotificationSuppressed(String recipientUserId, String roomId) {
+    return shouldSuppressNotification(recipientUserId, roomId, null);
+  }
+
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
     ActiveViewState activeView = activeViewByUserId.get(recipientUserId);

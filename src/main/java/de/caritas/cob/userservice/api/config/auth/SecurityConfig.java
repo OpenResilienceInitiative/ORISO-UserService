@@ -246,7 +246,9 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
+                    "/users/sessions/{sessionId:[0-9]+}/team-discussion",
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/conversations/anonymous/{sessionId:[0-9]+}/finish",

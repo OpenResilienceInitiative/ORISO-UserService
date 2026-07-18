@@ -1414,6 +1414,14 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Raises the room-wide {@code events_default} power level so ordinary members can no longer post
+   * (protocol-level read-only, US#473 team-discussion archive).
+   */
+  public boolean setRoomEventsDefaultPowerLevel(String roomId, int powerLevel, String accessToken) {
+    return matrixRoomClient.setRoomEventsDefaultPowerLevel(roomId, powerLevel, accessToken);
+  }
+
+  /**
    * Removes a user from a Matrix room (kick/leave).
    *
    * @param roomId The Matrix room ID
