@@ -127,6 +127,14 @@ public class DirectSessionMatrixRoomService {
             session.getId());
       }
 
+      // Best-effort: the notification listener syncs as the technical admin and must
+      // be a member of the room to see message events at all.
+      try {
+        matrixSynapseService.ensureAdminInRoom(roomId, consultant.getMatrixUserId());
+      } catch (Exception adminJoinError) {
+        log.warn("Could not add Matrix admin to room {}: {}", roomId, adminJoinError.getMessage());
+      }
+
       log.info(
           "Provisioned direct-session Matrix room {} for session {} (consultant {}, user {})",
           roomId,

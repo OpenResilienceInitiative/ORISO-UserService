@@ -884,6 +884,56 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Ensures the technical Matrix admin is a member of the given room. The event-listener /sync loop
+   * runs with the admin account and only receives events for rooms the admin has joined — without
+   * this membership, message notifications for the room can never fire.
+   *
+   * <p>Invite-only session rooms reject a direct admin join, so an existing member is impersonated
+   * (Synapse admin login-as-user) to invite the admin first.
+   *
+   * @param roomId the Matrix room ID
+   * @param memberMatrixUserId full Matrix ID of a current room member used for the invite fallback
+   * @return true when the admin is (now) a member of the room
+   */
+  public boolean ensureAdminInRoom(String roomId, String memberMatrixUserId) {
+    if (roomId == null || roomId.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      return false;
+    }
+
+    // Direct join succeeds for public rooms or when the admin is already invited/joined.
+    if (joinRoom(roomId, adminToken)) {
+      return true;
+    }
+
+    // Invite-only room: impersonate a current member to invite the admin, then join.
+    if (memberMatrixUserId == null || memberMatrixUserId.isBlank()) {
+      return false;
+    }
+    String memberToken = loginAsUserAccessToken(memberMatrixUserId);
+    if (memberToken == null) {
+      log.warn(
+          "Could not impersonate {} to invite the Matrix admin into {}",
+          memberMatrixUserId,
+          roomId);
+      return false;
+    }
+
+    String adminMatrixId =
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+    try {
+      inviteUserToRoom(roomId, adminMatrixId, memberToken);
+    } catch (Exception e) {
+      log.warn(
+          "Inviting Matrix admin {} into {} failed: {}", adminMatrixId, roomId, e.getMessage());
+    }
+    return joinRoom(roomId, adminToken);
+  }
+
+  /**
    * Leaves a Matrix room with the given user's own access token.
    *
    * @param roomId the room ID

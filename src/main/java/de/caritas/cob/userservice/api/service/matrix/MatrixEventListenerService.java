@@ -364,6 +364,10 @@ public class MatrixEventListenerService {
     // Handle different event types
     switch (eventType) {
       case "m.room.message":
+        // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
+        // (no msgtype/body), but sender + event id are cleartext, which is all the
+        // metadata-only notification pipeline needs (preview mode NONE).
+      case "m.room.encrypted":
         handleRoomMessage(roomId, event);
         break;
 
@@ -444,8 +448,15 @@ public class MatrixEventListenerService {
         // Trigger notification asynchronously to not block sync loop
         executorService.submit(
             () -> {
+              // The live STOMP push is best-effort; the persisted feed entry is the
+              // source of truth for the notification timeline. Isolate the failure
+              // domains so a live-send problem cannot swallow the notification row.
               try {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+              } catch (Exception e) {
+                log.error("❌ Failed to send LiveService notification", e);
+              }
+              try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
                       roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
@@ -458,7 +469,7 @@ public class MatrixEventListenerService {
                       senderDomainUserId, mappedSessionId);
                 }
               } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
+                log.error("❌ Failed to create event notification from room", e);
               }
             });
       }
@@ -573,8 +584,10 @@ public class MatrixEventListenerService {
       String msgtype,
       Map<String, Object> content) {
     String contentClass = classifyContent(msgtype);
+    // msgtype is null for m.room.encrypted events (opaque payload); Set.of(...) is
+    // null-hostile, so guard before the membership check.
     boolean hasAttachment =
-        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+        (msgtype != null && Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype))
             || (content != null && (content.containsKey("url") || content.containsKey("file")));
 
     Long timestamp = null;

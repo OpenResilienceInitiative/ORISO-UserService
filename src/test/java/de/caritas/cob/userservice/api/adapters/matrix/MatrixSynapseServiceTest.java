@@ -1046,4 +1046,57 @@ class MatrixSynapseServiceTest {
 
     assertThat(matrixSynapseService().loginUserViaAdmin("@alice:example.org")).isNull();
   }
+
+  // -------------------------------------------------------------------------
+  // ensureAdminInRoom — the /sync listener only sees rooms the admin joined,
+  // so session rooms must have the technical admin as a member for message
+  // notifications to work at all.
+  // -------------------------------------------------------------------------
+
+  private MatrixSynapseService ensureAdminServiceSpy() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(ADMIN_TOKEN).when(service).getAdminToken();
+    return service;
+  }
+
+  @Test
+  void ensureAdminInRoom_shouldJoinDirectly_whenAdminCanJoin() throws Exception {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(true);
+
+    assertThat(service.ensureAdminInRoom(MATRIX_ROOM_ID, MATRIX_USER_ID)).isTrue();
+
+    verify(matrixRoomClient, org.mockito.Mockito.never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void ensureAdminInRoom_shouldInviteViaMemberThenJoin_whenDirectJoinIsForbidden()
+      throws Exception {
+    var service = ensureAdminServiceSpy();
+    org.mockito.Mockito.doReturn(IMPERSONATION_TOKEN)
+        .when(service)
+        .loginAsUserAccessToken(MATRIX_USER_ID);
+    // invite-only room: first direct join fails, after the member invite it succeeds
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false, true);
+
+    assertThat(service.ensureAdminInRoom(MATRIX_ROOM_ID, MATRIX_USER_ID)).isTrue();
+
+    verify(matrixRoomClient)
+        .inviteUserToRoom(
+            eq(MATRIX_ROOM_ID), eq("@matrixadm:matrix.example.com"), eq(IMPERSONATION_TOKEN));
+    verify(matrixRoomClient, times(2)).joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN);
+  }
+
+  @Test
+  void ensureAdminInRoom_shouldReturnFalse_whenAdminTokenUnavailable() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
+
+    assertThat(service.ensureAdminInRoom(MATRIX_ROOM_ID, MATRIX_USER_ID)).isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
 }

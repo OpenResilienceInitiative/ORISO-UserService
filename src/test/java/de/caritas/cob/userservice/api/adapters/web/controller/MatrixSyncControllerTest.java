@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -39,6 +40,7 @@ class MatrixSyncControllerTest {
   private static final String MATRIX_ROOM_ID = "!room:matrix";
 
   @Mock private MatrixEventListenerService matrixEventListenerService;
+  @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionService sessionService;
   @Mock private AuthenticatedUser authenticatedUser;
 
@@ -224,6 +226,31 @@ class MatrixSyncControllerTest {
     assertThrows(NotFoundException.class, () -> controller.unregisterRoomFromSync(SESSION_ID));
 
     verifyNoInteractions(matrixEventListenerService);
+  }
+
+  @Test
+  void registerRoomForSync_shouldEnsureAdminIsInRoom_soSyncLoopReceivesEvents() {
+    // The listener /sync loop runs as the technical admin and only sees rooms the
+    // admin has joined — registering must therefore also heal the admin membership.
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithMatrixRoom());
+
+    controller.registerRoomForSync(SESSION_ID);
+
+    verify(matrixSynapseService).ensureAdminInRoom(MATRIX_ROOM_ID, "@seeker:matrix");
+  }
+
+  @Test
+  void registerRoomForSync_shouldStillSucceed_whenEnsureAdminInRoomFails() {
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(sessionWithMatrixRoom());
+    when(matrixSynapseService.ensureAdminInRoom(MATRIX_ROOM_ID, "@seeker:matrix"))
+        .thenThrow(new RuntimeException("matrix down"));
+
+    var response = controller.registerRoomForSync(SESSION_ID);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(matrixEventListenerService).registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
   }
 
   private Session sessionWithMatrixRoom() {
