@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
@@ -215,19 +218,38 @@ class PasswordResetServiceTest {
 
   @Test
   @SuppressWarnings("unchecked")
-  void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPassword() {
-    // If Keycloak rejects the new password (e.g. policy violation), the token must survive so
-    // the user can retry with a different password using the same emailed link — it must not be
-    // burned on a failed attempt.
+  void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPasswordPolicy() {
+    // Definitive policy rejection: Keycloak did NOT apply the password, so the token must
+    // survive for a retry with a different password using the same emailed link.
     ConcurrentHashMap<String, Object> tokens = injectToken("retry-token", 900);
-    doThrow(new RuntimeException("password policy violation"))
+    doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
         .updatePassword("user-keycloak-id", "weak");
 
     assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(CustomValidationHttpStatusException.class);
 
     assertThat(tokens).containsKey("retry-token");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void confirmPasswordReset_Should_ConsumeToken_When_UpdateFailsIndeterminately() {
+    // A generic failure can occur AFTER Keycloak applied the password — the outcome is unknown,
+    // so the token must stay consumed; restoring it could allow a second password change with an
+    // already-used link.
+    ConcurrentHashMap<String, Object> tokens = injectToken("indeterminate-token", 900);
+    doThrow(new RuntimeException("connection reset"))
+        .when(keycloakService)
+        .updatePassword("user-keycloak-id", "NewPassw0rd!");
+
+    assertThatThrownBy(
+            () -> passwordResetService.confirmPasswordReset("indeterminate-token", "NewPassw0rd!"))
+        .isInstanceOf(RuntimeException.class);
+
+    assertThat(tokens).doesNotContainKey("indeterminate-token");
   }
 
   @Test

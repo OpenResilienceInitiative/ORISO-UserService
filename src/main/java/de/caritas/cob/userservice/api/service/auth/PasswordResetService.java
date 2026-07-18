@@ -5,12 +5,14 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
 import jakarta.mail.PasswordAuthentication;
@@ -25,9 +27,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -65,14 +70,29 @@ public class PasswordResetService {
    * response returns in near-constant time regardless of whether the account exists — mitigates
    * timing-based account enumeration. Overridable in tests with a synchronous executor.
    */
-  private Executor passwordResetExecutor =
-      Executors.newFixedThreadPool(
+  private final ThreadPoolExecutor defaultPasswordResetExecutor =
+      new ThreadPoolExecutor(
+          2,
           4,
+          30L,
+          TimeUnit.SECONDS,
+          // Bounded queue: this is a public, unauthenticated endpoint — an unbounded queue
+          // would let request floods accumulate work in memory. Overflow is rejected (and
+          // swallowed by the caller) so the HTTP response stays identical either way.
+          new ArrayBlockingQueue<>(200),
           runnable -> {
             Thread thread = new Thread(runnable, "password-reset-dispatch");
             thread.setDaemon(true);
             return thread;
-          });
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+
+  private Executor passwordResetExecutor = defaultPasswordResetExecutor;
+
+  @PreDestroy
+  void shutdownPasswordResetExecutor() {
+    defaultPasswordResetExecutor.shutdown();
+  }
 
   /** Seam for sending the reset mail; the default delivers via SMTP. Overridable in tests. */
   private PasswordResetMailSender mailSender = this::sendViaSmtp;
@@ -107,8 +127,14 @@ public class PasswordResetService {
 
     String username = usernameInput.trim();
     String resolvedLocale = resolveLocale(locale);
-    // Dispatch asynchronously so the response time does not reveal whether the account exists.
-    passwordResetExecutor.execute(() -> processPasswordResetRequest(username, resolvedLocale));
+    try {
+      // Dispatch asynchronously so the response time does not reveal whether the account exists.
+      passwordResetExecutor.execute(() -> processPasswordResetRequest(username, resolvedLocale));
+    } catch (RejectedExecutionException ex) {
+      // Queue saturated (flood/overload): drop the dispatch, keep the response identical so
+      // neither existence nor the drop is observable. No PII in the log.
+      log.warn("Password reset dispatch rejected — executor queue saturated");
+    }
   }
 
   private void processPasswordResetRequest(String username, String locale) {
@@ -157,15 +183,18 @@ public class PasswordResetService {
 
     try {
       keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
-    } catch (RuntimeException ex) {
-      // Keycloak rejected the update (e.g. password policy violation). Re-insert the token so the
-      // user can retry with a different password using the same emailed link, mirroring how
-      // MagicLinkLoginService restores its token on a failed exchange. Note: there is a small
-      // window between the remove above and this re-insert during which a concurrent confirm would
-      // observe the token as absent — an acceptable trade for guaranteed single-use on success.
+    } catch (CustomValidationHttpStatusException ex) {
+      // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
+      // can safely be restored for a retry with a different password via the same emailed link
+      // (mirrors MagicLinkLoginService). Note: there is a small window between the remove above
+      // and this re-insert during which a concurrent confirm would observe the token as absent —
+      // an acceptable trade for guaranteed single-use on success.
       resetTokens.put(token, entry);
       throw ex;
     }
+    // Any other failure: the update outcome is unknown (Keycloak may have applied the password
+    // before the error surfaced), so the token stays consumed — re-inserting could allow a second
+    // password change with an already-used link.
     return true;
   }
 
