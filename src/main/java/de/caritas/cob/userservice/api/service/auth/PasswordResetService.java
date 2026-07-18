@@ -5,10 +5,13 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
@@ -60,6 +63,7 @@ public class PasswordResetService {
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull AdminRepository adminRepository;
   private final @NonNull KeycloakService keycloakService;
   private final @NonNull RestTemplate restTemplate;
 
@@ -103,6 +107,9 @@ public class PasswordResetService {
   @Value("${password.reset.frontend.base-url:}")
   private String passwordResetFrontendBaseUrl;
 
+  @Value("${password.reset.admin.frontend.base-url:}")
+  private String passwordResetAdminFrontendBaseUrl;
+
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
 
@@ -114,6 +121,13 @@ public class PasswordResetService {
               + "'password.reset.frontend.base-url' (env PASSWORD_RESET_FRONTEND_BASE_URL) is unset. "
               + "Reset emails will not be sent until it is configured.");
     }
+    if (isBlank(passwordResetAdminFrontendBaseUrl)) {
+      log.warn(
+          "Admin password reset is DISABLED: required property "
+              + "'password.reset.admin.frontend.base-url' "
+              + "(env PASSWORD_RESET_ADMIN_FRONTEND_BASE_URL) is unset. "
+              + "Admin reset emails will not be sent until it is configured.");
+    }
   }
 
   /**
@@ -121,15 +135,23 @@ public class PasswordResetService {
    * If an eligible account is found, a reset email is sent best-effort.
    */
   public void requestPasswordReset(String usernameInput, String locale) {
+    requestPasswordReset(usernameInput, locale, PasswordResetApplication.APP);
+  }
+
+  public void requestPasswordReset(
+      String usernameInput, String locale, PasswordResetApplication application) {
     if (isBlank(usernameInput)) {
       return;
     }
 
     String username = usernameInput.trim();
     String resolvedLocale = resolveLocale(locale);
+    PasswordResetApplication resolvedApplication =
+        application == null ? PasswordResetApplication.APP : application;
     try {
       // Dispatch asynchronously so the response time does not reveal whether the account exists.
-      passwordResetExecutor.execute(() -> processPasswordResetRequest(username, resolvedLocale));
+      passwordResetExecutor.execute(
+          () -> processPasswordResetRequest(username, resolvedLocale, resolvedApplication));
     } catch (RejectedExecutionException ex) {
       // Queue saturated (flood/overload): drop the dispatch, keep the response identical so
       // neither existence nor the drop is observable. No PII in the log.
@@ -137,9 +159,10 @@ public class PasswordResetService {
     }
   }
 
-  private void processPasswordResetRequest(String username, String locale) {
+  private void processPasswordResetRequest(
+      String username, String locale, PasswordResetApplication application) {
     try {
-      Optional<AccountResetTarget> accountOptional = resolveAccount(username);
+      Optional<AccountResetTarget> accountOptional = resolveAccount(username, application);
       if (accountOptional.isEmpty()) {
         return;
       }
@@ -150,7 +173,7 @@ public class PasswordResetService {
         return;
       }
 
-      sendPasswordResetEmailSafely(account, locale);
+      sendPasswordResetEmailSafely(account, locale, application);
     } catch (RuntimeException ex) {
       // Never leak PII (account id, email, raw message) — log the exception class only.
       log.warn("Password reset request processing failed ({})", ex.getClass().getSimpleName());
@@ -221,16 +244,34 @@ public class PasswordResetService {
         consultant -> new AccountResetTarget(consultant.getId(), consultant.getEmail()));
   }
 
+  private Optional<AccountResetTarget> resolveAccount(
+      String username, PasswordResetApplication application) {
+    if (application == PasswordResetApplication.ADMIN) {
+      Optional<Admin> adminOptional =
+          adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(username, username);
+      return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
+    }
+    return resolveAccount(username);
+  }
+
   private String resolveLocale(String locale) {
     return isNotBlank(locale) && EMAIL_CONTENT.containsKey(locale) ? locale : "de";
   }
 
-  private void sendPasswordResetEmailSafely(AccountResetTarget target, String locale) {
+  private void sendPasswordResetEmailSafely(
+      AccountResetTarget target, String locale, PasswordResetApplication application) {
+    String frontendBaseUrl =
+        application == PasswordResetApplication.ADMIN
+            ? passwordResetAdminFrontendBaseUrl
+            : passwordResetFrontendBaseUrl;
+    String frontendBaseUrlProperty =
+        application == PasswordResetApplication.ADMIN
+            ? "password.reset.admin.frontend.base-url"
+            : "password.reset.frontend.base-url";
     // Fail closed: without an explicitly configured frontend base URL we cannot build a usable
     // reset link, so the feature stays disabled instead of emailing a wrong/production URL.
-    if (isBlank(passwordResetFrontendBaseUrl)) {
-      log.warn(
-          "Password reset email not sent: 'password.reset.frontend.base-url' is not configured.");
+    if (isBlank(frontendBaseUrl)) {
+      log.warn("Password reset email not sent: '{}' is not configured.", frontendBaseUrlProperty);
       return;
     }
 
@@ -243,7 +284,7 @@ public class PasswordResetService {
     // Bound the in-memory token map: purge expired entries before inserting a new one.
     cleanupExpiredTokens();
     String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
-    String resetUrl = buildResetFrontendUrl(oneTimeToken);
+    String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
     EmailContent content = EMAIL_CONTENT.get(locale);
 
     try {
@@ -357,8 +398,8 @@ public class PasswordResetService {
     resetTokens.entrySet().removeIf(entry -> entry.getValue().getExpiresAt().isBefore(now));
   }
 
-  private String buildResetFrontendUrl(String oneTimeToken) {
-    return normalizeBaseUrl(passwordResetFrontendBaseUrl)
+  private String buildResetFrontendUrl(String oneTimeToken, String frontendBaseUrl) {
+    return normalizeBaseUrl(frontendBaseUrl)
         + "/password-reset/confirm?token="
         + URLEncoder.encode(oneTimeToken, StandardCharsets.UTF_8);
   }
