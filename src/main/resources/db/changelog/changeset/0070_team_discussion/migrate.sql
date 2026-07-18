@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS team_discussion (
   archive_date DATETIME NULL,
   created_by_consultant_id VARCHAR(36) NULL,
   is_first_notified TINYINT(1) NOT NULL DEFAULT 0,
+  is_read_only_applied TINYINT(1) NOT NULL DEFAULT 0,
   tenant_id BIGINT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_team_discussion_session (session_id),

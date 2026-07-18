@@ -74,6 +74,15 @@ public class TeamDiscussion implements TenantAware {
   @Builder.Default
   private boolean firstNotified = false;
 
+  /**
+   * Whether the protocol-level read-only switch (events_default raise) has actually been applied to
+   * the Matrix room after archiving. False after a failed Matrix call — retried lazily on next
+   * access instead of being forgotten.
+   */
+  @Column(name = "is_read_only_applied", nullable = false)
+  @Builder.Default
+  private boolean readOnlyApplied = false;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 }

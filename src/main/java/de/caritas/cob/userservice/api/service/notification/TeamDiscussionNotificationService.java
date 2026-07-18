@@ -76,8 +76,22 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
+    if (session.getConsultant() != null) {
+      // Create/accept race guard: once the case is accepted, an OPEN row must not keep
+      // notifying — the facade lazily archives it on next access.
+      return;
+    }
 
     Set<String> eligible = eligibleConsultantIds(session.getAgencyId());
+    if (!eligible.contains(senderUserId)) {
+      // Sender-eligibility guard: the endpoint is reachable for askers too. A caller outside
+      // the eligible circle must neither trigger a broadcast nor flip firstNotified.
+      log.warn(
+          "Ignoring team discussion notification from ineligible sender {} for room {}",
+          senderUserId,
+          roomId);
+      return;
+    }
     Set<String> mentioned = sanitizedMentions(mentionedUserIds, eligible);
 
     Set<String> recipients;

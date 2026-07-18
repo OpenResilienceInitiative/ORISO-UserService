@@ -243,4 +243,91 @@ class TeamDiscussionFacadeTest {
     assertThat(view.get().status()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
     assertThat(view.get().archiveDate()).isNotNull();
   }
+
+  @Test
+  void getDiscussion_shouldLazilyArchiveOpenDiscussionOnAssignedSession() {
+    // Review finding F2 (create/accept race): an OPEN row on an accepted case reconciles on access.
+    session.setConsultant(consultant);
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.OPEN)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+
+    var view = facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view).isPresent();
+    assertThat(view.get().status()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    verify(teamDiscussionRepository, org.mockito.Mockito.atLeastOnce()).save(discussion);
+  }
+
+  @Test
+  void archiveDiscussionIfPresent_shouldTrackFailedReadOnlyForRetry() {
+    // Review finding F3 (archive ordering): a failed power-level call must not be forgotten.
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.OPEN)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false);
+
+    facade.archiveDiscussionIfPresent(session);
+
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void getDiscussion_shouldRetryReadOnlyOnArchivedDiscussionUntilApplied() {
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .archiveDate(LocalDateTime.now())
+            .readOnlyApplied(false)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(
+            eq(ROOM_ID), eq(TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL), anyString()))
+        .thenReturn(true);
+
+    facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
+    verify(matrixSynapseService)
+        .setRoomEventsDefaultPowerLevel(
+            ROOM_ID, TeamDiscussionFacade.ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, "agency-token");
+    verify(teamDiscussionRepository).save(discussion);
+  }
+
+  @Test
+  void getDiscussion_shouldNotRetryReadOnlyWhenAlreadyApplied() {
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .archiveDate(LocalDateTime.now())
+            .readOnlyApplied(true)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+
+    facade.getDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    verify(matrixSynapseService, never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+  }
 }

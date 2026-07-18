@@ -68,7 +68,7 @@ public class TeamDiscussionFacade {
 
     Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
     if (existing.isPresent()) {
-      TeamDiscussion discussion = existing.get();
+      TeamDiscussion discussion = reconcileOnAccess(existing.get(), session);
       joinConsultantBestEffort(discussion, session, consultant);
       return toView(discussion);
     }
@@ -86,6 +86,11 @@ public class TeamDiscussionFacade {
                 .createdByConsultantId(consultant.getId())
                 .tenantId(session.getTenantId())
                 .build());
+    // Create/accept race: re-read the assignment state after committing the row — if the case
+    // was accepted while we were creating the room, archive immediately instead of leaving an
+    // OPEN discussion on an assigned case.
+    Session freshSession = sessionRepository.findById(sessionId).orElse(session);
+    discussion = reconcileOnAccess(discussion, freshSession);
     joinConsultantBestEffort(discussion, session, consultant);
     return toView(discussion);
   }
@@ -95,7 +100,32 @@ public class TeamDiscussionFacade {
     featureGate.requireEnabled();
     Session session = loadSession(sessionId);
     requireEligibleConsultant(session, consultantId);
-    return teamDiscussionRepository.findBySessionId(sessionId).map(this::toView);
+    return teamDiscussionRepository
+        .findBySessionId(sessionId)
+        .map(discussion -> reconcileOnAccess(discussion, session))
+        .map(this::toView);
+  }
+
+  /**
+   * Lazy reconciliation on every access (review findings F2/F3): an OPEN discussion on an
+   * already-accepted case is archived now (the accept-time hook may have raced the creation), and
+   * an ARCHIVED discussion whose read-only switch failed gets the power-level call retried.
+   */
+  private TeamDiscussion reconcileOnAccess(TeamDiscussion discussion, Session session) {
+    boolean sessionAccepted =
+        session.getConsultant() != null || session.getStatus() != SessionStatus.NEW;
+    if (discussion.getStatus() == TeamDiscussion.Status.OPEN && sessionAccepted) {
+      archiveDiscussion(session, discussion);
+      return discussion;
+    }
+    if (discussion.getStatus() == TeamDiscussion.Status.ARCHIVED
+        && !discussion.isReadOnlyApplied()) {
+      if (makeRoomReadOnlyBestEffort(session, discussion)) {
+        discussion.setReadOnlyApplied(true);
+        teamDiscussionRepository.save(discussion);
+      }
+    }
+    return discussion;
   }
 
   /**
@@ -115,16 +145,7 @@ public class TeamDiscussionFacade {
           || discussionOpt.get().getStatus() == TeamDiscussion.Status.ARCHIVED) {
         return;
       }
-      TeamDiscussion discussion = discussionOpt.get();
-      discussion.setStatus(TeamDiscussion.Status.ARCHIVED);
-      discussion.setArchiveDate(LocalDateTime.now());
-      teamDiscussionRepository.save(discussion);
-
-      makeRoomReadOnlyBestEffort(session, discussion);
-      log.info(
-          "Archived team discussion for session {} (room {})",
-          session.getId(),
-          discussion.getMatrixRoomId());
+      archiveDiscussion(session, discussionOpt.get());
     } catch (Exception ex) {
       log.error(
           "Failed to archive team discussion for session {}: {}",
@@ -244,16 +265,39 @@ public class TeamDiscussionFacade {
             .build());
   }
 
-  private void makeRoomReadOnlyBestEffort(Session session, TeamDiscussion discussion) {
+  /**
+   * ARCHIVED is persisted first (notifications must stop at acceptance regardless), then the
+   * read-only switch is attempted; a failure is tracked via {@code readOnlyApplied=false} and
+   * retried on next access ({@link #reconcileOnAccess}) instead of being forgotten.
+   */
+  private void archiveDiscussion(Session session, TeamDiscussion discussion) {
+    discussion.setStatus(TeamDiscussion.Status.ARCHIVED);
+    discussion.setArchiveDate(LocalDateTime.now());
+    discussion.setReadOnlyApplied(false);
+    teamDiscussionRepository.save(discussion);
+
+    if (makeRoomReadOnlyBestEffort(session, discussion)) {
+      discussion.setReadOnlyApplied(true);
+      teamDiscussionRepository.save(discussion);
+    }
+    log.info(
+        "Archived team discussion for session {} (room {}, readOnlyApplied={})",
+        session.getId(),
+        discussion.getMatrixRoomId(),
+        discussion.isReadOnlyApplied());
+  }
+
+  private boolean makeRoomReadOnlyBestEffort(Session session, TeamDiscussion discussion) {
     try {
       String agencyToken = loginAgencyOperator(session);
-      matrixSynapseService.setRoomEventsDefaultPowerLevel(
+      return matrixSynapseService.setRoomEventsDefaultPowerLevel(
           discussion.getMatrixRoomId(), ARCHIVED_EVENTS_DEFAULT_POWER_LEVEL, agencyToken);
     } catch (Exception ex) {
       log.error(
           "Could not set team discussion room {} read-only: {}",
           discussion.getMatrixRoomId(),
           ex.getMessage());
+      return false;
     }
   }
 

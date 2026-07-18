@@ -335,4 +335,48 @@ class TeamDiscussionNotificationServiceTest {
 
     verify(notificationRoomLevelRepository).save(any(NotificationRoomLevel.class));
   }
+
+  @Test
+  void ineligibleSender_shouldProduceNothingAndNotFlipFirstNotified() {
+    // Review finding F1: /users/event-notifications/** is reachable for USER_DEFAULT too —
+    // a caller outside the eligible circle must never trigger (or suppress) the broadcast.
+    service.createTeamDiscussionNotification(ROOM_ID, "outsider-or-asker", "Spoof", null);
+
+    verify(eventNotificationService, never())
+        .createEvent(
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any());
+    assertThat(discussion.isFirstNotified()).isFalse();
+    verify(teamDiscussionRepository, never()).save(any());
+    verify(participantRepository, never()).save(any());
+  }
+
+  @Test
+  void assignedSession_shouldProduceNothingEvenWhileDiscussionStillOpen() {
+    // Review finding F2 (race): once the case is accepted, an OPEN row must not keep notifying.
+    var acceptingConsultant = new Consultant();
+    acceptingConsultant.setId(COLLEAGUE_A);
+    session.setConsultant(acceptingConsultant);
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", null);
+
+    verify(eventNotificationService, never())
+        .createEvent(
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(),
+            any());
+  }
 }
