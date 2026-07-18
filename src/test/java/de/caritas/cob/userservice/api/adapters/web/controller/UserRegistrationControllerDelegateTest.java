@@ -376,6 +376,7 @@ class UserRegistrationControllerDelegateTest {
     var response = delegate.confirmPasswordReset(confirm);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(passwordResetService).confirmPasswordReset("valid-token", "NewPassw0rd!");
   }
 
   @Test
@@ -388,6 +389,7 @@ class UserRegistrationControllerDelegateTest {
     var response = delegate.confirmPasswordReset(confirm);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    verify(passwordResetService).confirmPasswordReset("bad-token", "NewPassw0rd!");
   }
 
   @SuppressWarnings("unchecked")
