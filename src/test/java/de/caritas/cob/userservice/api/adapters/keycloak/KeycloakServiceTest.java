@@ -336,13 +336,12 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"rawtypes", "unchecked"})
   public void otpRequests_ShouldUseDecodedKeycloakUsername() {
     var encodedUsername = "enc.ORSXG5BAOVZWK4Q.";
     when(usernameTranscoder.decodeUsername(encodedUsername)).thenReturn(USERNAME);
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
-    when(keycloakClient.get(anyString(), any(), any()))
-        .thenReturn(new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK));
+    when(keycloakClient.get(anyString(), anyString(), eq(OtpInfoDTO.class)))
+        .thenReturn(new ResponseEntity<>(OTP_INFO_DTO, HttpStatus.OK));
 
     keycloakService.getOtpCredential(encodedUsername);
     keycloakService.setUpOtpCredential(encodedUsername, "123456", "secret");
