@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.constraints.Min;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -26,6 +27,7 @@ import org.springframework.http.HttpStatus;
 class EventNotificationControllerTest {
 
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private TeamDiscussionNotificationService teamDiscussionNotificationService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -36,10 +38,16 @@ class EventNotificationControllerTest {
   void setUp() {
     controllerWithMirror =
         new EventNotificationController(
-            eventNotificationService, authenticatedUser, Optional.of(redisMessageMirrorService));
+            eventNotificationService,
+            teamDiscussionNotificationService,
+            authenticatedUser,
+            Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
-            eventNotificationService, authenticatedUser, Optional.empty());
+            eventNotificationService,
+            teamDiscussionNotificationService,
+            authenticatedUser,
+            Optional.empty());
   }
 
   @Test

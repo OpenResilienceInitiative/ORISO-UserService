@@ -112,6 +112,8 @@
     file="db/changelog/changeset/0068_consultant_assigned_supervisor/0068_changeSet.xml" />
   <include
     file="db/changelog/changeset/0069_case_handover_notification_templates/0069_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0070_team_discussion/0070_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

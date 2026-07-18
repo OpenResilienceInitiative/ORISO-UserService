@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -82,6 +83,8 @@ public class AssignEnquiryFacade {
    */
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
+  private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+
   /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
    * consultants from the Rocket.Chat group which don't have the right to view this session anymore.
@@ -106,6 +109,9 @@ public class AssignEnquiryFacade {
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
+    // ADR-016 hard close: the pre-acceptance Team-Besprechung archives the moment the case is
+    // accepted. Best-effort by the same contract — never blocks the acceptance.
+    teamDiscussionFacade.archiveDiscussionIfPresent(session);
     liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
         session.getUser().getUserId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
