@@ -87,7 +87,7 @@ class UserAccountControllerDelegateTest {
   @InjectMocks private UserAccountControllerDelegate delegate;
 
   @Test
-  void getUserDataShouldReturnUserDataWithoutOtpStateWhenOtpLookupFails() {
+  void getUserDataShouldPreserveOtpAvailabilityWhenOtpLookupFails() {
     var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();
@@ -99,14 +99,16 @@ class UserAccountControllerDelegateTest {
     when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.getOtpCredential(USERNAME)).thenThrow(new RuntimeException("OTP down"));
-    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+    when(userDtoMapper.userDataOf(
+            eq(partialUserData), any(OtpInfoDTO.class), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
     var response = delegate.getUserData();
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
-    verify(userDtoMapper).userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean());
+    verify(userDtoMapper)
+        .userDataOf(eq(partialUserData), any(OtpInfoDTO.class), anyBoolean(), anyBoolean());
   }
 
   @Test
