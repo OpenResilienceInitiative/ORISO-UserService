@@ -229,8 +229,7 @@ class UserController2faE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
-  void startTwoFactorAuthByEmailSetupShouldRespondWithNoContentIfEmailIsOwnedByUser()
-      throws Exception {
+  void startTwoFactorAuthByEmailSetupShouldAcceptOwnEmailForRawKeycloakUsername() throws Exception {
     givenAValidConsultant();
     givenAValidEmailDTO();
     givenKeycloakFoundOwnEmailInUse();
@@ -840,7 +839,7 @@ class UserController2faE2EIT {
   private void givenKeycloakFoundOwnEmailInUse() {
     var usernameTranscoder = new UsernameTranscoder();
     var userRepresentation = new UserRepresentation();
-    var username = usernameTranscoder.encodeUsername(consultant.getUsername());
+    var username = usernameTranscoder.decodeUsername(consultant.getUsername());
     userRepresentation.setUsername(username);
     userRepresentation.setEmail(emailDTO.getEmail());
     var userRepresentationList = new ArrayList<UserRepresentation>(1);
