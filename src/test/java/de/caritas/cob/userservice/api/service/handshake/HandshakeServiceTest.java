@@ -38,6 +38,7 @@ class HandshakeServiceTest {
   @Mock private HandshakeAuditEventRepository handshakeAuditEventRepository;
   @Mock private KeycloakAuthClient keycloakAuthClient;
   @Mock private HandshakeCompletionHandler completionHandler;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
   private HandshakeService handshakeService;
 
@@ -48,8 +49,12 @@ class HandshakeServiceTest {
             handshakeSessionRepository,
             handshakeAuditEventRepository,
             keycloakAuthClient,
+            identityClient,
             List.of(completionHandler));
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
+    org.mockito.Mockito.lenient()
+        .when(identityClient.getOtpCredential(anyString()))
+        .thenReturn(new de.caritas.cob.userservice.api.model.OtpInfoDTO().otpSetup(true));
   }
 
   private AuthenticatedUser supportAdmin() {
@@ -117,6 +122,31 @@ class HandshakeServiceTest {
         .isInstanceOf(ForbiddenException.class);
 
     verify(keycloakAuthClient, never()).verifyWithOtp(anyString(), anyString(), anyString());
+    verify(handshakeSessionRepository, never()).save(any());
+  }
+
+  @Test
+  void initiate_Should_Forbid_When_SupportAdminHasNoActiveSecondFactor() {
+    // ADR-018: a Global Support Admin cannot become active without completed 2FA enrollment.
+    when(identityClient.getOtpCredential(anyString()))
+        .thenReturn(new de.caritas.cob.userservice.api.model.OtpInfoDTO().otpSetup(false));
+
+    assertThatThrownBy(() -> handshakeService.initiate(supportAdmin(), supportRequest()))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessageContaining("2FA");
+
+    verify(keycloakAuthClient, never()).verifyWithOtp(anyString(), anyString(), anyString());
+    verify(handshakeSessionRepository, never()).save(any());
+  }
+
+  @Test
+  void initiate_Should_Forbid_When_SupportAdminOtpStateIsUnavailable() {
+    // Fail closed: an unreachable OTP state never lets a support admin through.
+    when(identityClient.getOtpCredential(anyString())).thenThrow(new RuntimeException("SPI down"));
+
+    assertThatThrownBy(() -> handshakeService.initiate(supportAdmin(), supportRequest()))
+        .isInstanceOf(ForbiddenException.class);
+
     verify(handshakeSessionRepository, never()).save(any());
   }
 
