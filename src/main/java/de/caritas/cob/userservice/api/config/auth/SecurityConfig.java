@@ -185,6 +185,8 @@ public class SecurityConfig {
                 // per-purpose role pairs + fresh-credential checks are enforced in the service.
                 .requestMatchers("/users/handshakes", "/users/handshakes/**")
                 .authenticated()
+                .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
+                .authenticated()
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
