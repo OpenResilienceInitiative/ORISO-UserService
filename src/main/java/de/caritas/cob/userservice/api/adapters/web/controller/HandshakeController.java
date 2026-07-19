@@ -33,14 +33,16 @@ public class HandshakeController {
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   @PostMapping
-  public ResponseEntity<HandshakeItem> initiate(@RequestBody InitiateHandshakeRequest request) {
+  public ResponseEntity<HandshakeItem> initiate(
+      @jakarta.validation.Valid @RequestBody InitiateHandshakeRequest request) {
     return ResponseEntity.status(HttpStatus.CREATED)
         .body(handshakeService.initiate(authenticatedUser, request));
   }
 
   @PostMapping("/{handshakeId}/confirm")
   public ResponseEntity<HandshakeItem> confirm(
-      @PathVariable String handshakeId, @RequestBody ConfirmHandshakeRequest request) {
+      @PathVariable String handshakeId,
+      @jakarta.validation.Valid @RequestBody ConfirmHandshakeRequest request) {
     return ResponseEntity.ok(
         handshakeService.confirm(authenticatedUser, handshakeId, request.getPassword()));
   }
@@ -53,6 +55,8 @@ public class HandshakeController {
   @Getter
   @Setter
   public static class ConfirmHandshakeRequest {
+    @jakarta.validation.constraints.NotBlank
+    @jakarta.validation.constraints.Size(max = 255)
     private String password;
   }
 }
