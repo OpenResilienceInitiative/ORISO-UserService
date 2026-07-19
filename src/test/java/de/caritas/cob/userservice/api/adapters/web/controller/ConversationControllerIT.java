@@ -90,6 +90,22 @@ class ConversationControllerIT {
   }
 
   @Test
+  void getAnonymousEnquiries_Should_returnOk_When_rcTokenHeaderIsMissing() throws Exception {
+    // Matrix-only consultants have no Rocket.Chat token; the queue must still answer
+    // (enrichment is failure-tolerant). Regression: required RCToken caused a bare 400.
+    this.mvc
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "0").param("count", "10"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void getRegisteredEnquiries_Should_returnOk_When_rcTokenHeaderIsMissing() throws Exception {
+    this.mvc
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "0").param("count", "10"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsMissing() throws Exception {
     this.mvc
         .perform(
