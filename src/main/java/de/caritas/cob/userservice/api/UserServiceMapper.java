@@ -130,13 +130,12 @@ public class UserServiceMapper {
               nonNull(fullConsultant)
                   ? mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap)
                   : new ArrayList<Map<String, Object>>();
-          var hasOtherIdentity =
-              nonNull(otherIdentityTypesById)
-                  && otherIdentityTypesById.containsKey(consultantBase.getId());
           var otherIdentityTypes =
-              hasOtherIdentity
-                  ? otherIdentityTypesById.get(consultantBase.getId())
+              nonNull(otherIdentityTypesById)
+                  ? otherIdentityTypesById.getOrDefault(
+                      consultantBase.getId(), Collections.<String>emptyList())
                   : Collections.<String>emptyList();
+          var hasOtherIdentity = !otherIdentityTypes.isEmpty();
           var consultantMap =
               mapOf(
                   consultantBase,

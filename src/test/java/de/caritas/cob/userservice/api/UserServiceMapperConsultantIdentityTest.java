@@ -117,8 +117,7 @@ class UserServiceMapperConsultantIdentityTest {
   }
 
   @Test
-  void mapOfConsultantPagedShouldKeepHasOtherIdentityTrueWhenTypeListIsEmpty() {
-    // e.g. the other identity is an admin type not exposed as a typed value
+  void mapOfConsultantPagedShouldKeepIdentityFieldsConsistentWhenTypeListIsEmpty() {
     var consultantPage =
         new org.springframework.data.domain.PageImpl<ConsultantBase>(
             List.of(consultantBase("consultant-1")));
@@ -134,7 +133,7 @@ class UserServiceMapperConsultantIdentityTest {
 
     @SuppressWarnings("unchecked")
     var consultants = (List<Map<String, Object>>) result.get("consultants");
-    assertThat(consultants.get(0)).containsEntry("hasOtherIdentity", true);
+    assertThat(consultants.get(0)).containsEntry("hasOtherIdentity", false);
     assertThat(consultants.get(0)).containsEntry("otherIdentityTypes", Collections.emptyList());
   }
 }

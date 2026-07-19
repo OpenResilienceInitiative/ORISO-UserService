@@ -174,9 +174,9 @@ public class AccountManager implements AccountManaging {
         .forEach(
             row -> {
               var id = (String) row[0];
-              var types = otherIdentityTypesById.computeIfAbsent(id, key -> new ArrayList<>());
               var typedValue = otherIdentityTypeOf((Admin.AdminType) row[1]);
               if (typedValue != null) {
+                var types = otherIdentityTypesById.computeIfAbsent(id, key -> new ArrayList<>());
                 types.add(typedValue);
               }
             });

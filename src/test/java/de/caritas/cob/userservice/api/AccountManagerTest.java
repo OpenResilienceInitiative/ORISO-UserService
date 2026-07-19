@@ -459,4 +459,51 @@ class AccountManagerTest {
             captor.capture());
     assertThat(captor.getValue()).containsEntry("c-1", List.of("TENANT_ADMIN"));
   }
+
+  @Test
+  void findConsultantsByInfix_Should_NotExposeUnsupportedPlatformAdminIdentity() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var consultantBase = Mockito.mock(Consultant.ConsultantBase.class);
+    Mockito.when(consultantBase.getId()).thenReturn("c-1");
+
+    Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
+    Mockito.when(
+            consultantRepository.findAllByInfix(
+                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+        .thenReturn(page);
+    Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
+    Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
+        .thenReturn(List.of(consultant));
+    Mockito.when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("c-1")))
+        .thenReturn(List.of());
+    Mockito.when(userServiceMapper.agencyIdsOf(List.of())).thenReturn(List.of());
+    Mockito.when(adminRepository.findIdAndTypeByIdIn(List.of("c-1")))
+        .thenReturn(List.<Object[]>of(new Object[] {"c-1", Admin.AdminType.SUPER}));
+    Mockito.when(
+            userServiceMapper.mapOf(
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(Map.of("total", 1));
+
+    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+
+    @SuppressWarnings("unchecked")
+    var captor =
+        org.mockito.ArgumentCaptor.forClass(
+            (Class<Map<String, List<String>>>) (Class<?>) Map.class);
+    Mockito.verify(userServiceMapper)
+        .mapOf(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            captor.capture());
+    assertThat(captor.getValue()).doesNotContainKey("c-1");
+  }
 }
