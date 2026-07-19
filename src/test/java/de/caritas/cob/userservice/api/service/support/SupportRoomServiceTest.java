@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +58,7 @@ class SupportRoomServiceTest {
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(supportRoomService, "roomTtlHours", 4L);
+    ReflectionTestUtils.setField(supportRoomService, "sweepBatchSize", 200);
     lenient().when(matrixConfig.getServerName()).thenReturn("caritas.local");
   }
 
@@ -67,8 +69,8 @@ class SupportRoomServiceTest {
         .initiatorId(GSA_ID)
         .counterpartId(CONSULTANT_ID)
         .status(HandshakeSession.HandshakeStatus.CONFIRMED)
-        .createDate(LocalDateTime.now())
-        .expiryDate(LocalDateTime.now().plusMinutes(5))
+        .createDate(LocalDateTime.now(ZoneOffset.UTC))
+        .expiryDate(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5))
         .tenantId(1L)
         .build();
   }
@@ -124,8 +126,8 @@ class SupportRoomServiceTest {
     assertThat(room.getSupportAdminId()).isEqualTo(GSA_ID);
     assertThat(room.getConsultantId()).isEqualTo(CONSULTANT_ID);
     assertThat(room.getExpiryDate())
-        .isAfter(LocalDateTime.now().plusHours(3))
-        .isBefore(LocalDateTime.now().plusHours(5));
+        .isAfter(LocalDateTime.now(ZoneOffset.UTC).plusHours(3))
+        .isBefore(LocalDateTime.now(ZoneOffset.UTC).plusHours(5));
     verify(handshakeAuditEventRepository).save(any());
   }
 
@@ -154,8 +156,8 @@ class SupportRoomServiceTest {
         .supportAdminMatrixId(GSA_MXID)
         .consultantId(CONSULTANT_ID)
         .status(SupportRoom.SupportRoomStatus.ACTIVE)
-        .createDate(LocalDateTime.now().minusHours(1))
-        .expiryDate(LocalDateTime.now().plusHours(3))
+        .createDate(LocalDateTime.now(ZoneOffset.UTC).minusHours(1))
+        .expiryDate(LocalDateTime.now(ZoneOffset.UTC).plusHours(3))
         .build();
   }
 
@@ -195,9 +197,11 @@ class SupportRoomServiceTest {
   @Test
   void sweepExpired_Should_KickAndCloseLapsedActiveRooms() {
     var room = activeRoom();
-    room.setExpiryDate(LocalDateTime.now().minusMinutes(1));
+    room.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
     when(supportRoomRepository.findAllByStatusAndExpiryDateBefore(
-            eq(SupportRoom.SupportRoomStatus.ACTIVE), any(LocalDateTime.class)))
+            eq(SupportRoom.SupportRoomStatus.ACTIVE),
+            any(LocalDateTime.class),
+            any(org.springframework.data.domain.Pageable.class)))
         .thenReturn(List.of(room));
     when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");
     when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(true);
@@ -215,9 +219,11 @@ class SupportRoomServiceTest {
   void sweepExpired_Should_CloseRoomEvenIfMatrixKickFails() {
     // Fail-safe: the lease must end at 4h even when the homeserver hiccups.
     var room = activeRoom();
-    room.setExpiryDate(LocalDateTime.now().minusMinutes(1));
+    room.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
     when(supportRoomRepository.findAllByStatusAndExpiryDateBefore(
-            eq(SupportRoom.SupportRoomStatus.ACTIVE), any(LocalDateTime.class)))
+            eq(SupportRoom.SupportRoomStatus.ACTIVE),
+            any(LocalDateTime.class),
+            any(org.springframework.data.domain.Pageable.class)))
         .thenReturn(List.of(room));
     when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID))
         .thenThrow(new RuntimeException("synapse down"));

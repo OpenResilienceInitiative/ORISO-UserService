@@ -9,7 +9,9 @@ import org.springframework.data.repository.CrudRepository;
 public interface SupportRoomRepository extends CrudRepository<SupportRoom, String> {
 
   List<SupportRoom> findAllByStatusAndExpiryDateBefore(
-      SupportRoomStatus status, LocalDateTime before);
+      SupportRoomStatus status,
+      LocalDateTime before,
+      org.springframework.data.domain.Pageable page);
 
   List<SupportRoom> findAllByStatusAndConsultantIdOrStatusAndSupportAdminId(
       SupportRoomStatus consultantStatus,

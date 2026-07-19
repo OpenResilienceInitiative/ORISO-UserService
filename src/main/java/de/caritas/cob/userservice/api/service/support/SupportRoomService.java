@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.support;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -52,6 +54,9 @@ public class SupportRoomService {
   @Value("${support.room-ttl-hours:4}")
   private long roomTtlHours;
 
+  @Value("${support.room-sweep-batch-size:200}")
+  private int sweepBatchSize;
+
   /**
    * Creates the fresh encrypted 1:1 room for a confirmed SUPPORT_ACCESS handshake. Any failure here
    * propagates — the handshake confirmation rolls back and no half-created lease remains.
@@ -95,7 +100,7 @@ public class SupportRoomService {
       var consultantToken = matrixSynapseService.loginAsUserAccessToken(consultantMatrixId);
       matrixSynapseService.joinRoom(roomId, consultantToken);
 
-      var now = LocalDateTime.now();
+      var now = nowInUtc();
       var room =
           SupportRoom.builder()
               .id(UUID.randomUUID().toString())
@@ -156,7 +161,10 @@ public class SupportRoomService {
   @Transactional
   public void sweepExpired() {
     supportRoomRepository
-        .findAllByStatusAndExpiryDateBefore(SupportRoomStatus.ACTIVE, LocalDateTime.now())
+        .findAllByStatusAndExpiryDateBefore(
+            SupportRoomStatus.ACTIVE,
+            nowInUtc(),
+            org.springframework.data.domain.PageRequest.of(0, sweepBatchSize))
         .forEach(room -> close(room, REASON_EXPIRED, null));
   }
 
@@ -174,7 +182,7 @@ public class SupportRoomService {
     }
     room.setStatus(SupportRoomStatus.CLOSED);
     room.setCloseReason(reason);
-    room.setClosedDate(LocalDateTime.now());
+    room.setClosedDate(nowInUtc());
     supportRoomRepository.save(room);
     audit(room, EVENT_ROOM_CLOSED, actorId);
   }
@@ -203,7 +211,7 @@ public class SupportRoomService {
             .actorId(actorId)
             .counterpartId(room.getConsultantId())
             .tenantId(room.getTenantId())
-            .createDate(LocalDateTime.now())
+            .createDate(nowInUtc())
             .build());
   }
 
