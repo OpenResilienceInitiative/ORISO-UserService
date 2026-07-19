@@ -181,6 +181,10 @@ public class SecurityConfig {
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
+                // per-purpose role pairs + fresh-credential checks are enforced in the service.
+                .requestMatchers("/users/handshakes", "/users/handshakes/**")
+                .authenticated()
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,

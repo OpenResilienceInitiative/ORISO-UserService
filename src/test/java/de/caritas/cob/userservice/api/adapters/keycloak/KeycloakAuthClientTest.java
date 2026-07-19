@@ -181,4 +181,38 @@ class KeycloakAuthClientTest {
 
     verify(realmResource, times(1)).deleteSession(eq("sessionId"), eq(false));
   }
+
+  @Test
+  void verifyWithOtp_Should_ReturnTrueAndLogout_When_LoginWithOtpSucceeds() {
+    var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setRefreshToken(REFRESH_TOKEN);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(loginResponse));
+    when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
+        .thenReturn(ResponseEntity.noContent().build());
+
+    assertTrue(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_LoginIsRejected() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"), is(false));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_OtpIsMissingOrWrong() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error_description\":\"Missing totp\"}".getBytes(),
+                null));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, ""), is(false));
+  }
 }

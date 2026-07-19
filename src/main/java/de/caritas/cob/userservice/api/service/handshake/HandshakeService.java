@@ -1,0 +1,225 @@
+package de.caritas.cob.userservice.api.service.handshake;
+
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.HandshakeAuditEvent;
+import de.caritas.cob.userservice.api.model.HandshakeSession;
+import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
+import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
+import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import lombok.Getter;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Live-Handshake core primitive (ADR-018 §1): two people confirm a privileged action with fresh
+ * credentials before it executes. The initiator re-authenticates with password + OTP, the
+ * counterpart confirms with their password inside a ~5-minute window; a lapsed window leaves
+ * nothing but one audit entry ("session was not established"). Confirmation triggers the purpose's
+ * {@link HandshakeCompletionHandler} inside the same transaction.
+ */
+@Service
+@Slf4j
+@RequiredArgsConstructor
+public class HandshakeService {
+
+  private static final String EVENT_INITIATED = "INITIATED";
+  private static final String EVENT_CONFIRMED = "CONFIRMED";
+  private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
+  private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
+
+  private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
+  private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
+  private final @NonNull KeycloakAuthClient keycloakAuthClient;
+  private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
+
+  @Value("${handshake.ttl-seconds:300}")
+  private long ttlSeconds;
+
+  @Value("${handshake.audit-retention-months:12}")
+  private long auditRetentionMonths;
+
+  @Transactional
+  public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
+    var purpose = purposeOf(request.getPurpose());
+
+    if (!purpose.mayInitiate(initiator)) {
+      throw new ForbiddenException(
+          String.format("User %s may not initiate a %s handshake", initiator.getUserId(), purpose));
+    }
+    if (request.getCounterpartId() == null || request.getCounterpartId().isBlank()) {
+      throw new BadRequestException("Handshake counterpart must be provided");
+    }
+    if (initiator.getUserId().equals(request.getCounterpartId())) {
+      throw new BadRequestException("A handshake requires two distinct people");
+    }
+    if (!keycloakAuthClient.verifyWithOtp(
+        initiator.getUsername(), request.getPassword(), request.getOtp())) {
+      throw new ForbiddenException(
+          String.format(
+              "Fresh credential verification failed for handshake initiator %s",
+              initiator.getUserId()));
+    }
+
+    var now = LocalDateTime.now();
+    var session =
+        HandshakeSession.builder()
+            .id(UUID.randomUUID().toString())
+            .purpose(purpose)
+            .initiatorId(initiator.getUserId())
+            .counterpartId(request.getCounterpartId())
+            .status(HandshakeStatus.PENDING)
+            .createDate(now)
+            .expiryDate(now.plusSeconds(ttlSeconds))
+            .tenantId(initiator.getTenantId())
+            .build();
+    session = handshakeSessionRepository.save(session);
+    audit(session, EVENT_INITIATED, initiator.getUserId());
+
+    return HandshakeItem.of(session);
+  }
+
+  @Transactional
+  public HandshakeItem confirm(AuthenticatedUser counterpart, String handshakeId, String password) {
+    var session =
+        handshakeSessionRepository
+            .findById(handshakeId)
+            .orElseThrow(
+                () -> new BadRequestException(String.format("Unknown handshake %s", handshakeId)));
+
+    if (session.getStatus() != HandshakeStatus.PENDING) {
+      throw new BadRequestException(String.format("Handshake %s is not pending", handshakeId));
+    }
+    if (session.getExpiryDate().isBefore(LocalDateTime.now())) {
+      expire(session);
+      throw new BadRequestException(String.format("Handshake %s has expired", handshakeId));
+    }
+    if (!session.getCounterpartId().equals(counterpart.getUserId())) {
+      throw new ForbiddenException(
+          String.format(
+              "User %s is not the counterpart of handshake %s",
+              counterpart.getUserId(), handshakeId));
+    }
+    if (!session.getPurpose().mayConfirm(counterpart)) {
+      throw new ForbiddenException(
+          String.format(
+              "User %s may not confirm a %s handshake",
+              counterpart.getUserId(), session.getPurpose()));
+    }
+    if (!keycloakAuthClient.verifyIgnoringOtp(counterpart.getUsername(), password)) {
+      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+      throw new ForbiddenException(
+          String.format(
+              "Fresh credential verification failed for handshake counterpart %s",
+              counterpart.getUserId()));
+    }
+
+    session.setStatus(HandshakeStatus.CONFIRMED);
+    session.setConfirmedDate(LocalDateTime.now());
+    handshakeSessionRepository.save(session);
+    audit(session, EVENT_CONFIRMED, counterpart.getUserId());
+
+    for (var handler : completionHandlers) {
+      if (handler.supports(session.getPurpose())) {
+        handler.onConfirmed(session);
+      }
+    }
+
+    return HandshakeItem.of(session);
+  }
+
+  @Transactional(readOnly = true)
+  public List<HandshakeItem> pendingForCounterpart(AuthenticatedUser counterpart) {
+    return handshakeSessionRepository
+        .findAllByCounterpartIdAndStatusAndExpiryDateAfter(
+            counterpart.getUserId(), HandshakeStatus.PENDING, LocalDateTime.now())
+        .stream()
+        .map(HandshakeItem::of)
+        .toList();
+  }
+
+  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. */
+  @Scheduled(fixedDelayString = "${handshake.sweep-delay-ms:60000}")
+  @Transactional
+  public void sweepExpired() {
+    handshakeSessionRepository
+        .findAllByStatusAndExpiryDateBefore(HandshakeStatus.PENDING, LocalDateTime.now())
+        .forEach(this::expire);
+  }
+
+  /** ADR-018 §3: audit retention 12 months, automatic deletion. */
+  @Scheduled(cron = "${handshake.audit-purge-cron:0 30 3 * * *}")
+  @Transactional
+  public void purgeOldAuditEvents() {
+    handshakeAuditEventRepository.deleteAllByCreateDateBefore(
+        LocalDateTime.now().minusMonths(auditRetentionMonths));
+  }
+
+  private void expire(HandshakeSession session) {
+    session.setStatus(HandshakeStatus.EXPIRED);
+    handshakeSessionRepository.save(session);
+    audit(session, EVENT_NOT_ESTABLISHED, null);
+  }
+
+  private void audit(HandshakeSession session, String event, String actorId) {
+    handshakeAuditEventRepository.save(
+        HandshakeAuditEvent.builder()
+            .handshakeId(session.getId())
+            .purpose(session.getPurpose().name())
+            .event(event)
+            .actorId(actorId)
+            .counterpartId(session.getCounterpartId())
+            .tenantId(session.getTenantId())
+            .createDate(LocalDateTime.now())
+            .build());
+  }
+
+  private HandshakePurpose purposeOf(String value) {
+    try {
+      return HandshakePurpose.valueOf(value);
+    } catch (IllegalArgumentException | NullPointerException e) {
+      throw new BadRequestException(String.format("Unknown handshake purpose %s", value));
+    }
+  }
+
+  @Getter
+  @Setter
+  public static class InitiateHandshakeRequest {
+    private String purpose;
+    private String counterpartId;
+    private String password;
+    private String otp;
+  }
+
+  @Getter
+  public static class HandshakeItem {
+    private String id;
+    private String purpose;
+    private String initiatorId;
+    private String counterpartId;
+    private String status;
+    private LocalDateTime expiryDate;
+
+    static HandshakeItem of(HandshakeSession session) {
+      var item = new HandshakeItem();
+      item.id = session.getId();
+      item.purpose = session.getPurpose().name();
+      item.initiatorId = session.getInitiatorId();
+      item.counterpartId = session.getCounterpartId();
+      item.status = session.getStatus().name();
+      item.expiryDate = session.getExpiryDate();
+      return item;
+    }
+  }
+}

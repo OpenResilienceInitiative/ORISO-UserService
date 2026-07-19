@@ -76,6 +76,33 @@ public class KeycloakAuthClient {
     }
   }
 
+  /**
+   * Verifies password AND active second factor by performing a full direct-grant login including
+   * the {@code otp} form field (the vendored otp-config SPI validates it, ADR-013). Any obtained
+   * session is logged out immediately — this is a verification, not a login.
+   *
+   * @return true only if Keycloak accepted password and OTP together
+   */
+  public boolean verifyWithOtp(String username, String password, String otp) {
+    var entity = loginRequest(usernameTranscoder.decodeUsername(username), password);
+    entity.getBody().add("otp", otp);
+    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
+
+    ResponseEntity<KeycloakLoginResponseDTO> loginResponse;
+    try {
+      loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
+    } catch (RestClientResponseException exception) {
+      return false;
+    }
+
+    var responsePayload = loginResponse.getBody();
+    if (nonNull(responsePayload) && nonNull(responsePayload.getRefreshToken())) {
+      logoutUser(responsePayload.getRefreshToken());
+    }
+
+    return loginResponse.getStatusCode().is2xxSuccessful();
+  }
+
   public boolean verifyIgnoringOtp(String username, String password) {
     var entity = loginRequest(username, password);
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
