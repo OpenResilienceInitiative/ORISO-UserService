@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.handshake;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -38,6 +40,7 @@ public class HandshakeService {
   private static final String EVENT_CONFIRMED = "CONFIRMED";
   private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
   private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
+  private static final String EVENT_CONFIRM_LOCKED = "CONFIRM_LOCKED";
 
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
@@ -49,6 +52,12 @@ public class HandshakeService {
 
   @Value("${handshake.audit-retention-months:12}")
   private long auditRetentionMonths;
+
+  @Value("${handshake.max-confirm-attempts:5}")
+  private int maxConfirmAttempts;
+
+  @Value("${handshake.sweep-batch-size:200}")
+  private int sweepBatchSize;
 
   @Transactional
   public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
@@ -72,7 +81,7 @@ public class HandshakeService {
               initiator.getUserId()));
     }
 
-    var now = LocalDateTime.now();
+    var now = nowInUtc();
     var session =
         HandshakeSession.builder()
             .id(UUID.randomUUID().toString())
@@ -101,7 +110,7 @@ public class HandshakeService {
     if (session.getStatus() != HandshakeStatus.PENDING) {
       throw new BadRequestException(String.format("Handshake %s is not pending", handshakeId));
     }
-    if (session.getExpiryDate().isBefore(LocalDateTime.now())) {
+    if (session.getExpiryDate().isBefore(nowInUtc())) {
       expire(session);
       throw new BadRequestException(String.format("Handshake %s has expired", handshakeId));
     }
@@ -111,14 +120,16 @@ public class HandshakeService {
               "User %s is not the counterpart of handshake %s",
               counterpart.getUserId(), handshakeId));
     }
+    enforceTenantPolicy(session, counterpart);
     if (!session.getPurpose().mayConfirm(counterpart)) {
+      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
       throw new ForbiddenException(
           String.format(
               "User %s may not confirm a %s handshake",
               counterpart.getUserId(), session.getPurpose()));
     }
     if (!keycloakAuthClient.verifyIgnoringOtp(counterpart.getUsername(), password)) {
-      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+      registerFailedConfirmAttempt(session, counterpart);
       throw new ForbiddenException(
           String.format(
               "Fresh credential verification failed for handshake counterpart %s",
@@ -126,8 +137,13 @@ public class HandshakeService {
     }
 
     session.setStatus(HandshakeStatus.CONFIRMED);
-    session.setConfirmedDate(LocalDateTime.now());
-    handshakeSessionRepository.save(session);
+    session.setConfirmedDate(nowInUtc());
+    try {
+      handshakeSessionRepository.save(session);
+    } catch (org.springframework.dao.OptimisticLockingFailureException e) {
+      throw new BadRequestException(
+          String.format("Handshake %s was modified concurrently", handshakeId));
+    }
     audit(session, EVENT_CONFIRMED, counterpart.getUserId());
 
     for (var handler : completionHandlers) {
@@ -143,7 +159,7 @@ public class HandshakeService {
   public List<HandshakeItem> pendingForCounterpart(AuthenticatedUser counterpart) {
     return handshakeSessionRepository
         .findAllByCounterpartIdAndStatusAndExpiryDateAfter(
-            counterpart.getUserId(), HandshakeStatus.PENDING, LocalDateTime.now())
+            counterpart.getUserId(), HandshakeStatus.PENDING, nowInUtc())
         .stream()
         .map(HandshakeItem::of)
         .toList();
@@ -154,7 +170,10 @@ public class HandshakeService {
   @Transactional
   public void sweepExpired() {
     handshakeSessionRepository
-        .findAllByStatusAndExpiryDateBefore(HandshakeStatus.PENDING, LocalDateTime.now())
+        .findAllByStatusAndExpiryDateBefore(
+            HandshakeStatus.PENDING,
+            nowInUtc(),
+            org.springframework.data.domain.PageRequest.of(0, sweepBatchSize))
         .forEach(this::expire);
   }
 
@@ -163,7 +182,41 @@ public class HandshakeService {
   @Transactional
   public void purgeOldAuditEvents() {
     handshakeAuditEventRepository.deleteAllByCreateDateBefore(
-        LocalDateTime.now().minusMonths(auditRetentionMonths));
+        nowInUtc().minusMonths(auditRetentionMonths));
+  }
+
+  /**
+   * Tenant isolation: SUPPORT_ACCESS crosses tenants by design; every other purpose requires the
+   * confirming counterpart to belong to the session (initiator) tenant or be platform-scoped.
+   */
+  private void enforceTenantPolicy(HandshakeSession session, AuthenticatedUser counterpart) {
+    if (!session.getPurpose().isTenantScoped()) {
+      return;
+    }
+    var counterpartTenant = counterpart.getTenantId();
+    var sessionTenant = session.getTenantId();
+    var platformScoped = counterpartTenant != null && counterpartTenant == 0L;
+    if (sessionTenant != null && !platformScoped && !sessionTenant.equals(counterpartTenant)) {
+      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+      throw new ForbiddenException(
+          String.format(
+              "User %s belongs to another tenant than handshake %s",
+              counterpart.getUserId(), session.getId()));
+    }
+  }
+
+  /** Durable brute-force guard: at the attempt limit the session locks terminally. */
+  private void registerFailedConfirmAttempt(
+      HandshakeSession session, AuthenticatedUser counterpart) {
+    session.setConfirmAttempts(session.getConfirmAttempts() + 1);
+    if (session.getConfirmAttempts() >= maxConfirmAttempts) {
+      session.setStatus(HandshakeStatus.EXPIRED);
+      handshakeSessionRepository.save(session);
+      audit(session, EVENT_CONFIRM_LOCKED, counterpart.getUserId());
+      return;
+    }
+    handshakeSessionRepository.save(session);
+    audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
   }
 
   private void expire(HandshakeSession session) {
@@ -181,7 +234,7 @@ public class HandshakeService {
             .actorId(actorId)
             .counterpartId(session.getCounterpartId())
             .tenantId(session.getTenantId())
-            .createDate(LocalDateTime.now())
+            .createDate(nowInUtc())
             .build());
   }
 
@@ -196,9 +249,19 @@ public class HandshakeService {
   @Getter
   @Setter
   public static class InitiateHandshakeRequest {
+    @jakarta.validation.constraints.NotBlank
+    @jakarta.validation.constraints.Size(max = 40)
     private String purpose;
+
+    @jakarta.validation.constraints.NotBlank
+    @jakarta.validation.constraints.Size(max = 36)
     private String counterpartId;
+
+    @jakarta.validation.constraints.NotBlank
+    @jakarta.validation.constraints.Size(max = 255)
     private String password;
+
+    @jakarta.validation.constraints.Size(max = 16)
     private String otp;
   }
 

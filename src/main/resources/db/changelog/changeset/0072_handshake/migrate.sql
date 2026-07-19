@@ -10,6 +10,8 @@ CREATE TABLE userservice.handshake_session (
   expiry_date DATETIME NOT NULL,
   confirmed_date DATETIME NULL,
   tenant_id BIGINT NULL,
+  confirm_attempts INT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (id)
 );
 

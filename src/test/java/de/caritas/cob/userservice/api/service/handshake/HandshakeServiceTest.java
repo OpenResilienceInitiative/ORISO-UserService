@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakeService.InitiateHandshakeRequest;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -50,6 +51,8 @@ class HandshakeServiceTest {
             keycloakAuthClient,
             List.of(completionHandler));
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
+    ReflectionTestUtils.setField(handshakeService, "maxConfirmAttempts", 5);
+    ReflectionTestUtils.setField(handshakeService, "sweepBatchSize", 200);
   }
 
   private AuthenticatedUser supportAdmin() {
@@ -94,8 +97,8 @@ class HandshakeServiceTest {
     assertThat(saved.getInitiatorId()).isEqualTo(SUPPORT_ADMIN_ID);
     assertThat(saved.getCounterpartId()).isEqualTo(CONSULTANT_ID);
     assertThat(saved.getExpiryDate())
-        .isAfter(LocalDateTime.now().plusSeconds(200))
-        .isBefore(LocalDateTime.now().plusSeconds(400));
+        .isAfter(LocalDateTime.now(ZoneOffset.UTC).plusSeconds(200))
+        .isBefore(LocalDateTime.now(ZoneOffset.UTC).plusSeconds(400));
     assertThat(item.getId()).isNotBlank();
     assertThat(item.getStatus()).isEqualTo("PENDING");
     verify(handshakeAuditEventRepository).save(any());
@@ -147,8 +150,8 @@ class HandshakeServiceTest {
         .initiatorId(SUPPORT_ADMIN_ID)
         .counterpartId(CONSULTANT_ID)
         .status(HandshakeSession.HandshakeStatus.PENDING)
-        .createDate(LocalDateTime.now().minusMinutes(1))
-        .expiryDate(LocalDateTime.now().plusMinutes(4))
+        .createDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1))
+        .expiryDate(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(4))
         .build();
   }
 
@@ -193,7 +196,7 @@ class HandshakeServiceTest {
   @Test
   void confirm_Should_ExpireSessionWithAudit_When_WindowLapsed() {
     var session = pendingSession();
-    session.setExpiryDate(LocalDateTime.now().minusSeconds(10));
+    session.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(10));
     when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -219,6 +222,110 @@ class HandshakeServiceTest {
     verify(completionHandler, never()).onConfirmed(any());
   }
 
+  @Test
+  void confirm_Should_RejectWithoutHandlers_When_ConcurrentConfirmationWinsTheRace() {
+    // TOCTOU guard: the optimistic lock makes exactly one transition succeed; the
+    // loser must never dispatch completion handlers.
+    var session = pendingSession();
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(true);
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenThrow(
+            new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                HandshakeSession.class, "hs-1"));
+
+    assertThatThrownBy(() -> handshakeService.confirm(consultant(), "hs-1", "pw"))
+        .isInstanceOf(BadRequestException.class);
+
+    verify(completionHandler, never()).onConfirmed(any());
+  }
+
+  @Test
+  void confirm_Should_AuditRoleMismatch_When_CounterpartLacksThePurposeRole() {
+    var session = pendingSession();
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    var wrongRoleCounterpart = new AuthenticatedUser();
+    wrongRoleCounterpart.setUserId(CONSULTANT_ID);
+    wrongRoleCounterpart.setUsername("consultant.user");
+    wrongRoleCounterpart.setRoles(Set.of("user"));
+
+    assertThatThrownBy(() -> handshakeService.confirm(wrongRoleCounterpart, "hs-1", "pw"))
+        .isInstanceOf(ForbiddenException.class);
+
+    // the role mismatch must be visible in the audit trail, not silent
+    verify(handshakeAuditEventRepository).save(any());
+    verify(completionHandler, never()).onConfirmed(any());
+  }
+
+  @Test
+  void confirm_Should_LockSession_When_FailedPasswordAttemptsReachTheLimit() {
+    var session = pendingSession();
+    session.setConfirmAttempts(4); // limit is 5 — this failure is the last straw
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(false);
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    assertThatThrownBy(() -> handshakeService.confirm(consultant(), "hs-1", "pw"))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(session.getConfirmAttempts()).isEqualTo(5);
+    assertThat(session.getStatus()).isEqualTo(HandshakeSession.HandshakeStatus.EXPIRED);
+    verify(completionHandler, never()).onConfirmed(any());
+  }
+
+  @Test
+  void confirm_Should_PersistAttemptCounter_When_PasswordFailsBelowTheLimit() {
+    var session = pendingSession();
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(false);
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    assertThatThrownBy(() -> handshakeService.confirm(consultant(), "hs-1", "pw"))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(session.getConfirmAttempts()).isEqualTo(1);
+    assertThat(session.getStatus()).isEqualTo(HandshakeSession.HandshakeStatus.PENDING);
+    verify(handshakeSessionRepository).save(session);
+  }
+
+  @Test
+  void confirm_Should_ForbidCrossTenant_When_PurposeIsTenantScoped() {
+    // RECOVERY/IDENTITY purposes are tenant-scoped; only SUPPORT_ACCESS crosses
+    // tenants by design (platform support).
+    var session = pendingSession();
+    session.setPurpose(HandshakePurpose.RECOVERY_CONSULTANT);
+    session.setTenantId(1L);
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    var crossTenantAdmin = new AuthenticatedUser();
+    crossTenantAdmin.setUserId(CONSULTANT_ID);
+    crossTenantAdmin.setUsername("agency.admin");
+    crossTenantAdmin.setRoles(Set.of("agency-admin"));
+    crossTenantAdmin.setTenantId(2L);
+
+    assertThatThrownBy(() -> handshakeService.confirm(crossTenantAdmin, "hs-1", "pw"))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(completionHandler, never()).onConfirmed(any());
+  }
+
+  @Test
+  void confirm_Should_AllowCrossTenant_When_PurposeIsSupportAccess() {
+    var session = pendingSession();
+    session.setTenantId(0L); // platform-side support admin
+    when(handshakeSessionRepository.findById("hs-1")).thenReturn(Optional.of(session));
+    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "pw")).thenReturn(true);
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    var tenantConsultant = consultant();
+    tenantConsultant.setTenantId(5L);
+
+    var item = handshakeService.confirm(tenantConsultant, "hs-1", "pw");
+
+    assertThat(item.getStatus()).isEqualTo("CONFIRMED");
+  }
+
   // --- pending lookup + sweeps ---
 
   @Test
@@ -235,11 +342,11 @@ class HandshakeServiceTest {
   }
 
   @Test
-  void sweepExpired_Should_ExpireLapsedPendingSessions_WithAuditEntry() {
+  void sweepExpired_Should_ExpireLapsedPendingSessions_InBoundedBatches() {
     var session = pendingSession();
-    session.setExpiryDate(LocalDateTime.now().minusMinutes(1));
+    session.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
     when(handshakeSessionRepository.findAllByStatusAndExpiryDateBefore(
-            any(), any(LocalDateTime.class)))
+            any(), any(LocalDateTime.class), any(org.springframework.data.domain.Pageable.class)))
         .thenReturn(List.of(session));
     when(handshakeSessionRepository.save(any(HandshakeSession.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -259,7 +366,7 @@ class HandshakeServiceTest {
     var captor = ArgumentCaptor.forClass(LocalDateTime.class);
     verify(handshakeAuditEventRepository).deleteAllByCreateDateBefore(captor.capture());
     assertThat(captor.getValue())
-        .isBefore(LocalDateTime.now().minusMonths(11))
-        .isAfter(LocalDateTime.now().minusMonths(13));
+        .isBefore(LocalDateTime.now(ZoneOffset.UTC).minusMonths(11))
+        .isAfter(LocalDateTime.now(ZoneOffset.UTC).minusMonths(13));
   }
 }

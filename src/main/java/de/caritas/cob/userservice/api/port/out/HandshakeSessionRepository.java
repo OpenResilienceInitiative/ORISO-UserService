@@ -12,5 +12,5 @@ public interface HandshakeSessionRepository extends CrudRepository<HandshakeSess
       String counterpartId, HandshakeStatus status, LocalDateTime after);
 
   List<HandshakeSession> findAllByStatusAndExpiryDateBefore(
-      HandshakeStatus status, LocalDateTime before);
+      HandshakeStatus status, LocalDateTime before, org.springframework.data.domain.Pageable page);
 }

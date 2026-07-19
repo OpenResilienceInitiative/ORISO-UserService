@@ -62,4 +62,14 @@ public class HandshakeSession {
 
   @Column(name = "tenant_id")
   private Long tenantId;
+
+  /** Brute-force guard: failed counterpart password attempts; at the limit the session locks. */
+  @Builder.Default
+  @Column(name = "confirm_attempts", nullable = false)
+  private int confirmAttempts = 0;
+
+  /** Optimistic lock: exactly one concurrent confirmation may win the PENDING→CONFIRMED race. */
+  @jakarta.persistence.Version
+  @Column(name = "version", nullable = false)
+  private long version;
 }

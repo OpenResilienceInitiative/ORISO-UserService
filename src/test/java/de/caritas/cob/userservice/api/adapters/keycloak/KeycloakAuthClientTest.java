@@ -86,13 +86,31 @@ class KeycloakAuthClientTest {
 
   @Test
   void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
+    // The vendored otp-config SPI (ADR-013) answers with this exact JSON error
+    // contract when the password was accepted but the second factor is absent.
     var exception = mock(HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
     assertTrue(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD));
+  }
+
+  @Test
+  void verifyIgnoringOtp_Should_ReturnFalse_When_MissingTotpAppearsOutsideTheJsonContract() {
+    // A body merely CONTAINING the phrase (e.g. inside another message) must not
+    // count as password-verified — only the SPI's exact error_description does.
+    var exception = mock(HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(exception.getResponseBodyAsString())
+        .thenReturn(
+            "{\"error\":\"invalid_grant\",\"error_description\":\"Account disabled; Missing totp enrollment\"}");
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(exception);
+
+    assertThat(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD), is(false));
   }
 
   @Test
