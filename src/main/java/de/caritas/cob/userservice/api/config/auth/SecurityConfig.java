@@ -349,6 +349,11 @@ public class SecurityConfig {
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/statistics/tutorials",
+                    "/service/useradmin/statistics/tutorials")
+                .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
