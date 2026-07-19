@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.admin;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceMapper;
@@ -19,6 +20,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +57,30 @@ class AgencyAdminUserServiceTest {
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
+
+  @Test
+  void findAgencyAdminShouldExposeActiveConsultantIdentity() {
+    var admin = agencyAdmin("agency-admin", 1L);
+    when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
+        .thenReturn(Set.of("agency-admin"));
+
+    var response = agencyAdminUserService.findAgencyAdmin("agency-admin");
+
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isTrue();
+  }
+
+  @Test
+  void findAgencyAdminShouldReportNoActiveConsultantIdentity() {
+    var admin = agencyAdmin("agency-admin", 1L);
+    when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
+        .thenReturn(Collections.emptySet());
+
+    var response = agencyAdminUserService.findAgencyAdmin("agency-admin");
+
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isFalse();
+  }
 
   @Test
   void findAgencyAdminsByInfix_Should_ScopeToCallerAgencies_WhenRestrictedAgencyAdmin() {

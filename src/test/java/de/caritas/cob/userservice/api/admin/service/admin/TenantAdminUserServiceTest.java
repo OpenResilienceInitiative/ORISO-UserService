@@ -153,6 +153,42 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void findTenantAdmin_Should_SetHasOtherIdentityTrue_When_ConsultantIdentityExists() {
+    // given
+    Admin admin = new Admin();
+    admin.setId("tenant-admin-1");
+    admin.setType(Admin.AdminType.TENANT);
+    when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
+        .thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
+        .thenReturn(java.util.Set.of("tenant-admin-1"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.findTenantAdmin("tenant-admin-1");
+
+    // then
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isTrue();
+  }
+
+  @Test
+  void findTenantAdmin_Should_SetHasOtherIdentityFalse_When_NoConsultantIdentityExists() {
+    // given
+    Admin admin = new Admin();
+    admin.setId("tenant-admin-1");
+    admin.setType(Admin.AdminType.TENANT);
+    when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
+        .thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
+        .thenReturn(java.util.Collections.emptySet());
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.findTenantAdmin("tenant-admin-1");
+
+    // then
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isFalse();
+  }
+
+  @Test
   void findTenantAdminsByInfix_Should_NotFail_WhenTenantServiceReturnsNotFound() {
     // given
     PageRequest pageRequest = PageRequest.of(0, 10);

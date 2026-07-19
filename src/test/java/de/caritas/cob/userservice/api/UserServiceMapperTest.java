@@ -26,7 +26,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.Test;
@@ -498,7 +497,8 @@ class UserServiceMapperTest {
     full.setTenantId(10L);
 
     Map<String, Object> result =
-        userServiceMapper.mapOf(base, full, List.of(), Map.of(10L, "My Tenant"), true);
+        userServiceMapper.mapOf(
+            base, full, List.of(), Map.of(10L, "My Tenant"), true, List.of("TENANT_ADMIN"));
 
     assertThat(result.get("id")).isEqualTo("c-2");
     assertThat(result.get("email")).isEqualTo("c2@example.com");
@@ -516,7 +516,7 @@ class UserServiceMapperTest {
     when(base.getLastName()).thenReturn("Jones");
 
     Map<String, Object> result =
-        userServiceMapper.mapOf(base, null, List.of(), Collections.emptyMap(), false);
+        userServiceMapper.mapOf(base, null, List.of(), Collections.emptyMap(), false, List.of());
 
     assertThat(result.get("status")).isEqualTo("ERROR");
     assertThat(result.get("username")).isNull();
@@ -645,7 +645,12 @@ class UserServiceMapperTest {
 
     Map<String, Object> result =
         userServiceMapper.mapOf(
-            page, List.of(), List.of(), List.of(), Collections.emptyMap(), Set.of("c-special"));
+            page,
+            List.of(),
+            List.of(),
+            List.of(),
+            Collections.emptyMap(),
+            Map.of("c-special", List.of("TENANT_ADMIN")));
 
     var consultants = (List<Map<String, Object>>) result.get("consultants");
     assertThat(consultants.get(0).get("hasOtherIdentity")).isEqualTo(true);

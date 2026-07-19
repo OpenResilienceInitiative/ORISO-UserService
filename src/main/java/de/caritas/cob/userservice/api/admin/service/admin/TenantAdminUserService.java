@@ -75,7 +75,11 @@ public class TenantAdminUserService {
 
   public AdminResponseDTO findTenantAdmin(final String adminId) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
-    return AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    responseDTO
+        .getEmbedded()
+        .setHasOtherIdentity(!consultantRepository.findActiveIdsByIdIn(Set.of(adminId)).isEmpty());
+    return responseDTO;
   }
 
   public AdminResponseDTO updateTenantAdmin(
