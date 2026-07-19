@@ -67,4 +67,11 @@ class IdentityManagerTest {
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isTrue();
   }
+
+  @Test
+  void isEmailAvailableOrOwnShouldRejectIncompleteOwnerDataWithoutThrowing() {
+    when(identityClient.findUserByEmail(EMAIL)).thenReturn(Map.of("email", EMAIL));
+
+    assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isFalse();
+  }
 }

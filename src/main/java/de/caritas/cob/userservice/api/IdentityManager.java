@@ -69,7 +69,7 @@ public class IdentityManager implements IdentityManaging {
     var user = identityClient.findUserByEmail(email);
 
     return user.isEmpty()
-        || user.get("encodedUsername").equals(username)
-        || user.get("decodedUsername").equals(usernameTranscoder.decodeUsername(username));
+        || username.equals(user.get("encodedUsername"))
+        || usernameTranscoder.decodeUsername(username).equals(user.get("decodedUsername"));
   }
 }
