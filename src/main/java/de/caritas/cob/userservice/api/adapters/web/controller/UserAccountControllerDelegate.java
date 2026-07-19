@@ -161,10 +161,13 @@ class UserAccountControllerDelegate {
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
     } catch (Exception ex) {
       log.warn(
-          "Could not retrieve OTP credential for authenticated user {}; returning user data without OTP state",
+          "Could not retrieve OTP credential for authenticated user {}; preserving OTP availability without credential state",
           authenticatedUser.getUserId(),
           ex);
-      return null;
+      // A failed Keycloak lookup must not look like role-policy denial. An empty
+      // DTO keeps 2FA enabled in the response while safely reporting no active
+      // credential, so users can still open setup/reset controls.
+      return new OtpInfoDTO();
     }
   }
 
