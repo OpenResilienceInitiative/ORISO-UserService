@@ -36,6 +36,15 @@ public enum HandshakePurpose {
   private final Set<String> initiatorRoles;
   private final Set<String> counterpartRoles;
 
+  /**
+   * Tenant policy: only SUPPORT_ACCESS crosses tenants (platform support by design, ADR-018 §2).
+   * Every other purpose is tenant-scoped — the confirming counterpart must belong to the
+   * initiator's tenant or be platform-scoped (tenant 0).
+   */
+  public boolean isTenantScoped() {
+    return this != SUPPORT_ACCESS;
+  }
+
   public boolean mayInitiate(AuthenticatedUser user) {
     return matches(user, initiatorRoles);
   }

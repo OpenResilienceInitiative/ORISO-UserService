@@ -112,7 +112,7 @@ public class KeycloakAuthClient {
       loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
     } catch (HttpClientErrorException exception) {
       return exception.getStatusCode().equals(HttpStatus.BAD_REQUEST)
-          && exception.getResponseBodyAsString().contains("Missing totp"); // but password correct
+          && isMissingTotpContract(exception.getResponseBodyAsString()); // but password correct
     }
 
     var responsePayload = loginResponse.getBody();
@@ -160,6 +160,26 @@ public class KeycloakAuthClient {
   public void closeSession(String sessionId) {
     keycloakClient.getRealmResource().deleteSession(sessionId, false);
   }
+
+  /**
+   * Strict contract check against the vendored otp-config SPI (ADR-013): the SPI answers a
+   * password-correct-but-second-factor-absent direct grant with EXACTLY {@code error_description:
+   * "Missing totp"}. Only that exact JSON field counts — a body merely containing the phrase must
+   * never pass as password-verified. The SPI is vendored and version-pinned in ORISO-Helm, so this
+   * string is under ORISO control; re-verify on SPI bumps.
+   */
+  private boolean isMissingTotpContract(String responseBody) {
+    try {
+      var node = ERROR_BODY_READER.readTree(responseBody);
+      return node.hasNonNull("error_description")
+          && "Missing totp".equals(node.get("error_description").asText());
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private static final com.fasterxml.jackson.databind.ObjectMapper ERROR_BODY_READER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {
     MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
