@@ -14,6 +14,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Collects all relevant mobile tokens and fires push notifications via the {@link
@@ -32,6 +33,7 @@ public class MobilePushNotificationService {
    *
    * @param userIds user ids to send push notifications
    */
+  @Transactional(readOnly = true)
   public void triggerMobilePushNotification(List<String> userIds) {
     userIds.forEach(this::sendPushNotificationForUser);
   }
