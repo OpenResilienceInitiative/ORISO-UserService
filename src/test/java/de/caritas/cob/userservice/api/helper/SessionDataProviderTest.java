@@ -217,6 +217,20 @@ class SessionDataProviderTest {
   }
 
   @Test
+  void createSessionDataList_Should_AlwaysPersistAnonymousDisplayName() {
+    when(consultingTypeManager.getConsultingTypeSettings(CONSULTING_TYPE_ID_U25))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_WITH_NO_SESSION_DATA_ITEMS);
+
+    List<SessionData> result =
+        sessionDataProvider.createSessionDataList(
+            INITIALIZED_SESSION_U25, new SessionDataDTO().displayName("Behutsames Pferd Jules"));
+
+    assertEquals(
+        "Behutsames Pferd Jules",
+        getValueOfKey(result, SessionDataKeyRegistration.DISPLAY_NAME.getValue()));
+  }
+
+  @Test
   void
       createSessionDataList_Should_ReturnCorrectListOfSessionDataItems_WhenSessionDataValuesAreNull() {
     when(consultingTypeManager.getConsultingTypeSettings(CONSULTING_TYPE_ID_SUCHT))
