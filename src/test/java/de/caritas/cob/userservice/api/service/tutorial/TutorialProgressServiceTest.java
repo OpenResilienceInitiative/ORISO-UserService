@@ -38,6 +38,65 @@ class TutorialProgressServiceTest {
     return req;
   }
 
+  /* --- hardening (gate run e2e-20260720-1507): unknown tours and unbounded rows --- */
+
+  @Test
+  void upsertOwnProgress_rejectsATourThatIsNotEnabledOnThatSurface() {
+    // A consultant could otherwise write surface=admin rows that surface in the
+    // tenant admin's aggregate dashboard with attacker-chosen labels.
+    var req = request("completed");
+    req.setSurface("admin");
+
+    assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
+        .isInstanceOf(BadRequestException.class);
+    verify(tutorialProgressRepository, never()).save(any());
+  }
+
+  @Test
+  void upsertOwnProgress_rejectsAnUnknownTourId() {
+    var req = request("completed");
+    req.setTourId("zz-invented-tour");
+
+    assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
+        .isInstanceOf(BadRequestException.class);
+    verify(tutorialProgressRepository, never()).save(any());
+  }
+
+  @Test
+  void upsertOwnProgress_rejectsNewRowsBeyondThePerUserCap() {
+    var req = request("in_progress");
+    req.setTourVersion(7);
+    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
+            "user-1", "frontend", "consultant-walkthrough", 7))
+        .thenReturn(Optional.empty());
+    when(tutorialProgressRepository.countByUserId("user-1")).thenReturn(50L);
+
+    assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
+        .isInstanceOf(BadRequestException.class);
+    verify(tutorialProgressRepository, never()).save(any());
+  }
+
+  @Test
+  void upsertOwnProgress_stillUpdatesAnExistingRowWhenTheCapIsReached() {
+    var req = request("completed");
+    var existing =
+        TutorialProgress.builder()
+            .userId("user-1")
+            .surface("frontend")
+            .tourId("consultant-walkthrough")
+            .tourVersion(1)
+            .status("in_progress")
+            .build();
+    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
+            "user-1", "frontend", "consultant-walkthrough", 1))
+        .thenReturn(Optional.of(existing));
+    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    var item = service.upsertOwnProgress("user-1", 1L, req);
+
+    assertThat(item.getStatus()).isEqualTo("completed");
+  }
+
   @Test
   void upsertOwnProgress_createsScopedRecordForTheAuthenticatedUser() {
     // Business reason: progress is keyed by user, surface, tour and version so
