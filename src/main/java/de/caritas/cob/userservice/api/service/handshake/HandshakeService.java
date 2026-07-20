@@ -45,7 +45,11 @@ public class HandshakeService {
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
   private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
+
+  private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
+      new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
 
   @Value("${handshake.ttl-seconds:300}")
   private long ttlSeconds;
@@ -73,6 +77,7 @@ public class HandshakeService {
     if (initiator.getUserId().equals(request.getCounterpartId())) {
       throw new BadRequestException("A handshake requires two distinct people");
     }
+    requireActiveSecondFactorForSupportAdmin(initiator);
     if (!keycloakAuthClient.verifyWithOtp(
         initiator.getUsername(), request.getPassword(), request.getOtp())) {
       throw new ForbiddenException(
@@ -217,6 +222,38 @@ public class HandshakeService {
     }
     handshakeSessionRepository.save(session);
     audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+  }
+
+  /**
+   * ADR-018: a Global Support Admin cannot become active without completed 2FA enrollment. Fails
+   * closed — an unreachable OTP state never lets a support admin through.
+   */
+  private void requireActiveSecondFactorForSupportAdmin(AuthenticatedUser initiator) {
+    var roles = initiator.getRoles();
+    if (roles == null
+        || !roles.contains(
+            de.caritas.cob.userservice.api.config.auth.UserRole.GLOBAL_SUPPORT_ADMIN.getValue())) {
+      return;
+    }
+    boolean otpActive;
+    try {
+      var otpInfo =
+          identityClient.getOtpCredential(
+              usernameTranscoder.encodeUsername(initiator.getUsername()));
+      otpActive = otpInfo != null && Boolean.TRUE.equals(otpInfo.getOtpSetup());
+    } catch (Exception e) {
+      log.warn(
+          "Could not read OTP state for support admin {}; failing closed",
+          initiator.getUserId(),
+          e);
+      otpActive = false;
+    }
+    if (!otpActive) {
+      throw new ForbiddenException(
+          String.format(
+              "Support admin %s must complete 2FA enrollment before initiating a handshake",
+              initiator.getUserId()));
+    }
   }
 
   private void expire(HandshakeSession session) {

@@ -188,6 +188,8 @@ public class AdminDtoMapper implements DtoMapperUtils {
         return "Tenant Admin";
       case AGENCY:
         return "Agency Admin";
+      case SUPPORT:
+        return "Support Admin";
       default:
         return null;
     }

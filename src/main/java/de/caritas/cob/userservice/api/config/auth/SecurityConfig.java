@@ -185,6 +185,8 @@ public class SecurityConfig {
                 // per-purpose role pairs + fresh-credential checks are enforced in the service.
                 .requestMatchers("/users/handshakes", "/users/handshakes/**")
                 .authenticated()
+                .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
+                .authenticated()
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -298,6 +300,8 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
+                .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
