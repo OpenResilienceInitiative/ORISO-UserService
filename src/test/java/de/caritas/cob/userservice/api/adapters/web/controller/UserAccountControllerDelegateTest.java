@@ -112,6 +112,25 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void getUserDataShouldRequireTwoFactorSetupForPlatformAdmins() {
+    var roles = Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.AGENCY_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(partialUserData.getEncourage2fa()).isTrue();
+  }
+
+  @Test
   void patchUserShouldRejectMagicLinkLoginWhenConsultantHasDummyEmail() {
     var patchUserDTO = new PatchUserDTO();
     patchUserDTO.setMagicLinkLoginEnabled(true);
