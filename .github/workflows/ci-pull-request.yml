@@ -11,18 +11,6 @@ jobs:
   validate:
     name: test, build and Docker validation
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-        - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      ORISO_LOCAL_REDIS_IT: true
 
     steps:
     # OBS-P10 PoC (ORISO-Helm#62): capture job start time so the final step
@@ -137,6 +125,36 @@ jobs:
           -d "${payload}" \
           || echo "::warning::Failed to POST CI health metrics to SigNoz (non-blocking, telemetry only)"
         true
+
+  redis-contract:
+    name: Redis availability contract
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ORISO_LOCAL_REDIS_IT: true
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+
+    - name: Verify Redis-backed availability contract
+      run: ./mvnw -B -Dtest=ConsultantActivityRegistryRedisIT test
 
   # Non-blocking burn-in (Test Quality Audit 2026-07-04, item 3 + CI Roadmap Part 1).
   # Runs `mvnw -B verify`, which reaches the surefire `integration-tests` execution
