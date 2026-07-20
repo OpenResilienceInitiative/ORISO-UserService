@@ -31,8 +31,7 @@ public class ConsultantActivityInterceptor implements HandlerInterceptor {
   public boolean preHandle(
       HttpServletRequest request, HttpServletResponse response, Object handler) {
     try {
-      if ("GET".equalsIgnoreCase(request.getMethod())
-          && AVAILABILITY_PATH.equals(request.getRequestURI())) {
+      if (request.getRequestURI().startsWith(AVAILABILITY_PATH)) {
         return true;
       }
       AuthenticatedUser user = authenticatedUser.getIfAvailable();

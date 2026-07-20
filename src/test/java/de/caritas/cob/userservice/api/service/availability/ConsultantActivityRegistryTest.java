@@ -1,141 +1,137 @@
 package de.caritas.cob.userservice.api.service.availability;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.time.Clock;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
+@ExtendWith(MockitoExtension.class)
 class ConsultantActivityRegistryTest {
 
+  private static final Duration TTL = Duration.ofSeconds(120);
+  private static final String PREFIX = "livechat:consultant:available:";
+
+  @Mock private StringRedisTemplate redisTemplate;
+  @Mock private ValueOperations<String, String> valueOperations;
+
+  private SimpleMeterRegistry meterRegistry;
   private ConsultantActivityRegistry registry;
 
   @BeforeEach
   void setUp() {
-    registry = new ConsultantActivityRegistry();
+    meterRegistry = new SimpleMeterRegistry();
+    registry = new ConsultantActivityRegistry(redisTemplate, meterRegistry, TTL, PREFIX);
+  }
+
+  private void givenValueOperations() {
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
   }
 
   @Test
-  void markAvailable_Should_AddConsultant() {
+  void markAvailable_Should_WriteRedisKeyWithConfiguredTtl() {
+    givenValueOperations();
     registry.markAvailable("consultant-1");
 
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).containsExactly("consultant-1");
+    verify(valueOperations).set(PREFIX + "consultant-1", "1", TTL);
   }
 
   @Test
-  void markAvailable_Should_IgnoreNullId() {
-    registry.markAvailable(null);
-
-    Set<String> active = registry.filterActive(List.of(), 60_000);
-    assertThat(active).isEmpty();
-  }
-
-  @Test
-  void markAvailable_Should_IgnoreBlankId() {
-    registry.markAvailable("   ");
-
-    Set<String> active = registry.filterActive(List.of("   "), 60_000);
-    assertThat(active).isEmpty();
-  }
-
-  @Test
-  void markUnavailable_Should_RemoveConsultant() {
+  void newRegistryInstance_Should_ReadAvailabilityWrittenByPreviousInstance() {
+    givenValueOperations();
     registry.markAvailable("consultant-1");
+    when(valueOperations.multiGet(List.of(PREFIX + "consultant-1"))).thenReturn(List.of("1"));
+
+    var reconstructedRegistry =
+        new ConsultantActivityRegistry(redisTemplate, meterRegistry, TTL, PREFIX);
+
+    assertThat(reconstructedRegistry.filterActive(List.of("consultant-1"), TTL.toMillis()))
+        .containsExactly("consultant-1");
+  }
+
+  @Test
+  void filterActive_Should_ExcludeExpiredRedisKey() {
+    givenValueOperations();
+    when(valueOperations.multiGet(List.of(PREFIX + "consultant-1")))
+        .thenReturn(java.util.Collections.singletonList(null));
+
+    assertThat(registry.filterActive(List.of("consultant-1"), TTL.toMillis())).isEmpty();
+  }
+
+  @Test
+  void refreshIfAvailable_Should_OnlyExtendExistingKeyAndNeverCreateOne() {
+    when(redisTemplate.expire(PREFIX + "consultant-1", TTL)).thenReturn(false);
+
+    registry.refreshIfAvailable("consultant-1");
+
+    verify(redisTemplate).expire(PREFIX + "consultant-1", TTL);
+    verify(valueOperations, never()).set(any(), any(), any(Duration.class));
+  }
+
+  @Test
+  void markUnavailable_Should_DeleteRedisKeyImmediately() {
     registry.markUnavailable("consultant-1");
 
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).isEmpty();
+    verify(redisTemplate).delete(PREFIX + "consultant-1");
   }
 
   @Test
-  void markUnavailable_Should_IgnoreNullId() {
-    registry.markAvailable("consultant-1");
+  void filterActive_Should_FailClosedAndExposeMetric_WhenRedisReadFails() {
+    givenValueOperations();
+    when(valueOperations.multiGet(List.of(PREFIX + "consultant-1")))
+        .thenThrow(new RedisConnectionFailureException("redis unavailable"));
+
+    assertThat(registry.filterActive(List.of("consultant-1"), TTL.toMillis())).isEmpty();
+    assertThat(
+            meterRegistry
+                .get(ConsultantActivityRegistry.STORE_METRIC)
+                .tag("operation", "read")
+                .tag("outcome", "failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
+
+  @Test
+  void markAvailable_Should_RejectEnableAndExposeMetric_WhenRedisWriteFails() {
+    givenValueOperations();
+    org.mockito.Mockito.doThrow(new RedisConnectionFailureException("redis unavailable"))
+        .when(valueOperations)
+        .set(PREFIX + "consultant-1", "1", TTL);
+
+    assertThatThrownBy(() -> registry.markAvailable("consultant-1"))
+        .isInstanceOf(AvailabilityStoreException.class);
+    assertThat(
+            meterRegistry
+                .get(ConsultantActivityRegistry.STORE_METRIC)
+                .tag("operation", "enable")
+                .tag("outcome", "failure")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
+
+  @Test
+  void invalidIds_Should_NotAccessRedis() {
+    registry.markAvailable(" ");
     registry.markUnavailable(null);
-
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).containsExactly("consultant-1");
-  }
-
-  @Test
-  void markUnavailable_Should_NotFailWhenConsultantNotPresent() {
-    registry.markUnavailable("non-existent");
-
-    Set<String> active = registry.filterActive(List.of("non-existent"), 60_000);
-    assertThat(active).isEmpty();
-  }
-
-  @Test
-  void refreshIfAvailable_Should_KeepConsultantActive() throws InterruptedException {
-    registry.markAvailable("consultant-1");
-    Thread.sleep(10);
-    registry.refreshIfAvailable("consultant-1");
-
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).containsExactly("consultant-1");
-  }
-
-  @Test
-  void refreshIfAvailable_Should_NotAddUnavailableConsultant() {
-    registry.refreshIfAvailable("consultant-1");
-
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).isEmpty();
-  }
-
-  @Test
-  void refreshIfAvailable_Should_IgnoreNullId() {
-    registry.markAvailable("consultant-1");
     registry.refreshIfAvailable(null);
 
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).containsExactly("consultant-1");
-  }
-
-  @Test
-  void filterActive_Should_ReturnOnlyActiveWithinWindow() {
-    Clock clock = mock(Clock.class);
-    ConsultantActivityRegistry timedRegistry = new ConsultantActivityRegistry(clock);
-
-    when(clock.millis()).thenReturn(1000L);
-    timedRegistry.markAvailable("consultant-1");
-
-    when(clock.millis()).thenReturn(1200L);
-    timedRegistry.markAvailable("consultant-2");
-
-    // cutoff = 1200 - 150 = 1050; consultant-1 (1000) excluded, consultant-2 (1200) included
-    Set<String> active = timedRegistry.filterActive(List.of("consultant-1", "consultant-2"), 150);
-    assertThat(active).containsExactly("consultant-2");
-  }
-
-  @Test
-  void filterActive_Should_ReturnEmptyWhenNoConsultantsGiven() {
-    registry.markAvailable("consultant-1");
-
-    Set<String> active = registry.filterActive(List.of(), 60_000);
-    assertThat(active).isEmpty();
-  }
-
-  @Test
-  void filterActive_Should_OnlyReturnSubsetMatchingGivenIds() {
-    registry.markAvailable("consultant-1");
-    registry.markAvailable("consultant-2");
-
-    Set<String> active = registry.filterActive(List.of("consultant-1"), 60_000);
-    assertThat(active).containsExactly("consultant-1");
-  }
-
-  @Test
-  void multipleConsultants_Should_TrackIndependently() {
-    registry.markAvailable("c1");
-    registry.markAvailable("c2");
-    registry.markUnavailable("c1");
-
-    Set<String> active = registry.filterActive(List.of("c1", "c2"), 60_000);
-    assertThat(active).containsExactly("c2");
+    verify(valueOperations, never()).set(any(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(any(String.class));
+    verify(redisTemplate, never()).expire(any(String.class), any(Duration.class));
   }
 }

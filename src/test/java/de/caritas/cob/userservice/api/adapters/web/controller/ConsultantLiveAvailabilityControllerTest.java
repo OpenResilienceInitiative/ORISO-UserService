@@ -62,6 +62,18 @@ class ConsultantLiveAvailabilityControllerTest {
   }
 
   @Test
+  void heartbeat_Should_RefreshExistingAvailabilityWithoutEnablingConsultant() {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-2");
+
+    var response = controller.heartbeatLiveChatAvailability();
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(consultantActivityRegistry).refreshIfAvailable("consultant-2");
+    verify(consultantActivityRegistry, never()).markAvailable("consultant-2");
+  }
+
+  @Test
   void setLiveChatAvailability_consultantAndAvailableNull_marksUnavailable() {
     // Business reason: null availability payload should fail safe to unavailable to avoid stale
     // live
