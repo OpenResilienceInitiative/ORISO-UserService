@@ -128,6 +128,16 @@ public class UserAccountServiceTest {
   }
 
   @Test
+  public void retrieveValidatedUser_Should_Throw_ForbiddenException_When_UserIsSoftDeleted() {
+    User deletedUser = mock(User.class);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(deletedUser));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.retrieveValidatedUser());
+  }
+
+  @Test
   public void retrieveValidatedConsultant_Should_ReturnConsultant_When_ConsultantIsPresent() {
     Consultant consultantMock = mock(Consultant.class);
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultantMock));
