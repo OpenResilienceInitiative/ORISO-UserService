@@ -422,11 +422,13 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveChatsForUserByChatIds_Should_ReturnGroupSessionList() {
-    when(userSessionListService.retrieveChatsForUserAndChatIds(Mockito.any(), Mockito.any()))
+    when(userSessionListService.retrieveChatsForUserAndChatIds(
+            Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveChatsForUserByChatIds(java.util.List.of(), RC_CREDENTIALS);
+        sessionListFacade.retrieveChatsForUserByChatIds(
+            USER_ID, java.util.List.of(), RC_CREDENTIALS);
 
     assertNotNull(result);
     assertEquals(0, result.getSessions().size());
