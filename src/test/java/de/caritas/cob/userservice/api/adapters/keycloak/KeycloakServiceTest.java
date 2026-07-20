@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
@@ -753,6 +754,38 @@ public class KeycloakServiceTest {
     this.keycloakService.updateRole("user", validRole);
 
     verify(roleScopeResource, times(1)).add(any());
+  }
+
+  @Test
+  public void updateRole_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    String validRole = "role";
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation assignedRole = mock(RoleRepresentation.class);
+    when(assignedRole.getName()).thenReturn(validRole);
+    when(roleScopeResource.listAll()).thenReturn(singletonList(assignedRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RoleRepresentation roleRepresentation = new EasyRandom().nextObject(RoleRepresentation.class);
+    RoleResource roleResource = mock(RoleResource.class);
+    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
+    RolesResource rolesResource = mock(RolesResource.class);
+    when(rolesResource.get(any())).thenReturn(roleResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+    when(keycloakClient.getRealmResource())
+        .thenThrow(new NotAuthorizedException("Bearer"))
+        .thenReturn(realmResource);
+
+    keycloakService.updateRole("user", validRole);
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getRealmResource();
+    verify(roleScopeResource).add(any());
   }
 
   @Test
