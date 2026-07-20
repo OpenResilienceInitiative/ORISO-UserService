@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -53,6 +54,7 @@ public class ConsultantAdminService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
 
@@ -215,6 +217,7 @@ public class ConsultantAdminService {
         .forEach(
             session -> {
               caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+              sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);
             });
   }

@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -59,6 +60,8 @@ public class ConsultantAdminServiceTest {
   @Mock private SessionRepository sessionRepository;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
+
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
 
@@ -188,8 +191,10 @@ public class ConsultantAdminServiceTest {
 
     consultantAdminService.markConsultantForDeletion("c-1", true);
 
-    var deletionOrder = inOrder(caseHandoverRequestRepository, sessionRepository);
+    var deletionOrder =
+        inOrder(caseHandoverRequestRepository, sessionSupervisorRepository, sessionRepository);
     deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
+    deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionRepository).delete(session);
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
