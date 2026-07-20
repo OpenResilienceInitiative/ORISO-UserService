@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -40,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +60,7 @@ public class ChatService {
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
 
   private final @NonNull AgencyService agencyService;
 
@@ -303,8 +306,7 @@ public class ChatService {
               var displayName =
                   consultantService
                       .getConsultant(participant.getConsultantId())
-                      .map(Consultant::getDisplayName)
-                      .filter(name -> name != null && !name.isBlank())
+                      .map(this::resolveParticipantDisplayName)
                       .orElse(participant.getConsultantId());
               return new GroupChatParticipantDTO()
                   .consultantId(participant.getConsultantId())
@@ -312,6 +314,23 @@ public class ChatService {
                   .displayName(displayName);
             })
         .toList();
+  }
+
+  private String resolveParticipantDisplayName(Consultant consultant) {
+    if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
+      return consultant.getDisplayName();
+    }
+    var fullName =
+        Stream.of(consultant.getFirstName(), consultant.getLastName())
+            .filter(name -> name != null && !name.isBlank())
+            .collect(Collectors.joining(" "));
+    if (!fullName.isBlank()) {
+      return fullName;
+    }
+    if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
+      return consultant.getUsername();
+    }
+    return consultant.getId();
   }
 
   private Set<ChatAgency> loadChatAgencies(Long chatId) {
@@ -437,6 +456,7 @@ public class ChatService {
    * @param authenticatedUser {@link AuthenticatedUser}
    * @return {@link UpdateChatResponseDTO}
    */
+  @Transactional
   public UpdateChatResponseDTO updateChat(
       Long chatId, ChatDTO chatDTO, AuthenticatedUser authenticatedUser) {
 
@@ -497,6 +517,7 @@ public class ChatService {
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
     return new UpdateChatResponseDTO().groupId(chat.getGroupId());
   }

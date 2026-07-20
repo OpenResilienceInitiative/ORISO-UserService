@@ -70,13 +70,13 @@ public class CaseHandoverService {
           "COUNSELLOR_ASKED_FOR_ADVICE",
           Map.of(
               "de",
-              "Du hast zugestimmt: {{newAdvisor}} kann dieses Gespräch zeitweise mitlesen, um deine Berater:in fachlich zu unterstützen. Deine Berater:in bleibt für dich zuständig.",
+              "Du hast der Fallübergabe zugestimmt. {{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
               "en",
-              "You have given your consent: {{newAdvisor}} can temporarily read this conversation to support your counsellor professionally. Your counsellor remains responsible for you.",
+              "You agreed to the case handover. {{newAdvisor}} has taken over your case and will continue your counselling from now on.",
               "tr",
-              "Onay verdiniz: {{newAdvisor}}, danışmanınıza mesleki destek sağlamak için bu görüşmeyi geçici olarak okuyabilir. Danışmanınız sizin için sorumlu olmaya devam eder.",
+              "Vaka devrine onay verdiniz. {{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınızı sürdürecek.",
               "uk",
-              "Ви надали згоду: {{newAdvisor}} може тимчасово читати цю розмову, щоб професійно підтримати вашого консультанта. Ваш консультант і надалі відповідає за вас."),
+              "Ви погодилися на передачу справи. {{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування."),
           "COUNSELLOR_ON_HOLIDAY",
           Map.of(
               "de",
@@ -894,6 +894,17 @@ public class CaseHandoverService {
     if (!joined) {
       throw new InternalServerErrorException(
           "Failed to join case handover requester to Matrix room");
+    }
+
+    // A completed takeover transfers access; it must not leave the previous
+    // counsellor joined at the transport layer after the application curtain
+    // has hidden the conversation. Removing the old member only after the new
+    // member joined keeps the room reachable if the join itself fails.
+    boolean previousConsultantLeft =
+        matrixSynapseService.leaveRoom(roomId, previousConsultantToken);
+    if (!previousConsultantLeft) {
+      throw new InternalServerErrorException(
+          "Failed to remove previous consultant from Matrix room after case handover");
     }
   }
 
