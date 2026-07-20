@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -129,6 +130,34 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findAvailableConsultantIds(5L);
 
     assertThat(result).containsExactly("c1");
+  }
+
+  @Test
+  void findAvailableConsultantIds_Should_QueryAcrossTenants_AndRestoreCallerContext() {
+    TenantContext.setCurrentTenant(84L);
+    try {
+      when(consultantTopicRepository.findConsultantIdsByTopicId(9L))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return List.of("tenant-84-consultant");
+              });
+      when(consultantRepository.findAllByIdIn(List.of("tenant-84-consultant")))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return List.of(consultant("tenant-84-consultant", false));
+              });
+      when(consultantActivityRegistry.filterActive(List.of("tenant-84-consultant"), 120_000L))
+          .thenReturn(Set.of("tenant-84-consultant"));
+
+      assertThat(service.findAvailableConsultantIds(9L)).containsExactly("tenant-84-consultant");
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(84L);
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test

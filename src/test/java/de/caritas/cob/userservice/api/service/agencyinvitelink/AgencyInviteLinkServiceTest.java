@@ -289,6 +289,10 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getTopicId()).isEqualTo(11L);
     // No agency resolution at entry for a live-chat link.
     assertThat(ctx.getAgencyId()).isNull();
+    assertThat(link.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+    assertThat(link.getUsedAt()).isNull();
+    assertThat(link.getUsedBySessionId()).isNull();
+    verify(repository, org.mockito.Mockito.never()).save(link);
     verify(agencyService, org.mockito.Mockito.never()).getAgenciesByConsultingType(anyInt());
   }
 
