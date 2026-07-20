@@ -11,8 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,8 +23,11 @@ import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserRe
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -44,6 +49,7 @@ import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensi
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.Set;
 import org.hibernate.validator.internal.util.CollectionHelper;
 import org.junit.jupiter.api.AfterEach;
@@ -81,6 +87,11 @@ class CreateConsultantSagaTest {
 
   @Mock private TenantAdminService tenantAdminService;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+
+  @Mock
+  private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AppointmentService appointmentService;
@@ -111,6 +122,70 @@ class CreateConsultantSagaTest {
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
     verify(appointmentService, never()).createConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_AssignAllRequestedAgenciesBeforeReturning() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAgencyIds(List.of(5L, 9L));
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
+        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
+    verify(consultantAgencyRelationCreatorService, times(2))
+        .createNewConsultantAgency(eq(KEYCLOAK_USER_ID), agencyCaptor.capture());
+    assertThat(
+        agencyCaptor.getAllValues().stream().map(CreateConsultantAgencyDTO::getAgencyId).toList(),
+        is(List.of(5L, 9L)));
+  }
+
+  @Test
+  void createNewConsultant_Should_ValidateAgencyAndTopicTopologyBeforeCreatingIdentity() {
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(3L);
+    dto.setTopicIds(List.of(7L));
+    dto.setAgencyIds(List.of(5L));
+    doThrow(new BadRequestException("invalid topology"))
+        .when(consultantTopicAgencyCompatibilityValidator)
+        .validateGrantTopicsAgainstSelectedAgencies(List.of(7L), List.of(5L), 3L);
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+
+    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+  }
+
+  @Test
+  void createNewConsultant_Should_PreserveLegacyTopicOnlyRequestsWithoutAgencyIds()
+      throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTopicIds(List.of(7L));
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    verify(consultantTopicAgencyCompatibilityValidator, never())
+        .validateGrantTopicsAgainstSelectedAgencies(any(), any(), any());
+  }
+
+  @Test
+  void createNewConsultant_Should_RollBackIdentityWhenAgencyAssignmentFails() throws Exception {
+    stubKeycloakUserCreation();
+    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
+        .thenReturn(ROCKET_CHAT_USER_ID);
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAgencyIds(List.of(5L));
+    doThrow(new BadRequestException("relation failed"))
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(KEYCLOAK_USER_ID), any(CreateConsultantAgencyDTO.class));
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+
+    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+    verify(sessionService, never()).getRegisteredEnquiriesForConsultant(any());
   }
 
   @Test

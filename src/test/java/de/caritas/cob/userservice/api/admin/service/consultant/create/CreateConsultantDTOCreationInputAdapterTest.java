@@ -28,6 +28,7 @@ class CreateConsultantDTOCreationInputAdapterTest {
     dto.setFormalLanguage(true);
     dto.setTenantId(3L);
     dto.setTopicIds(List.of(10L, 20L));
+    dto.setAgencyIds(List.of(30L, 40L));
 
     ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
 
@@ -44,6 +45,7 @@ class CreateConsultantDTOCreationInputAdapterTest {
     assertThat(input.isLanguageFormal(), is(true));
     assertThat(input.getTenantId(), is(3L));
     assertThat(input.getTopicIds(), is(List.of(10L, 20L)));
+    assertThat(input.getAgencyIds(), is(List.of(30L, 40L)));
     assertThat(input.getCreateDate(), notNullValue());
     assertThat(input.getUpdateDate(), notNullValue());
   }

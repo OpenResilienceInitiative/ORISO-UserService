@@ -16,11 +16,14 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.CreateConsultantDTOAbsenceInputAdapter;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
@@ -71,6 +74,10 @@ public class CreateConsultantSaga {
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
 
   private final @NonNull RollbackFacade rollbackFacade;
 
@@ -93,6 +100,13 @@ public class CreateConsultantSaga {
     setCurrentTenant(createConsultantDTO);
     validateTenantId(createConsultantDTO);
     ensureTenantIdResolved(createConsultantDTO);
+    if (createConsultantDTO.getAgencyIds() != null
+        && !createConsultantDTO.getAgencyIds().isEmpty()) {
+      consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+          createConsultantDTO.getTopicIds(),
+          createConsultantDTO.getAgencyIds(),
+          createConsultantDTO.getTenantId());
+    }
 
     assertLicensesNotExceeded(createConsultantDTO);
 
@@ -262,8 +276,27 @@ public class CreateConsultantSaga {
         createConsultantInMariaDBOrRollback(
             consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
 
+    assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
     tryAssignConsultantToExistingSessions(consultant);
     return consultant;
+  }
+
+  private void assignAgenciesOrRollback(Consultant consultant, List<Long> agencyIds) {
+    if (agencyIds == null) {
+      return;
+    }
+    try {
+      agencyIds.stream()
+          .filter(java.util.Objects::nonNull)
+          .distinct()
+          .forEach(
+              agencyId ->
+                  consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                      consultant.getId(), new CreateConsultantAgencyDTO().agencyId(agencyId)));
+    } catch (RuntimeException e) {
+      rollbackCreateNewConsultant(consultant);
+      throw e;
+    }
   }
 
   private void tryAssignConsultantToExistingSessions(Consultant consultant) {

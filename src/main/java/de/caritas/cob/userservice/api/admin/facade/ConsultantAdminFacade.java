@@ -131,6 +131,15 @@ public class ConsultantAdminFacade {
    *     ConsultantAdminResponseDTO}
    */
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO) {
+    if (createConsultantDTO != null && createConsultantDTO.getAgencyIds() != null) {
+      var requestedAgencies =
+          createConsultantDTO.getAgencyIds().stream()
+              .filter(java.util.Objects::nonNull)
+              .distinct()
+              .map(agencyId -> new CreateConsultantAgencyDTO().agencyId(agencyId))
+              .collect(Collectors.toList());
+      checkPermissionsToAssignedAgencies(requestedAgencies);
+    }
     return this.consultantAdminService.createNewConsultant(createConsultantDTO);
   }
 
