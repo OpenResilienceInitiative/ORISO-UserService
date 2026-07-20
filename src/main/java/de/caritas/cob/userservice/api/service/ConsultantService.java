@@ -45,6 +45,10 @@ public class ConsultantService {
     return consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
   }
 
+  public Optional<Consultant> getConsultantByPublicSlug(String publicSlug) {
+    return consultantRepository.findByPublicSlugAndDeleteDateIsNull(publicSlug);
+  }
+
   /**
    * Find a {@link Consultant} by ID regardless of soft-delete state (includes deleted records).
    * Used to distinguish "not found" from "found but flagged for deletion".
@@ -145,6 +149,11 @@ public class ConsultantService {
    */
   public List<Consultant> findConsultantsByAgencyId(Long agencyId) {
     return consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(agencyId);
+  }
+
+  public List<Consultant> findActiveConsultantsForTenant(Long tenantId) {
+    return consultantRepository.findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(
+        tenantId);
   }
 
   /**

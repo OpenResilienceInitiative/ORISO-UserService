@@ -5,17 +5,23 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
+  Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
   /**
    * Find a {@link Session} by a consultant id and a session status.
@@ -266,6 +272,31 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       Pageable pageable);
 
   /**
+   * Topic-only visibility for the anonymous Live Chat queue. A live consultant sees anonymous
+   * enquiries for the topics they are assigned to, independent of consulting type — the queue is
+   * topic-bound and deliberately cross-agency/cross-tenant. Used instead of the consulting-type
+   * variant so the queue never needs an authenticated AgencyService lookup to resolve the
+   * consultant's consulting types.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.mainTopicId IN :topicIds "
+          + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
+      Pageable pageable);
+
+  /**
    * Count live-chat enquiries that are visible in the consultant queue and were created before the
    * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
    * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
@@ -366,4 +397,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   @Query("SELECT max(s.updateDate) FROM Session s WHERE s.consultant = :consultant")
   LocalDateTime findMaxUpdateDateByConsultant(@Param("consultant") Consultant consultant);
+
+  @Query(
+      "SELECT DISTINCT s.consultingTypeId FROM Session s WHERE s.agencyId = :agencyId ORDER BY s.consultingTypeId")
+  List<Integer> findDistinctConsultingTypeIdsByAgencyId(
+      @Param("agencyId") Long agencyId, Pageable pageable);
 }

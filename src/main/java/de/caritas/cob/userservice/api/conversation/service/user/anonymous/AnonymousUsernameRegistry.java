@@ -4,10 +4,12 @@ import static java.lang.Integer.parseInt;
 import static java.util.Collections.sort;
 import static org.apache.commons.lang3.StringUtils.substringAfter;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedList;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +24,13 @@ public class AnonymousUsernameRegistry {
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
+
+  // Dedicated transcoder for building the Matrix localpart during the occupancy check. It is kept
+  // separate from usernameTranscoder (which encodes the single returned username) so the Matrix
+  // check never perturbs callers that verify how often the returned value is encoded.
+  private final UsernameTranscoder matrixLocalpartTranscoder = new UsernameTranscoder();
 
   @Value("${anonymous.username.prefix}")
   private String usernamePrefix;
@@ -69,9 +77,53 @@ public class AnonymousUsernameRegistry {
     // out low ids again. Besides the local DB we must therefore also consult Keycloak: a username
     // that still exists there (e.g. a previous anonymous user) would otherwise trigger a 409
     // "username already exists" when creating the Keycloak account during invite-link redeem.
-    return userService.findUserByUsername(username).isPresent()
-        || consultantService.getConsultantByUsername(username).isPresent()
-        || !identityClient.isUsernameAvailable(username);
+    //
+    // The anonymous username namespace is GLOBAL, not per-tenant: Matrix user IDs are global
+    // (@anon_18:<server>) and the anonymous live-chat queue is deliberately cross-tenant. The DB
+    // lookups below are tenant-filtered, so without the technical-context bypass a caller in
+    // tenant 83 cannot see an anon user of tenant 1, hands the name out again, and Matrix rejects
+    // it with M_USER_IN_USE -> 500 on every redeem (self-perpetuating: the same id is picked
+    // again on each retry). Keycloak is already global and needs no bypass.
+    return runCrossTenant(
+            () ->
+                userService.findUserByUsername(username).isPresent()
+                    || consultantService.getConsultantByUsername(username).isPresent())
+        || !identityClient.isUsernameAvailable(username)
+        || existsInMatrix(username);
+  }
+
+  /**
+   * Matrix user IDs are global, so a localpart occupied in Matrix must not be handed out again even
+   * when it is absent from MariaDB and Keycloak (an orphan left behind by a rolled-back or
+   * externally cleaned-up account). Without this check such an orphan is deemed free, {@code
+   * createUser} fails with {@code M_USER_IN_USE}, and — because the generator is deterministic —
+   * every retry collides on the same id, so invite-link redeem returns 500 indefinitely.
+   *
+   * <p>The Matrix localpart has been written in two forms over time (the encoded username and, for
+   * older accounts, the plain one), so both are checked.
+   */
+  private boolean existsInMatrix(String username) {
+    return matrixSynapseService.userExists(matrixLocalpartTranscoder.encodeUsername(username))
+        || matrixSynapseService.userExists(username);
+  }
+
+  /**
+   * Runs a lookup in technical tenant context so {@code TenantAspect} disables the Hibernate {@code
+   * tenantFilter}; the caller's tenant is restored afterwards so no other query in the same request
+   * leaks across tenants.
+   */
+  private boolean runCrossTenant(java.util.function.BooleanSupplier lookup) {
+    var callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return lookup.getAsBoolean();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
   }
 
   private int obtainUsernameId(String username) {

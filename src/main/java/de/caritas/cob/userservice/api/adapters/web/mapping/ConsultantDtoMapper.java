@@ -54,6 +54,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .languages(languageStringsOf(updateConsultantDTO.getLanguages()))
         .absent(consultant.isAbsent())
         .absenceMessage(consultant.getAbsenceMessage())
+        .publicSlug(updateConsultantDTO.getPublicSlug())
         .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
         .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation());
   }
@@ -66,6 +67,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     var consultantResponseDto =
         new ConsultantResponseDTO()
             .consultantId(consultant.getId())
+            .publicSlug(consultant.getPublicSlug())
             .agencies(agencyDtoList)
             .isSupervisor(consultant.isSupervisor());
 

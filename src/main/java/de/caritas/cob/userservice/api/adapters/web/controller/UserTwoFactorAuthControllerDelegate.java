@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ class UserTwoFactorAuthControllerDelegate {
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
+  private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
@@ -57,6 +59,7 @@ class UserTwoFactorAuthControllerDelegate {
     if (Boolean.parseBoolean(validationResult.get("created"))) {
       var patchMap = userDtoMapper.mapOf(validationResult.get("email"), authenticatedUser);
       accountManager.patchUser(patchMap);
+      accountInviteService.markTwoFactorActive(authenticatedUser.getUserId());
       return ResponseEntity.noContent().build();
     }
     if (Boolean.parseBoolean(validationResult.get("attemptsLeft"))) {
@@ -78,12 +81,17 @@ class UserTwoFactorAuthControllerDelegate {
             oneTimePasswordDTO.getOtp(),
             oneTimePasswordDTO.getSecret());
 
-    return isValid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    if (isValid) {
+      accountInviteService.markTwoFactorActive(authenticatedUser.getUserId());
+      return ResponseEntity.ok().build();
+    }
+    return ResponseEntity.badRequest().build();
   }
 
   ResponseEntity<Void> deactivateTwoFactorAuthByApp() {
     identityManager.deleteOneTimePassword(
         usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
+    accountInviteService.markTwoFactorPendingSetup(authenticatedUser.getUserId());
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

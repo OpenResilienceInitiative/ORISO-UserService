@@ -269,7 +269,7 @@ public class Messenger implements Messaging {
             session -> {
               session.setIsConsultantDirectlySet(true);
               var updatedSession = sessionRepository.save(session);
-              return updatedSession.getIsConsultantDirectlySet();
+              return Boolean.TRUE.equals(updatedSession.getIsConsultantDirectlySet());
             })
         .orElse(false);
   }

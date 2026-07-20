@@ -37,7 +37,6 @@ public class MatrixChatShutdownService {
   public void shutdownRoom(Chat chat) {
     var matrixRoomId = chat.getMatrixRoomId();
     if (isBlank(matrixRoomId) && MatrixIds.isRoomId(chat.getGroupId())) {
-      // During the migration the room id may only be present in the legacy group_id column.
       matrixRoomId = chat.getGroupId();
     }
     if (isBlank(matrixRoomId)) {

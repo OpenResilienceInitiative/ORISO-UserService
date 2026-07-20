@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -77,7 +76,7 @@ public class MatrixMediaClient {
   }
 
   public byte[] downloadFile(String serverName, String mediaId, String accessToken) {
-    String url =
+    var url =
         MatrixUrlBuilder.buildUrl(
             matrixConfig,
             ENDPOINT_MEDIA_DOWNLOAD,
@@ -90,8 +89,7 @@ public class MatrixMediaClient {
 
     ResponseEntity<byte[]> response;
     try {
-      response =
-          restTemplate.exchange(URI.create(url), HttpMethod.GET, requestEntity, byte[].class);
+      response = restTemplate.exchange(url, HttpMethod.GET, requestEntity, byte[].class);
     } catch (RuntimeException e) {
       log.error("❌ Failed to download file from Matrix", e);
       throw new RuntimeException("Failed to download file: " + e.getMessage(), e);
@@ -150,7 +148,7 @@ public class MatrixMediaClient {
       log.info("📨 Sending file message to Matrix room: {} (type: {})", roomId, msgtype);
 
       @SuppressWarnings("rawtypes")
-      var response = restTemplate.exchange(URI.create(url), HttpMethod.PUT, request, Map.class);
+      var response = restTemplate.exchange(url, HttpMethod.PUT, request, Map.class);
 
       log.info("✅ File message sent successfully");
     } catch (Exception ex) {

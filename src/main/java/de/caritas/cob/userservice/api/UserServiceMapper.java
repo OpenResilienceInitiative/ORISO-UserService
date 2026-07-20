@@ -86,6 +86,11 @@ public class UserServiceMapper {
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
     map.put("chatUserId", consultant.getRocketChatId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
+    map.put("publicSlug", consultant.getPublicSlug());
+    map.put("pendingPublicSlug", consultant.getPendingPublicSlug());
+    map.put(
+        "publicSlugStatus",
+        consultant.getPublicSlugStatus() != null ? consultant.getPublicSlugStatus().name() : null);
 
     var displayName =
         additionalMap.containsKey("displayName")
@@ -271,6 +276,15 @@ public class UserServiceMapper {
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
+    map.put("publicSlug", nonNull(fullConsultant) ? fullConsultant.getPublicSlug() : null);
+    map.put(
+        "pendingPublicSlug",
+        nonNull(fullConsultant) ? fullConsultant.getPendingPublicSlug() : null);
+    map.put(
+        "publicSlugStatus",
+        nonNull(fullConsultant) && nonNull(fullConsultant.getPublicSlugStatus())
+            ? fullConsultant.getPublicSlugStatus().name()
+            : null);
     map.put(
         "createdAt",
         nonNull(fullConsultant) && nonNull(fullConsultant.getCreateDate())

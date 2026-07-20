@@ -77,6 +77,11 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
     return this.createConsultantDTO.getEmail();
   }
 
+  @Override
+  public String getPublicSlug() {
+    return this.createConsultantDTO.getPublicSlug();
+  }
+
   /**
    * Provides the password.
    *

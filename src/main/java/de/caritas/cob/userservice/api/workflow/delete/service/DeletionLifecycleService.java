@@ -50,6 +50,10 @@ public class DeletionLifecycleService {
     if (consultant.getDeleteDate() == null) {
       consultant.setDeleteDate(now);
     }
+    consultant.setPublicSlug(null);
+    consultant.setPendingPublicSlug(null);
+    consultant.setPublicSlugStatus(null);
+    consultant.setPublicSlugReviewedAt(null);
     consultant.setDeletionLifecycleState(DeletionLifecycleState.PENDING_DELETION);
     transitionToReadOnlySafeguard(consultant, actorId);
   }

@@ -26,6 +26,13 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
+  @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
+  Optional<Consultant> findByPublicSlugAndDeleteDateIsNull(String publicSlug);
+
+  boolean existsByPublicSlugAndIdNotAndDeleteDateIsNull(String publicSlug, String id);
+
+  boolean existsByPendingPublicSlugAndIdNotAndDeleteDateIsNull(String pendingPublicSlug, String id);
+
   Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   List<Consultant> findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List<Long> agencyIds);
@@ -35,6 +42,8 @@ public interface ConsultantRepository
   List<Consultant> findAllByDeleteDateNotNull();
 
   List<Consultant> findByDeleteDateIsNull();
+
+  List<Consultant> findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(Long tenantId);
 
   List<Consultant> findAllByIdIn(List<String> ids);
 

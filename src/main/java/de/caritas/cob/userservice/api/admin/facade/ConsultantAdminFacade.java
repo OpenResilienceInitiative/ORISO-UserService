@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -242,7 +243,31 @@ public class ConsultantAdminFacade {
    * @param consultantId the consultant id
    */
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
+    assertCallerMayDeleteConsultant(consultantId);
     this.consultantAdminService.markConsultantForDeletion(consultantId, forceDeleteSessions);
+  }
+
+  /**
+   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
+   * may only delete consultants sharing at least one of their own agencies. This mirrors {@code
+   * AgencyAdminUserService#assertCallerMayAccessAgencyAdmin} and prevents a single
+   * Beratungsstellen-Admin from deleting consultants of other Träger by targeting their id
+   * directly.
+   */
+  private void assertCallerMayDeleteConsultant(String consultantId) {
+    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return;
+    }
+    var callerAgencyIds = adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId());
+    var consultantAgencyIds = consultantAgencyAdminService.findConsultantAgencyIds(consultantId);
+    if (Collections.disjoint(callerAgencyIds, consultantAgencyIds)) {
+      log.warn(
+          "Restricted agency admin {} attempted to delete consultant {} outside their agencies",
+          authenticatedUser.getUserId(),
+          consultantId);
+      throw new ForbiddenException(
+          "Does not have permission to delete a consultant outside the own agencies");
+    }
   }
 
   public void pauseConsultantDeletion(

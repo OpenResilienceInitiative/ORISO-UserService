@@ -135,6 +135,10 @@ public class Session implements TenantAware {
   @NonNull
   private RegistrationType registrationType;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "conversation_type", length = 32)
+  private ConversationType conversationType;
+
   @Column(name = "postcode", nullable = false)
   @Size(max = 5)
   @NonNull
@@ -196,6 +200,15 @@ public class Session implements TenantAware {
 
   @Column(name = "referer")
   private String referer;
+
+  /**
+   * The ratsuchende's supervision opt-out (grill 2026-07-13, supersedes the ADR-008 item-4 binary
+   * per-reason consent flag). Supervision is allowed by default (false); when the client switches
+   * this on, no supervisor may be attached to the case and any active supervisors are removed.
+   * Nullable + default false so a row predating the column reads as "not opted out".
+   */
+  @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
+  private Boolean supervisionOptedOut;
 
   @OneToMany(
       targetEntity = SessionTopic.class,

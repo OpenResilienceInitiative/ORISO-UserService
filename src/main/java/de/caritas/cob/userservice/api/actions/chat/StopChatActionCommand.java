@@ -42,17 +42,32 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
           String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
     }
 
-    if (!chat.isRepetitive() || nonNull(chat.nextStart())) {
-      if (!matrixChat) {
-        deleteMessengerChat(chat);
-      }
-      if (chat.isRepetitive()) {
+    if (chat.isRepetitive() && isNull(chat.getChatInterval())) {
+      throw new InternalServerErrorException(
+          String.format("Finite chat series with id %s has no interval", chat.getId()));
+    }
+
+    if (chat.isRepetitive()) {
+      if (nonNull(chat.nextStart())) {
+        if (!matrixChat) {
+          deleteMessengerChat(chat);
+        }
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
         chatReCreator.updateAsNextChat(chat, matrixRoomId);
       } else {
-        chatService.deleteChat(chat);
+        if (!matrixChat) {
+          deleteMessengerChat(chat);
+        }
         matrixChatShutdownService.shutdownRoom(chat);
+        chat.setActive(false);
+        chatService.saveChat(chat);
       }
+    } else {
+      if (!matrixChat) {
+        deleteMessengerChat(chat);
+      }
+      chatService.deleteChat(chat);
+      matrixChatShutdownService.shutdownRoom(chat);
     }
   }
 
@@ -71,6 +86,7 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
   }
 
   private boolean isMatrixChat(Chat chat) {
-    return MatrixIds.isRoomId(chat.getGroupId()) || MatrixIds.isRoomId(chat.getMatrixRoomId());
+    return MatrixIds.isRoomId(chat.getGroupId())
+        || (isNull(chat.getGroupId()) && MatrixIds.isRoomId(chat.getMatrixRoomId()));
   }
 }

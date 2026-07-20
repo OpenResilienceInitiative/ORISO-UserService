@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import jakarta.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -25,10 +26,11 @@ public class AcceptAnonymousEnquiryFacade {
    *
    * @param sessionId the id of the anonymous session
    */
+  @Transactional
   public void acceptAnonymousEnquiry(Long sessionId) {
     var session =
         sessionService
-            .getSession(sessionId)
+            .getSessionForUpdate(sessionId)
             .orElseThrow(
                 () -> new NotFoundException("Session with id %s does not exist", sessionId));
 

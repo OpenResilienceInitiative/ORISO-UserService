@@ -77,9 +77,8 @@ public class SessionSupervisorController {
             currentConsultant,
             request.getReasonCode(),
             request.getNotes());
-    // Only notify "supervisor added" when the supervisor actually became active. For a
-    // consent-gated add (ADR-008 item 4) the supervisor is PENDING with no room access yet — those
-    // notifications fire later, when the client approves consent.
+    // A supervisor is provisioned and active immediately (the per-reason consent park was retired
+    // by the grill 2026-07-13 opt-out model); notify straight away.
     if (Boolean.TRUE.equals(supervisor.getIsActive())) {
       fireSupervisorActivatedNotifications(supervisor);
     }
@@ -89,60 +88,23 @@ public class SessionSupervisorController {
   }
 
   /**
-   * The ratsuchende approves or declines a PENDING supervision-consent request (ADR-008 item 4).
-   * Only the session's own client may decide. On approval the supervisor is provisioned into the
-   * rooms and the "supervisor added" notifications fire (deferred from add time).
+   * The ratsuchende's supervision opt-out toggle (grill 2026-07-13). Only the session's own client
+   * may set it. Switching it on removes any active supervisors from the case; switching it off
+   * clears the block for future adds (it does not restore removed supervisors).
    *
    * @param sessionId the session ID
-   * @param supervisorId the pending supervisor row id
-   * @param request the decision (APPROVED / DECLINED)
-   * @return the updated supervisor
+   * @param request the desired opt-out state
+   * @return no content
    */
-  @PostMapping("/{sessionId}/supervisors/{supervisorId}/consent")
-  public ResponseEntity<SessionSupervisorResponseDTO> decideSupervisionConsent(
-      @PathVariable @NotNull Long sessionId,
-      @PathVariable @NotNull Long supervisorId,
-      @Valid @RequestBody SupervisionConsentDecisionDTO request) {
+  @PostMapping("/{sessionId}/supervision/opt-out")
+  public ResponseEntity<Void> setSupervisionOptedOut(
+      @PathVariable @NotNull Long sessionId, @Valid @RequestBody SupervisionOptOutDTO request) {
     User client = userAccountService.retrieveValidatedUser();
     if (client == null || !isClientOfSession(client, sessionId)) {
       return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
-    boolean approve;
-    if ("APPROVED".equalsIgnoreCase(request.getDecision())) {
-      approve = true;
-    } else if ("DECLINED".equalsIgnoreCase(request.getDecision())) {
-      approve = false;
-    } else {
-      return ResponseEntity.badRequest().build();
-    }
-
-    SessionSupervisor updated =
-        sessionSupervisorFacade.decideSupervisionConsent(sessionId, supervisorId, approve);
-    if (approve && Boolean.TRUE.equals(updated.getIsActive())) {
-      fireSupervisorActivatedNotifications(updated);
-    }
-    return ResponseEntity.ok(mapToDTO(updated));
-  }
-
-  /**
-   * List the supervision requests for a session that are still awaiting the client's consent
-   * (ADR-008 item 4). Only the session's own client may read this.
-   *
-   * @param sessionId the session ID
-   * @return the pending-consent supervisor requests
-   */
-  @GetMapping("/{sessionId}/supervisors/pending-consent")
-  public ResponseEntity<List<SessionSupervisorResponseDTO>> getPendingConsentSupervisors(
-      @PathVariable @NotNull Long sessionId) {
-    User client = userAccountService.retrieveValidatedUser();
-    if (client == null || !isClientOfSession(client, sessionId)) {
-      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-    }
-    List<SessionSupervisorResponseDTO> response =
-        sessionSupervisorFacade.getPendingConsentSupervisors(sessionId).stream()
-            .map(this::mapToDTO)
-            .collect(Collectors.toList());
-    return ResponseEntity.ok(response);
+    sessionSupervisorFacade.setSupervisionOptedOut(sessionId, request.isOptedOut());
+    return ResponseEntity.noContent().build();
   }
 
   /** True when the authenticated user is the ratsuchende (asker) that owns the session. */
@@ -337,17 +299,17 @@ public class SessionSupervisorController {
     }
   }
 
-  /** Request DTO for the client's decision on a pending supervision-consent request. */
-  public static class SupervisionConsentDecisionDTO {
-    /** The decision: {@code APPROVED} or {@code DECLINED} (case-insensitive). */
-    @NotNull private String decision;
+  /** Request DTO for the client's supervision opt-out toggle (grill 2026-07-13). */
+  public static class SupervisionOptOutDTO {
+    /** True to opt out of supervision for this session, false to allow it again. */
+    @NotNull private Boolean optedOut;
 
-    public String getDecision() {
-      return decision;
+    public boolean isOptedOut() {
+      return Boolean.TRUE.equals(optedOut);
     }
 
-    public void setDecision(String decision) {
-      this.decision = decision;
+    public void setOptedOut(Boolean optedOut) {
+      this.optedOut = optedOut;
     }
   }
 

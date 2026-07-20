@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+
+  <changeSet id="0061_chat_occurrence_exception_sequence" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><sequenceExists sequenceName="sequence_chat_occurrence_exception"/></not>
+    </preConditions>
+    <createSequence sequenceName="sequence_chat_occurrence_exception" startValue="1" incrementBy="1"/>
+    <rollback><dropSequence sequenceName="sequence_chat_occurrence_exception"/></rollback>
+  </changeSet>
+
+  <changeSet id="0061_chat_occurrence_exception_table" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="chat_occurrence_exception"/></not>
+    </preConditions>
+    <createTable tableName="chat_occurrence_exception">
+      <column name="id" type="BIGINT">
+        <constraints nullable="false" primaryKey="true"/>
+      </column>
+      <column name="series_id" type="BIGINT UNSIGNED">
+        <constraints nullable="false"/>
+      </column>
+      <column name="original_occurrence_start_utc" type="DATETIME(6)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="exception_type" type="VARCHAR(16)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="override_start_utc" type="DATETIME(6)"/>
+      <column name="override_duration" type="INT"/>
+      <column name="override_capacity" type="INT"/>
+      <column name="override_modality" type="VARCHAR(16)"/>
+    </createTable>
+    <rollback><dropTable tableName="chat_occurrence_exception"/></rollback>
+  </changeSet>
+
+  <changeSet id="0061_chat_occurrence_exception_fk" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><foreignKeyConstraintExists foreignKeyName="fk_chat_occurrence_exception_series"/></not>
+    </preConditions>
+    <addForeignKeyConstraint
+      baseTableName="chat_occurrence_exception"
+      baseColumnNames="series_id"
+      referencedTableName="chat"
+      referencedColumnNames="id"
+      constraintName="fk_chat_occurrence_exception_series"/>
+    <rollback>
+      <dropForeignKeyConstraint
+        baseTableName="chat_occurrence_exception"
+        constraintName="fk_chat_occurrence_exception_series"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0061_chat_occurrence_exception_unique" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">
+        SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'chat_occurrence_exception'
+        AND CONSTRAINT_NAME = 'uk_chat_occurrence_exception_series_start'
+      </sqlCheck>
+    </preConditions>
+    <addUniqueConstraint
+      tableName="chat_occurrence_exception"
+      columnNames="series_id, original_occurrence_start_utc"
+      constraintName="uk_chat_occurrence_exception_series_start"/>
+    <rollback>
+      <dropUniqueConstraint
+        tableName="chat_occurrence_exception"
+        constraintName="uk_chat_occurrence_exception_series_start"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

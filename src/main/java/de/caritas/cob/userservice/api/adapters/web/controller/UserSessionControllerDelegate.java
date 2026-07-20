@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
@@ -50,6 +51,7 @@ class UserSessionControllerDelegate {
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull SessionListFacade sessionListFacade;
+  private final @NonNull AssignEnquiryFacade assignEnquiryFacade;
   private final @NonNull AssignSessionFacade assignSessionFacade;
   private final @NonNull ConsultantDataFacade consultantDataFacade;
   private final @NonNull SessionArchiveService sessionArchiveService;
@@ -209,7 +211,8 @@ class UserSessionControllerDelegate {
     }
 
     var userId = authenticatedUser.getUserId();
-    if (session.get().getStatus().equals(SessionStatus.NEW)
+    var isNewEnquiry = session.get().getStatus().equals(SessionStatus.NEW);
+    if (isNewEnquiry
         && !authenticatedUser
             .getGrantedAuthorities()
             .contains(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY)) {
@@ -222,6 +225,11 @@ class UserSessionControllerDelegate {
     }
 
     var consultantToAssign = userAccountProvider.retrieveValidatedConsultantById(consultantId);
+    if (isNewEnquiry) {
+      assignEnquiryFacade.assignRegisteredEnquiry(session.get(), consultantToAssign);
+      return new ResponseEntity<>(HttpStatus.OK);
+    }
+
     var consultantToKeep = consultantService.getConsultant(userId).orElse(null);
     assignSessionFacade.assignSession(session.get(), consultantToAssign, consultantToKeep);
 
@@ -334,7 +342,10 @@ class UserSessionControllerDelegate {
 
   private RocketChatCredentials buildUserRocketChatCredentials(User user, String rcToken) {
     var token = rcToken != null ? rcToken : DUMMY_ROCKET_CHAT_TOKEN;
-    var rcUserId = user.getRcUserId() != null ? user.getRcUserId() : DUMMY_ROCKET_CHAT_USER_ID;
+    var rcUserId =
+        user.getRcUserId() != null
+            ? user.getRcUserId()
+            : user.getMatrixUserId() != null ? user.getMatrixUserId() : DUMMY_ROCKET_CHAT_USER_ID;
     return RocketChatCredentials.builder()
         .rocketChatUserId(rcUserId)
         .rocketChatToken(token)

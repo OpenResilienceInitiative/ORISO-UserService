@@ -70,6 +70,12 @@ public class UserDataResponseDTO {
   private String displayName;
   private Boolean isDisplayNameEditable;
 
+  private String publicSlug;
+
+  private String pendingPublicSlug;
+
+  private String publicSlugStatus;
+
   @JsonIgnore private Boolean encourage2fa;
 
   private Boolean magicLinkLoginEnabled;

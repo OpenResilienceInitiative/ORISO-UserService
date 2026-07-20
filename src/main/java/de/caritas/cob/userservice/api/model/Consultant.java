@@ -14,6 +14,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.Lob;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
@@ -134,9 +135,38 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean supervisor;
 
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): this counsellor's STANDING supervisor — the
+   * consultant id of the colleague who is automatically attached, read-only, to every Agency
+   * Counselling case this counsellor accepts. Set by an agency admin; at most one at a time (one
+   * supervisor may hold this relationship with many counsellors). Null = no standing supervision.
+   *
+   * <p>Deliberately a plain id, not a self-referencing {@code @ManyToOne} — the relationship is
+   * only ever resolved on the accept path, and a self-join on Consultant would add fetch/cycle
+   * hazards to a heavily-loaded entity for no gain. Distinct from {@link #supervisor} ({@code
+   * is_supervisor}), which is the capability flag "may this consultant BE a supervisor at all".
+   */
+  @Column(name = "assigned_supervisor_id")
+  @Size(max = 36)
+  private String assignedSupervisorId;
+
   @Column(name = "display_name")
   private String displayName;
 
+  @Column(name = "public_slug", length = 128)
+  private String publicSlug;
+
+  @Column(name = "pending_public_slug", length = 128)
+  private String pendingPublicSlug;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "public_slug_status", length = 32)
+  private PublicSlugStatus publicSlugStatus;
+
+  @Column(name = "public_slug_reviewed_at", columnDefinition = "datetime")
+  private LocalDateTime publicSlugReviewedAt;
+
+  @Lob
   @Column(name = "absence_message", columnDefinition = "longtext")
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String absenceMessage;

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
@@ -25,26 +26,66 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.adapters.web.dto.OccurrenceOverrideRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.RoleRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TransferOwnershipRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
+import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
+import de.caritas.cob.userservice.api.config.VideoChatConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
+import de.caritas.cob.userservice.api.facade.CreateUserFacade;
+import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
+import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
+import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
+import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -64,13 +105,47 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController implements UsersApi {
 
   private final @NotNull UserAccountService userAccountProvider;
-  private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
+  private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
   private final @NotNull UserAccountControllerDelegate userAccountControllerDelegate;
-  private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
-  private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserConsultantControllerDelegate userConsultantControllerDelegate;
   private final @NotNull UserSupportControllerDelegate userSupportControllerDelegate;
+  private final @NotNull UserTwoFactorAuthControllerDelegate userTwoFactorAuthControllerDelegate;
+  private final @NotNull UserChatControllerDelegate userChatControllerDelegate;
+  private final @NotNull CreateUserFacade createUserFacade;
+  private final @NotNull CreateNewSessionFacade createNewSessionFacade;
+  private final @NotNull ConsultantDataFacade consultantDataFacade;
+  private final @NotNull SessionDataService sessionDataService;
+  private final @NotNull SessionArchiveService sessionArchiveService;
+  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull IdentityManaging identityManager;
+  private final @NonNull AccountManaging accountManager;
+  private final @NonNull Messaging messenger;
+  private final @NonNull ConsultantDtoMapper consultantDtoMapper;
+  private final @NonNull UserDtoMapper userDtoMapper;
+  private final @NonNull ConsultantService consultantService;
+  private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
+  private final @NonNull ConsultantUpdateService consultantUpdateService;
+  private final @NonNull ConsultantDataProvider consultantDataProvider;
+  private final @NonNull AskerDataProvider askerDataProvider;
+  private final @NonNull VideoChatConfig videoChatConfig;
+  private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NotNull IdentityClient identityClient;
+  private final @NonNull MagicLinkLoginService magicLinkLoginService;
+  private final @NonNull ConsultantAgencyService consultantAgencyService;
+
+  private final @NotNull AdminUserFacade adminUserFacade;
+
+  @Value("${feature.topics.enabled}")
+  private boolean featureTopicsEnabled;
+
+  private final @NonNull SessionDeleteService sessionDeleteService;
+  private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NotNull ChatOccurrenceQueryService chatOccurrenceQueryService;
+  private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
+  private final @NotNull GroupChatRoleService groupChatRoleService;
+  private final @NotNull AuthenticatedUser authenticatedUser;
 
   @Override
   public ResponseEntity<Void> userExists(String username) {
@@ -79,7 +154,19 @@ public class UserController implements UsersApi {
 
   @GetMapping("/users/availability/{username}")
   public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
-    return userRegistrationControllerDelegate.usernameAvailability(username);
+    boolean usernameAvailable;
+    try {
+      usernameAvailable = identityClient.isUsernameAvailable(username);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not check username availability for {}. Treating it as available so registration is not blocked.",
+          username,
+          exception);
+      usernameAvailable = true;
+    }
+    return usernameAvailable
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(HttpStatus.CONFLICT).build();
   }
 
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/request")
@@ -99,6 +186,9 @@ public class UserController implements UsersApi {
    * @param user the {@link UserDTO}
    * @return {@link ResponseEntity} with possible registration conflict information in header
    */
+  @org.springframework.web.bind.annotation.PostMapping(
+      value = {"/users/askers/new", "/service/users/askers/new"},
+      consumes = MediaType.APPLICATION_JSON_VALUE)
   @Override
   public ResponseEntity<Void> registerUser(@RequestBody UserDTO user) {
     return userRegistrationControllerDelegate.registerUser(user);
@@ -446,6 +536,87 @@ public class UserController implements UsersApi {
     return userChatControllerDelegate.createChatV2(chatDTO);
   }
 
+  @Override
+  public ResponseEntity<List<GetChatSeriesOccurrences200ResponseInner>> getChatSeriesOccurrences(
+      Long seriesId, OffsetDateTime from, OffsetDateTime to, Integer limit) {
+    var occurrences =
+        chatOccurrenceQueryService.getOccurrences(
+            seriesId, toUtcLocalDateTime(from), toUtcLocalDateTime(to), limit);
+    return ResponseEntity.ok(
+        occurrences.stream()
+            .map(
+                occurrence ->
+                    new GetChatSeriesOccurrences200ResponseInner()
+                        .seriesId(occurrence.seriesId())
+                        .occurrenceIndex(occurrence.occurrenceIndex())
+                        .originalStart(occurrence.originalStart().atOffset(ZoneOffset.UTC))
+                        .start(occurrence.start().atOffset(ZoneOffset.UTC))
+                        .duration(occurrence.duration())
+                        .capacity(occurrence.capacity())
+                        .modality(
+                            GetChatSeriesOccurrences200ResponseInner.ModalityEnum.fromValue(
+                                occurrence.modality().name())))
+            .toList());
+  }
+
+  @Override
+  public ResponseEntity<Void> skipChatSeriesOccurrence(
+      Long seriesId, OffsetDateTime originalStartUtc) {
+    chatOccurrenceCommandService.skip(
+        seriesId, authenticatedUser.getUserId(), toUtcLocalDateTime(originalStartUtc));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> overrideChatSeriesOccurrence(
+      Long seriesId, OccurrenceOverrideRequest request) {
+    var overrideStart = request.getOverrideStartUtc();
+    var modality = request.getModality();
+    chatOccurrenceCommandService.override(
+        seriesId,
+        authenticatedUser.getUserId(),
+        toUtcLocalDateTime(request.getOriginalStartUtc()),
+        overrideStart == null ? null : toUtcLocalDateTime(overrideStart),
+        request.getDuration(),
+        request.getCapacity(),
+        modality == null ? null : ChatModality.valueOf(modality.getValue()));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> changeChatSeriesParticipantRole(
+      Long seriesId, String consultantId, RoleRequest request) {
+    groupChatRoleService.changeRole(
+        seriesId,
+        authenticatedUser.getUserId(),
+        consultantId,
+        ParticipantRole.valueOf(request.getRole().getValue()));
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> removeChatSeriesParticipant(Long seriesId, String consultantId) {
+    groupChatRoleService.removeParticipant(seriesId, authenticatedUser.getUserId(), consultantId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<List<ConsultantResponseDTO>> getChatSeriesConsultants() {
+    return userConsultantControllerDelegate.getTenantConsultants();
+  }
+
+  @Override
+  public ResponseEntity<Void> transferChatSeriesOwnership(
+      Long seriesId, TransferOwnershipRequest request) {
+    groupChatRoleService.transferPrimaryOwnership(
+        seriesId, authenticatedUser.getUserId(), request.getConsultantId());
+    return ResponseEntity.noContent().build();
+  }
+
+  private static java.time.LocalDateTime toUtcLocalDateTime(OffsetDateTime value) {
+    return value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime();
+  }
+
   /**
    * Starts a chat.
    *
@@ -688,8 +859,18 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing all agencies of consultant
    */
   @Override
-  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(UUID consultantId) {
-    return userConsultantControllerDelegate.getConsultantPublicData(consultantId);
+  public ResponseEntity<ConsultantResponseDTO> getConsultantPublicData(String consultantId) {
+    var consultantIdString = consultantId.trim();
+    var consultant =
+        consultantPublicSlugService
+            .resolveActiveConsultant(consultantIdString)
+            .orElseThrow(
+                () -> new NotFoundException("Consultant with id %s not found", consultantIdString));
+    var onlineAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant(consultant.getId());
+    var consultantDto =
+        consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
+
+    return new ResponseEntity<>(consultantDto, HttpStatus.OK);
   }
 
   @Override
