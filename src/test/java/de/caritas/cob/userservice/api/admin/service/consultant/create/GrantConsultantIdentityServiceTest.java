@@ -161,6 +161,10 @@ class GrantConsultantIdentityServiceTest {
     Consultant saved = consultantCaptor.getValue();
     assertThat(saved.getId(), is(ADMIN_ID));
     assertThat(saved.getEmail(), is("admin@example.com"));
+    // create/update dates must be set explicitly: liquibase-created schemas have
+    // no column default and reject NULL (found on the local clean-slate stack).
+    assertThat(saved.getCreateDate(), notNullValue());
+    assertThat(saved.getUpdateDate(), notNullValue());
 
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());

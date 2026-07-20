@@ -539,6 +539,20 @@ public class KeycloakService implements IdentityClient {
    * @param roleName Keycloak role name
    */
   public void updateRole(final String userId, final String roleName) {
+    try {
+      updateRoleOnce(userId, roleName);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
+              + " token refresh and retrying once",
+          roleName,
+          userId);
+      keycloakClient.refreshAdminSession();
+      updateRoleOnce(userId, roleName);
+    }
+  }
+
+  private void updateRoleOnce(final String userId, final String roleName) {
     // Get realm and user resources
     var realmResource = keycloakClient.getRealmResource();
     UsersResource userRessource = realmResource.users();

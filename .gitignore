@@ -4,6 +4,7 @@
 *.bak
 cookies.txt
 /node_modules
+/.understand-anything/
 
 ### STS ###
 .apt_generated

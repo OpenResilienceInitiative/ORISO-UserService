@@ -22,7 +22,7 @@ class ArchiveOrDeleteSessionStatisticsEventTest {
   private ArchiveOrDeleteSessionStatisticsEvent archiveOrDeleteSessionStatisticsEvent;
   private static final Long TENANT_ID = 2L;
   private static final String USER_ID = "userId";
-  private static final LocalDateTime END_DATE = LocalDateTime.now();
+  private static final LocalDateTime END_DATE = LocalDateTime.of(2024, 1, 15, 10, 30, 45);
 
   @BeforeEach
   public void setup() throws NoSuchFieldException, IllegalAccessException {

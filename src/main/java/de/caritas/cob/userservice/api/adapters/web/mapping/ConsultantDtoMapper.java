@@ -175,6 +175,14 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
       consultant.setTenantId(tenantId.intValue());
     }
     consultant.setTenantName((String) consultantMap.get("tenantName"));
+    consultant.setHasOtherIdentity(Boolean.TRUE.equals(consultantMap.get("hasOtherIdentity")));
+    var otherIdentityTypes = (List<String>) consultantMap.get("otherIdentityTypes");
+    consultant.setOtherIdentityTypes(
+        otherIdentityTypes == null
+            ? new ArrayList<>()
+            : otherIdentityTypes.stream()
+                .map(ConsultantDTO.OtherIdentityTypesEnum::fromValue)
+                .collect(Collectors.toList()));
 
     // Handle missing Keycloak users gracefully
     boolean isGroupChatConsultant = false;

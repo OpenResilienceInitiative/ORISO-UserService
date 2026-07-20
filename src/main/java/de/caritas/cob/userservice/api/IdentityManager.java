@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api;
 
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final UsernameTranscoder usernameTranscoder;
 
   @Override
   public Optional<String> setUpOneTimePassword(String username, String email) {
@@ -67,7 +69,7 @@ public class IdentityManager implements IdentityManaging {
     var user = identityClient.findUserByEmail(email);
 
     return user.isEmpty()
-        || user.get("encodedUsername").equals(username)
-        || user.get("decodedUsername").equals(username);
+        || username.equals(user.get("encodedUsername"))
+        || usernameTranscoder.decodeUsername(username).equals(user.get("decodedUsername"));
   }
 }

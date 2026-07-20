@@ -201,7 +201,8 @@ public class AgencyInviteLinkService {
       if (InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())) {
         var dto = new CreateAnonymousEnquiryDTO(consultingTypeId).mainTopicId(link.getTopicId());
         var session = createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
-        // Link is reusable until expiry date — stay ACTIVE, do not mark USED.
+        // Public Live Chat entry points are reusable until expiry so multiple clients can enter
+        // the shared topic queue through the same published link.
         return new RedeemContext(
             session, link.getTenantId(), null, consultingTypeId, link.getTopicId());
       }

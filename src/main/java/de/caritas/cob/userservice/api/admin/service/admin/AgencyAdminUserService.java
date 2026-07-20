@@ -55,7 +55,11 @@ public class AgencyAdminUserService {
   public AdminResponseDTO findAgencyAdmin(final String adminId) {
     assertCallerMayAccessAgencyAdmin(adminId);
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
-    return AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    responseDTO
+        .getEmbedded()
+        .setHasOtherIdentity(!consultantRepository.findActiveIdsByIdIn(Set.of(adminId)).isEmpty());
+    return responseDTO;
   }
 
   public AdminResponseDTO updateAgencyAdmin(
