@@ -75,10 +75,17 @@ class ConsultantActivityRegistryTest {
   void refreshIfAvailable_Should_OnlyExtendExistingKeyAndNeverCreateOne() {
     when(redisTemplate.expire(PREFIX + "consultant-1", TTL)).thenReturn(false);
 
-    registry.refreshIfAvailable("consultant-1");
+    assertThat(registry.refreshIfAvailable("consultant-1")).isFalse();
 
     verify(redisTemplate).expire(PREFIX + "consultant-1", TTL);
     verify(valueOperations, never()).set(any(), any(), any(Duration.class));
+  }
+
+  @Test
+  void refreshIfAvailable_Should_ReturnTrue_WhenLeaseWasExtended() {
+    when(redisTemplate.expire(PREFIX + "consultant-1", TTL)).thenReturn(true);
+
+    assertThat(registry.refreshIfAvailable("consultant-1")).isTrue();
   }
 
   @Test

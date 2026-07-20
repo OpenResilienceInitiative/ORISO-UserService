@@ -56,11 +56,12 @@ public class ConsultantLiveAvailabilityController {
 
   /** Refreshes only an existing availability key; it never enables a disabled consultant. */
   @PostMapping("/conversations/consultants/availability/heartbeat")
-  public ResponseEntity<Void> heartbeatLiveChatAvailability() {
+  public ResponseEntity<ConsultantLiveAvailabilityResponseDTO> heartbeatLiveChatAvailability() {
+    boolean available = false;
     if (authenticatedUser.isConsultant() && authenticatedUser.getUserId() != null) {
-      consultantActivityRegistry.refreshIfAvailable(authenticatedUser.getUserId());
+      available = consultantActivityRegistry.refreshIfAvailable(authenticatedUser.getUserId());
     }
-    return ResponseEntity.noContent().build();
+    return ResponseEntity.ok(new ConsultantLiveAvailabilityResponseDTO(available));
   }
 
   /**

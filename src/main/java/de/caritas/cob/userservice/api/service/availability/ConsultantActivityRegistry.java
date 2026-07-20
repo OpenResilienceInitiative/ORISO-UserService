@@ -74,13 +74,14 @@ public class ConsultantActivityRegistry {
   }
 
   /** Heartbeat: EXPIRE refreshes only an existing key and can never enable a consultant. */
-  public void refreshIfAvailable(String consultantId) {
+  public boolean refreshIfAvailable(String consultantId) {
     if (!isValid(consultantId)) {
-      return;
+      return false;
     }
     try {
       Boolean refreshed = redisTemplate.expire(key(consultantId), ttl);
       record("refresh", Boolean.TRUE.equals(refreshed) ? "success" : "missing");
+      return Boolean.TRUE.equals(refreshed);
     } catch (RuntimeException ex) {
       throw storeFailure("refresh", ex);
     }

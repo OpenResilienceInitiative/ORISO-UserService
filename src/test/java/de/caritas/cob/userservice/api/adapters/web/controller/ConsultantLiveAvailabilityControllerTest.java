@@ -65,12 +65,26 @@ class ConsultantLiveAvailabilityControllerTest {
   void heartbeat_Should_RefreshExistingAvailabilityWithoutEnablingConsultant() {
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(authenticatedUser.getUserId()).thenReturn("consultant-2");
+    when(consultantActivityRegistry.refreshIfAvailable("consultant-2")).thenReturn(true);
 
     var response = controller.heartbeatLiveChatAvailability();
 
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(true, response.getBody().getAvailable());
     verify(consultantActivityRegistry).refreshIfAvailable("consultant-2");
     verify(consultantActivityRegistry, never()).markAvailable("consultant-2");
+  }
+
+  @Test
+  void heartbeat_Should_ReturnUnavailable_WhenLeaseAlreadyExpired() {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-2");
+    when(consultantActivityRegistry.refreshIfAvailable("consultant-2")).thenReturn(false);
+
+    var response = controller.heartbeatLiveChatAvailability();
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(false, response.getBody().getAvailable());
   }
 
   @Test
