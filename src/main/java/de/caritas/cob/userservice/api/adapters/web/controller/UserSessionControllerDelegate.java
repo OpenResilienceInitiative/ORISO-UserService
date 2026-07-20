@@ -142,7 +142,7 @@ class UserSessionControllerDelegate {
       var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
-              singletonList(chatId), rocketChatCredentials);
+              user.getUserId(), singletonList(chatId), rocketChatCredentials);
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -331,7 +331,7 @@ class UserSessionControllerDelegate {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
-              singletonList(sessionId), rocketChatCredentials);
+              user.getUserId(), singletonList(sessionId), rocketChatCredentials);
 
       log.info(
           "Step 2 result: {} chats found",

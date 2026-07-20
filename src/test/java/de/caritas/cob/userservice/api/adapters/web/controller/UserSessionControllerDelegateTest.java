@@ -232,7 +232,7 @@ class UserSessionControllerDelegateTest {
     when(sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
             eq("user-id"), eq(List.of(1L)), any(), eq(Set.of(UserRole.USER.getValue()))))
         .thenReturn(emptySessionList);
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(chatSessionList);
 
     var response = delegate.getSessionForId(1L, null);
@@ -304,7 +304,7 @@ class UserSessionControllerDelegateTest {
     var responseDto = new GroupSessionListResponseDTO().sessions(List.of());
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithRocketChatId());
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(responseDto);
 
     var response = delegate.getChatById("rc-token", 1L);
@@ -319,7 +319,7 @@ class UserSessionControllerDelegateTest {
         new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithoutRocketChatId());
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(responseDto);
 
     var response = delegate.getChatById(null, 1L);
@@ -327,7 +327,7 @@ class UserSessionControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     var credentialsCaptor = ArgumentCaptor.forClass(RocketChatCredentials.class);
     verify(sessionListFacade)
-        .retrieveChatsForUserByChatIds(eq(List.of(1L)), credentialsCaptor.capture());
+        .retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), credentialsCaptor.capture());
     assertThat(credentialsCaptor.getValue().getRocketChatUserId()).isEqualTo("dummy-rc-user");
     assertThat(credentialsCaptor.getValue().getRocketChatToken()).isEqualTo("dummy-rc-token");
   }

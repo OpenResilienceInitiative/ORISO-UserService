@@ -2124,6 +2124,10 @@ components:
     SessionDataDTO:
       type: object
       properties:
+        displayName:
+          type: string
+          example: Behutsames Pferd Jules
+          description: Session-scoped pseudonym shown to consultants for anonymous live chat
         age:
           type: string
           example: 17
@@ -2614,6 +2618,9 @@ components:
         username:
           type: string
           example: max94
+        displayName:
+          type: string
+          example: Behutsames Pferd Jules
         isDeleted:
           type: boolean
         sessionData:

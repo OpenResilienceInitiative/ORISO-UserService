@@ -133,9 +133,10 @@ public class SessionListFacade {
   }
 
   public GroupSessionListResponseDTO retrieveChatsForUserByChatIds(
-      List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
+      String userId, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     var userChatSessions =
-        userSessionListService.retrieveChatsForUserAndChatIds(chatIds, rocketChatCredentials);
+        userSessionListService.retrieveChatsForUserAndChatIds(
+            userId, chatIds, rocketChatCredentials);
     userChatSessions.sort(
         comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 

@@ -6,11 +6,13 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -48,22 +50,44 @@ public class TopicConsultantRoutingService {
       return Collections.emptyList();
     }
 
-    List<String> topicConsultantIds = consultantTopicRepository.findConsultantIdsByTopicId(topicId);
-    if (topicConsultantIds.isEmpty()) {
-      return Collections.emptyList();
-    }
-
     List<String> activeConsultantIds =
-        consultantRepository.findAllByIdIn(topicConsultantIds).stream()
-            .filter(consultant -> consultant != null && !consultant.isAbsent())
-            .map(Consultant::getId)
-            .collect(Collectors.toList());
+        runCrossTenant(
+            () -> {
+              List<String> topicConsultantIds =
+                  consultantTopicRepository.findConsultantIdsByTopicId(topicId);
+              if (topicConsultantIds.isEmpty()) {
+                return Collections.emptyList();
+              }
+              return consultantRepository.findAllByIdIn(topicConsultantIds).stream()
+                  .filter(consultant -> consultant != null && !consultant.isAbsent())
+                  .map(Consultant::getId)
+                  .collect(Collectors.toList());
+            });
     if (activeConsultantIds.isEmpty()) {
       return Collections.emptyList();
     }
 
     return new ArrayList<>(
         consultantActivityRegistry.filterActive(activeConsultantIds, activeWindowMs));
+  }
+
+  /**
+   * Public topic availability is deliberately cross-tenant: one published Live Chat link feeds a
+   * shared topic queue. Disable the tenant filter only while resolving eligible consultant IDs and
+   * always restore the caller context before applying the in-memory activity filter.
+   */
+  private <T> T runCrossTenant(Supplier<T> lookup) {
+    Long callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return lookup.get();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
   }
 
   public List<String> findEligibleConsultantIds(Long topicId, Integer consultingTypeId) {
