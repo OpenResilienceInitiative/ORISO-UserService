@@ -47,4 +47,8 @@ interface ConsultantCreationInput {
   default List<Long> getTopicIds() {
     return null;
   }
+
+  default List<Long> getAgencyIds() {
+    return null;
+  }
 }
