@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.TutorialProgress;
 import de.caritas.cob.userservice.api.port.out.TutorialProgressRepository;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -13,6 +14,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,27 +35,51 @@ public class TutorialProgressService {
 
   private final @NonNull TutorialProgressRepository tutorialProgressRepository;
 
+  /**
+   * Tours that may be written per surface. Without this allowlist any authenticated user could
+   * invent tour ids — including on a surface they never see — and those rows would show up in the
+   * tenant admin's aggregate dashboard with attacker-chosen labels (found in gate run
+   * e2e-20260720-1507, probe S6). Configured rather than hardcoded so enabling a new tour stays a
+   * deployment concern; the frontends remain the source of truth for tour content.
+   */
+  @Value("${tutorial.tours.frontend:consultant-walkthrough}")
+  private String[] frontendTours = {"consultant-walkthrough"};
+
+  @Value("${tutorial.tours.admin:}")
+  private String[] adminTours = {};
+
+  /**
+   * Upper bound of progress rows a single account may own. Rows are only ever created by their own
+   * user, but nothing else bounded how many distinct tour/version combinations one account could
+   * create (probe S7). Updates of existing rows are never blocked by this cap.
+   */
+  @Value("${tutorial.max-rows-per-user:50}")
+  private int maxRowsPerUser = 50;
+
   @Transactional
   public TutorialProgressItem upsertOwnProgress(
       String userId, Long tenantId, UpsertTutorialProgressRequest request) {
     validate(request);
 
     var now = LocalDateTime.now();
+    var existing =
+        tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
+            userId, request.getSurface(), request.getTourId(), request.getTourVersion());
+    if (existing.isEmpty() && tutorialProgressRepository.countByUserId(userId) >= maxRowsPerUser) {
+      throw new BadRequestException("tutorial progress row limit reached for this user");
+    }
     var progress =
-        tutorialProgressRepository
-            .findByUserIdAndSurfaceAndTourIdAndTourVersion(
-                userId, request.getSurface(), request.getTourId(), request.getTourVersion())
-            .orElseGet(
-                () ->
-                    TutorialProgress.builder()
-                        .userId(userId)
-                        .surface(request.getSurface())
-                        .tourId(request.getTourId())
-                        .tourVersion(request.getTourVersion())
-                        .createDate(now)
-                        .startedAt(now)
-                        .tenantId(tenantId)
-                        .build());
+        existing.orElseGet(
+            () ->
+                TutorialProgress.builder()
+                    .userId(userId)
+                    .surface(request.getSurface())
+                    .tourId(request.getTourId())
+                    .tourVersion(request.getTourVersion())
+                    .createDate(now)
+                    .startedAt(now)
+                    .tenantId(tenantId)
+                    .build());
 
     progress.setStatus(request.getStatus());
     progress.setCurrentStepId(request.getCurrentStepId());
@@ -101,6 +127,14 @@ public class TutorialProgressService {
     if (request.getTourVersion() == null || request.getTourVersion() < 1) {
       throw new BadRequestException("tourVersion must be a positive integer");
     }
+    if (!isEnabledTour(request.getSurface(), request.getTourId())) {
+      throw new BadRequestException("unknown tour for this surface");
+    }
+  }
+
+  private boolean isEnabledTour(String surface, String tourId) {
+    var enabled = "admin".equals(surface) ? adminTours : frontendTours;
+    return enabled != null && Arrays.stream(enabled).map(String::trim).anyMatch(tourId::equals);
   }
 
   private TutorialProgressItem toItem(TutorialProgress progress) {

@@ -11,4 +11,7 @@ public interface TutorialProgressRepository extends CrudRepository<TutorialProgr
       String userId, String surface, String tourId, Integer tourVersion);
 
   List<TutorialProgress> findByUserIdAndSurface(String userId, String surface);
+
+  /** Number of progress rows a user owns — used to cap per-user row growth. */
+  long countByUserId(String userId);
 }
