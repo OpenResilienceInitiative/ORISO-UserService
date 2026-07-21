@@ -58,19 +58,18 @@ public class UserAccountService {
     return this.consultantService.findConsultantByEmail(email);
   }
 
-  /**
-   * Tries to retrieve the user of the current {@link AuthenticatedUser} and throws an 500 - Server
-   * Error if {@link User} is not present.
-   *
-   * @return the validated {@link User}
-   */
+  /** Tries to retrieve the active user of the current {@link AuthenticatedUser}. */
   public User retrieveValidatedUser() {
-    return this.userService
-        .getUser(this.authenticatedUser.getUserId())
-        .orElseThrow(
-            () ->
-                new InternalServerErrorException(
-                    String.format("User with id %s not found", authenticatedUser.getUserId())));
+    String userId = this.authenticatedUser.getUserId();
+    Optional<User> active = this.userService.getUser(userId);
+    if (active.isPresent()) {
+      return active.get();
+    }
+    if (this.userService.findDeletedById(userId).isPresent()) {
+      throw new ForbiddenException(
+          String.format("User with id %s is flagged for deletion and cannot log in", userId));
+    }
+    throw new InternalServerErrorException(String.format("User with id %s not found", userId));
   }
 
   /**

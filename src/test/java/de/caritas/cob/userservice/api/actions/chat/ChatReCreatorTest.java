@@ -4,10 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -21,7 +24,11 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -45,6 +52,15 @@ class ChatReCreatorTest {
 
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
 
+  @Mock private GroupChatMembershipService groupChatMembershipService;
+
+  @BeforeEach
+  void resolveRoomIdFromChatFixture() {
+    lenient()
+        .when(groupChatMembershipService.resolveMatrixRoomId(any(Chat.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0, Chat.class).getMatrixRoomId());
+  }
+
   @Test
   void recreateShouldCreateMatrixRoomAsChatOwnerAndShutDownOldRoomAfterwards()
       throws MatrixCreateRoomException {
@@ -54,6 +70,11 @@ class ChatReCreatorTest {
     when(matrixSynapseService.createRoomAsMatrixUser(
             eq("topic"), startsWith("group_chat_"), eq(OWNER_MATRIX_USER_ID)))
         .thenReturn(ResponseEntity.ok(response));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true)));
 
     var newRoomId = chatReCreator.recreateMessengerChat(chat);
 
@@ -66,9 +87,74 @@ class ChatReCreatorTest {
   }
 
   @Test
+  void recreateShouldCarryEveryHumanMemberIntoNewRoomBeforeShuttingDownOldRoom()
+      throws MatrixCreateRoomException {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var coModeratorMatrixId = "@co-moderator:matrix.local";
+    var askerMatrixId = "@asker:matrix.local";
+    var response = new MatrixCreateRoomResponseDTO();
+    response.setRoomId(NEW_MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true),
+                new ResolvedRoomMember(coModeratorMatrixId, "co-id", "co", "Co Moderator", true),
+                new ResolvedRoomMember(askerMatrixId, "asker-id", "asker", "asker", false)));
+    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(response));
+    when(groupChatMembershipService.addMemberToRoom(
+            NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, coModeratorMatrixId))
+        .thenReturn(true);
+    when(groupChatMembershipService.addMemberToRoom(
+            NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, askerMatrixId))
+        .thenReturn(true);
+
+    chatReCreator.recreateMessengerChat(chat);
+
+    verify(groupChatMembershipService, never())
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, OWNER_MATRIX_USER_ID);
+    var order = inOrder(groupChatMembershipService, matrixChatShutdownService);
+    order
+        .verify(groupChatMembershipService)
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, coModeratorMatrixId);
+    order
+        .verify(groupChatMembershipService)
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, askerMatrixId);
+    order.verify(matrixChatShutdownService).shutdownRoom(chat);
+  }
+
+  @Test
+  void recreateShouldKeepOldRoomAliveWhenAnyHumanMemberCannotJoinNewRoom()
+      throws MatrixCreateRoomException {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var askerMatrixId = "@asker:matrix.local";
+    var response = new MatrixCreateRoomResponseDTO();
+    response.setRoomId(NEW_MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true),
+                new ResolvedRoomMember(askerMatrixId, "asker-id", "asker", "asker", false)));
+    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(response));
+    when(groupChatMembershipService.addMemberToRoom(
+            NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, askerMatrixId))
+        .thenReturn(false);
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verifyNoInteractions(matrixChatShutdownService);
+  }
+
+  @Test
   void recreateShouldFailAndKeepOldRoomAliveWhenMatrixRoomCreationFails()
       throws MatrixCreateRoomException {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(ownerRoomMembers());
     when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
         .thenThrow(new MatrixCreateRoomException("Synapse unavailable"));
 
@@ -82,6 +168,8 @@ class ChatReCreatorTest {
   @Test
   void recreateShouldFailWhenMatrixResponseContainsNoRoomId() throws MatrixCreateRoomException {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(ownerRoomMembers());
     when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(new MatrixCreateRoomResponseDTO()));
 
@@ -146,5 +234,10 @@ class ChatReCreatorTest {
     chat.setGroupId(OLD_MATRIX_ROOM_ID);
     chat.setMatrixRoomId(OLD_MATRIX_ROOM_ID);
     return chat;
+  }
+
+  private List<ResolvedRoomMember> ownerRoomMembers() {
+    return List.of(
+        new ResolvedRoomMember(OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true));
   }
 }

@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.List;
@@ -25,6 +26,7 @@ abstract class DeleteRoomsAndSessionAction {
   protected final @NonNull SessionDataRepository sessionDataRepository;
   protected final @NonNull RocketChatService rocketChatService;
   protected final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+  protected final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
   void deleteRocketChatGroup(String rcGroupId, List<DeletionWorkflowError> workflowErrors) {
     if (isNotBlank(rcGroupId)) {
@@ -63,9 +65,7 @@ abstract class DeleteRoomsAndSessionAction {
 
   void deleteCaseHandoverRequests(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
-      var caseHandoverRequests =
-          this.caseHandoverRequestRepository.findBySessionId(session.getId());
-      this.caseHandoverRequestRepository.deleteAll(caseHandoverRequests);
+      this.caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);
       workflowErrors.add(
@@ -74,6 +74,22 @@ abstract class DeleteRoomsAndSessionAction {
               .deletionTargetType(DeletionTargetType.DATABASE)
               .identifier(String.valueOf(session.getId()))
               .reason("Unable to delete case handover requests for session")
+              .timestamp(nowInUtc())
+              .build());
+    }
+  }
+
+  void deleteSessionSupervisors(Session session, List<DeletionWorkflowError> workflowErrors) {
+    try {
+      this.sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+    } catch (Exception e) {
+      log.error("UserService delete workflow error: ", e);
+      workflowErrors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.DATABASE)
+              .identifier(String.valueOf(session.getId()))
+              .reason("Unable to delete supervisors for session")
               .timestamp(nowInUtc())
               .build());
     }
@@ -99,6 +115,7 @@ abstract class DeleteRoomsAndSessionAction {
 
     deleteRocketChatGroup(session.getGroupId(), workflowErrors);
     deleteSessionData(session, workflowErrors);
+    deleteSessionSupervisors(session, workflowErrors);
     deleteCaseHandoverRequests(session, workflowErrors);
     deleteSession(session, workflowErrors);
   }

@@ -54,9 +54,15 @@ import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.*;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -256,6 +262,12 @@ class UserControllerIT {
   @Autowired private MockMvc mvc;
 
   @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private PasswordResetService passwordResetService;
+  @MockitoBean private AccountInviteService accountInviteService;
+  @MockitoBean private GroupChatFeatureGate groupChatFeatureGate;
+  @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
+  @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
+  @MockitoBean private GroupChatRoleService groupChatRoleService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -342,6 +354,7 @@ class UserControllerIT {
   private UserDtoMapper userDtoMapper;
 
   @MockitoBean private ConsultantService consultantService;
+  @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -1266,6 +1279,22 @@ class UserControllerIT {
                 .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
+  }
+
+  @Test
+  void getUserData_ForSoftDeletedUser_Should_ReturnForbidden() throws Exception {
+    when(authenticatedUser.getRoles()).thenReturn(ROLES_WITH_USER);
+    when(authenticatedUser.getGrantedAuthorities())
+        .thenReturn(new HashSet<>(Authority.getAuthoritiesByUserRole(UserRole.USER)));
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userAccountService.retrieveValidatedUser()).thenThrow(new ForbiddenException(""));
+
+    mvc.perform(
+            get(PATH_USER_DATA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .cookie(RC_TOKEN_COOKIE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isForbidden());
   }
 
   @Test

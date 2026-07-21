@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -52,6 +53,8 @@ class DeleteAskerRoomsAndSessionsActionTest {
   @Mock private RocketChatService rocketChatService;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
+
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
   private LogbackCaptor logCaptor;
 
@@ -92,8 +95,8 @@ class DeleteAskerRoomsAndSessionsActionTest {
     verify(this.rocketChatService, times(1)).deleteGroupAsTechnicalUser(any());
     verify(this.sessionDataRepository, times(1)).findBySessionId(session.getId());
     verify(this.sessionDataRepository, times(1)).deleteAll(any());
-    verify(this.caseHandoverRequestRepository, times(1)).findBySessionId(session.getId());
-    verify(this.caseHandoverRequestRepository, times(1)).deleteAll(any());
+    verify(this.caseHandoverRequestRepository, times(1)).deleteAllBySessionId(session.getId());
+    verify(this.sessionSupervisorRepository, times(1)).deleteAllBySessionId(session.getId());
     verify(this.sessionRepository, times(1)).delete(session);
   }
 
@@ -106,7 +109,12 @@ class DeleteAskerRoomsAndSessionsActionTest {
         .when(this.rocketChatService)
         .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.sessionDataRepository).deleteAll(any());
-    doThrow(new RuntimeException()).when(this.caseHandoverRequestRepository).deleteAll(any());
+    doThrow(new RuntimeException())
+        .when(this.caseHandoverRequestRepository)
+        .deleteAllBySessionId(any());
+    doThrow(new RuntimeException())
+        .when(this.sessionSupervisorRepository)
+        .deleteAllBySessionId(any());
     doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
     AskerDeletionWorkflowDTO workflowDTO =
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
@@ -114,8 +122,8 @@ class DeleteAskerRoomsAndSessionsActionTest {
     this.deleteAskerRoomsAndSessionsAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(4));
-    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(4);
+    assertThat(workflowErrors, hasSize(5));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(5);
   }
 
   @Test
@@ -128,7 +136,12 @@ class DeleteAskerRoomsAndSessionsActionTest {
         .when(this.rocketChatService)
         .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.sessionDataRepository).deleteAll(any());
-    doThrow(new RuntimeException()).when(this.caseHandoverRequestRepository).deleteAll(any());
+    doThrow(new RuntimeException())
+        .when(this.caseHandoverRequestRepository)
+        .deleteAllBySessionId(any());
+    doThrow(new RuntimeException())
+        .when(this.sessionSupervisorRepository)
+        .deleteAllBySessionId(any());
     doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
     AskerDeletionWorkflowDTO workflowDTO =
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
@@ -136,8 +149,8 @@ class DeleteAskerRoomsAndSessionsActionTest {
     this.deleteAskerRoomsAndSessionsAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(12));
-    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(12);
+    assertThat(workflowErrors, hasSize(15));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(15);
   }
 
   @Test
@@ -187,7 +200,9 @@ class DeleteAskerRoomsAndSessionsActionTest {
   void execute_Should_returnExpectedWorkflowError_When_caseHandoverRequestDeletionFails() {
     Session session = new EasyRandom().nextObject(Session.class);
     when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
-    doThrow(new RuntimeException()).when(this.caseHandoverRequestRepository).deleteAll(any());
+    doThrow(new RuntimeException())
+        .when(this.caseHandoverRequestRepository)
+        .deleteAllBySessionId(any());
     AskerDeletionWorkflowDTO workflowDTO =
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
 

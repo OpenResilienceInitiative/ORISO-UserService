@@ -9,7 +9,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.time.Instant;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,7 @@ public class ChatReCreator {
   private final ChatService chatService;
   private final MatrixSynapseService matrixSynapseService;
   private final MatrixChatShutdownService matrixChatShutdownService;
+  private final GroupChatMembershipService groupChatMembershipService;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id is persisted both as
@@ -65,7 +68,29 @@ public class ChatReCreator {
    * @return the id of the newly created Matrix room
    */
   public String recreateMessengerChat(Chat chat) {
+    var oldRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
+    var humanMembers = groupChatMembershipService.resolveHumanMembers(oldRoomId);
+    if (humanMembers.isEmpty()) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not resolve members of repetitive group chat %s before re-creating room",
+              chat.getId()));
+    }
+
     var newRoomId = createMatrixRoom(chat);
+    var ownerMatrixUserId = chat.getChatOwner().getMatrixUserId();
+    for (var member : humanMembers) {
+      if (Objects.equals(ownerMatrixUserId, member.matrixUserId())) {
+        continue;
+      }
+      if (!groupChatMembershipService.addMemberToRoom(
+          newRoomId, ownerMatrixUserId, member.matrixUserId())) {
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not carry member %s into next occurrence of group chat %s",
+                member.matrixUserId(), chat.getId()));
+      }
+    }
     matrixChatShutdownService.shutdownRoom(chat);
 
     return newRoomId;

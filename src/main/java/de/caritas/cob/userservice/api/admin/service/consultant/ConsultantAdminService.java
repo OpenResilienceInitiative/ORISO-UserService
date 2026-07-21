@@ -22,9 +22,11 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -37,6 +39,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class for admin operations on {@link Consultant} objects. */
 @Service
@@ -50,6 +53,8 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
 
@@ -153,6 +158,7 @@ public class ConsultantAdminService {
    * @param consultantId the consultant id
    * @param forceDeleteSessions
    */
+  @Transactional
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
     var consultant =
         this.consultantRepository
@@ -208,6 +214,11 @@ public class ConsultantAdminService {
   private void deleteSessionsInProgressOrArchived(Consultant consultant) {
     sessionRepository
         .findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
-        .forEach(sessionRepository::delete);
+        .forEach(
+            session -> {
+              caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+              sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+              sessionRepository.delete(session);
+            });
   }
 }
