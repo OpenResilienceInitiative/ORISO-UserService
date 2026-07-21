@@ -88,6 +88,51 @@ class TutorialProgressControllerE2EIT {
   }
 
   @Test
+  void tutorialProgress_rejectsATourThatIsNotEnabledOnThatSurface() throws Exception {
+    // Hardening (gate run e2e-20260720-1507, probe S6): a consultant must not be
+    // able to invent admin-surface tours that then appear in the tenant admin's
+    // aggregate dashboard.
+    org.mockito.Mockito.when(authenticatedUser.getUserId()).thenReturn("tutorial-user-1");
+    var payload =
+        Map.of(
+            "surface", "admin",
+            "tourId", "consultant-walkthrough",
+            "tourVersion", 1,
+            "status", "completed");
+
+    mockMvc
+        .perform(
+            put("/users/tutorials/progress")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .with(jwt().authorities(() -> AuthorityValue.CONSULTANT_DEFAULT))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void tutorialProgress_rejectsAnUnknownTourId() throws Exception {
+    org.mockito.Mockito.when(authenticatedUser.getUserId()).thenReturn("tutorial-user-1");
+    var payload =
+        Map.of(
+            "surface", "frontend",
+            "tourId", "zz-invented-tour",
+            "tourVersion", 1,
+            "status", "completed");
+
+    mockMvc
+        .perform(
+            put("/users/tutorials/progress")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .with(jwt().authorities(() -> AuthorityValue.CONSULTANT_DEFAULT))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void tutorialProgress_rejectsUnknownStatusWithBadRequest() throws Exception {
     org.mockito.Mockito.when(authenticatedUser.getUserId()).thenReturn("tutorial-user-1");
     var payload =

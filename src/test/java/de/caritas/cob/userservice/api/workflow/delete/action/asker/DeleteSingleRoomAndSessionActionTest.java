@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -48,6 +49,8 @@ class DeleteSingleRoomAndSessionActionTest {
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
 
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -74,8 +77,8 @@ class DeleteSingleRoomAndSessionActionTest {
     verify(this.rocketChatService, times(1)).deleteGroupAsTechnicalUser(any());
     verify(this.sessionDataRepository, times(1)).findBySessionId(session.getId());
     verify(this.sessionDataRepository, times(1)).deleteAll(any());
-    verify(this.caseHandoverRequestRepository, times(1)).findBySessionId(session.getId());
-    verify(this.caseHandoverRequestRepository, times(1)).deleteAll(any());
+    verify(this.caseHandoverRequestRepository, times(1)).deleteAllBySessionId(session.getId());
+    verify(this.sessionSupervisorRepository, times(1)).deleteAllBySessionId(session.getId());
     verify(this.sessionRepository, times(1)).delete(session);
   }
 
@@ -87,7 +90,12 @@ class DeleteSingleRoomAndSessionActionTest {
         .when(this.rocketChatService)
         .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.sessionDataRepository).deleteAll(any());
-    doThrow(new RuntimeException()).when(this.caseHandoverRequestRepository).deleteAll(any());
+    doThrow(new RuntimeException())
+        .when(this.caseHandoverRequestRepository)
+        .deleteAllBySessionId(any());
+    doThrow(new RuntimeException())
+        .when(this.sessionSupervisorRepository)
+        .deleteAllBySessionId(any());
     doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
     SessionDeletionWorkflowDTO workflowDTO =
         new SessionDeletionWorkflowDTO(session, new ArrayList<>());
@@ -95,8 +103,8 @@ class DeleteSingleRoomAndSessionActionTest {
     this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(4));
-    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(4);
+    assertThat(workflowErrors, hasSize(5));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(5);
   }
 
   @Test
@@ -143,7 +151,9 @@ class DeleteSingleRoomAndSessionActionTest {
   @Test
   void execute_Should_returnExpectedWorkflowError_When_caseHandoverRequestDeletionFails() {
     Session session = new EasyRandom().nextObject(Session.class);
-    doThrow(new RuntimeException()).when(this.caseHandoverRequestRepository).deleteAll(any());
+    doThrow(new RuntimeException())
+        .when(this.caseHandoverRequestRepository)
+        .deleteAllBySessionId(any());
     SessionDeletionWorkflowDTO workflowDTO =
         new SessionDeletionWorkflowDTO(session, new ArrayList<>());
 
@@ -159,6 +169,23 @@ class DeleteSingleRoomAndSessionActionTest {
         workflowErrors.get(0).getReason(),
         is("Unable to delete case handover requests for session"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
+  }
+
+  @Test
+  void execute_Should_returnExpectedWorkflowError_When_sessionSupervisorDeletionFails() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    doThrow(new RuntimeException())
+        .when(this.sessionSupervisorRepository)
+        .deleteAllBySessionId(any());
+    SessionDeletionWorkflowDTO workflowDTO =
+        new SessionDeletionWorkflowDTO(session, new ArrayList<>());
+
+    this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+    assertThat(
+        workflowDTO.getDeletionWorkflowErrors().get(0).getReason(),
+        is("Unable to delete supervisors for session"));
   }
 
   @Test

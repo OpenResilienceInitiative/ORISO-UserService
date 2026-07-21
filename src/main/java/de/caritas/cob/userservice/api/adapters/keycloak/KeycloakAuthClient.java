@@ -104,7 +104,7 @@ public class KeycloakAuthClient {
   }
 
   public boolean verifyIgnoringOtp(String username, String password) {
-    var entity = loginRequest(username, password);
+    var entity = loginRequest(usernameTranscoder.decodeUsername(username), password);
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
 
     ResponseEntity<KeycloakLoginResponseDTO> loginResponse;

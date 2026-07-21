@@ -1169,7 +1169,7 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
-  void handleRoomMessage_shouldStillCreateNotificationRow_whenLiveSendFails() {
+  void handleRoomMessage_shouldStillPersistNotificationAndStatistic_whenLiveOrPushSendFails() {
     // The live STOMP push is an optimisation; the persisted feed entry is the
     // source of truth for the Zeitstrahl. A live-send failure (e.g. the
     // request-scoped AuthenticatedUser being unavailable on the sync-loop
@@ -1177,19 +1177,22 @@ class MatrixEventListenerServiceTest {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(33L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
-    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
-        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
 
-    org.mockito.Mockito.doThrow(new IllegalStateException("No thread-bound request found"))
+    org.mockito.Mockito.doThrow(new IllegalStateException("mobile push failed"))
         .when(liveEventNotificationService)
         .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
 
-    var event = messageEvent(SENDER_MATRIX_ID, "m.text", "hello", "$evt-live-down");
+    var event = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-live-or-push-down");
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
   }
 
   @Test

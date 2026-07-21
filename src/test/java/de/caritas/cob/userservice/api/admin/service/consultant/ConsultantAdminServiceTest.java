@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,9 +21,11 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -55,6 +58,10 @@ public class ConsultantAdminServiceTest {
   @Mock private AppointmentService appointmentService;
 
   @Mock private SessionRepository sessionRepository;
+
+  @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
+
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
 
@@ -184,7 +191,11 @@ public class ConsultantAdminServiceTest {
 
     consultantAdminService.markConsultantForDeletion("c-1", true);
 
-    verify(sessionRepository).delete(session);
+    var deletionOrder =
+        inOrder(caseHandoverRequestRepository, sessionSupervisorRepository, sessionRepository);
+    deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
+    deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
+    deletionOrder.verify(sessionRepository).delete(session);
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
 

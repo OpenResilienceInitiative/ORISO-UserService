@@ -111,6 +111,9 @@ class UserAccountControllerDelegate {
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      if (authenticatedUser.isPlatformAdmin()) {
+        partialUserData.setEncourage2fa(true);
+      }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);

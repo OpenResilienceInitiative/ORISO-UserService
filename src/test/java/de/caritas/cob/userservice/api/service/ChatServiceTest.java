@@ -49,6 +49,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -78,6 +79,8 @@ class ChatServiceTest {
   @Mock private ConsultantService consultantService;
 
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+
+  @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
 
   @Mock private AgencyService agencyService;
 
@@ -270,6 +273,28 @@ class ChatServiceTest {
   }
 
   @Test
+  void getChatsForUserId_Should_FallBackToFirstAndLastName_WhenDisplayNameIsEmpty() {
+    Chat series = activeChatWithAgency();
+    when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId()))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder()
+                    .consultantId("co-moderator")
+                    .role(ParticipantRole.CO_MODERATOR)
+                    .build()));
+    Consultant coModerator = Mockito.mock(Consultant.class);
+    when(coModerator.getFirstName()).thenReturn("Carlo");
+    when(coModerator.getLastName()).thenReturn("Co-Moderator");
+    when(consultantService.getConsultant("co-moderator")).thenReturn(Optional.of(coModerator));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertEquals(
+        "Carlo Co-Moderator", result.get(0).getChat().getParticipants().get(0).getDisplayName());
+  }
+
+  @Test
   void
       getChatsForUserId_Should_ReturnListOfUserSessionResponseDTOWithChats_When_AssignedChatIsFound() {
     when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(singletonList(CHAT_V2));
@@ -455,6 +480,7 @@ class ChatServiceTest {
     ArgumentCaptor<Chat> chatArgumentCaptor = ArgumentCaptor.forClass(Chat.class);
     verify(chatRepository, times(1)).save(chatArgumentCaptor.capture());
     assertEquals(CHAT_HINT_MESSAGE, chatArgumentCaptor.getValue().getHintMessage());
+    verify(participantReconciliationService).reconcile(inactiveChat, CHAT_DTO.getConsultantIds());
   }
 
   @Test
