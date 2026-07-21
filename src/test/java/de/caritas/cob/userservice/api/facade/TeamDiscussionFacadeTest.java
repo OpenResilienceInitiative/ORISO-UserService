@@ -160,7 +160,7 @@ class TeamDiscussionFacadeTest {
   void getOrCreateDiscussion_shouldRespectFeatureGate() throws Exception {
     doThrow(new ForbiddenException("Team discussion is disabled"))
         .when(featureGate)
-        .requireEnabled();
+        .requireEnabled(org.mockito.ArgumentMatchers.any());
 
     assertThatThrownBy(() -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID))
         .isInstanceOf(ForbiddenException.class);
