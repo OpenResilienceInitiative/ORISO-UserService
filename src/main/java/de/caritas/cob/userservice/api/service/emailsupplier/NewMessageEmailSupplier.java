@@ -61,6 +61,9 @@ public class NewMessageEmailSupplier implements EmailSupplier {
 
   private final ReleaseToggleService releaseToggleService;
 
+  private final de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
+      doNotDisturbService;
+
   /**
    * Generates new message notification mails sent to regarding consultants when a user has written
    * a new message and to regarding user when a consultant has written a new message.
@@ -108,6 +111,7 @@ public class NewMessageEmailSupplier implements EmailSupplier {
       return consultantList.stream()
           .filter(agency -> checkThatConsultantEmailNotEmpty(agency))
           .filter(agency -> wantsToReceiveNotifications(agency.getConsultant()))
+          .filter(agency -> notInDoNotDisturb(agency.getConsultant()))
           .filter(isConsultantLoggedOut())
           .map(this::toNewConsultantMessageMailDTO)
           .collect(Collectors.toList());
@@ -232,6 +236,18 @@ public class NewMessageEmailSupplier implements EmailSupplier {
     }
 
     return emptyList();
+  }
+
+  private boolean notInDoNotDisturb(Consultant consultant) {
+    if (doNotDisturbService == null) {
+      return true;
+    }
+    var inDnd = doNotDisturbService.isInDoNotDisturb(consultant.getId());
+    if (inDnd) {
+      log.debug(
+          "Skipping email notification: consultant {} is in do-not-disturb", consultant.getId());
+    }
+    return !inDnd;
   }
 
   private Predicate<ConsultantAgency> isConsultantLoggedOut() {

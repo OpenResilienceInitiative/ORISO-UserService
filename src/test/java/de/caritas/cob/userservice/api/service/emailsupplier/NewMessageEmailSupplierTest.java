@@ -82,6 +82,10 @@ class NewMessageEmailSupplierTest {
 
   @Mock private ReleaseToggleService releaseToggleService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
+      doNotDisturbService;
+
   private TestLogAppender testLogAppender;
 
   @BeforeEach
@@ -99,6 +103,7 @@ class NewMessageEmailSupplierTest {
             .emailDummySuffix("dummySuffix")
             .messageClient(messageClient)
             .releaseToggleService(releaseToggleService)
+            .doNotDisturbService(doNotDisturbService)
             .build();
 
     // Attach a custom appender to the logger
@@ -188,6 +193,22 @@ class NewMessageEmailSupplierTest {
     assertThat(templateData.get(1).getValue(), is("1234"));
     assertThat(templateData.get(2).getKey(), is("url"));
     assertThat(templateData.get(2).getValue(), is("app baseurl"));
+  }
+
+  @Test
+  void generateEmails_Should_SkipConsultant_When_ConsultantIsInDoNotDisturb() {
+    when(roles.contains(UserRole.USER.getValue())).thenReturn(true);
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn(USER.getUserId());
+    when(session.getUser()).thenReturn(user);
+    when(session.getStatus()).thenReturn(SessionStatus.IN_PROGRESS);
+    when(session.getConsultant()).thenReturn(CONSULTANT);
+    when(session.getPostcode()).thenReturn("1234");
+    when(doNotDisturbService.isInDoNotDisturb(CONSULTANT.getId())).thenReturn(true);
+
+    List<MailDTO> generatedMails = this.newMessageEmailSupplier.generateEmails();
+
+    assertThat(generatedMails, hasSize(0));
   }
 
   @Test
