@@ -171,6 +171,7 @@ public class SecurityConfig {
                     "/users/drafts/**",
                     "/users/event-notifications",
                     "/users/event-notifications/**",
+                    "/users/notifications/do-not-disturb",
                     "/users/chat/{chatId:[0-9]+}",
                     "/users/chat/e2e",
                     "/users/chat/{chatId:[0-9]+}/join",
