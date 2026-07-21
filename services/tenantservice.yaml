@@ -98,6 +98,9 @@ components:
         featureGroupChatV2Enabled:
           type: boolean
           default: false
+        featureTeamDiscussionEnabled:
+          type: boolean
+          default: false
     Licensing:
       type: object
       required:
