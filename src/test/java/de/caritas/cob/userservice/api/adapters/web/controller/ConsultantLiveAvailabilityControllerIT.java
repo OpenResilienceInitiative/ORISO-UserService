@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -110,5 +111,17 @@ class ConsultantLiveAvailabilityControllerIT {
     verify(consultantActivityRegistry).filterActive(anyCollection(), anyLong());
     verify(consultantActivityRegistry, never()).refreshIfAvailable(any());
     verify(consultantActivityRegistry, never()).markAvailable(any());
+  }
+
+  @Test
+  void heartbeat_Should_ReturnAuthoritativeFalse_WhenLeaseHasExpired() throws Exception {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantActivityRegistry.refreshIfAvailable(CONSULTANT_ID)).thenReturn(false);
+
+    this.mockMvc
+        .perform(post(AVAILABILITY_PATH + "/heartbeat"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.available").value(false));
   }
 }

@@ -54,15 +54,14 @@ class ConsultantActivityInterceptorTest {
   }
 
   @Test
-  void preHandle_Should_refreshTtl_When_putAvailabilityPath() {
-    givenAuthenticatedConsultant();
+  void preHandle_Should_notRefreshTtl_When_putAvailabilityPathOwnsMutation() {
     var request =
         new MockHttpServletRequest("PUT", ConsultantActivityInterceptor.AVAILABILITY_PATH);
     var response = new MockHttpServletResponse();
 
     interceptor.preHandle(request, response, new Object());
 
-    verify(consultantActivityRegistry).refreshIfAvailable(CONSULTANT_ID);
+    verify(consultantActivityRegistry, never()).refreshIfAvailable(CONSULTANT_ID);
   }
 
   @Test
