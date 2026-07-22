@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.NonNull;
@@ -192,9 +193,11 @@ public class KeycloakService implements IdentityClient {
 
   @Override
   public OtpInfoDTO getOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
-    var response = keycloakClient.get(bearerToken, requestUrl, OtpInfoDTO.class);
+    var response =
+        withFreshAdminTokenOnUnauthorized(
+            () ->
+                keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
     return response.getBody();
   }
@@ -202,11 +205,13 @@ public class KeycloakService implements IdentityClient {
   @Override
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
-    var bearerToken = keycloakClient.getBearerToken();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, OtpInfoDTO.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
       return true;
     } catch (HttpClientErrorException exception) {
       if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
@@ -219,19 +224,21 @@ public class KeycloakService implements IdentityClient {
 
   @Override
   public void deleteOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
-    keycloakClient.delete(bearerToken, requestUrl, Void.class);
+    withFreshAdminTokenOnUnauthorized(
+        () -> keycloakClient.delete(keycloakClient.getBearerToken(), requestUrl, Void.class));
   }
 
   @Override
   public Optional<String> initiateEmailVerification(String username, String email) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
-    var bearerToken = keycloakClient.getBearerToken();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, Success.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, Success.class));
       return Optional.empty();
     } catch (RestClientException exception) {
       return Optional.of("Keycloak answered: " + exception.getMessage());
@@ -241,13 +248,17 @@ public class KeycloakService implements IdentityClient {
   @Override
   public Map<String, String> finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
-    var bearerToken = keycloakClient.getBearerToken();
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
       var response =
-          keycloakClient.postForEntity(
-              bearerToken, requestUrl, otpSetupDTO, SuccessWithEmail.class);
+          withFreshAdminTokenOnUnauthorized(
+              () ->
+                  keycloakClient.postForEntity(
+                      keycloakClient.getBearerToken(),
+                      requestUrl,
+                      otpSetupDTO,
+                      SuccessWithEmail.class));
       return keycloakMapper.mapOf(response);
     } catch (HttpClientErrorException exception) {
       return keycloakMapper.mapOf(exception);
@@ -258,6 +269,22 @@ public class KeycloakService implements IdentityClient {
     var decodedUsername = usernameTranscoder.decodeUsername(username);
     return identityClientConfig.getOtpUrl(
         endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
+  }
+
+  private <T> T withFreshAdminTokenOnUnauthorized(Supplier<T> request) {
+    try {
+      return request.get();
+    } catch (HttpClientErrorException exception) {
+      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
+        throw exception;
+      }
+
+      log.warn(
+          "Keycloak admin session was unauthorized for an OTP provider request, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return request.get();
+    }
   }
 
   /**
