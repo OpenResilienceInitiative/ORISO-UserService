@@ -117,7 +117,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(
     properties = {
-      "spring.datasource.url=jdbc:h2:mem:user-controller-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+      "spring.datasource.url=jdbc:h2:mem:user-controller-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER",
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
