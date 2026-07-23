@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import org.springframework.stereotype.Component;
 
@@ -27,13 +28,15 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
       SessionDataRepository sessionDataRepository,
       RocketChatService rocketChatService,
       CaseHandoverRequestRepository caseHandoverRequestRepository,
-      SessionSupervisorRepository sessionSupervisorRepository) {
+      SessionSupervisorRepository sessionSupervisorRepository,
+      SessionTopicRepository sessionTopicRepository) {
     super(
         sessionRepository,
         sessionDataRepository,
         rocketChatService,
         caseHandoverRequestRepository,
-        sessionSupervisorRepository);
+        sessionSupervisorRepository,
+        sessionTopicRepository);
   }
 
   /**

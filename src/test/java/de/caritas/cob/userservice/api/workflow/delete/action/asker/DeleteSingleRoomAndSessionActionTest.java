@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -51,6 +52,8 @@ class DeleteSingleRoomAndSessionActionTest {
 
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
+  @Mock private SessionTopicRepository sessionTopicRepository;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -79,6 +82,7 @@ class DeleteSingleRoomAndSessionActionTest {
     verify(this.sessionDataRepository, times(1)).deleteAll(any());
     verify(this.caseHandoverRequestRepository, times(1)).deleteAllBySessionId(session.getId());
     verify(this.sessionSupervisorRepository, times(1)).deleteAllBySessionId(session.getId());
+    verify(this.sessionTopicRepository, times(1)).deleteAllBySessionId(session.getId());
     verify(this.sessionRepository, times(1)).delete(session);
   }
 
