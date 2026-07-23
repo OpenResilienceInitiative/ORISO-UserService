@@ -124,6 +124,24 @@ class InactiveAccountAuditLogsControllerAuthorizationIT {
   }
 
   @Test
+  void listAuditLogs_Should_ReturnForbidden_WhenTenantIdIsFractionalZero() throws Exception {
+    mvc.perform(
+            get(ENDPOINT)
+                .with(
+                    jwt()
+                        .jwt(
+                            token ->
+                                token
+                                    .claim(
+                                        "realm_access",
+                                        Map.of("roles", List.of("agency-admin", "tenant-admin")))
+                                    .claim("tenantId", 0.5))))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(inactiveAccountAuditLogsService);
+  }
+
+  @Test
   void listAuditLogs_Should_ReturnForbidden_WhenTenantAdminLacksAgencyAdminRole() throws Exception {
     mvc.perform(
             get(ENDPOINT)

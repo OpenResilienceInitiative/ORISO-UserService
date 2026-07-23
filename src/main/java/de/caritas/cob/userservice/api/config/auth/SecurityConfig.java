@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
@@ -488,7 +489,11 @@ public class SecurityConfig {
   private boolean isPlatformTenant(Jwt jwt) {
     Object tenantId = jwt.getClaims().get("tenantId");
     if (tenantId instanceof Number number) {
-      return number.longValue() == 0L;
+      try {
+        return new BigDecimal(number.toString()).compareTo(BigDecimal.ZERO) == 0;
+      } catch (NumberFormatException ignored) {
+        return false;
+      }
     }
     return tenantId != null && "0".equals(tenantId.toString());
   }
