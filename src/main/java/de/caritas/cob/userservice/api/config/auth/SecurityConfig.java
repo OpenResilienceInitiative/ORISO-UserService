@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,11 +20,13 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -32,6 +35,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
@@ -370,7 +374,7 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .hasAuthority(TECHNICAL_DEFAULT)
+                .access(this::canAccessInactiveAccountAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -454,6 +458,39 @@ public class SecurityConfig {
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
     return authorities;
+  }
+
+  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    boolean isTechnicalAccount =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
+
+    if (isTechnicalAccount) {
+      return new AuthorizationDecision(true);
+    }
+
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+
+    Jwt jwt = jwtAuthentication.getToken();
+    Set<String> roles = extractKeycloakRoles(jwt);
+    boolean hasPlatformAdminRoles =
+        roles.contains(UserRole.AGENCY_ADMIN.getValue())
+            && roles.contains(UserRole.TENANT_ADMIN.getValue());
+
+    return new AuthorizationDecision(hasPlatformAdminRoles && isPlatformTenant(jwt));
+  }
+
+  private boolean isPlatformTenant(Jwt jwt) {
+    Object tenantId = jwt.getClaims().get("tenantId");
+    if (tenantId instanceof Number number) {
+      return number.longValue() == 0L;
+    }
+    return tenantId != null && "0".equals(tenantId.toString());
   }
 
   @SuppressWarnings("unchecked")
