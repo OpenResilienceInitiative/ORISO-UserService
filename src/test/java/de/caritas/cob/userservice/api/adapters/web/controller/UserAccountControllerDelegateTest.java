@@ -131,6 +131,27 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void getUserDataShouldNotRequireTwoFactorSetupForPlatformAdminsWhenOtpIsNotAllowed() {
+    var roles = Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.AGENCY_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    // The setup endpoints would answer 409 for this role, so encouraging 2FA here would
+    // lock the admin UI behind a gate that can never be satisfied.
+    assertThat(partialUserData.getEncourage2fa()).isNull();
+  }
+
+  @Test
   void patchUserShouldRejectMagicLinkLoginWhenConsultantHasDummyEmail() {
     var patchUserDTO = new PatchUserDTO();
     patchUserDTO.setMagicLinkLoginEnabled(true);

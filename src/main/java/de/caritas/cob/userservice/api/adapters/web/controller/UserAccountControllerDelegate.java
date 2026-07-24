@@ -111,7 +111,13 @@ class UserAccountControllerDelegate {
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
-      if (authenticatedUser.isPlatformAdmin()) {
+      // Only ask a platform admin to set 2FA up when the OTP role policy would actually
+      // let them finish. Encouraging it unconditionally deadlocks the admin UI: the
+      // client gates on isToEncourage && !isActive, but isActive can never become true
+      // while the policy denies OTP (the credential is never read), and every setup
+      // endpoint rejects the attempt with 409. See assertTwoFactorAuthAllowed in
+      // UserTwoFactorAuthControllerDelegate.
+      if (authenticatedUser.isPlatformAdmin() && isOtpAllowed()) {
         partialUserData.setEncourage2fa(true);
       }
     } else {
@@ -155,8 +161,12 @@ class UserAccountControllerDelegate {
     }
   }
 
+  private boolean isOtpAllowed() {
+    return identityClientConfig.isOtpAllowed(authenticatedUser.getRoles());
+  }
+
   private OtpInfoDTO retrieveOtpCredentialIfAllowed() {
-    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+    if (!isOtpAllowed()) {
       return null;
     }
     try {
