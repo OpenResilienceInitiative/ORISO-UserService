@@ -1,9 +1,12 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_AIDS;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -22,6 +25,7 @@ import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.RocketChatTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.workflow.delete.service.WorkflowErrorMailService;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +70,8 @@ class DeleteUserAnonymousSchedulerIT {
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @MockitoBean MatrixSynapseService matrixSynapseService;
+
+  @MockitoBean WorkflowErrorMailService workflowErrorMailService;
 
   private Session currentSession;
 
@@ -156,6 +162,21 @@ class DeleteUserAnonymousSchedulerIT {
     prepareCurrentSessionForDeletion();
 
     deleteUserAnonymousScheduler.performDeletionWorkflow();
+
+    assertSessionAndUserDoNotExistInDatabase(
+        currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
+  @Test
+  void performDeletionWorkflow_Should_commitDeletion_When_errorNotificationDependencyFails() {
+    prepareCurrentSessionForDeletion();
+    when(matrixSynapseService.deactivateUser(anyString()))
+        .thenThrow(new IllegalStateException("matrix deletion failed"));
+    doThrow(new IllegalStateException("error notification failed"))
+        .when(workflowErrorMailService)
+        .buildAndSendErrorMail(anyList());
+
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
 
     assertSessionAndUserDoNotExistInDatabase(
         currentSession.getId(), currentSession.getUser().getUserId());

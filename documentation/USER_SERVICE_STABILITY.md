@@ -1,6 +1,7 @@
 # UserService stability, dependency measurements and module decision
 
 Date: 2026-07-25
+Updated: 2026-07-26
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -16,7 +17,7 @@ After repairing those clusters:
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Integration + contract + E2E | 941 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
@@ -110,6 +111,61 @@ The audited pod predates this branch. Therefore its live data proves the OTel
 pipeline and supplies a baseline, but it does not prove the new
 `userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
 repair. Those require the branch image to be deployed and queried again.
+
+### Live PreDev follow-up after the `pre-dev` merge
+
+The 2026-07-26 read-only follow-up kept build, deploy and runtime evidence
+separate:
+
+- merge commit `730a9323` published the UserService `pre-dev` image with digest
+  `sha256:16534c4d5b0cf8d98b58e164c75bc1ee0320e4597fe28181ab56eee198fe1cfb`;
+- the running PreDev deployment still used the older digest
+  `sha256:11c0a03cd903d387a6cc229412ac91e1a99b33cb68f1d276e09613d4c4c479e2`;
+- no `userservice.*` metric metadata existed in the live SigNoz store.
+
+The merge and image publication are therefore confirmed, but deployment and
+the new custom-metric runtime proof remain open.
+
+Approximately 24 hours of traces from that older running image supplied this
+baseline:
+
+| Service/client operation | Spans/calls | Errors | p95 latency |
+| --- | ---: | ---: | ---: |
+| UserService, all spans | 15,732 | 33 | 25.38 ms |
+| Matrix POST | 877 | 0 | 47.64 ms |
+| Matrix DELETE | 660 | 0 | 26.27 ms |
+| Matrix GET | 474 | 1 | about 30 s |
+| Matrix PUT | 8 | 0 | 287.16 ms |
+| Tenant GET | 14 | 10 | n/a |
+| Keycloak GET | 9 | 0 | 16.23 ms |
+| Consulting Type GET | 9 | 0 | 20.86 ms |
+| Agency GET | 4 | 0 | 28.89 ms |
+
+Of the Matrix GET calls, 462 were expected `/sync` long-polls. Their latency is
+not ordinary request slowness. The Tenant errors were 404 responses in a
+technical/global context and required call-site classification rather than
+retries.
+
+### Anonymous-deletion repeat loop
+
+Trace grouping identified one concrete chatty-call cause in
+`deleteUserAnonymousScheduler.performDeletionWorkflow`:
+
+- six scheduler runs made 1,510 successful Matrix client calls;
+- each run averaged about 252 Matrix calls and reached a maximum of 272;
+- every root workflow then failed after about 7.5 seconds while the secondary
+  error-notification path tried to resolve a tenant template.
+
+The deletion method wrapped both irreversible Matrix actions and database
+cleanup in one transaction. When notification failed after the actions, the
+exception rolled back database cleanup, so the next scheduler run repeated the
+already completed external calls.
+
+The notification step is now best-effort: its runtime failure is logged without
+workflow identifiers, while completed deletion results remain committed. A
+regression integration test proves this transaction boundary. The focused
+test, 12 adjacent unit tests, formatting gate and all 941 integration tests pass
+on the repair branch.
 
 ## Chatty-call reductions
 
