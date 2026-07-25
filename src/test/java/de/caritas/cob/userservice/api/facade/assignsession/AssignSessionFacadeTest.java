@@ -87,6 +87,8 @@ class AssignSessionFacadeTest {
                 new GroupMemberDTO("userRcId", null, "name", null, null),
                 new GroupMemberDTO("consultantRcId", null, "name", null, null),
                 new GroupMemberDTO("otherRcId", null, "name", null, null)));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(asList("userRcId", "consultantRcId", "otherRcId"));
     Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
     consultantToRemove.setRocketChatId("otherRcId");
     when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
@@ -138,6 +140,14 @@ class AssignSessionFacadeTest {
                 new GroupMemberDTO("otherRcId", null, "name", null, null),
                 new GroupMemberDTO("teamConsultantRcId", null, "name", null, null),
                 new GroupMemberDTO("teamConsultantRcId2", null, "name", null, null)));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(
+            asList(
+                "userRcId",
+                "newConsultantRcId",
+                "otherRcId",
+                "teamConsultantRcId",
+                "teamConsultantRcId2"));
     Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
     consultantToRemove.setRocketChatId("otherRcId");
     when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");

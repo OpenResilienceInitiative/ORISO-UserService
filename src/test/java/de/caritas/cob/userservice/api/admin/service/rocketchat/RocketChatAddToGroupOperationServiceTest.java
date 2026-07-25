@@ -14,7 +14,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -67,10 +66,8 @@ class RocketChatAddToGroupOperationServiceTest {
     session.setStatus(SessionStatus.NEW);
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     doThrow(new RuntimeException("")).when(this.logMethod).accept(anyString());
-    GroupMemberDTO memberOfGroup = new GroupMemberDTO();
-    memberOfGroup.set_id(consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(singletonList(memberOfGroup));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(singletonList(consultant.getRocketChatId()));
 
     RocketChatAddToGroupOperationService operationService =
         RocketChatAddToGroupOperationService.getInstance(
@@ -116,10 +113,8 @@ class RocketChatAddToGroupOperationServiceTest {
     session.setStatus(SessionStatus.NEW);
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     doThrow(new RuntimeException("")).when(this.logMethod).accept(anyString());
-    GroupMemberDTO memberOfGroup = new GroupMemberDTO();
-    memberOfGroup.set_id(consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(singletonList(memberOfGroup));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(singletonList(consultant.getRocketChatId()));
     doThrow(new RuntimeException(""))
         .when(this.rocketChatFacade)
         .removeUserFromGroup(anyString(), anyString());

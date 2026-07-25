@@ -90,6 +90,26 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "concrete identity or chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_admin_module_depends_on_ports_not_chat_adapters(self):
+        admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.matrix.",
+            "import de.caritas.cob.userservice.api.adapters.rocketchat.",
+        )
+        offenders = []
+
+        for source in admin_module.rglob("*.java"):
+            for line in source.read_text().splitlines():
+                if line.startswith(forbidden_prefixes):
+                    offenders.append(f"{source.relative_to(ROOT)} imports {line}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The admin application module must use outbound ports instead of "
+            "concrete chat adapters:\n" + "\n".join(offenders),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

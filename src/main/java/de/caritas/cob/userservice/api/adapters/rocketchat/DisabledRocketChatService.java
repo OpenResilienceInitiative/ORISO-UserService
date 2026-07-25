@@ -292,6 +292,11 @@ public class DisabledRocketChatService extends RocketChatService {
   }
 
   @Override
+  public List<String> findRoomIds(String chatUserId) {
+    return emptyList();
+  }
+
+  @Override
   public void deleteUser(String rcUserId) {
     skip("deleteUser");
   }

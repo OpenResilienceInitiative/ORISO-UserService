@@ -18,7 +18,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -41,7 +40,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class GrantConsultantIdentityServiceTest {
@@ -87,10 +85,8 @@ class GrantConsultantIdentityServiceTest {
   }
 
   private void stubHappyMatrix() throws Exception {
-    var matrixResponse = new MatrixCreateUserResponseDTO();
-    matrixResponse.setUserId(MATRIX_USER_ID);
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(matrixResponse));
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenReturn(MATRIX_USER_ID);
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
   }
 
@@ -234,7 +230,7 @@ class GrantConsultantIdentityServiceTest {
     when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
         .thenThrow(new RuntimeException("matrix down"));
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -368,8 +364,7 @@ class GrantConsultantIdentityServiceTest {
     when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(new MatrixCreateUserResponseDTO()));
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString())).thenReturn(null);
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 

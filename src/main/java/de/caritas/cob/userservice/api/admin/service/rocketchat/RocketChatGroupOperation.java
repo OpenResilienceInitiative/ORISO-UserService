@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service.rocketchat;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -11,7 +10,6 @@ import de.caritas.cob.userservice.api.service.LogService;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -79,8 +77,6 @@ abstract class RocketChatGroupOperation {
   }
 
   private List<String> obtainRocketChatGroupMemberIds(String groupId) {
-    return this.rocketChatFacade.retrieveRocketChatMembers(groupId).stream()
-        .map(GroupMemberDTO::get_id)
-        .collect(Collectors.toList());
+    return this.rocketChatFacade.retrieveRocketChatMemberIds(groupId);
   }
 }

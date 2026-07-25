@@ -148,20 +148,21 @@ whole codebase as modular:
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
-| Admin | Admin orchestration is grouped below `api.admin`. | The large admin controller and several admin services still depend directly on concrete services or chat/identity adapter types. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning depends on the new `SessionRoomGateway`; `MatrixSessionRoomGateway` owns Matrix HTTP/DTO translation. | Session-list and assignment slices still expose Rocket.Chat/Matrix types and need the same treatment. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
 `service.session` application package from importing Matrix or Rocket.Chat
-adapters. The appointment deletion repair also stays behind `Organizing` and
-`AppointmentRepository`.
+adapters. It also prevents the Identity/Profile packages and the Admin module
+from importing their protected concrete chat adapters. The appointment deletion
+repair stays behind `Organizing` and `AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
-token/create-user DTO decoupling, then the admin composition boundary, then
-session-list/assignment adapter removal. Each step must add a failing boundary
-contract before moving dependencies.
+token/create-user DTO decoupling, then the admin controller composition
+boundary, then session-list/assignment adapter removal. Each step must add a
+failing boundary contract before moving dependencies.
 
 ## Microservice decision
 
