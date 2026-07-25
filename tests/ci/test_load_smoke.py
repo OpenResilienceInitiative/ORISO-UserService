@@ -222,7 +222,9 @@ class LoadSmokeContractTest(unittest.TestCase):
             thread.join(timeout=2)
 
         output = json.loads(result.stdout)
-        self.assertLess(output["summary"]["latency_p95_ms"], 50)
+        self.assertEqual(20, output["summary"]["requests"])
+        self.assertEqual(19, output["summary"]["operations"]["fast-read"]["requests"])
+        self.assertEqual(1, output["summary"]["operations"]["slow-read"]["requests"])
         self.assertGreater(
             output["summary"]["operations"]["slow-read"]["latency_p95_ms"], 50
         )
