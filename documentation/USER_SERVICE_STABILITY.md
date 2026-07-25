@@ -16,7 +16,7 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,801 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 941 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
@@ -143,8 +143,12 @@ baseline:
 
 Of the Matrix GET calls, 462 were expected `/sync` long-polls. Their latency is
 not ordinary request slowness. The Tenant errors were 404 responses in a
-technical/global context and required call-site classification rather than
-retries.
+technical/global context. That context has no tenant-specific branding, so the
+canonical tenant-template supplier now returns only the generic application URL
+without calling TenantService or ApplicationSettingsService. A unit regression
+test proves that both outbound boundaries remain untouched. Runtime
+confirmation still requires the repaired branch image to be merged, deployed
+and traced.
 
 ### Anonymous-deletion repeat loop
 
@@ -163,9 +167,12 @@ already completed external calls.
 
 The notification step is now best-effort: its runtime failure is logged without
 workflow identifiers, while completed deletion results remain committed. A
-regression integration test proves this transaction boundary. The focused
-test, 12 adjacent unit tests, formatting gate and all 941 integration tests pass
-on the repair branch.
+regression integration test proves this transaction boundary. The technical
+mail context also no longer performs the TenantService lookup that caused the
+observed notification failure. On the repair branch, the unit suite reports
+3,801 tests with zero failures, zero errors and seven skips; the integration
+suite reports 941 tests with zero failures, zero errors and three skips. The
+focused supplier test and formatting gate also pass.
 
 ## Chatty-call reductions
 
