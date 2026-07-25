@@ -113,7 +113,15 @@ public class SecurityConfig {
     http.authorizeHttpRequests(
         authorize ->
             authorize
-                .requestMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
+                .requestMatchers(
+                    "/users/docs",
+                    "/users/docs/**",
+                    "/v2/api-docs",
+                    "/configuration/ui",
+                    "/swagger-resources/**",
+                    "/configuration/security",
+                    "/swagger-ui.html",
+                    "/webjars/**")
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
@@ -166,8 +174,6 @@ public class SecurityConfig {
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .permitAll()
-                .requestMatchers("/users/sessions/askers")
                 .permitAll()
                 .requestMatchers(
                     "/users/email",
@@ -236,6 +242,8 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+"))
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/sessions/room/{sessionId:[0-9]+}",
@@ -302,11 +310,16 @@ public class SecurityConfig {
                 .hasAuthority(UPDATE_CHAT)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
-                .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
+                .requestMatchers(
+                    "/useradmin/tenantadmins",
+                    "/useradmin/tenantadmins/**",
+                    "/service/useradmin/tenantadmins",
+                    "/service/useradmin/tenantadmins/**")
                 .hasAuthority(TENANT_ADMIN)
-                .requestMatchers("/useradmin/data/*")
+                .requestMatchers("/useradmin/data", "/service/useradmin/data")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.POST, "/useradmin/consultants/")
+                .requestMatchers(
+                    HttpMethod.POST, "/useradmin/consultants", "/service/useradmin/consultants")
                 .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,

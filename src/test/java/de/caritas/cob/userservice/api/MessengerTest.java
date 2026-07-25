@@ -61,13 +61,26 @@ class MessengerTest {
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 30L);
+    ReflectionTestUtils.setField(messenger, "rocketChatEnabled", false);
   }
 
   // ── getAvailability ───────────────────────────────────────────────────────
 
   @Test
-  void getAvailability_Should_ReturnTrue_Always() {
+  void getAvailability_Should_ReturnTrue_When_RocketChatIsDisabled() {
     assertThat(messenger.getAvailability("consultant-1")).isTrue();
+  }
+
+  @Test
+  void getAvailability_Should_ReturnRocketChatPresence_When_IntegrationIsEnabled() {
+    var consultant = new Consultant();
+    consultant.setRocketChatId("chat-consultant-1");
+    ReflectionTestUtils.setField(messenger, "rocketChatEnabled", true);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant-1"))
+        .thenReturn(Optional.of(consultant));
+    when(messageClient.isAvailable("chat-consultant-1")).thenReturn(Optional.of(false));
+
+    assertThat(messenger.getAvailability("consultant-1")).isFalse();
   }
 
   // ── countPendingEnquiriesAheadOf ─────────────────────────────────────────

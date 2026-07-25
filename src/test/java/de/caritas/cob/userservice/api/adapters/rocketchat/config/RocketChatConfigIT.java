@@ -16,10 +16,8 @@ class RocketChatConfigIT {
   @Test
   void configurationShouldLoadProperties() {
     assertEquals("https://testing.com/api/v1", underTest.getBaseUrl());
-    assertEquals("0 0 * * * ?", underTest.getCredentialCron());
-    assertEquals(
-        "mongodb://<USERNAME>:<PASSWORD>@mongodb:27017/rocketchat?retryWrites=false",
-        underTest.getMongoUrl());
+    assertEquals("0 */10 * * * ?", underTest.getCredentialCron());
+    assertEquals("mongodb://localhost:27017/testing", underTest.getMongoUrl());
   }
 
   @Test

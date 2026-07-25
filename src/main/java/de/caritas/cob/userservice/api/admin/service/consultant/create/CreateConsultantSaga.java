@@ -222,12 +222,16 @@ public class CreateConsultantSaga {
 
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
-    // Use password from DTO (required field)
     String password = consultantCreationInput.getPassword();
-    if (password == null || password.isEmpty()) {
+    if ((password == null || password.isEmpty())
+        && consultantCreationInput.shouldGeneratePassword()) {
+      password = userHelper.getRandomPassword();
+      log.info("Using generated password for consultant import");
+    } else if (password == null || password.isEmpty()) {
       throw new BadRequestException("Password is required for consultant creation");
+    } else {
+      log.info("Using provided password for consultant creation");
     }
-    log.info("Using provided password for consultant creation");
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
 

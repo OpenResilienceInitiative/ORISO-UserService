@@ -18,6 +18,34 @@ def job_block(workflow: str, job_name: str) -> str:
 
 
 class RequiredCiContractTest(unittest.TestCase):
+    def test_integration_tests_preserve_the_configured_test_database(self):
+        test_root = ROOT / "src/test/java"
+        offenders = []
+
+        for source in test_root.rglob("*.java"):
+            for line_number, line in enumerate(source.read_text().splitlines(), start=1):
+                stripped = line.strip()
+                replaces_with_any_database = (
+                    stripped
+                    == "@AutoConfigureTestDatabase(replace = Replace.ANY)"
+                    or stripped
+                    == "@AutoConfigureTestDatabase("
+                    "replace = AutoConfigureTestDatabase.Replace.ANY)"
+                )
+                uses_replacing_default = stripped == "@AutoConfigureTestDatabase"
+                if replaces_with_any_database or uses_replacing_default:
+                    offenders.append(
+                        f"{source.relative_to(ROOT)}:{line_number}: {stripped}"
+                    )
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Integration tests must retain application-testing.properties "
+            "(including H2 MariaDB compatibility settings):\n"
+            + "\n".join(offenders),
+        )
+
     def test_required_runner_propagates_maven_failure(self):
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -39,39 +67,59 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
-            "needs: [validate, redis-contract, required-integration-tests]", aggregate
+            "needs: [validate, redis-contract, mariadb-contract, required-integration-tests]",
+            aggregate,
         )
         self.assertIn("if: always()", aggregate)
         self.assertIn("name: required PreDev CI", aggregate)
         self.assertIn("needs.required-integration-tests.result", aggregate)
+        self.assertIn("needs.mariadb-contract.result", aggregate)
 
     def test_publish_waits_for_required_integration_tests(self):
         workflow = (ROOT / ".github/workflows/ci-main.yml").read_text()
         publish = job_block(workflow, "publish")
         integration = job_block(workflow, "required-integration-tests")
 
-        self.assertIn("needs: required-integration-tests", publish)
+        self.assertIn("needs: [required-integration-tests, mariadb-contract]", publish)
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
 
-    def test_legacy_burn_in_is_visible_owned_and_time_bounded(self):
+    def test_real_mariadb_contract_is_required_on_every_workflow(self):
+        reusable = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
+        self.assertIn("workflow_call:", reusable)
+        self.assertIn("image: mariadb:10.11", reusable)
+        self.assertIn("LIQUIBASE_IT_DB_URL", reusable)
+        self.assertIn("DatabaseChangelogDriftIT", reusable)
+        self.assertIn("AdminStatisticsRepositoryMariaDbIT", reusable)
+        self.assertNotIn("continue-on-error:", reusable)
+
         for relative_path in (
             ".github/workflows/ci-pull-request.yml",
             ".github/workflows/ci-feature-branch.yml",
             ".github/workflows/ci-main.yml",
         ):
             workflow = (ROOT / relative_path).read_text()
-            quarantine = job_block(workflow, "legacy-integration-quarantine")
-            self.assertIn("#734", quarantine)
-            self.assertIn("2026-09-30", quarantine)
-            self.assertNotIn("continue-on-error:", quarantine)
+            mariadb = job_block(workflow, "mariadb-contract")
+            self.assertIn("uses: ./.github/workflows/mariadb-contract.yml", mariadb)
 
-        action = (
-            ROOT / ".github/actions/maven-verify-burnin/action.yml"
-        ).read_text()
-        self.assertIn("id: legacy_verify", action)
-        self.assertIn("continue-on-error: true", action)
-        self.assertIn("steps.legacy_verify.outcome", action)
+    def test_full_integration_suite_is_required_without_quarantine(self):
+        runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
+        self.assertIn("-Dskip.unit-tests=true integration-test", runner)
+        self.assertIn("tests < 900", runner)
+        self.assertIn("UserControllerE2EIT", runner)
+
+        for relative_path in (
+            ".github/workflows/ci-pull-request.yml",
+            ".github/workflows/ci-feature-branch.yml",
+            ".github/workflows/ci-main.yml",
+        ):
+            workflow = (ROOT / relative_path).read_text()
+            self.assertNotIn("legacy-integration-quarantine", workflow)
+            self.assertNotIn("maven-verify-burnin", workflow)
+
+        self.assertFalse(
+            (ROOT / ".github/actions/maven-verify-burnin/action.yml").exists()
+        )
 
 
 if __name__ == "__main__":

@@ -80,7 +80,6 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import jakarta.servlet.http.Cookie;
-import java.lang.reflect.Method;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -112,7 +111,9 @@ import org.keycloak.representations.idm.RoleRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -130,25 +131,23 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.context.request.ServletWebRequest;
-import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
-import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
-import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
 import org.springframework.web.util.UriTemplateHandler;
 
 @SpringBootTest(properties = "rocket-chat.enabled=true")
-@ExtendWith(OutputCaptureExtension.class)
+@ExtendWith({OutputCaptureExtension.class, MockitoExtension.class})
+@MockitoSettings(strictness = Strictness.LENIENT)
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Transactional
 class UserControllerSessionE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private UserController userController;
   private MockMvc mockMvc;
@@ -185,7 +184,7 @@ class UserControllerSessionE2EIT {
   @MockitoBean
   private ConsultantDataFacade consultantDataFacade;
 
-  @Autowired private MongoClient mockedMongoClient;
+  @MockitoBean private MongoClient mockedMongoClient;
 
   @Mock private MongoDatabase mongoDatabase;
 
@@ -224,35 +223,14 @@ class UserControllerSessionE2EIT {
 
   @AfterEach
   void reset() {
-    if (nonNull(user)) {
-      user.setDeleteDate(null);
-      userRepository.save(user);
-      user = null;
-    }
-    if (nonNull(session)) {
-      if (deleteSession) {
-        sessionRepository.delete(session);
-        deleteSession = false;
-      } else {
-        sessionRepository.save(session);
-      }
-      session = null;
-    }
+    user = null;
+    session = null;
+    deleteSession = false;
     consultant = null;
     enquiryMessageDTO = null;
-    consultantAgencyRepository.deleteAll(consultantAgencies);
     consultantAgencies = new ArrayList<>();
-    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
-      chatRepository.deleteById(chat.getId());
-    }
     chat = null;
-    if (nonNull(chatAgency) && chatAgencyRepository.existsById(chatAgency.getId())) {
-      chatAgencyRepository.deleteById(chatAgency.getId());
-    }
     chatAgency = null;
-    if (nonNull(userAgency) && userAgencyRepository.existsById(userAgency.getId())) {
-      userAgencyRepository.deleteById(userAgency.getId());
-    }
     userAgency = null;
     videoChatConfig.setE2eEncryptionEnabled(false);
     userInfoResponse = null;
@@ -263,38 +241,15 @@ class UserControllerSessionE2EIT {
 
   @BeforeEach
   public void setUp() {
-    MockitoAnnotations.initMocks(this);
     this.mockMvc =
         MockMvcBuilders.standaloneSetup(userController)
-            .setHandlerExceptionResolvers(withExceptionControllerAdvice())
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
             .build();
     objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
                 new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()));
-  }
-
-  private ExceptionHandlerExceptionResolver withExceptionControllerAdvice() {
-    final ExceptionHandlerExceptionResolver exceptionResolver =
-        new ExceptionHandlerExceptionResolver() {
-          @Override
-          protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
-              final HandlerMethod handlerMethod,
-              final Exception exception,
-              final ServletWebRequest webRequest) {
-            Method method =
-                new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
-                    .resolveMethod(exception);
-            if (method != null) {
-              return new ServletInvocableHandlerMethod(
-                  new ApiResponseEntityExceptionHandler(), method);
-            }
-            return super.getExceptionHandlerMethod(handlerMethod, exception, webRequest);
-          }
-        };
-    exceptionResolver.afterPropertiesSet();
-    return exceptionResolver;
   }
 
   @Test
@@ -1139,6 +1094,7 @@ class UserControllerSessionE2EIT {
     chat.setConsultingTypeId(easyRandom.nextInt(128));
     chat.setDuration(easyRandom.nextInt(32768));
     chat.setMaxParticipants(easyRandom.nextInt(128));
+    chat.setSourceLanguage("de");
     chat.setUpdateDate(CustomLocalDateTime.nowInUtc());
     chatRepository.save(chat);
 
@@ -1307,7 +1263,7 @@ class UserControllerSessionE2EIT {
 
   private void givenAConsultantOfSameAgencyToAssignTo() {
     consultantToAssign =
-        StreamSupport.stream(consultantRepository.findAll().spliterator(), true)
+        StreamSupport.stream(consultantRepository.findAll().spliterator(), false)
             .filter(c -> !c.getId().equals(consultant.getId()))
             .filter(c -> !c.getId().equals(session.getConsultant().getId()))
             .filter(c -> c.isInAgency(session.getAgencyId()))

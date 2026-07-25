@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional
 class UserServiceIT {
 

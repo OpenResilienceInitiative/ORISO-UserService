@@ -34,16 +34,5 @@ jobs:
       with:
         java_version: '21'
 
-  # Explicit legacy quarantine: #734, owner @Storypapst, expires 2026-09-30.
-  legacy-integration-quarantine:
-    name: legacy integration quarantine (#734, expires 2026-09-30)
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Run full legacy integration suite
-      uses: ./.github/actions/maven-verify-burnin
-      with:
-        java_version: '21'
+  mariadb-contract:
+    uses: ./.github/workflows/mariadb-contract.yml

@@ -40,7 +40,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 @DataJpaTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class ConsultantRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();

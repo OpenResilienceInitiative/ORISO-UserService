@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.DecodeUsernameJsonSerializer;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
@@ -8,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 /**
  * Consultant object for a session representing the assigned consultant (for the user session list
