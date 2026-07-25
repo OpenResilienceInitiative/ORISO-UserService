@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
@@ -18,7 +19,6 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,6 +39,7 @@ class MagicLinkLoginServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private RestTemplate restTemplate;
   @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private OneTimeTokenStore oneTimeTokenStore;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
 
@@ -51,6 +52,7 @@ class MagicLinkLoginServiceTest {
     ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAdminUsername", "admin");
     ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAdminPassword", "secret");
     ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAppClientId", "app");
+    when(oneTimeTokenStore.claim(anyString(), anyString())).thenReturn(Optional.empty());
   }
 
   // --- requestMagicLink ---
@@ -243,17 +245,11 @@ class MagicLinkLoginServiceTest {
     assertThat(result).isEqualTo(MagicLinkRequestResult.ACCEPTED);
   }
 
-  // ── consumeMagicLink — token via reflection ───────────────────────────────
+  // ── consumeMagicLink — shared token store ─────────────────────────────────
 
   @Test
-  @SuppressWarnings("unchecked")
   void consumeMagicLink_Should_ReturnEmpty_When_TokenIsExpired() {
-    var tokens =
-        (java.util.concurrent.ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
-
-    // inject expired token via reflection inner class via constructor
-    // We can't easily inject the private MagicLoginTokenEntry — just confirm empty for unknown
+    when(oneTimeTokenStore.claim("magic-login", "not-stored-token")).thenReturn(Optional.empty());
     assertThat(magicLinkLoginService.consumeMagicLink("not-stored-token")).isEmpty();
   }
 
@@ -293,29 +289,9 @@ class MagicLinkLoginServiceTest {
   // ── Token single-use ─────────────────────────────────────────────────────
 
   @Test
-  @SuppressWarnings("unchecked")
   void consumeMagicLink_Should_RestoreToken_When_ExchangeThrowsException() {
-    // Inject a valid non-expired token directly into the internal map.
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
-
-    // Use reflection to construct the private inner MagicLoginTokenEntry
-    Class<?>[] innerClasses = MagicLinkLoginService.class.getDeclaredClasses();
-    Object entry = null;
-    for (Class<?> cls : innerClasses) {
-      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          entry =
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-keycloak-id", Instant.now().plusSeconds(900));
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-    tokens.put("valid-token", entry);
+    OneTimeTokenStore.TokenClaim claim = validClaim("user-keycloak-id");
+    when(oneTimeTokenStore.claim("magic-login", "valid-token")).thenReturn(Optional.of(claim));
 
     // First call: token is in map, but exchange will fail (no admin credentials) → returns empty
     // The important thing is the token is REMOVED from the map after first consume attempt
@@ -325,35 +301,15 @@ class MagicLinkLoginServiceTest {
 
     magicLinkLoginService.consumeMagicLink("valid-token");
 
-    // When exchange throws (caught → returns null), token is restored in map for retry.
-    // This is intentional behavior (line 116-117 in production code).
-    assertThat(tokens).containsKey("valid-token");
+    verify(oneTimeTokenStore).restore("magic-login", "valid-token", claim, false);
   }
 
   // ── Token restore on transient exchange failure ───────────────────────────
 
   @Test
-  @SuppressWarnings("unchecked")
   void consumeMagicLink_Should_RestoreToken_When_ExchangeReturnsNull() {
-    // If exchangeTokenForUser returns null (transient failure), token must be restored for retry.
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
-
-    Class<?>[] innerClasses = MagicLinkLoginService.class.getDeclaredClasses();
-    for (Class<?> cls : innerClasses) {
-      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          Object entry =
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-keycloak-id", Instant.now().plusSeconds(900));
-          tokens.put("retry-token", entry);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
+    OneTimeTokenStore.TokenClaim claim = validClaim("user-keycloak-id");
+    when(oneTimeTokenStore.claim("magic-login", "retry-token")).thenReturn(Optional.of(claim));
 
     // Admin login returns null body → loginAdminForToken returns null → exchangeTokenForUser
     // returns null → token is restored
@@ -365,8 +321,7 @@ class MagicLinkLoginServiceTest {
         magicLinkLoginService.consumeMagicLink("retry-token");
 
     assertThat(result).isEmpty();
-    // Token must be restored in map for retry
-    assertThat(tokens).containsKey("retry-token");
+    verify(oneTimeTokenStore).restore("magic-login", "retry-token", claim, false);
   }
 
   // ── resolveGlobalSmtpSettings — missing required fields ──────────────────
@@ -476,36 +431,14 @@ class MagicLinkLoginServiceTest {
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
   }
 
-  // ── cleanupExpiredTokens ──────────────────────────────────────────────────
+  // ── Redis failure boundary ────────────────────────────────────────────────
 
   @Test
-  @SuppressWarnings("unchecked")
-  void consumeMagicLink_Should_CleanupExpiredTokens_Before_Lookup() {
-    // cleanupExpiredTokens fires on every consumeMagicLink call.
-    // Inject an already-expired token — it must be removed before lookup.
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
+  void consumeMagicLink_Should_FailClosed_When_TokenStoreIsUnavailable() {
+    when(oneTimeTokenStore.claim("magic-login", "token"))
+        .thenThrow(new IllegalStateException("redis unavailable"));
 
-    for (Class<?> cls : MagicLinkLoginService.class.getDeclaredClasses()) {
-      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          // expiresAt in the past
-          Object expired =
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-id", Instant.now().minusSeconds(60));
-          tokens.put("expired-token", expired);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    assertThat(tokens).containsKey("expired-token");
-    // Consuming any token triggers cleanup — expired entry must be gone after the call
-    magicLinkLoginService.consumeMagicLink("any-other-token");
-    assertThat(tokens).doesNotContainKey("expired-token");
+    assertThat(magicLinkLoginService.consumeMagicLink("token")).isEmpty();
   }
 
   // ── resolveAccount — username encoding fallback ───────────────────────────
@@ -613,24 +546,9 @@ class MagicLinkLoginServiceTest {
   // ── consumeMagicLink — happy path returns KeycloakLoginResponseDTO ────────
 
   @Test
-  @SuppressWarnings("unchecked")
   void consumeMagicLink_Should_ReturnDto_When_TokenValidAndExchangeSucceeds() {
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
-    for (Class<?> cls : MagicLinkLoginService.class.getDeclaredClasses()) {
-      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          tokens.put(
-              "happy-token",
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-kc-id", Instant.now().plusSeconds(900)));
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
+    when(oneTimeTokenStore.claim("magic-login", "happy-token"))
+        .thenReturn(Optional.of(validClaim("user-kc-id")));
 
     Map<String, Object> adminBody = new HashMap<>();
     adminBody.put("access_token", "admin-access-token");
@@ -652,24 +570,10 @@ class MagicLinkLoginServiceTest {
   // ── exchangeTokenForUser catch block — admin succeeds, exchange throws ────
 
   @Test
-  @SuppressWarnings("unchecked")
   void consumeMagicLink_Should_RestoreToken_When_AdminSucceedsButExchangeThrows() {
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(magicLinkLoginService, "magicLoginTokens");
-    for (Class<?> cls : MagicLinkLoginService.class.getDeclaredClasses()) {
-      if (cls.getSimpleName().equals("MagicLoginTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          tokens.put(
-              "exchange-fail-token",
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-id", Instant.now().plusSeconds(900)));
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
+    OneTimeTokenStore.TokenClaim claim = validClaim("user-id");
+    when(oneTimeTokenStore.claim("magic-login", "exchange-fail-token"))
+        .thenReturn(Optional.of(claim));
 
     Map<String, Object> adminBody = new HashMap<>();
     adminBody.put("access_token", "admin-token");
@@ -685,7 +589,7 @@ class MagicLinkLoginServiceTest {
 
     // exchangeTokenForUser catch → returns null → token restored
     assertThat(result).isEmpty();
-    assertThat(tokens).containsKey("exchange-fail-token");
+    verify(oneTimeTokenStore).restore("magic-login", "exchange-fail-token", claim, false);
   }
 
   // ── asIntSettingValue — valid port string "587" ───────────────────────────
@@ -782,6 +686,10 @@ class MagicLinkLoginServiceTest {
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+  }
+
+  private OneTimeTokenStore.TokenClaim validClaim(String subjectId) {
+    return new OneTimeTokenStore.TokenClaim(subjectId, Instant.now().plusSeconds(900));
   }
 
   private User validUserWithMagicLinkEnabled() {

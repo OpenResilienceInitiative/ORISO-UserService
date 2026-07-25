@@ -31,7 +31,6 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -48,11 +47,9 @@ import org.springframework.web.client.RestTemplate;
  * token and sends our own branded, localized email directly via SMTP, instead of handing off to
  * Keycloak's hosted reset-credentials pages/theme (ORISO-Helm#72).
  *
- * <p><b>Known single-replica limitation:</b> reset tokens live only in this process's heap ({@link
- * #resetTokens}). A restart or a crash invalidates every outstanding reset link, and the feature is
- * <b>not safe to run with more than one replica</b> — a request handled by replica A stores the
- * token in A's memory, so a confirm routed to replica B will not find it. This is a deliberate,
- * documented deferral: a Redis/DB-backed store is intentionally out of scope for this change.
+ * <p>Reset tokens live in the shared {@link OneTimeTokenStore}. A request and confirmation may be
+ * handled by different replicas, and replacing an application instance does not invalidate an
+ * outstanding link.
  */
 @Slf4j
 @Service
@@ -60,14 +57,14 @@ import org.springframework.web.client.RestTemplate;
 public class PasswordResetService {
 
   private static final Duration RESET_TOKEN_TTL = Duration.ofMinutes(120);
+  private static final String TOKEN_SCOPE = "password-reset";
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull KeycloakService keycloakService;
   private final @NonNull RestTemplate restTemplate;
-
-  private final Map<String, ResetTokenEntry> resetTokens = new ConcurrentHashMap<>();
+  private final @NonNull OneTimeTokenStore oneTimeTokenStore;
 
   /**
    * Runs the (potentially slow) account lookup + mail dispatch off the request thread so the HTTP
@@ -196,23 +193,35 @@ public class PasswordResetService {
       return false;
     }
 
-    cleanupExpiredTokens();
-    // Claim the token atomically (remove-first) so two concurrent confirmations cannot both
-    // succeed against the same token — this closes the double-confirm race.
-    ResetTokenEntry entry = resetTokens.remove(token);
-    if (entry == null || entry.getExpiresAt().isBefore(Instant.now())) {
+    Optional<OneTimeTokenStore.TokenClaim> claim;
+    try {
+      // Claim the token atomically (remove-first) so concurrent confirmations cannot both succeed.
+      claim = oneTimeTokenStore.claim(TOKEN_SCOPE, token);
+    } catch (RuntimeException redisFailure) {
+      log.warn(
+          "Password-reset token validation unavailable ({})",
+          redisFailure.getClass().getSimpleName());
+      return false;
+    }
+    if (claim.isEmpty()) {
       return false;
     }
 
     try {
-      keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
+      keycloakService.updatePassword(claim.get().subjectId(), newPassword);
     } catch (CustomValidationHttpStatusException ex) {
       // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
       // can safely be restored for a retry with a different password via the same emailed link
       // (mirrors MagicLinkLoginService). Note: there is a small window between the remove above
       // and this re-insert during which a concurrent confirm would observe the token as absent —
       // an acceptable trade for guaranteed single-use on success.
-      resetTokens.put(token, entry);
+      try {
+        oneTimeTokenStore.restore(TOKEN_SCOPE, token, claim.get(), true);
+      } catch (RuntimeException redisFailure) {
+        log.warn(
+            "Password-reset token retry restoration unavailable ({})",
+            redisFailure.getClass().getSimpleName());
+      }
       throw ex;
     }
     // Any other failure: the update outcome is unknown (Keycloak may have applied the password
@@ -281,8 +290,6 @@ public class PasswordResetService {
     }
     var smtpSettings = smtpSettingsOptional.get();
 
-    // Bound the in-memory token map: purge expired entries before inserting a new one.
-    cleanupExpiredTokens();
     String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
     EmailContent content = EMAIL_CONTENT.get(locale);
@@ -292,7 +299,13 @@ public class PasswordResetService {
     } catch (Exception ex) {
       // Do not leave a token behind for a mail that never went out, and never log PII (account id,
       // recipient, or the raw exception message) — record the exception class only.
-      resetTokens.remove(oneTimeToken);
+      try {
+        oneTimeTokenStore.discard(TOKEN_SCOPE, oneTimeToken, target.getKeycloakUserId());
+      } catch (RuntimeException redisFailure) {
+        log.warn(
+            "Password-reset token cleanup unavailable ({})",
+            redisFailure.getClass().getSimpleName());
+      }
       log.warn("Password reset email dispatch failed ({})", ex.getClass().getSimpleName());
       log.debug("Password reset email dispatch failure detail", ex);
     }
@@ -383,19 +396,13 @@ public class PasswordResetService {
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
-    // Cap at one outstanding token per account: a fresh request supersedes any previous link.
-    resetTokens.values().removeIf(entry -> entry.getKeycloakUserId().equals(keycloakUserId));
     String token =
         UUID.randomUUID().toString().replace("-", "")
             + UUID.randomUUID().toString().replace("-", "");
-    resetTokens.put(
-        token, new ResetTokenEntry(keycloakUserId, Instant.now().plus(RESET_TOKEN_TTL)));
+    // Cap at one outstanding token per account across all replicas.
+    oneTimeTokenStore.store(
+        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(RESET_TOKEN_TTL), true);
     return token;
-  }
-
-  private void cleanupExpiredTokens() {
-    Instant now = Instant.now();
-    resetTokens.entrySet().removeIf(entry -> entry.getValue().getExpiresAt().isBefore(now));
   }
 
   private String buildResetFrontendUrl(String oneTimeToken, String frontendBaseUrl) {
@@ -498,12 +505,6 @@ public class PasswordResetService {
   private static class AccountResetTarget {
     String keycloakUserId;
     String email;
-  }
-
-  @lombok.Value
-  private static class ResetTokenEntry {
-    String keycloakUserId;
-    Instant expiresAt;
   }
 
   @lombok.Value
