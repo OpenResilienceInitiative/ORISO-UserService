@@ -1,13 +1,20 @@
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from threading import Thread
+import time
 import unittest
-
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 LOAD_SCRIPT = ROOT / "tests/load/user_service_load_smoke.py"
+SEEDED_PUBLIC_READ_SCENARIO = ROOT / "tests/load/scenarios/seeded-public-read.json"
+AGENCY_STUB_SCRIPT = ROOT / "tests/load/seeded_agency_stub.py"
+SEEDED_PUBLIC_READ_RUNNER = ROOT / "scripts/load/run-seeded-public-read.sh"
 SPEC = importlib.util.spec_from_file_location("user_service_load_smoke", LOAD_SCRIPT)
 LOAD_SMOKE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -26,6 +33,13 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def log_message(self, _format, *_args):
         pass
+
+
+class SlowOperationHandler(HealthHandler):
+    def do_GET(self):
+        if self.path == "/slow":
+            time.sleep(0.1)
+        super().do_GET()
 
 
 class LoadSmokeContractTest(unittest.TestCase):
@@ -52,6 +66,236 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertGreater(summary["requests_per_second"], 0)
         self.assertGreaterEqual(summary["latency_p95_ms"], 0)
         self.assertTrue(all(sample.status == 200 for sample in samples))
+
+    def test_weighted_workload_reports_each_public_read_operation_separately(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            summary, samples = LOAD_SMOKE.run_workload(
+                f"http://127.0.0.1:{server.server_port}",
+                request_specs=[
+                    LOAD_SMOKE.RequestSpec(
+                        name="consultant-profile",
+                        path="/users/consultants/473f7c4b-f011-4fc2-847c-ceb636a5b399",
+                        weight=3,
+                    ),
+                    LOAD_SMOKE.RequestSpec(
+                        name="agency-languages",
+                        path="/users/consultants/languages?agencyId=1",
+                        weight=1,
+                    ),
+                ],
+                requests=40,
+                concurrency=8,
+                timeout_seconds=2,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual(40, summary["requests"])
+        self.assertEqual(30, summary["operations"]["consultant-profile"]["requests"])
+        self.assertEqual(10, summary["operations"]["agency-languages"]["requests"])
+        self.assertEqual(0, summary["operations"]["consultant-profile"]["failures"])
+        self.assertEqual(0, summary["operations"]["agency-languages"]["failures"])
+        self.assertEqual(
+            {"consultant-profile", "agency-languages"},
+            {sample.operation for sample in samples},
+        )
+
+    def test_weighted_workload_requires_one_complete_weight_cycle(self):
+        with self.assertRaisesRegex(
+            ValueError, "requests must cover at least one complete weight cycle"
+        ):
+            LOAD_SMOKE.run_workload(
+                "http://127.0.0.1:1",
+                request_specs=[
+                    LOAD_SMOKE.RequestSpec(name="first", path="/first", weight=3),
+                    LOAD_SMOKE.RequestSpec(name="second", path="/second", weight=1),
+                ],
+                requests=3,
+                concurrency=1,
+                timeout_seconds=1,
+            )
+
+    def test_cli_runs_a_json_scenario_and_emits_per_operation_results(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", encoding="utf-8"
+            ) as scenario:
+                json.dump(
+                    {
+                        "requests": [
+                            {
+                                "name": "consultant-profile",
+                                "path": "/users/consultants/473f7c4b-f011-4fc2-847c-ceb636a5b399",
+                                "weight": 3,
+                            },
+                            {
+                                "name": "agency-languages",
+                                "path": "/users/consultants/languages?agencyId=1",
+                                "weight": 1,
+                            },
+                        ]
+                    },
+                    scenario,
+                )
+                scenario.flush()
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(LOAD_SCRIPT),
+                        "--base-url",
+                        f"http://127.0.0.1:{server.server_port}",
+                        "--scenario",
+                        scenario.name,
+                        "--requests",
+                        "20",
+                        "--concurrency",
+                        "4",
+                    ],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=10,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(
+            15, output["summary"]["operations"]["consultant-profile"]["requests"]
+        )
+        self.assertEqual(
+            5, output["summary"]["operations"]["agency-languages"]["requests"]
+        )
+
+    def test_scenario_fails_when_a_low_weight_operation_exceeds_its_p95_limit(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowOperationHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", encoding="utf-8"
+            ) as scenario:
+                json.dump(
+                    {
+                        "requests": [
+                            {"name": "fast-read", "path": "/fast", "weight": 19},
+                            {"name": "slow-read", "path": "/slow", "weight": 1},
+                        ]
+                    },
+                    scenario,
+                )
+                scenario.flush()
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(LOAD_SCRIPT),
+                        "--base-url",
+                        f"http://127.0.0.1:{server.server_port}",
+                        "--scenario",
+                        scenario.name,
+                        "--requests",
+                        "20",
+                        "--concurrency",
+                        "4",
+                        "--max-p95-ms",
+                        "50",
+                    ],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=10,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        output = json.loads(result.stdout)
+        self.assertLess(output["summary"]["latency_p95_ms"], 50)
+        self.assertGreater(
+            output["summary"]["operations"]["slow-read"]["latency_p95_ms"], 50
+        )
+        self.assertEqual(1, result.returncode)
+
+    def test_repository_scenario_covers_seeded_profiles_relations_and_liveness(self):
+        specs = LOAD_SMOKE.load_request_specs(str(SEEDED_PUBLIC_READ_SCENARIO))
+
+        self.assertEqual(6, len(specs))
+        self.assertEqual(14, sum(spec.weight for spec in specs))
+        self.assertEqual(
+            {
+                "consultant-profile-addiction",
+                "consultant-profile-peer",
+                "consultant-profile-parenting-team",
+                "agency-languages-primary",
+                "agency-languages-multi",
+                "liveness-control",
+            },
+            {spec.name for spec in specs},
+        )
+        self.assertTrue(
+            all(
+                spec.path.startswith("/users/") or spec.path.startswith("/actuator/")
+                for spec in specs
+            )
+        )
+
+    def test_seeded_agency_stub_implements_the_generated_batch_read_contract(self):
+        spec = importlib.util.spec_from_file_location(
+            "seeded_agency_stub", AGENCY_STUB_SCRIPT
+        )
+        stub = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = stub
+        spec.loader.exec_module(stub)
+
+        server = stub.create_server("127.0.0.1", 0)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/agencies/1,121",
+                timeout=2,
+            ) as response:
+                payload = json.load(response)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual([1, 121], [agency["id"] for agency in payload])
+        self.assertTrue(all(agency["offline"] is False for agency in payload))
+
+    def test_seeded_runner_wires_seed_dependency_and_mixed_scenario(self):
+        result = subprocess.run(
+            ["bash", "-n", str(SEEDED_PUBLIC_READ_RUNNER)],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        runner = SEEDED_PUBLIC_READ_RUNNER.read_text(encoding="utf-8")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("UserServiceDatabase.sql", runner)
+        self.assertIn("seeded_agency_stub.py", runner)
+        self.assertIn("seeded-public-read.json", runner)
+        self.assertIn("spring-boot.run.useTestClasspath=true", runner)
+        self.assertIn("--max-error-rate", runner)
+        self.assertIn("--max-p95-ms", runner)
+        self.assertIn("trap cleanup EXIT", runner)
+        self.assertIn("trap 'exit 130' INT", runner)
+        self.assertIn("trap 'exit 143' TERM", runner)
 
 
 if __name__ == "__main__":

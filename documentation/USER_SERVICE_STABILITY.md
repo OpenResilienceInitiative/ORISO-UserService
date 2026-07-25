@@ -55,7 +55,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; Rocket.Chat only when explicitly enabled | HTTP long-poll + HTTP; optional MongoDB |
+| Chat | Matrix; residual Rocket.Chat code only when explicitly enabled | HTTP long-poll + HTTP; optional legacy MongoDB |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -80,6 +80,16 @@ The Java `HttpClient` used by LiveService and Keycloak's own admin-client
 transport are not covered by the payload interceptor; their higher-level retry
 paths are covered by the explicit retry counter. This is a known measurement
 boundary, not an implied zero.
+
+Rocket.Chat is a removal target, not a supported second transport in the target
+architecture. Matrix/Synapse is the sole messaging backbone, the ORISO frontend
+remains the product surface, and LiveKit plus the controlled Element Call path
+is the target calling stack. The remaining Rocket.Chat configuration, adapters,
+DTOs, database/wire names and optional MongoDB access are migration debt to
+delete after data and contract gates; they must not be preserved merely because
+the current ports can hide them. Jitsi removal is coordinated outside this
+UserService-only stability change across Frontend, call/appointment contracts
+and deployment.
 
 ### Live PreDev baseline before this change
 
@@ -161,10 +171,12 @@ policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next safe sequence is the remaining identity
-token/create-user DTO decoupling, then the admin controller composition
-boundary, then session-list adapter removal. Each step must add a failing
-boundary contract before moving dependencies.
+domains are already isolated. The next migration-aligned sequence is the
+session-list Rocket.Chat deletion slice, anonymous identity/provisioning
+cleanup, then Admin chat operations. Coordinated wire/database renames follow
+only after a verified Matrix identity and room-ID backfill. Each step must add a
+failing boundary contract before moving dependencies, and a slice is not
+complete while both transports remain reachable behind a cleaner interface.
 
 ## Microservice decision
 
@@ -186,7 +198,7 @@ Reconsider extraction only when PreDev telemetry supplies all of:
 
 ## Load and regression use
 
-Run a bounded load smoke against a deployed environment:
+Run a bounded single-endpoint smoke against a deployed environment:
 
 ```bash
 python3 tests/load/user_service_load_smoke.py \
@@ -201,12 +213,60 @@ python3 tests/load/user_service_load_smoke.py \
 Protected endpoints can receive repeated `--header 'Name: value'` arguments.
 The script reports request count, error rate, response bytes, throughput and
 mean/p50/p95/max latency and exits non-zero when either threshold is exceeded.
-Its concurrent behavior is itself exercised by the required Python CI contract.
 
-Local proof on 2026-07-25 used a real started UserService testing process and
+For a weighted workload, pass `--scenario`. The exit threshold applies to the
+overall result and every named operation, so a slow low-weight endpoint cannot
+hide behind a healthy aggregate. The runner also requires at least one complete
+weight cycle.
+
+The reproducible local seeded read proof is:
+
+```bash
+bash scripts/load/run-seeded-public-read.sh
+```
+
+The runner starts a real UserService testing-profile process with
+`UserServiceDatabase.sql` in an isolated H2 database, starts the deterministic
+AgencyService batch-read stub, waits for liveness, warms every operation, runs
+`tests/load/scenarios/seeded-public-read.json`, and cleans up both processes.
+Defaults are 1,400 requests, concurrency 32, zero tolerated failures and a
+1,000 ms p95 ceiling. Request count, concurrency and ceiling can be overridden
+with `USERSERVICE_LOAD_REQUESTS`, `USERSERVICE_LOAD_CONCURRENCY` and
+`USERSERVICE_LOAD_MAX_P95_MS`.
+
+The six operations exercise three seeded consultant profiles, their
+agency/topic relations, two agency-language aggregations, the generated
+AgencyService HTTP client contract, security/controller/JPA/mapping paths, and
+a small liveness control.
+
+Local healthy-dependency proof on 2026-07-25:
+
+| Operation | Requests | Failures | Response bytes | p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Consultant profile — addiction | 400 | 0 | 148,400 | 128.55 ms |
+| Consultant profile — peer | 300 | 0 | 172,500 | 133.77 ms |
+| Consultant profile — parenting team | 200 | 0 | 75,000 | 163.93 ms |
+| Agency languages — primary | 200 | 0 | 4,000 | 34.89 ms |
+| Agency languages — multi | 200 | 0 | 4,000 | 40.47 ms |
+| Liveness control | 100 | 0 | 1,500 | 31.92 ms |
+| **Overall** | **1,400** | **0** | **405,400** | **114.28 ms** |
+
+The overall run completed in 1.627 seconds at 860.47 requests/second with
+35.69 ms mean latency and 343.82 ms maximum latency. This is a bounded local
+mixed-read regression proof, not a production capacity claim.
+
+The same seeded workload was also run with AgencyService deliberately
+unavailable. UserService still returned all 1,400 responses through its local
+topic fallback at concurrency 32 (121.19 ms p95, 843.2 requests/second).
+However, each failed dependency attempt emitted a WARN stack trace. That proves
+fallback continuity while exposing log amplification as a separate operational
+risk; it is not equivalent to the healthy-dependency result above.
+
+The earlier control proof on 2026-07-25 used a real started UserService testing process and
 500 requests at concurrency 20 against `/actuator/health/liveness`: 0 failures,
 0% error rate, 2,996 requests/second, 6.58 ms mean and 17.84 ms p95 (25.98 ms
-max). This is a bounded smoke baseline, not a production capacity claim. The
+max). It is retained as a liveness control and is superseded by the seeded mixed
+read scenario for application-path evidence. The
 aggregate local health group was `DOWN` because the developer RabbitMQ instance
 did not accept the testing profile's credentials; liveness and readiness were
 both `UP`, and the dedicated Redis contract passed independently.
