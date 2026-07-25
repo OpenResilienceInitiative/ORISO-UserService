@@ -106,4 +106,11 @@ class AuthorityTest {
     assertTrue(result.contains(AuthorityValue.ANONYMOUS_DEFAULT));
     assertEquals(1, result.size());
   }
+
+  @Test
+  void globalSupportAdminRoleGrantsOnlyDedicatedAuthority() {
+    List<String> result = Authority.getAuthoritiesByUserRole(UserRole.GLOBAL_SUPPORT_ADMIN);
+
+    assertThat(result, contains(AuthorityValue.GLOBAL_SUPPORT_ADMIN));
+  }
 }

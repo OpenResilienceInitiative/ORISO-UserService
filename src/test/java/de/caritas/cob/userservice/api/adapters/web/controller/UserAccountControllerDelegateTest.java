@@ -112,6 +112,30 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void getUserDataShouldRouteGlobalSupportAdminToAdminProfileAndRequireTwoFactorSetup() {
+    var roles = Set.of(UserRole.GLOBAL_SUPPORT_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    var otpInfo = new OtpInfoDTO().otpSetup(false);
+    when(authenticatedUser.isGlobalSupportAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.getOtpCredential(USERNAME)).thenReturn(otpInfo);
+    when(userDtoMapper.userDataOf(eq(partialUserData), eq(otpInfo), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(partialUserData.getEncourage2fa()).isTrue();
+    verify(keycloakUserDataProvider).retrieveAuthenticatedUserData();
+    verify(askerDataProvider, never()).retrieveData(any(User.class));
+  }
+
+  @Test
   void getUserDataShouldRequireTwoFactorSetupForPlatformAdmins() {
     var roles = Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.AGENCY_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();

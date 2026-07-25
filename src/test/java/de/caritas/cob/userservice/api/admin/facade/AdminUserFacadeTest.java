@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
+import de.caritas.cob.userservice.api.admin.service.admin.GlobalSupportAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -40,6 +41,7 @@ class AdminUserFacadeTest {
   @Mock private AdminFilterService adminFilterService;
 
   @Mock private TenantAdminUserService tenantAdminUserService;
+  @Mock private GlobalSupportAdminUserService globalSupportAdminUserService;
 
   @Mock private AuthenticatedUser authenticatedUser;
 
@@ -68,6 +70,15 @@ class AdminUserFacadeTest {
     this.adminUserFacade.createNewTenantAdmin(createAdminDTO);
 
     verify(this.tenantAdminUserService).createNewTenantAdmin(createAdminDTO);
+  }
+
+  @Test
+  void createGlobalSupportAdmin_ShouldUseDedicatedService() {
+    CreateAdminDTO createAdminDTO = mock(CreateAdminDTO.class);
+
+    this.adminUserFacade.createGlobalSupportAdmin(createAdminDTO);
+
+    verify(this.globalSupportAdminUserService).create(createAdminDTO);
   }
 
   @Test

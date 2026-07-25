@@ -184,6 +184,18 @@ public class AuthenticatedUserTest {
   }
 
   @Test
+  public void isGlobalSupportAdmin_Should_ReturnTrue_When_RolesContainGlobalSupportAdmin() {
+    AuthenticatedUser authenticatedUser = givenAuthenticatedUserWithRoles("global-support-admin");
+    assertThat(authenticatedUser.isGlobalSupportAdmin()).isTrue();
+  }
+
+  @Test
+  public void isGlobalSupportAdmin_Should_ReturnFalse_When_RolesIsNull() {
+    AuthenticatedUser authenticatedUser = new AuthenticatedUser();
+    assertThat(authenticatedUser.isGlobalSupportAdmin()).isFalse();
+  }
+
+  @Test
   public void isPlatformAdmin_Should_ReturnTrue_When_TenantIdIsZeroAndAgencyAndTenantSuperAdmin() {
     AuthenticatedUser authenticatedUser =
         givenAuthenticatedUserWithRoles("agency-admin", "tenant-admin");

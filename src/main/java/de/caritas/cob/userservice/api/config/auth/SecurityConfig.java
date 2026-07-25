@@ -304,6 +304,12 @@ public class SecurityConfig {
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
                 .hasAuthority(TENANT_ADMIN)
+                .requestMatchers(
+                    "/useradmin/supportadmins",
+                    "/useradmin/supportadmins/**",
+                    "/service/useradmin/supportadmins",
+                    "/service/useradmin/supportadmins/**")
+                .hasAuthority(TENANT_ADMIN)
                 .requestMatchers("/useradmin/data/*")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.POST, "/useradmin/consultants/")

@@ -57,7 +57,8 @@ public class Admin implements TenantAware {
   public enum AdminType {
     AGENCY,
     TENANT,
-    SUPER
+    SUPER,
+    SUPPORT
   }
 
   @Id
@@ -100,7 +101,7 @@ public class Admin implements TenantAware {
   private String email;
 
   @Enumerated(EnumType.STRING)
-  @Column(length = 6, nullable = false)
+  @Column(length = 32, nullable = false)
   private AdminType type;
 
   @Column(name = "rc_user_id")

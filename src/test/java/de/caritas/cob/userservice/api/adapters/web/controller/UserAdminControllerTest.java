@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeletionPauseRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
@@ -53,6 +55,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.annotation.Validated;
 
@@ -102,6 +105,40 @@ class UserAdminControllerTest {
     var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
     verify(adminUserFacade).createNewTenantAdmin(captor.capture());
     assertEquals("upper@example.org", captor.getValue().getEmail());
+  }
+
+  @Test
+  void createGlobalSupportAdmin_ShouldNormalizeEmailAndReturnCreated() {
+    var dto = new CreateAdminDTO();
+    dto.setEmail("SUPPORT@EXAMPLE.ORG");
+    when(adminUserFacade.createGlobalSupportAdmin(any())).thenReturn(new GlobalSupportAdminDTO());
+
+    var response = controller.createGlobalSupportAdmin(dto);
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
+    verify(adminUserFacade).createGlobalSupportAdmin(captor.capture());
+    assertEquals("support@example.org", captor.getValue().getEmail());
+  }
+
+  @Test
+  void searchGlobalSupportAdmins_ShouldDelegateDecodedQueryAndSorting() {
+    var expected = new GlobalSupportAdminSearchResultDTO();
+    when(adminDtoMapper.mappedFieldOf("EMAIL")).thenReturn("email");
+    when(adminUserFacade.searchGlobalSupportAdmins(eq("sam support"), any())).thenReturn(expected);
+
+    var response = controller.searchGlobalSupportAdmins("sam%20support", 2, 20, "EMAIL", "DESC");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(expected, response.getBody());
+    var pageRequestCaptor = ArgumentCaptor.forClass(PageRequest.class);
+    verify(adminUserFacade)
+        .searchGlobalSupportAdmins(eq("sam support"), pageRequestCaptor.capture());
+    assertEquals(1, pageRequestCaptor.getValue().getPageNumber());
+    assertEquals(20, pageRequestCaptor.getValue().getPageSize());
+    assertEquals(
+        org.springframework.data.domain.Sort.Direction.DESC,
+        pageRequestCaptor.getValue().getSort().getOrderFor("email").getDirection());
   }
 
   @Test

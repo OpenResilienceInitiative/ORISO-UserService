@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import java.util.Objects;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
@@ -12,13 +13,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.test.context.ActiveProfiles;
 
 @DataJpaTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import(JpaAuditingConfiguration.class)
 class AdminRepositoryIT {
 
@@ -55,6 +57,25 @@ class AdminRepositoryIT {
     auditingHandler.markModified(admin);
     admin = adminRepository.save(admin);
     assertTrue(admin.getCreateDate().isBefore(admin.getUpdateDate()));
+  }
+
+  @Test
+  void globalSupportAdminCanBePersistedAndRetrieved() {
+    admin =
+        Admin.builder()
+            .id(UUID.randomUUID().toString())
+            .tenantId(0L)
+            .username("global-support-admin")
+            .firstName("Global")
+            .lastName("Support")
+            .email("global-support-admin@synthetic.oriso.test")
+            .type(AdminType.SUPPORT)
+            .build();
+
+    adminRepository.saveAndFlush(admin);
+
+    assertEquals(
+        AdminType.SUPPORT, adminRepository.findById(admin.getId()).orElseThrow().getType());
   }
 
   private void givenPersistedAdmin() {

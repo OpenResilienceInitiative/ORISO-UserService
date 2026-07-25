@@ -1,0 +1,13 @@
+<?xml version="1.1" encoding="UTF-8" standalone="no"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <changeSet author="ORISO-496" id="ORISO-496-expand-admin-type">
+    <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(32)"/>
+    <rollback>
+      <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(6)"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

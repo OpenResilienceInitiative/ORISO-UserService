@@ -80,7 +80,8 @@ public class IdentityConfig implements IdentityClientConfig {
 
   @Override
   public boolean isOtpAllowed(@NotNull Set<String> roles) {
-    return roles.contains(UserRole.USER.getValue()) && otpAllowedForUsers
+    return roles.contains(UserRole.GLOBAL_SUPPORT_ADMIN.getValue())
+        || roles.contains(UserRole.USER.getValue()) && otpAllowedForUsers
         || roles.contains(UserRole.CONSULTANT.getValue()) && otpAllowedForConsultants
         || roles.contains(UserRole.TENANT_ADMIN.getValue()) && otpAllowedForTenantSuperAdmins
         || roles.contains(UserRole.SINGLE_TENANT_ADMIN.getValue())

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.admin.create;
 
 import static de.caritas.cob.userservice.api.config.auth.UserRole.AGENCY_ADMIN;
+import static de.caritas.cob.userservice.api.config.auth.UserRole.GLOBAL_SUPPORT_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.SINGLE_TENANT_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TENANT_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TOPIC_ADMIN;
@@ -30,6 +31,7 @@ import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -70,6 +72,40 @@ class CreateAdminServiceTest {
 
     assertThat(defaultRoles).containsOnly(USER_ADMIN, AGENCY_ADMIN, TENANT_ADMIN, TOPIC_ADMIN);
     assertThat(defaultRoles).doesNotContain(SINGLE_TENANT_ADMIN);
+  }
+
+  @Test
+  void getDefaultRoles_Should_AssignOnlyDedicatedRole_ForGlobalSupportAdmin() {
+    List<UserRole> defaultRoles = createAdminService.getDefaultRoles(Admin.AdminType.SUPPORT);
+
+    assertThat(defaultRoles).containsOnly(GLOBAL_SUPPORT_ADMIN);
+  }
+
+  @Test
+  void createNewGlobalSupportAdmin_Should_CreatePlatformScopedSupportIdentity() {
+    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    keycloakResponse.setUserId("gsa-id");
+    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
+        .thenReturn(keycloakResponse);
+    when(adminRepository.save(any(Admin.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
+    createAdminDTO.setUsername("global.support");
+    createAdminDTO.setEmail("global.support@example.org");
+    createAdminDTO.setTenantId(99);
+
+    Admin result = createAdminService.createNewGlobalSupportAdmin(createAdminDTO);
+
+    assertThat(result.getId()).isEqualTo("gsa-id");
+    assertThat(result.getType()).isEqualTo(Admin.AdminType.SUPPORT);
+    assertThat(result.getTenantId()).isZero();
+    assertThat(createAdminDTO.getTenantId()).isZero();
+    verify(identityClient).updateRole("gsa-id", GLOBAL_SUPPORT_ADMIN);
+
+    ArgumentCaptor<Admin> adminCaptor = ArgumentCaptor.forClass(Admin.class);
+    verify(adminRepository).save(adminCaptor.capture());
+    assertThat(adminCaptor.getValue().getType()).isEqualTo(Admin.AdminType.SUPPORT);
   }
 
   @Test

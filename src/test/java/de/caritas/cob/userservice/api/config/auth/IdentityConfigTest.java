@@ -84,6 +84,18 @@ class IdentityConfigTest {
     assertValidationError("technicalUser", "must not be null");
   }
 
+  @Test
+  void globalSupportAdminShouldAlwaysBeAllowedToEnrollMandatoryOtp() {
+    givenAValidIdentityConfig();
+    identityConfig.setOtpAllowedForUsers(false);
+    identityConfig.setOtpAllowedForConsultants(false);
+    identityConfig.setOtpAllowedForSingleTenantAdmins(false);
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(false);
+    identityConfig.setOtpAllowedForTenantSuperAdmins(false);
+
+    assertTrue(identityConfig.isOtpAllowed(Set.of(UserRole.GLOBAL_SUPPORT_ADMIN.getValue())));
+  }
+
   private void givenAValidIdentityConfig() {
     identityConfig = easyRandom.nextObject(IdentityConfig.class);
     identityConfig.setOpenidConnectUrl("https://localhost:1000");

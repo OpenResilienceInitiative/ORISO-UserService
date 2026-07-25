@@ -54,12 +54,20 @@ public class CreateAdminService {
     return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
   }
 
+  public Admin createNewGlobalSupportAdmin(CreateAdminDTO createAdminDTO) {
+    createAdminDTO.setTenantId(0);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.SUPPORT);
+  }
+
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
     if (Admin.AdminType.AGENCY.equals(adminType)) {
       return Lists.newArrayList(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
     }
     if (Admin.AdminType.TENANT.equals(adminType)) {
       return getUserRolesForTenantAdmin();
+    }
+    if (Admin.AdminType.SUPPORT.equals(adminType)) {
+      return Lists.newArrayList(UserRole.GLOBAL_SUPPORT_ADMIN);
     }
     return Lists.newArrayList();
   }

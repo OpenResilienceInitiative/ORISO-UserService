@@ -120,6 +120,8 @@
     file="db/changelog/changeset/0071_tutorial_progress/0071_changeSet.xml" />
   <include
     file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0073_global_support_admin/0073_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
