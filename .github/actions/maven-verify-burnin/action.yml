@@ -21,8 +21,21 @@ runs:
       cache: maven
 
   - name: Run Maven verify (legacy quarantine)
+    id: legacy_verify
     shell: bash
+    continue-on-error: true
     run: ./mvnw -B -fae verify
+
+  - name: Record the quarantined Maven outcome
+    if: ${{ always() }}
+    shell: bash
+    env:
+      LEGACY_VERIFY_OUTCOME: ${{ steps.legacy_verify.outcome }}
+    run: |
+      echo "Legacy integration outcome: ${LEGACY_VERIFY_OUTCOME}" >> "$GITHUB_STEP_SUMMARY"
+      if [[ "${LEGACY_VERIFY_OUTCOME}" != success ]]; then
+        echo "::warning::Legacy integration failures are quarantined by #734 until 2026-09-30."
+      fi
 
   - name: Assert test reports were produced (zero-report guard)
     if: ${{ always() }}

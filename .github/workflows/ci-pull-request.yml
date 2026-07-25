@@ -77,7 +77,6 @@ jobs:
   legacy-integration-quarantine:
     name: legacy integration quarantine (#734, expires 2026-09-30)
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
     - name: Checkout repository
