@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 class MatrixSessionRoomGatewayTest {
 
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private MatrixConfig matrixConfig;
   @InjectMocks private MatrixSessionRoomGateway gateway;
 
   @Test
@@ -53,5 +55,21 @@ class MatrixSessionRoomGatewayTest {
         .thenReturn(null);
 
     assertThat(gateway.createUser("consultant", "password", "Consultant Name")).isNull();
+  }
+
+  @Test
+  void shouldBuildUserIdFromConfiguredHomeserver() {
+    when(matrixConfig.getServerName()).thenReturn("matrix.example.org");
+
+    assertThat(gateway.userIdFor("consultant")).isEqualTo("@consultant:matrix.example.org");
+  }
+
+  @Test
+  void shouldDelegateAssignmentRoomOperations() {
+    when(matrixSynapseService.setUserPowerLevel("!room", "@user", 100, "token")).thenReturn(true);
+    when(matrixSynapseService.removeUserFromRoom("!room", "@user", "token")).thenReturn(true);
+
+    assertThat(gateway.setUserPowerLevel("!room", "@user", 100, "token")).isTrue();
+    assertThat(gateway.removeUserFromRoom("!room", "@user", "token")).isTrue();
   }
 }

@@ -15,7 +15,7 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,788 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
@@ -149,20 +149,22 @@ whole codebase as modular:
 | --- | --- | --- |
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
-| Session/consultant | Room provisioning depends on the new `SessionRoomGateway`; `MatrixSessionRoomGateway` owns Matrix HTTP/DTO translation. | Session-list and assignment slices still expose Rocket.Chat/Matrix types and need the same treatment. |
+| Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
 `service.session` application package from importing Matrix or Rocket.Chat
 adapters. It also prevents the Identity/Profile packages and the Admin module
-from importing their protected concrete chat adapters. The appointment deletion
-repair stays behind `Organizing` and `AppointmentRepository`.
+from importing their protected concrete chat adapters. The assignment boundary
+also forbids the legacy admin Rocket.Chat operation implementation, so rollback
+policy cannot leak back into orchestration. The appointment deletion repair
+stays behind `Organizing` and `AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
 token/create-user DTO decoupling, then the admin controller composition
-boundary, then session-list/assignment adapter removal. Each step must add a
-failing boundary contract before moving dependencies.
+boundary, then session-list adapter removal. Each step must add a failing
+boundary contract before moving dependencies.
 
 ## Microservice decision
 

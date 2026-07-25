@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 public class MatrixSessionRoomGateway implements SessionRoomGateway {
 
   private final MatrixSynapseService matrixSynapseService;
+  private final MatrixConfig matrixConfig;
 
   @Override
   public String loginUser(String username, String password) {
@@ -59,5 +61,21 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   @Override
   public boolean ensureAdminInRoom(String roomId, String memberMatrixUserId) {
     return matrixSynapseService.ensureAdminInRoom(roomId, memberMatrixUserId);
+  }
+
+  @Override
+  public boolean setUserPowerLevel(
+      String roomId, String matrixUserId, int powerLevel, String accessToken) {
+    return matrixSynapseService.setUserPowerLevel(roomId, matrixUserId, powerLevel, accessToken);
+  }
+
+  @Override
+  public boolean removeUserFromRoom(String roomId, String matrixUserId, String accessToken) {
+    return matrixSynapseService.removeUserFromRoom(roomId, matrixUserId, accessToken);
+  }
+
+  @Override
+  public String userIdFor(String localpart) {
+    return "@" + localpart + ":" + matrixConfig.getServerName();
   }
 }

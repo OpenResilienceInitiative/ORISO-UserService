@@ -5,10 +5,8 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static de.caritas.cob.userservice.api.testHelper.AsyncVerification.verifyAsync;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_WITH_AGENCY;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.LIST_GROUP_MEMBER_DTO;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKET_CHAT_SYSTEM_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
@@ -34,19 +32,12 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -54,6 +45,8 @@ import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
@@ -77,8 +70,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class AssignEnquiryFacadeTest {
@@ -86,15 +77,11 @@ class AssignEnquiryFacadeTest {
 
   @InjectMocks AssignEnquiryFacade assignEnquiryFacade;
   @Mock SessionService sessionService;
-  @Mock RocketChatFacade rocketChatFacade;
+  @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
 
   @Mock
   @SuppressWarnings("unused")
   KeycloakService keycloakService;
-
-  @SuppressWarnings("unused")
-  @Mock
-  ConsultingTypeManager consultingTypeManager;
 
   @Mock SessionToConsultantVerifier sessionToConsultantVerifier;
   @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
@@ -102,12 +89,11 @@ class AssignEnquiryFacadeTest {
   @Mock StatisticsService statisticsService;
   @Mock HttpServletRequest httpServletRequest;
   @Mock EmailNotificationFacade emailNotificationFacade;
-  @Mock MatrixSynapseService matrixSynapseService;
+  @Mock SessionRoomGateway sessionRoomGateway;
   @Mock ConsultantRepository consultantRepository;
   @Mock UserRepository userRepository;
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
-  @Mock MatrixConfig matrixConfig;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
@@ -138,24 +124,21 @@ class AssignEnquiryFacadeTest {
         .when(usernameTranscoder.decodeUsername(anyString()))
         .thenAnswer(i -> i.getArgument(0));
     lenient().when(userHelper.getRandomPassword()).thenReturn("random-password");
-    lenient().when(matrixConfig.getServerName()).thenReturn("matrix.example.com");
+    lenient()
+        .when(sessionRoomGateway.userIdFor(anyString()))
+        .thenAnswer(invocation -> "@" + invocation.getArgument(0) + ":matrix.example.com");
 
     givenMatrixRoomCreationSucceeds();
   }
 
   private void givenMatrixRoomCreationSucceeds() throws MatrixCreateRoomException {
-    var roomResponse = new MatrixCreateRoomResponseDTO();
-    roomResponse.setRoomId(MATRIX_ROOM_ID);
     lenient()
-        .when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(roomResponse));
+        .when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(MATRIX_ROOM_ID);
+    lenient().when(sessionRoomGateway.loginAsUser(anyString())).thenReturn(MATRIX_TOKEN);
+    lenient().when(sessionRoomGateway.joinRoom(anyString(), anyString())).thenReturn(true);
     lenient()
-        .when(matrixSynapseService.loginAsUserAccessToken(anyString()))
-        .thenReturn(MATRIX_TOKEN);
-    lenient().when(matrixSynapseService.joinRoom(anyString(), anyString())).thenReturn(true);
-    lenient()
-        .when(
-            matrixSynapseService.setUserPowerLevel(anyString(), anyString(), anyInt(), anyString()))
+        .when(sessionRoomGateway.setUserPowerLevel(anyString(), anyString(), anyInt(), anyString()))
         .thenReturn(true);
   }
 
@@ -192,14 +175,9 @@ class AssignEnquiryFacadeTest {
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     USER_WITH_RC_ID.setMatrixUserId(null);
-    lenient()
-        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(LIST_GROUP_MEMBER_DTO);
-
-    var matrixUserResponse = new MatrixCreateUserResponseDTO();
-    matrixUserResponse.setUserId(USER_MATRIX_ID);
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(matrixUserResponse));
+    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
+    when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(USER_MATRIX_ID);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
@@ -213,14 +191,11 @@ class AssignEnquiryFacadeTest {
     // session room must contain the admin or message notifications never fire.
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     CONSULTANT_WITH_AGENCY.setMatrixUserId("@consultant:matrix.example.com");
-    lenient()
-        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(LIST_GROUP_MEMBER_DTO);
+    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
-    verify(matrixSynapseService)
-        .ensureAdminInRoom(MATRIX_ROOM_ID, "@consultant:matrix.example.com");
+    verify(sessionRoomGateway).ensureAdminInRoom(MATRIX_ROOM_ID, "@consultant:matrix.example.com");
   }
 
   @Test
@@ -229,19 +204,16 @@ class AssignEnquiryFacadeTest {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     USER_WITH_RC_ID.setMatrixUserId(null);
     USER_WITH_RC_ID.setUsername("asker");
-    lenient()
-        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(LIST_GROUP_MEMBER_DTO);
-    when(matrixSynapseService.createUser(eq("asker"), anyString(), eq("asker")))
+    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
+    when(sessionRoomGateway.createUser(eq("asker"), anyString(), eq("asker")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
-    when(matrixSynapseService.loginAsUserAccessToken("@asker:matrix.example.com"))
-        .thenReturn(MATRIX_TOKEN);
+    when(sessionRoomGateway.loginAsUser("@asker:matrix.example.com")).thenReturn(MATRIX_TOKEN);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     verify(userRepository).save(USER_WITH_RC_ID);
     assertEquals("@asker:matrix.example.com", USER_WITH_RC_ID.getMatrixUserId());
-    verify(matrixSynapseService, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
+    verify(sessionRoomGateway, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
   }
 
   @Test
@@ -254,40 +226,34 @@ class AssignEnquiryFacadeTest {
     // hardcode and prove it flows verbatim into the constructed MXID — i.e. change the config,
     // change the MXID.
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    when(matrixConfig.getServerName()).thenReturn("test.example.org");
+    when(sessionRoomGateway.userIdFor("probeuser")).thenReturn("@probeuser:test.example.org");
     USER_WITH_RC_ID.setMatrixUserId(null);
     USER_WITH_RC_ID.setUsername("probeuser");
-    lenient()
-        .when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(LIST_GROUP_MEMBER_DTO);
+    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
     // Force the create path to fail so the MXID-construction fallback branch runs.
-    when(matrixSynapseService.createUser(eq("probeuser"), anyString(), eq("probeuser")))
+    when(sessionRoomGateway.createUser(eq("probeuser"), anyString(), eq("probeuser")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     // The constructed candidate MXID must use the configured server name verbatim.
     assertThat(USER_WITH_RC_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
-    verify(matrixSynapseService, atLeastOnce())
-        .loginAsUserAccessToken("@probeuser:test.example.org");
+    verify(sessionRoomGateway, atLeastOnce()).loginAsUser("@probeuser:test.example.org");
   }
 
   @Test
   void assignEnquiry_Should_ReturnOKAndRemoveSystemMessagesFromGroup() {
     // given
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    when(rocketChatFacade.retrieveRocketChatMembers(anyString())).thenReturn(LIST_GROUP_MEMBER_DTO);
+    when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
 
     // when
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     // then
     verifyConsultantAndSessionHaveBeenChecked(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(rocketChatFacade, times(0)).removeUserFromGroup(ROCKET_CHAT_SYSTEM_USER_ID, RC_GROUP_ID);
     verifyAsync(
-        (a) ->
-            verify(rocketChatFacade, times(1))
-                .removeSystemMessagesFromRocketChatGroup(anyString()));
+        (a) -> verify(sessionAssignmentChatGateway, times(1)).removeSystemMessages(anyString()));
     verifyAsync(
         (a) -> verify(tenantContextProvider).setCurrentTenantContextIfMissing(CURRENT_TENANT_ID));
   }
@@ -295,8 +261,8 @@ class AssignEnquiryFacadeTest {
   @Test
   void assignEnquiry_Should_LogError_When_RCRemoveGroupMembersFails() {
     doThrow(new InternalServerErrorException(""))
-        .when(rocketChatFacade)
-        .removeSystemMessagesFromRocketChatGroup(anyString());
+        .when(sessionAssignmentChatGateway)
+        .removeSystemMessages(anyString());
 
     assignEnquiryFacade.assignRegisteredEnquiry(
         U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
@@ -312,8 +278,8 @@ class AssignEnquiryFacadeTest {
   @Test
   void assignEnquiry_Should_LogError_WhenRemoveSystemMessagesFromGroupFails() {
     doThrow(new InternalServerErrorException("error"))
-        .when(rocketChatFacade)
-        .removeSystemMessagesFromRocketChatGroup(Mockito.any());
+        .when(sessionAssignmentChatGateway)
+        .removeSystemMessages(Mockito.any());
 
     assignEnquiryFacade.assignRegisteredEnquiry(
         U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
@@ -340,13 +306,7 @@ class AssignEnquiryFacadeTest {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("consultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(
-            asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("consultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null)));
-    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
         .thenReturn(asList("userRcId", "consultantRcId", "otherRcId"));
     Consultant consultantToRemove = new EasyRandom().nextObject(Consultant.class);
     consultantToRemove.setRocketChatId("otherRcId");
@@ -358,9 +318,8 @@ class AssignEnquiryFacadeTest {
     verifyConsultantAndSessionHaveBeenChecked(session, consultant);
     verifyAsync(
         (a) ->
-            verify(this.rocketChatFacade, times(1))
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
+            verify(sessionAssignmentChatGateway, times(1))
+                .removeConsultantsIgnoringMissingGroup(session, List.of(consultantToRemove)));
   }
 
   @Test
@@ -377,15 +336,7 @@ class AssignEnquiryFacadeTest {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("newConsultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(
-            asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("newConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId2", null, "name", null, null)));
-    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
         .thenReturn(
             asList(
                 "userRcId",
@@ -403,15 +354,8 @@ class AssignEnquiryFacadeTest {
     verifyConsultantAndSessionHaveBeenChecked(session, consultant);
     verifyAsync(
         (a) ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verifyAsync(
-        (a) ->
-            verify(this.rocketChatFacade, never())
-                .removeUserFromGroup("teamConsultantRcId", session.getGroupId()));
-    verify(this.rocketChatFacade, never())
-        .removeUserFromGroup("teamConsultantRcId2", session.getGroupId());
+            verify(sessionAssignmentChatGateway, atLeastOnce())
+                .removeConsultantsIgnoringMissingGroup(session, List.of(consultantToRemove)));
   }
 
   @Test
@@ -421,8 +365,8 @@ class AssignEnquiryFacadeTest {
 
     verifyConsultantAndSessionHaveBeenChecked(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(rocketChatFacade, times(1))
-        .addUserToRocketChatGroup(ROCKETCHAT_ID, ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getGroupId());
+    verify(sessionAssignmentChatGateway, times(1))
+        .addUserToGroup(ROCKETCHAT_ID, ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getGroupId());
   }
 
   @Test
@@ -432,15 +376,15 @@ class AssignEnquiryFacadeTest {
 
     verifyConsultantAndSessionHaveBeenChecked(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(rocketChatFacade, times(1)).removeSystemMessagesFromRocketChatGroup(anyString());
+    verify(sessionAssignmentChatGateway, times(1)).removeSystemMessages(anyString());
   }
 
   @Test
   void
       assignAnonymousEnquiry_Should_ReturnInternalServerErrorAndDoARollback_WhenAddConsultantToGroupFails() {
     doThrow(new InternalServerErrorException(""))
-        .when(rocketChatFacade)
-        .addUserToRocketChatGroup(ROCKETCHAT_ID, RC_GROUP_ID);
+        .when(sessionAssignmentChatGateway)
+        .addUserToGroup(ROCKETCHAT_ID, RC_GROUP_ID);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -499,15 +443,13 @@ class AssignEnquiryFacadeTest {
     consultant.setMatrixUserId(null);
     Session session = sessionWithUser(USER_MATRIX_ID, null);
 
-    var userResponse = new MatrixCreateUserResponseDTO();
-    userResponse.setUserId("@new-consultant:matrix.example.com");
     lenient()
-        .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(userResponse));
+        .when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
+        .thenReturn("@new-consultant:matrix.example.com");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService).createUser(anyString(), anyString(), anyString());
+    verify(sessionRoomGateway).createUser(anyString(), anyString(), anyString());
     verify(consultantRepository).save(consultant);
     assertThat(consultant.getMatrixUserId()).isEqualTo("@new-consultant:matrix.example.com");
   }
@@ -519,9 +461,9 @@ class AssignEnquiryFacadeTest {
     consultant.setMatrixUserId(null);
     Session session = sessionWithUser(USER_MATRIX_ID, null);
 
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+    when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
         .thenThrow(new RuntimeException("Matrix registration failed"));
-    lenient().when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
+    lenient().when(sessionRoomGateway.loginAsUser(anyString())).thenReturn(null);
 
     // consultant ends up with null matrixUserId → ISE from missing credentials check, not from
     // createUser — which proves the exception was swallowed correctly
@@ -529,7 +471,7 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(matrixSynapseService).createUser(anyString(), anyString(), anyString());
+    verify(sessionRoomGateway).createUser(anyString(), anyString(), anyString());
     verify(consultantRepository, never()).save(any());
   }
 
@@ -556,9 +498,9 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(null);
     lenient()
-        .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(null));
-    lenient().when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn(null);
+        .when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+    lenient().when(sessionRoomGateway.loginAsUser(anyString())).thenReturn(null);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -576,8 +518,8 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(null));
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -589,10 +531,8 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    var emptyRoom = new MatrixCreateRoomResponseDTO();
-    emptyRoom.setRoomId(null);
-    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.status(HttpStatus.OK).body(emptyRoom));
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -605,7 +545,7 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("");
+    when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_ID)).thenReturn("");
 
     assertThrows(
         InternalServerErrorException.class,
@@ -617,8 +557,8 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
-    when(matrixSynapseService.joinRoom(eq(MATRIX_ROOM_ID), eq(MATRIX_TOKEN))).thenReturn(false);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
+    when(sessionRoomGateway.joinRoom(eq(MATRIX_ROOM_ID), eq(MATRIX_TOKEN))).thenReturn(false);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -630,7 +570,7 @@ class AssignEnquiryFacadeTest {
     Session session = sessionWithUser(USER_MATRIX_ID, null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
-    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
         .thenThrow(new RuntimeException("Matrix unavailable"));
 
     assertThrows(
@@ -652,13 +592,13 @@ class AssignEnquiryFacadeTest {
     AgencyMatrixCredentialsDTO creds =
         agencyCredentials("@agency:matrix.example.com", "agencyPass");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(matrixSynapseService.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
-    verify(matrixSynapseService)
-        .inviteUserToRoom(
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
+    verify(sessionRoomGateway)
+        .inviteUser(
             eq("!existing-room:matrix.example.com"), eq(CONSULTANT_MATRIX_ID), eq("agency-token"));
   }
 
@@ -671,7 +611,7 @@ class AssignEnquiryFacadeTest {
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -684,7 +624,7 @@ class AssignEnquiryFacadeTest {
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -695,11 +635,11 @@ class AssignEnquiryFacadeTest {
     AgencyMatrixCredentialsDTO creds =
         agencyCredentials("@agency:matrix.example.com", "agencyPass");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(matrixSynapseService.loginUser(anyString(), anyString())).thenReturn("");
+    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("");
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -711,15 +651,14 @@ class AssignEnquiryFacadeTest {
     AgencyMatrixCredentialsDTO creds =
         agencyCredentials("@agency:matrix.example.com", "agencyPass");
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
-    when(matrixSynapseService.loginUser(anyString(), anyString())).thenReturn("agency-token");
-    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
-        .thenReturn(MATRIX_TOKEN);
-    when(matrixSynapseService.joinRoom(eq("!existing-room:matrix.example.com"), any()))
+    when(sessionRoomGateway.loginUser(anyString(), anyString())).thenReturn("agency-token");
+    when(sessionRoomGateway.loginAsUser(CONSULTANT_MATRIX_ID)).thenReturn(MATRIX_TOKEN);
+    when(sessionRoomGateway.joinRoom(eq("!existing-room:matrix.example.com"), any()))
         .thenReturn(false);
 
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
-    verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -728,7 +667,7 @@ class AssignEnquiryFacadeTest {
 
   @Test
   void updateRocketChatRooms_Should_LogAndRethrow_When_MembersFetchFails() {
-    when(rocketChatFacade.retrieveRocketChatMembers(anyString()))
+    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
         .thenThrow(new RuntimeException("RC unavailable"));
 
     assertThrows(

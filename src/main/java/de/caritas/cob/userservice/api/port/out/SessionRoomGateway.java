@@ -31,4 +31,10 @@ public interface SessionRoomGateway {
   boolean joinRoom(String roomId, String accessToken);
 
   boolean ensureAdminInRoom(String roomId, String memberMatrixUserId);
+
+  boolean setUserPowerLevel(String roomId, String matrixUserId, int powerLevel, String accessToken);
+
+  boolean removeUserFromRoom(String roomId, String matrixUserId, String accessToken);
+
+  String userIdFor(String localpart);
 }

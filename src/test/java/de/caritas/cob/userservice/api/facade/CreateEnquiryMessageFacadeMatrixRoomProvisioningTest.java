@@ -10,6 +10,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSessionRoomGateway;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
@@ -89,6 +90,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Mock private SessionService sessionService;
   @Mock private RocketChatService rocketChatService;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private MatrixConfig matrixConfig;
   @Mock private ConsultantAgencyService consultantAgencyService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
@@ -131,7 +133,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
-            new MatrixSessionRoomGateway(matrixSynapseService),
+            new MatrixSessionRoomGateway(matrixSynapseService, matrixConfig),
             sessionService);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 

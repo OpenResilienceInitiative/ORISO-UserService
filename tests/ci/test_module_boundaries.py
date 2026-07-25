@@ -110,6 +110,31 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "concrete chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_session_assignment_module_depends_on_ports_not_chat_adapters(self):
+        assignment_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/assignsession"
+        )
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.matrix.",
+            "import de.caritas.cob.userservice.api.adapters.rocketchat.",
+            "import de.caritas.cob.userservice.api.admin.service.rocketchat.",
+        )
+        offenders = []
+
+        for source in assignment_module.glob("*.java"):
+            for line in source.read_text().splitlines():
+                if line.startswith(forbidden_prefixes):
+                    offenders.append(f"{source.relative_to(ROOT)} imports {line}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The session-assignment application module must use outbound ports "
+            "instead of concrete chat adapters or admin implementation services:\n"
+            + "\n".join(offenders),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
