@@ -138,6 +138,14 @@ class OpenApiContractGateTest(unittest.TestCase):
         self.assertRegex(
             workflow,
             re.compile(
+                r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
+                r"7106a3437e55cdc3e7e9524d6ceaeced300c0b46",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            workflow,
+            re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 r"a213d5546e2cdbcbd1f641291661f11cbbca2cfc",
                 re.DOTALL,
