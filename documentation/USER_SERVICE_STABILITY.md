@@ -15,7 +15,7 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,782 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,788 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
@@ -64,18 +64,52 @@ All `RestTemplateBuilder` clients now emit:
 - `userservice.outbound.http.calls`: call attempts by dependency host, method and
   coarse outcome;
 - `userservice.outbound.http.latency`: latency with the same low-cardinality
-  dimensions;
+  dimensions and finite 10 ms to 60 s SLO buckets, so p95 can be derived in
+  SigNoz instead of having only a `+Inf` bucket;
 - `userservice.outbound.http.payload`: exact request bytes and response bytes
   when `Content-Length` is available;
 - `userservice.outbound.retries`: explicitly scheduled Keycloak and Matrix
   retries by fixed dependency and operation tags.
 
-Paths, query values, IDs and exception text are never metric tags. Spring Boot's
-standard `http.client.requests` remains available as an independent cross-check.
+Paths, query values, IDs and exception text are never custom metric tags.
+Spring Boot's standard `http.client.requests` remains available as an
+independent cross-check, but now uses a bounded observation convention:
+untemplated URLs are grouped as `uri=untemplated`, and URI templates retain
+only their query-free path template.
 The Java `HttpClient` used by LiveService and Keycloak's own admin-client
 transport are not covered by the payload interceptor; their higher-level retry
 paths are covered by the explicit retry counter. This is a known measurement
 boundary, not an implied zero.
+
+### Live PreDev baseline before this change
+
+A read-only SigNoz/ClickHouse audit on 2026-07-25 proved that the running
+UserService pod was exporting both metrics and traces through the cluster OTel
+collector. In an approximately 40-minute active window, the standard client
+metric showed:
+
+| Dependency/operation | Calls | Mean latency |
+| --- | ---: | ---: |
+| Matrix GET 2xx | 138 | 19.36 s |
+| Matrix GET 403 | 26 | 3.9 ms |
+| Matrix POST 2xx | 9 | 176.1 ms |
+| Matrix PUT 2xx | 3 | 262.4 ms |
+| Tenant GET 2xx | 6 | 47.4 ms |
+| Consulting Type GET 2xx | 8 | 16.2 ms |
+| Keycloak GET 2xx | 5 | 19.4 ms |
+| Agency GET 2xx | 2 | 36.6 ms |
+
+The Matrix GET mean is dominated by the expected sync long-poll and must not be
+read as ordinary request slowness. The audit also found 47 Matrix GET series:
+the standard `uri` label included the changing Matrix `since` query parameter.
+That real cardinality defect motivated the bounded observation convention
+above. Existing standard histograms exposed only the `+Inf` bucket, which
+motivated the explicit finite latency buckets.
+
+The audited pod predates this branch. Therefore its live data proves the OTel
+pipeline and supplies a baseline, but it does not prove the new
+`userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
+repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
@@ -93,9 +127,9 @@ dependency only when PreDev shows high calls per request, payload volume or p95
 latency. This avoids speculative batching and caches without an invalidation
 model.
 
-## Internal module boundary
+## Internal module boundaries
 
-The stabilized user and appointment slices follow:
+The intended dependency direction is:
 
 ```mermaid
 flowchart LR
@@ -108,11 +142,26 @@ flowchart LR
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
 
-The `tests/ci/test_module_boundaries.py` contract prevents those web adapters
-from reverting to concrete `AccountManager`, `Messenger`, `Organizer`,
-`KeycloakService` or `RocketChatService` dependencies. The appointment deletion
-repair also stays behind `Organizing` and `AppointmentRepository`, so the HTTP,
-application and persistence contracts can evolve independently.
+The current state is deliberately tracked per domain instead of describing the
+whole codebase as modular:
+
+| Module | Enforced seam | Remaining debt |
+| --- | --- | --- |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
+| Admin | Admin orchestration is grouped below `api.admin`. | The large admin controller and several admin services still depend directly on concrete services or chat/identity adapter types. |
+| Session/consultant | Room provisioning depends on the new `SessionRoomGateway`; `MatrixSessionRoomGateway` owns Matrix HTTP/DTO translation. | Session-list and assignment slices still expose Rocket.Chat/Matrix types and need the same treatment. |
+
+`tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
+from reverting to concrete application/chat services and prevents the
+`service.session` application package from importing Matrix or Rocket.Chat
+adapters. The appointment deletion repair also stays behind `Organizing` and
+`AppointmentRepository`.
+
+This is a ratcheted incremental modularization, not a claim that all three
+domains are already isolated. The next safe sequence is the remaining identity
+token/create-user DTO decoupling, then the admin composition boundary, then
+session-list/assignment adapter removal. Each step must add a failing boundary
+contract before moving dependencies.
 
 ## Microservice decision
 

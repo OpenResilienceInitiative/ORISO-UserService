@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.restclient.RestTemplateCustomizer;
@@ -32,10 +33,29 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
   static final String PAYLOAD = "userservice.outbound.http.payload";
   static final String RETRIES = "userservice.outbound.retries";
 
+  private static final BoundedClientRequestObservationConvention OBSERVATION_CONVENTION =
+      new BoundedClientRequestObservationConvention();
+  private static final Duration[] LATENCY_SLOS = {
+    Duration.ofMillis(10),
+    Duration.ofMillis(25),
+    Duration.ofMillis(50),
+    Duration.ofMillis(100),
+    Duration.ofMillis(250),
+    Duration.ofMillis(500),
+    Duration.ofSeconds(1),
+    Duration.ofSeconds(2),
+    Duration.ofSeconds(5),
+    Duration.ofSeconds(10),
+    Duration.ofSeconds(20),
+    Duration.ofSeconds(30),
+    Duration.ofSeconds(60)
+  };
+
   private final MeterRegistry meterRegistry;
 
   @Override
   public void customize(RestTemplate restTemplate) {
+    restTemplate.setObservationConvention(OBSERVATION_CONVENTION);
     restTemplate.getInterceptors().add(new MetricsInterceptor(meterRegistry));
   }
 
@@ -88,6 +108,7 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
       sample.stop(
           Timer.builder(LATENCY)
               .description("Outbound HTTP latency")
+              .serviceLevelObjectives(LATENCY_SLOS)
               .tags("dependency", dependency, "method", method, "outcome", outcome)
               .register(meterRegistry));
     }

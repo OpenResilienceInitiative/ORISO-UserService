@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSessionRoomGateway;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
@@ -129,7 +130,9 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var realRoomService =
         new AgencyPreAssignmentRoomService(
-            matrixCredentialClient, matrixSynapseService, sessionService);
+            matrixCredentialClient,
+            new MatrixSessionRoomGateway(matrixSynapseService),
+            sessionService);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();

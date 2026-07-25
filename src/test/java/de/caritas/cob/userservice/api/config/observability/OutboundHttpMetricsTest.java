@@ -6,8 +6,13 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.URI;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.client.ClientHttpRequest;
+import org.springframework.http.client.observation.ClientRequestObservationContext;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
@@ -40,13 +45,13 @@ class OutboundHttpMetricsTest {
                 .counter()
                 .count())
         .isEqualTo(1);
-    assertThat(
-            registry
-                .get(OutboundHttpMetrics.LATENCY)
-                .tags("dependency", "matrix.example", "method", "post", "outcome", "2xx")
-                .timer()
-                .count())
-        .isEqualTo(1);
+    var latency =
+        registry
+            .get(OutboundHttpMetrics.LATENCY)
+            .tags("dependency", "matrix.example", "method", "post", "outcome", "2xx")
+            .timer();
+    assertThat(latency.count()).isEqualTo(1);
+    assertThat(latency.takeSnapshot().histogramCounts()).isNotEmpty();
     assertThat(
             registry
                 .get(OutboundHttpMetrics.PAYLOAD)
@@ -83,5 +88,46 @@ class OutboundHttpMetricsTest {
                 .counter()
                 .count())
         .isEqualTo(1);
+  }
+
+  @Test
+  void shouldBoundStandardClientMetricUrisWithoutLosingTemplates() {
+    var request = org.mockito.Mockito.mock(ClientHttpRequest.class);
+    org.mockito.Mockito.when(request.getMethod()).thenReturn(HttpMethod.GET);
+    org.mockito.Mockito.when(request.getURI())
+        .thenReturn(
+            URI.create(
+                "https://matrix.example/_matrix/client/r0/sync"
+                    + "?since=s10188_dynamic&timeout=30000"));
+    var convention = new BoundedClientRequestObservationConvention();
+    var context = new ClientRequestObservationContext(request);
+
+    assertThat(uriTag(convention, context)).isEqualTo("untemplated");
+
+    context.setUriTemplate("/_matrix/client/r0/rooms/{roomId}?since={since}");
+
+    assertThat(uriTag(convention, context)).isEqualTo("/_matrix/client/r0/rooms/{roomId}");
+  }
+
+  @Test
+  void shouldInstallBoundedConventionOnEveryCustomizedRestTemplate() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+    var restTemplate = new RestTemplate();
+
+    metrics.customize(restTemplate);
+
+    assertThat(restTemplate.getObservationConvention())
+        .isInstanceOf(BoundedClientRequestObservationConvention.class);
+  }
+
+  private String uriTag(
+      BoundedClientRequestObservationConvention convention,
+      ClientRequestObservationContext context) {
+    return StreamSupport.stream(convention.getLowCardinalityKeyValues(context).spliterator(), false)
+        .filter(keyValue -> keyValue.getKey().equals("uri"))
+        .findFirst()
+        .orElseThrow()
+        .getValue();
   }
 }

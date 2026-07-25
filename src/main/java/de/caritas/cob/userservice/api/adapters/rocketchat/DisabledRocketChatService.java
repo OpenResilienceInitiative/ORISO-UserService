@@ -106,6 +106,11 @@ public class DisabledRocketChatService extends RocketChatService {
   }
 
   @Override
+  public void updateUserEmail(String chatUserId, String email) {
+    warnOnce("updateUser(email)");
+  }
+
+  @Override
   public Set<String> findAllAvailableUserIds() {
     return Set.of();
   }

@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.SetRoomReadOn
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserCreateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserDeleteBodyDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UsersListReponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -235,6 +236,11 @@ public class RocketChatService implements MessageClient {
       log.error("Setting display failed.", exception);
       return false;
     }
+  }
+
+  @Override
+  public void updateUserEmail(String chatUserId, String email) {
+    updateUser(new UserUpdateRequestDTO(chatUserId, new UserUpdateDataDTO(email, true)));
   }
 
   @Override

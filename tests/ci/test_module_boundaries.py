@@ -41,6 +41,55 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "application services or outbound adapters:\n" + "\n".join(offenders),
         )
 
+    def test_session_module_depends_on_ports_not_chat_adapters(self):
+        session_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/session"
+        )
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.matrix.",
+            "import de.caritas.cob.userservice.api.adapters.rocketchat.",
+        )
+        offenders = []
+
+        for source in session_module.glob("*.java"):
+            for line in source.read_text().splitlines():
+                if line.startswith(forbidden_prefixes):
+                    offenders.append(f"{source.relative_to(ROOT)} imports {line}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The session/consultant application module must use outbound ports "
+            "instead of concrete chat adapters:\n" + "\n".join(offenders),
+        )
+
+    def test_identity_profile_module_depends_on_ports_not_identity_or_chat_adapters(self):
+        application_roots = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/identity",
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/service/user",
+        )
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak.",
+            "import de.caritas.cob.userservice.api.adapters.matrix.",
+            "import de.caritas.cob.userservice.api.adapters.rocketchat.",
+        )
+        offenders = []
+
+        for application_root in application_roots:
+            for source in application_root.rglob("*.java"):
+                for line in source.read_text().splitlines():
+                    if line.startswith(forbidden_prefixes):
+                        offenders.append(f"{source.relative_to(ROOT)} imports {line}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The identity/profile application module must use ports instead of "
+            "concrete identity or chat adapters:\n" + "\n".join(offenders),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

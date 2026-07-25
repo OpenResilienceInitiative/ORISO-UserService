@@ -17,6 +17,8 @@ public interface MessageClient {
   @SuppressWarnings("UnusedReturnValue")
   boolean updateUser(String chatUserId, String displayName);
 
+  void updateUserEmail(String chatUserId, String email);
+
   Optional<Boolean> isLoggedIn(String chatUserId);
 
   Set<String> findAllAvailableUserIds();
