@@ -1233,7 +1233,7 @@ components:
       properties:
         field:
           type: string
-          example: id|name|description|postcode|city|teamAgency|offline|createDate
+          example: id|name|description|postCode|city|teamAgency|offline|createDate
           enum:
             - id
             - name

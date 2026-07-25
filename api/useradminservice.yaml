@@ -1851,7 +1851,7 @@ components:
         _embedded:
           $ref: '#/components/schemas/AgencyAdminResponseDTO'
         _links:
-          $ref: './../services/agencyadminservice.yaml#/components/schemas/AgencyLinks'
+          $ref: '#/components/schemas/AgencyLinks'
 
     AgencyLinks:
       type: object

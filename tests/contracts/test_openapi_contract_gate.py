@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -49,6 +51,47 @@ class OpenApiContractGateTest(unittest.TestCase):
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertIn("provider-contracts-${{ github.sha }}", workflow)
         self.assertNotIn("continue-on-error:", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertEqual(
+            workflow.count("uses: actions/checkout@v6"),
+            workflow.count("persist-credentials: false"),
+        )
+
+    def test_provider_specs_are_linted_before_they_are_bundled(self):
+        publisher = (
+            ROOT / "scripts/contracts/publish-provider-contracts.sh"
+        ).read_text()
+
+        lint = publisher.index(
+            'run_redocly lint --extends minimal "${relative_spec}"'
+        )
+        bundle = publisher.index('run_redocly bundle "${relative_spec}"')
+        self.assertLess(lint, bundle)
+
+    def test_compatibility_views_are_self_contained_and_valid(self):
+        provider = yaml.safe_load((ROOT / "api/useradminservice.yaml").read_text())
+        agency_admin = yaml.safe_load(
+            (ROOT / "services/agencyadminservice.yaml").read_text()
+        )
+        topic = yaml.safe_load((ROOT / "services/topicservice.yaml").read_text())
+
+        full_response = provider["components"]["schemas"][
+            "AgencyAdminFullResponseDTO"
+        ]
+        self.assertEqual(
+            "#/components/schemas/AgencyLinks",
+            full_response["properties"]["_links"]["$ref"],
+        )
+
+        sort_field = agency_admin["components"]["schemas"]["Sort"]["properties"][
+            "field"
+        ]
+        self.assertIn("postCode", sort_field["example"].split("|"))
+        self.assertNotIn("postcode", sort_field["example"].split("|"))
+
+        topic_schemas = topic["components"]["schemas"]
+        self.assertNotIn("format", topic_schemas["WelcomeMessage"])
+        self.assertEqual("uri", topic_schemas["FallBackUrl"]["format"])
 
     def test_all_backend_consumer_contracts_are_checked(self):
         workflow = (ROOT / ".github/workflows/openapi-contracts.yml").read_text()

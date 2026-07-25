@@ -24,6 +24,11 @@ while IFS= read -r spec; do
   output_spec="${output_dir}/$(basename "${spec}")"
   (
     cd "${repo_root}"
+    # The existing generated descriptions are not yet policy-clean, so use
+    # Redocly's structural minimal ruleset: unresolved refs and invalid
+    # OpenAPI structure block publication while legacy style findings remain
+    # visible as warnings.
+    run_redocly lint --extends minimal "${relative_spec}"
     run_redocly bundle "${relative_spec}" --output "${output_spec}"
   )
   spec_count=$((spec_count + 1))
