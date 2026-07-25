@@ -6,7 +6,7 @@ maven_wrapper="${ORISO_MAVEN_WRAPPER:-./mvnw}"
 
 # The complete *IT suite is the required contract. Unit tests are owned by the
 # validate job, so they are skipped here to keep the two conclusions explicit.
-"${maven_wrapper}" -B -Dskip.unit-tests=true integration-test
+"${maven_wrapper}" -B -Dskip.unit-tests=true clean integration-test
 
 python3 - <<'PY'
 from pathlib import Path

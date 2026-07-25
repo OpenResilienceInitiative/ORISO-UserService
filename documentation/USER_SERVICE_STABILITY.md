@@ -16,7 +16,7 @@ After repairing those clusters:
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Unit | 3,782 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true integration-test` |
+| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
@@ -26,11 +26,19 @@ CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, requires at least 900 executed tests and checks for critical E2E reports.
+suite, starts from a clean build, requires at least 900 executed tests and
+checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. The three environment-gated cases are not quarantined: Redis has
 its own required service-container job, and both MariaDB cases run in a required
 fresh-MariaDB job on branch, pull-request and publish workflows.
+
+The first clean Ubuntu run exposed three portability defects that a warmed local
+workspace had hidden. Each Spring test context now owns a unique H2 database so
+an evicted `create-drop` context cannot remove another cached context's schema.
+Timestamp preservation assertions allow only H2's sub-microsecond rounding.
+The Actuator integration test checks liveness rather than aggregate dependency
+health; Redis and MariaDB availability remain independently required contracts.
 
 Making the MariaDB contract required exposed and repaired one real production
 schema drift: `ReservedPublicSlug.active` declared the SQL default as part of

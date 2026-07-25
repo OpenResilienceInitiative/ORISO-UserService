@@ -803,7 +803,7 @@ class UserControllerChatE2EIT {
     assertEquals(chat.getMaxParticipants(), chatAfter.getMaxParticipants());
     assertEquals(chat.getGroupId(), chatAfter.getGroupId());
     assertEquals(chat.getChatOwner(), chatAfter.getChatOwner());
-    assertEquals(chat.getUpdateDate(), chatAfter.getUpdateDate());
+    assertPersistedTimestampEquals(chat.getUpdateDate(), chatAfter.getUpdateDate());
   }
 
   @Test
@@ -1238,7 +1238,7 @@ class UserControllerChatE2EIT {
     assertEquals(chat.getMaxParticipants(), chatAfter.getMaxParticipants());
     assertEquals(originalGroupId, chatAfter.getGroupId());
     assertEquals(chat.getChatOwner(), chatAfter.getChatOwner());
-    assertEquals(originalUpdateDate, chatAfter.getUpdateDate());
+    assertPersistedTimestampEquals(originalUpdateDate, chatAfter.getUpdateDate());
   }
 
   @Test
@@ -1619,6 +1619,13 @@ class UserControllerChatE2EIT {
             logOutput.getOut(),
             "RocketChatTestConfig.removeUserFromGroup(" + chatUserId + "," + groupId + ") called");
     assertEquals(1, occurrencesOfRemoval);
+  }
+
+  private void assertPersistedTimestampEquals(
+      LocalDateTime expected, LocalDateTime persistedValue) {
+    assertTrue(
+        Math.abs(ChronoUnit.NANOS.between(expected, persistedValue)) <= 500,
+        () -> "Expected persisted timestamp " + expected + " but was " + persistedValue);
   }
 
   private void givenNoRocketChatSubscriptionUpdates() {

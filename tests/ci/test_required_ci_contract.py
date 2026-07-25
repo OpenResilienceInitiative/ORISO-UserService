@@ -104,7 +104,7 @@ class RequiredCiContractTest(unittest.TestCase):
 
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
-        self.assertIn("-Dskip.unit-tests=true integration-test", runner)
+        self.assertIn("-Dskip.unit-tests=true clean integration-test", runner)
         self.assertIn("tests < 900", runner)
         self.assertIn("UserControllerE2EIT", runner)
 

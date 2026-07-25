@@ -38,11 +38,11 @@ class ActuatorControllerIT {
   }
 
   @Test
-  void getHealtcheck_Should_returnHealtcheck() throws Exception {
+  void getLivenessHealthcheckShouldReturnUp() throws Exception {
 
     // when // then
     mockMvc
-        .perform(get("/actuator/health").contentType(APPLICATION_JSON))
+        .perform(get("/actuator/health/liveness").contentType(APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("status", is("UP")));
   }
