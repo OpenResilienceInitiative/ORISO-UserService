@@ -1853,13 +1853,25 @@ components:
         _links:
           $ref: '#/components/schemas/AgencyLinks'
 
-    AgencyLinks:
+    DefaultLinks:
       type: object
       required:
         - self
       properties:
         self:
           $ref: '#/components/schemas/HalLink'
+        update:
+          $ref: '#/components/schemas/HalLink'
+        delete:
+          $ref: '#/components/schemas/HalLink'
+
+    AgencyLinks:
+      allOf:
+        - $ref: '#/components/schemas/DefaultLinks'
+        - type: object
+          properties:
+            postcodeRanges:
+              $ref: '#/components/schemas/HalLink'
 
     ConsultantAgencyLinks:
       type: object

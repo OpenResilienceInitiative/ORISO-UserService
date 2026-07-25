@@ -68,6 +68,14 @@ class OpenApiContractGateTest(unittest.TestCase):
         bundle = publisher.index('run_redocly bundle "${relative_spec}"')
         self.assertLess(lint, bundle)
 
+    def test_provider_compatibility_flattens_equivalent_allof_schemas(self):
+        gate = (
+            ROOT / "scripts/contracts/verify-provider-source-compatibility.sh"
+        ).read_text()
+
+        self.assertIn('"${oasdiff_bin}" breaking "${base_spec}" "${head_spec}"', gate)
+        self.assertIn("--flatten-allof", gate)
+
     def test_compatibility_views_are_self_contained_and_valid(self):
         provider = yaml.safe_load((ROOT / "api/useradminservice.yaml").read_text())
         agency_admin = yaml.safe_load(
@@ -81,6 +89,15 @@ class OpenApiContractGateTest(unittest.TestCase):
         self.assertEqual(
             "#/components/schemas/AgencyLinks",
             full_response["properties"]["_links"]["$ref"],
+        )
+        agency_links = provider["components"]["schemas"]["AgencyLinks"]
+        self.assertEqual(
+            "#/components/schemas/DefaultLinks",
+            agency_links["allOf"][0]["$ref"],
+        )
+        self.assertIn(
+            "postcodeRanges",
+            agency_links["allOf"][1]["properties"],
         )
 
         sort_field = agency_admin["components"]["schemas"]["Sort"]["properties"][

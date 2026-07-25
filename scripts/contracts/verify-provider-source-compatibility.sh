@@ -16,6 +16,7 @@ while IFS= read -r base_spec; do
     exit 1
   fi
   "${oasdiff_bin}" breaking "${base_spec}" "${head_spec}" \
+    --flatten-allof \
     --fail-on WARN \
     --format githubactions
   checked=$((checked + 1))
