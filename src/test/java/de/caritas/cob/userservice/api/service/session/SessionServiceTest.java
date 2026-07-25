@@ -1178,6 +1178,64 @@ class SessionServiceTest {
     assertThat(result).hasSize(1);
   }
 
+  // ---------------------------------------------------------------------------
+  // getVisibleAnonymousLiveChatEnquiriesByIds — #774 open-path fallback
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEnquiry_When_ConsultantHasMatchingTopic() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session liveChatEnquiry = easyRandom.nextObject(Session.class);
+    liveChatEnquiry.setMainTopicId(42L);
+    liveChatEnquiry.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    liveChatEnquiry.setStatus(SessionStatus.NEW);
+    liveChatEnquiry.setConsultant(null);
+    liveChatEnquiry.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+            eq(Set.of(103507L)),
+            eq(Set.of(42L)),
+            eq(SessionStatus.NEW),
+            eq(Session.RegistrationType.ANONYMOUS)))
+        .thenReturn(List.of(liveChatEnquiry));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of(103507L));
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEmptyAndNotQuery_When_ConsultantHasNoTopics() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID)).thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of(103507L));
+
+    assertThat(result).isEmpty();
+    verify(sessionRepository, never())
+        .findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(any(), any(), any(), any());
+  }
+
+  @Test
+  void getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEmpty_When_NoSessionIdsGiven() {
+    Consultant consultant = mock(Consultant.class);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of());
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(consultantTopicRepository);
+  }
+
   @Test
   void
       getRegisteredEnquiriesForConsultant_Should_ExcludeRegularTopicOnlySessions_When_ConsultantHasNoSessionAgency() {

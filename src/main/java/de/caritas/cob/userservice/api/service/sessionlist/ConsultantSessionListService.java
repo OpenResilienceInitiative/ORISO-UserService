@@ -69,6 +69,19 @@ public class ConsultantSessionListService {
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
   }
 
+  /**
+   * Loads anonymous Live Chat queue entries by id using the queue's topic-based, cross-tenant
+   * visibility (#774). Used as the open-path fallback when {@link
+   * #retrieveSessionsForConsultantAndSessionIds} finds nothing, so a live chat request the
+   * consultant can see in the queue can also be opened and accepted.
+   */
+  public List<ConsultantSessionResponseDTO>
+      retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+          Consultant consultant, List<Long> sessionIds) {
+    var uniqueSessionIds = new HashSet<>(sessionIds);
+    return sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, uniqueSessionIds);
+  }
+
   public List<ConsultantSessionResponseDTO> retrieveChatsForConsultantAndChatIds(
       Consultant consultant, List<Long> chatIds, String rcAuthToken) {
     log.info(

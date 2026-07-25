@@ -297,6 +297,33 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       Pageable pageable);
 
   /**
+   * Same topic-only visibility as {@link #findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly}
+   * but restricted to the given session ids, for opening a single queue entry rather than listing
+   * the queue (#774). The consultant sees these live-chat requests by topic across tenants; opening
+   * one must apply the identical visibility rule so a request that is visible can always be opened
+   * and accepted. The queue's {@code updateDate} staleness window is intentionally omitted here: it
+   * is a queue-freshness concern, not an access control, and re-applying it would re-introduce a
+   * visible-but-unopenable race for a card that aged out between render and click.
+   * Security-relevant predicates (topic-assigned, unassigned, NEW, anonymous, privacy confirmed)
+   * are all kept.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.id IN :sessionIds "
+          + "AND s.mainTopicId IN :topicIds "
+          + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') ")
+  List<Session> findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+      @Param("sessionIds") Set<Long> sessionIds,
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
+
+  /**
    * Count live-chat enquiries that are visible in the consultant queue and were created before the
    * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
    * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
