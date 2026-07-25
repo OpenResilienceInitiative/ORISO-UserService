@@ -8,7 +8,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantSettings;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,7 +35,7 @@ class GroupChatFeatureGateTest {
             new RestrictedTenantDTO()
                 .id(7L)
                 .name("Tenant")
-                .settings(new RestrictedTenantSettings().featureGroupChatV2Enabled(true)));
+                .settings(new Settings().featureGroupChatV2Enabled(true)));
 
     assertThatCode(() -> gate.requireEnabled(consultant)).doesNotThrowAnyException();
   }
@@ -48,7 +48,7 @@ class GroupChatFeatureGateTest {
             new RestrictedTenantDTO()
                 .id(7L)
                 .name("Tenant")
-                .settings(new RestrictedTenantSettings().featureGroupChatV2Enabled(false)));
+                .settings(new Settings().featureGroupChatV2Enabled(false)));
 
     assertThatThrownBy(() -> gate.requireEnabled(consultant))
         .isInstanceOf(ForbiddenException.class);

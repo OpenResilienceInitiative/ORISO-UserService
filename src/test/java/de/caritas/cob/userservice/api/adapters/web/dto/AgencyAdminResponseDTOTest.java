@@ -9,7 +9,6 @@ class AgencyAdminResponseDTOTest {
   private AgencyAdminResponseDTO givenAFullyPopulatedDTO() {
     return new AgencyAdminResponseDTO()
         .id(1L)
-        .dioceseId(2L)
         .name("Suchtberatung Freiburg")
         .description("description")
         .postcode("79106")
@@ -29,7 +28,6 @@ class AgencyAdminResponseDTOTest {
     var dto = givenAFullyPopulatedDTO();
 
     assertThat(dto.getId()).isEqualTo(1L);
-    assertThat(dto.getDioceseId()).isEqualTo(2L);
     assertThat(dto.getName()).isEqualTo("Suchtberatung Freiburg");
     assertThat(dto.getDescription()).isEqualTo("description");
     assertThat(dto.getPostcode()).isEqualTo("79106");
@@ -48,7 +46,6 @@ class AgencyAdminResponseDTOTest {
   void setters_Should_RoundTripAllFields() {
     var dto = new AgencyAdminResponseDTO();
     dto.setId(1L);
-    dto.setDioceseId(2L);
     dto.setName("name");
     dto.setDescription("description");
     dto.setPostcode("79106");
@@ -110,7 +107,6 @@ class AgencyAdminResponseDTOTest {
     var base = givenAFullyPopulatedDTO();
 
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().id(99L));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().dioceseId(99L));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().name("otherName"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().description("otherDescription"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().postcode("00000"));

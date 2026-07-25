@@ -1,42 +1,36 @@
 openapi: 3.0.1
-
 info:
   title: Definition for Topic API
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
-
 paths:
-  /topic:
-    post:
+  /topic-groups:
+    get:
       tags:
-        - topic-controller
-      summary: 'Creates a new topic [Authorization: Role: topic-admin]'
-      operationId: createTopic
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/TopicDTO'
+        - topic-groups
+      summary: Get all topic groups
+      operationId: getAllTopicGroups
       responses:
-        200:
+        '200':
           description: OK - successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TopicDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        500:
+                $ref: '#/components/schemas/TopicGroupsDTO'
+        '204':
+          description: NO CONTENT - no content found
+        '401':
+          description: UNAUTHORIZED - no/invalid token
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /topic:
     get:
       tags:
         - topic-controller
-      summary: 'Get all topics'
+      summary: Get all topics
       operationId: getAllTopics
       responses:
-        200:
+        '200':
           description: OK - successful operation
           content:
             application/json:
@@ -44,13 +38,13 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TopicDTO'
-        204:
+        '204':
           description: NO CONTENT - no content found
-        400:
+        '400':
           description: BAD REQUEST - invalid/incomplete request or body object
-        401:
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        500:
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /topic/{id}:
     summary: Represents a topic
@@ -58,7 +52,7 @@ paths:
     get:
       tags:
         - topic-controller
-      summary: 'Gets a topic by its id [Not yet implemented]'
+      summary: Gets a topic by its id [Not yet implemented]
       operationId: getTopicById
       parameters:
         - name: id
@@ -69,23 +63,122 @@ paths:
             type: integer
             format: int64
       responses:
-        200:
+        '200':
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TopicDTO'
-        400:
+        '400':
           description: BAD REQUEST - invalid/incomplete request or body object
-        401:
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        404:
+        '404':
           description: Not found
-        500:
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /topic/public:
+    summary: Represents the public allowed topic data
+    get:
+      tags:
+        - topic-controller
+      summary: 'Get all public available (active) topics [Authorization: no-auth]'
+      operationId: getAllActiveTopics
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TopicDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /topicadmin:
+    post:
+      tags:
+        - topic-admin-controller
+      summary: 'Creates a new topic [Authorization: Role: topic-admin]'
+      operationId: createTopic
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TopicMultilingualDTO'
+      responses:
+        '200':
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicMultilingualDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+    get:
+      tags:
+        - topic-admin-controller
+      summary: Get all topics
+      operationId: getAllTopicsAsAdmin
+      responses:
+        '200':
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TopicDTO'
+        '204':
+          description: NO CONTENT - no content found
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /topicadmin/{id}:
+    summary: Represents a topic
+    description: This resource represents an individual topic in a system.
+    get:
+      tags:
+        - topic-admin-controller
+      summary: Gets a topic with translation by its id [Not yet implemented]
+      operationId: getTopicWithTranslationById
+      parameters:
+        - name: id
+          in: path
+          description: Topic ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicMultilingualDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '404':
+          description: Not found
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
     put:
       tags:
-        - topic-controller
+        - topic-admin-controller
       summary: 'Updates a topic [Authorization: Role: topic-admin] [Not yet implemented]'
       operationId: updateTopic
       parameters:
@@ -98,46 +191,97 @@ paths:
             format: int64
       requestBody:
         content:
-          'application/json':
+          application/json:
             schema:
-              $ref: '#/components/schemas/TopicDTO'
+              $ref: '#/components/schemas/TopicMultilingualDTO'
       responses:
-        200:
+        '200':
           description: Successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TopicDTO'
-        401:
+                $ref: '#/components/schemas/TopicMultilingualDTO'
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        409:
+        '409':
           description: CONFLICT - unique constraint validation fails
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-  /topic/public:
-    summary: 'Represents the public allowed topic data'
-    get:
-      tags:
-        - topic-controller
-      summary: 'Get all public available (active) topics [Authorization: no-auth]'
-      operationId: getAllActiveTopics
-      responses:
-        200:
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/TopicDTO'
-        404:
-          description: Not found
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        500:
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
 components:
   schemas:
+    TitlesDTO:
+      type: object
+      properties:
+        short:
+          type: string
+          example: xyz
+        long:
+          type: string
+          example: Beratung xyz in Ort
+        welcome:
+          type: string
+          example: Herzlich Willkommen zu Beratung xyz
+        registrationDropdown:
+          type: string
+          example: Beratung xyz
+    TitlesMultilingualDTO:
+      type: object
+      properties:
+        short:
+          type: object
+          additionalProperties:
+            type: string
+        long:
+          type: object
+          additionalProperties:
+            type: string
+        welcome:
+          type: string
+          example: Herzlich Willkommen zu Beratung xyz
+        registrationDropdown:
+          type: string
+          example: Beratung xyz
+    TopicGroupsDTO:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: object
+          required:
+            - items
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required:
+                  - id
+                  - name
+                  - topicIds
+                properties:
+                  id:
+                    type: integer
+                    example: 12132
+                  name:
+                    type: string
+                    example: Topic group name
+                    maxLength: 100
+                  topicIds:
+                    type: array
+                    items:
+                      type: integer
+    FallbackAgencyId:
+      type: integer
+      format: int32
+    WelcomeMessage:
+      type: string
+      format: int32
+      maxLength: 200
+    FallBackUrl:
+      type: string
+      format: url
+      maxLength: 200
     TopicDTO:
       type: object
       required:
@@ -150,21 +294,87 @@ components:
           example: 12132
         name:
           type: string
-          example: "Topic name"
+          example: Topic name
+          maxLength: 100
+        slug:
+          type: string
+          example: topic_slug
           maxLength: 100
         description:
           type: string
-          example: "Description"
+          example: Description
           maxLength: 100
         internalIdentifier:
           type: string
-          example: "identifier for data exports for example: alcohol"
+          example: 'identifier for data exports for example: alcohol'
           maxLength: 50
         status:
           type: string
-          example: "Active"
+          example: Active
           maxLength: 10
         createDate:
           type: string
         updateDate:
           type: string
+        fallbackAgencyId:
+          $ref: '#/components/schemas/FallbackAgencyId'
+        fallbackUrl:
+          $ref: '#/components/schemas/FallBackUrl'
+        welcomeMessage:
+          $ref: '#/components/schemas/WelcomeMessage'
+        titles:
+          $ref: '#/components/schemas/TitlesDTO'
+    TopicMultilingualDTO:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12132
+        name:
+          type: object
+          additionalProperties:
+            type: string
+        slug:
+          type: string
+          example: topic_slug
+          maxLength: 100
+        description:
+          type: object
+          additionalProperties:
+            type: string
+        internalIdentifier:
+          type: string
+          example: 'identifier for data exports for example: alcohol'
+          maxLength: 50
+        status:
+          type: string
+          example: Active
+          maxLength: 10
+        createDate:
+          type: string
+        updateDate:
+          type: string
+        fallbackAgencyId:
+          $ref: '#/components/schemas/FallbackAgencyId'
+        fallbackUrl:
+          $ref: '#/components/schemas/FallBackUrl'
+        welcomeMessage:
+          $ref: '#/components/schemas/WelcomeMessage'
+        titles:
+          $ref: '#/components/schemas/TitlesMultilingualDTO'
+    Translation:
+      type: object
+      required:
+        - lang
+      properties:
+        lang:
+          type: string
+          example: en
+        value:
+          type: string
+          maxLength: 100
+          example: Lorem
