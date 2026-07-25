@@ -108,7 +108,7 @@ class OpenApiContractGateTest(unittest.TestCase):
 
         topic_schemas = topic["components"]["schemas"]
         self.assertNotIn("format", topic_schemas["WelcomeMessage"])
-        self.assertEqual("uri", topic_schemas["FallBackUrl"]["format"])
+        self.assertNotIn("format", topic_schemas["FallBackUrl"])
 
     def test_all_backend_consumer_contracts_are_checked(self):
         workflow = (ROOT / ".github/workflows/openapi-contracts.yml").read_text()
@@ -139,7 +139,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"7106a3437e55cdc3e7e9524d6ceaeced300c0b46",
+                r"48004847491b0ad0d38296a5d57d1ba3c1ea4730",
                 re.DOTALL,
             ),
         )

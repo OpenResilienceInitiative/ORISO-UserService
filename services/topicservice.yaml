@@ -279,7 +279,6 @@ components:
       maxLength: 200
     FallBackUrl:
       type: string
-      format: uri
       maxLength: 200
     TopicDTO:
       type: object

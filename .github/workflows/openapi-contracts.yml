@@ -45,7 +45,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
-        ref: ${{ github.event_name == 'pull_request' && '7106a3437e55cdc3e7e9524d6ceaeced300c0b46' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && '48004847491b0ad0d38296a5d57d1ba3c1ea4730' || 'pre-dev' }}
         path: .providers/consulting
         persist-credentials: false
 
