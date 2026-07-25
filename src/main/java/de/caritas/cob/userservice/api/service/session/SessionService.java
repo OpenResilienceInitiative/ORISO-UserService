@@ -46,6 +46,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -642,6 +643,58 @@ public class SessionService {
             .filter(session -> isConsultantPermittedToSession(consultant, session))
             .collect(Collectors.toList());
     return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
+   * Loads anonymous Live Chat queue entries by id for a consultant, applying the exact same
+   * topic-based, cross-tenant visibility the queue itself uses ({@link
+   * de.caritas.cob.userservice.api.conversation.provider.AnonymousEnquiryConversationListProvider}).
+   *
+   * <p>#774: the queue makes anonymous NEW enquiries visible by the consultant's topics across
+   * tenants, but {@link #getSessionsByIds} only permits sessions the consultant is assigned to /
+   * shares an agency with, and runs tenant-filtered. A consultant could therefore see a live chat
+   * request in the queue yet receive 204 opening it, blocking acceptance. This method is the scoped
+   * fallback the open path uses so a visible request can always be opened; it never widens access
+   * to registered sessions.
+   */
+  public List<ConsultantSessionResponseDTO> getVisibleAnonymousLiveChatEnquiriesByIds(
+      Consultant consultant, Set<Long> sessionIds) {
+    if (!isNotEmpty(sessionIds)) {
+      return emptyList();
+    }
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (topicIds == null || topicIds.isEmpty()) {
+      return emptyList();
+    }
+    var sessions =
+        runCrossTenant(
+            () ->
+                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+                    sessionIds,
+                    new HashSet<>(topicIds),
+                    SessionStatus.NEW,
+                    RegistrationType.ANONYMOUS));
+    return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
+   * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
+   * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
+   * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
+   * guard.
+   */
+  private <T> T runCrossTenant(Supplier<T> query) {
+    var callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return query.get();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
   }
 
   /**

@@ -26,7 +26,7 @@ public class ReservedPublicSlug {
   @Column(name = "reason", length = 512)
   private String reason;
 
-  @Column(name = "active", nullable = false, columnDefinition = "tinyint default 1")
+  @Column(name = "active", nullable = false, columnDefinition = "tinyint")
   private boolean active = true;
 
   @Column(name = "created_by", length = 64)

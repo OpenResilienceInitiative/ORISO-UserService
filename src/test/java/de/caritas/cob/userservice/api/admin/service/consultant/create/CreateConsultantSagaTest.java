@@ -305,15 +305,18 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_throwBadRequest_When_importRecordHasNoPassword() {
+  void createNewConsultant_Should_generatePassword_When_importRecordHasNoPassword()
+      throws Exception {
     ImportRecord importRecord = validImportRecord();
-    stubKeycloakUserCreation();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
 
-    assertThrows(
-        BadRequestException.class,
-        () ->
-            createConsultantSaga.createNewConsultant(
-                importRecord, CollectionHelper.asSet(CONSULTANT.getValue())));
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant, notNullValue());
+    verify(identityClient).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 
   @Test

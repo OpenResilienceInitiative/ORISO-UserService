@@ -28,7 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 @ActiveProfiles("testing")
 class ChatSeriesControllerAuthorizationIT {
 
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", "test");
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", "test");
 
   @Autowired private MockMvc mvc;
   @Autowired private ObjectMapper objectMapper;
@@ -46,7 +46,7 @@ class ChatSeriesControllerAuthorizationIT {
                         .authorities(new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))
                         .jwt(token -> token.claim("userId", "consultant-1")))
                 .cookie(CSRF_COOKIE)
-                .header("csrfHeader", "test")
+                .header("X-CSRF-Token", "test")
                 .queryParam("from", "2026-07-01T00:00:00Z")
                 .queryParam("to", "2026-08-01T00:00:00Z")
                 .queryParam("limit", "50"))
@@ -62,7 +62,7 @@ class ChatSeriesControllerAuthorizationIT {
                         .authorities(new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))
                         .jwt(token -> token.claim("userId", "consultant-1")))
                 .cookie(CSRF_COOKIE)
-                .header("csrfHeader", "test")
+                .header("X-CSRF-Token", "test")
                 .queryParam("originalStartUtc", "2026-07-20T16:00:00Z"))
         .andExpect(status().isForbidden());
   }

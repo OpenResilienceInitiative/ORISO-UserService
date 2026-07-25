@@ -46,7 +46,7 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @ActiveProfiles("testing")
 class UserStatisticsControllerAuthorizationIT {
 

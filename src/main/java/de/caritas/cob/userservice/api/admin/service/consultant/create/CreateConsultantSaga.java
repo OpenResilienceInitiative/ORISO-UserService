@@ -12,8 +12,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -27,18 +25,20 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.Consul
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.CreateConsultantDTOAbsenceInputAdapter;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
+import de.caritas.cob.userservice.api.exception.MessageClientException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -67,13 +67,13 @@ public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MessageClient messageClient;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -222,12 +222,16 @@ public class CreateConsultantSaga {
 
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
-    // Use password from DTO (required field)
     String password = consultantCreationInput.getPassword();
-    if (password == null || password.isEmpty()) {
+    if ((password == null || password.isEmpty())
+        && consultantCreationInput.shouldGeneratePassword()) {
+      password = userHelper.getRandomPassword();
+      log.info("Using generated password for consultant import");
+    } else if (password == null || password.isEmpty()) {
       throw new BadRequestException("Password is required for consultant creation");
+    } else {
+      log.info("Using provided password for consultant creation");
     }
-    log.info("Using provided password for consultant creation");
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
 
@@ -239,16 +243,15 @@ public class CreateConsultantSaga {
         String matrixPassword = userHelper.getRandomPassword();
         log.info(
             "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
-        var matrixResponse =
-            matrixSynapseService.createUser(
+        matrixUserId =
+            matrixUserClient.createUserId(
                 plainCreds.getUsername(),
                 matrixPassword,
                 consultantCreationInput.getFirstName()
                     + " "
                     + consultantCreationInput.getLastName());
 
-        if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-          matrixUserId = matrixResponse.getBody().getUserId();
+        if (matrixUserId != null) {
           log.info(
               "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
               plainCreds.getUsername(),
@@ -314,9 +317,9 @@ public class CreateConsultantSaga {
     enquiries.forEach(
         session -> {
           try {
-            rocketChatService.addUserToGroup(
+            messageClient.addUserToGroup(
                 consultant.getRocketChatId(), session.getSession().getGroupId());
-          } catch (RocketChatAddUserToGroupException e) {
+          } catch (MessageClientException e) {
             log.error(
                 "Unable to add user with id {} to group with id {}",
                 consultant.getRocketChatId(),
@@ -453,7 +456,7 @@ public class CreateConsultantSaga {
   private String createRocketChatUserOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      return this.rocketChatService.getUserID(
+      return this.messageClient.getUserID(
           consultantCreationInput.getEncodedUsername(), password, true);
     } catch (Exception e) {
       log.warn(

@@ -40,7 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @TestPropertySource(properties = "feature.topics.enabled=true")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class SessionServiceIT {
 
   @Autowired private SessionService sessionService;

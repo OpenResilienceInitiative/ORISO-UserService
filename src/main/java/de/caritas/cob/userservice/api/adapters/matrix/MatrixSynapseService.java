@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -37,7 +38,7 @@ import org.springframework.web.util.UriUtils;
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-public class MatrixSynapseService {
+public class MatrixSynapseService implements MatrixUserClient {
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -246,6 +247,13 @@ public class MatrixSynapseService {
       throw new MatrixCreateUserException(
           String.format("Could not create user (%s) in Matrix", username));
     }
+  }
+
+  @Override
+  public String createUserId(String username, String password, String displayName)
+      throws MatrixCreateUserException {
+    var response = createUser(username, password, displayName);
+    return response == null || response.getBody() == null ? null : response.getBody().getUserId();
   }
 
   /**
@@ -576,6 +584,7 @@ public class MatrixSynapseService {
    * @param displayName the new display name
    * @return true if successful, false otherwise
    */
+  @Override
   public boolean updateUserDisplayName(String matrixUserId, String displayName) {
     try {
       // Get admin token

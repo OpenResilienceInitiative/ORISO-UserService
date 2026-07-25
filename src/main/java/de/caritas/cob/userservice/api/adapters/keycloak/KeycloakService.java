@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
@@ -49,6 +50,7 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -84,11 +86,18 @@ public class KeycloakService implements IdentityClient {
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
+  private OutboundHttpMetrics outboundHttpMetrics;
+
   @Value("${api.error.keycloakError}")
   private String keycloakError;
 
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
 
   /**
    * Changes the (Keycloak) password of a user and returns true on success.
@@ -574,6 +583,7 @@ public class KeycloakService implements IdentityClient {
               + " token refresh and retrying once",
           roleName,
           userId);
+      recordRetry("admin-session-refresh");
       keycloakClient.refreshAdminSession();
       updateRoleOnce(userId, roleName);
     }
@@ -598,6 +608,7 @@ public class KeycloakService implements IdentityClient {
     }
 
     for (int attempt = 0; attempt < 3; attempt++) {
+      recordRetry("role-visibility");
       try {
         Thread.sleep(100L);
       } catch (InterruptedException interruptedException) {
@@ -612,6 +623,12 @@ public class KeycloakService implements IdentityClient {
     }
 
     throw new KeycloakException("Could not update user role");
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("keycloak", operation);
+    }
   }
 
   private boolean isRoleAssigned(UserResource user, String roleName) {

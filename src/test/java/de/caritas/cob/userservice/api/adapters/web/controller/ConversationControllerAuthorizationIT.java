@@ -53,8 +53,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 @AutoConfigureMockMvc
 class ConversationControllerAuthorizationIT {
 
-  private final String CSRF_COOKIE = "csrfCookie";
-  private final String CSRF_HEADER = "csrfHeader";
+  private final String CSRF_COOKIE = "CSRF-TOKEN";
+  private final String CSRF_HEADER = "X-CSRF-Token";
   private final String CSRF_VALUE = "test";
   private final Cookie csrfCookie = new Cookie(CSRF_COOKIE, CSRF_VALUE);
 

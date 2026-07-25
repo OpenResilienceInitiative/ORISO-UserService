@@ -38,6 +38,10 @@ runs:
           sys.exit(1)
       PY
 
+  - name: Verify CI and load-test contracts
+    shell: bash
+    run: python3 -m unittest discover -s tests/ci -p 'test_*.py'
+
   - name: Package Java application
     shell: bash
     run: ./mvnw -B package -DskipTests

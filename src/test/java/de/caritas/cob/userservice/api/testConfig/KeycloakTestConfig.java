@@ -97,6 +97,11 @@ public class KeycloakTestConfig {
         return keycloakUserDTO;
       }
 
+      @Override
+      public boolean isUsernameAvailable(String username) {
+        return true;
+      }
+
       private boolean shouldGenerateNewUsername(UserDTO user) {
         return user.getUserGender() != null;
       }

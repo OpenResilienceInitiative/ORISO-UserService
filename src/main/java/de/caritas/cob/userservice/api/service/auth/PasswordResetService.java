@@ -4,7 +4,6 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -12,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
@@ -64,7 +64,7 @@ public class PasswordResetService {
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
-  private final @NonNull KeycloakService keycloakService;
+  private final @NonNull IdentityClient identityClient;
   private final @NonNull RestTemplate restTemplate;
 
   private final Map<String, ResetTokenEntry> resetTokens = new ConcurrentHashMap<>();
@@ -205,7 +205,7 @@ public class PasswordResetService {
     }
 
     try {
-      keycloakService.updatePassword(entry.getKeycloakUserId(), newPassword);
+      identityClient.updatePassword(entry.getKeycloakUserId(), newPassword);
     } catch (CustomValidationHttpStatusException ex) {
       // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
       // can safely be restored for a retry with a different password via the same emailed link
