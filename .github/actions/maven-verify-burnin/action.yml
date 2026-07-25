@@ -1,12 +1,10 @@
-name: Reusable Maven integration-test burn-in
+name: Reusable legacy integration-test quarantine
 
-# Burn-in action (Test Quality Audit 2026-07-04, item 3 + CI Roadmap Part 1).
+# Time-bounded quarantine owned by #734 and expiring 2026-09-30.
 # Runs the full `verify` lifecycle so the surefire `integration-tests` execution
-# (bound to the integration-test phase, includes **/*IT.*) actually runs. These
-# integration tests have never run in CI before, so this action is wired into a
-# NON-BLOCKING (continue-on-error) job. It must NOT be a required check until the
-# ITs are green. `mvnw` is run with `-fae` so IT failures are visible in the job
-# summary and reports without aborting the report-collection step below.
+# (bound to the integration-test phase, includes **/*IT.*) actually runs. Maven's
+# failure is propagated; the calling job alone owns the explicit non-blocking
+# quarantine. `-fae` keeps the report set complete.
 
 inputs:
   java_version:
@@ -22,15 +20,9 @@ runs:
       distribution: 'temurin'
       cache: maven
 
-  - name: Run Maven verify (unit + integration tests, burn-in)
+  - name: Run Maven verify (legacy quarantine)
     shell: bash
-    # -fae (fail-at-end) lets every module/execution run so the report set is
-    # complete; the actual pass/fail signal comes from the report gate below,
-    # which this burn-in job tolerates (continue-on-error at the job level).
-    run: |
-      if ! ./mvnw -B -fae verify; then
-        echo "::warning::Integration-test burn-in is red (expected during burn-in) - report-only. See the summary step and the uploaded report artifacts."
-      fi
+    run: ./mvnw -B -fae verify
 
   - name: Assert test reports were produced (zero-report guard)
     if: ${{ always() }}
@@ -49,7 +41,7 @@ runs:
         exit 1
       fi
 
-  - name: Summarise integration-test results (burn-in)
+  - name: Summarise legacy integration-test results
     if: ${{ always() }}
     shell: bash
     run: |
@@ -75,10 +67,10 @@ runs:
           if failures or errors:
               failing.append((report, failures, errors))
 
-      print(f"Integration-test burn-in: tests={total_tests} "
+      print(f"Legacy integration quarantine: tests={total_tests} "
             f"failures={total_failures} errors={total_errors} skipped={total_skipped}")
       if failing:
-          print("Reports with failures/errors (expected during burn-in):")
+          print("Quarantined reports with failures/errors:")
           for report, failures, errors in sorted(failing):
               print(f"- {report}: failures={failures}, errors={errors}")
       PY
