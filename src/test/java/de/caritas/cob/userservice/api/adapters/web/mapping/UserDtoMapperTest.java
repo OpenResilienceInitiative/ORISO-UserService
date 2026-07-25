@@ -52,6 +52,11 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void mapOf_Should_ReturnEmpty_When_GeneratedPatchDtoContainsOnlyDefaultEmptyCollections() {
+    assertThat(mapper.mapOf(new PatchUserDTO(), authenticatedUser)).isEmpty();
+  }
+
+  @Test
   void userDataOf_Should_markIsActive_When_otpIsSetupWithAppType() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.USER.getValue()));

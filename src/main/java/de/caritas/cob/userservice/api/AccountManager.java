@@ -32,9 +32,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort.Direction;
@@ -73,6 +75,9 @@ public class AccountManager implements AccountManaging {
   private final PatchConsultantSaga patchConsultantSaga;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
 
   @Override
   public Optional<Map<String, Object>> findConsultant(String id) {
@@ -249,25 +254,25 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> findByDbConsultant(Consultant dbConsultant) {
-    var userMap = new HashMap<String, Object>();
+    if (!rocketChatEnabled) {
+      return userServiceMapper.mapOf(dbConsultant, Map.of());
+    }
 
-    // Skip RocketChat integration for now due to configuration issues
-    log.warn(
-        "Skipping RocketChat integration for consultant {} due to configuration issues",
-        dbConsultant.getId());
-    userMap.putAll(userServiceMapper.mapOf(dbConsultant, new HashMap<>()));
-
-    return userMap;
+    var chatUser =
+        messageClient
+            .findUser(dbConsultant.getRocketChatId())
+            .orElseThrow(
+                throwPersistenceConflict(dbConsultant.getId(), dbConsultant.getRocketChatId()));
+    return userServiceMapper.mapOf(dbConsultant, chatUser);
   }
 
-  private Runnable throwPersistenceConflict(String dbUserId, String chatUserId) {
+  private Supplier<InternalServerErrorException> throwPersistenceConflict(
+      String dbUserId, String chatUserId) {
     var message =
         String.format(
             "User (%s) found in database but not in Rocket.Chat (%s)", dbUserId, chatUserId);
 
-    return () -> {
-      throw new InternalServerErrorException(message);
-    };
+    return () -> new InternalServerErrorException(message);
   }
 
   /**

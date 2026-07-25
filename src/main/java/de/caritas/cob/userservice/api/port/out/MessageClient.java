@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.exception.MessageClientException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,6 +17,15 @@ public interface MessageClient {
 
   @SuppressWarnings("UnusedReturnValue")
   boolean updateUser(String chatUserId, String displayName);
+
+  void updateUserEmail(String chatUserId, String email);
+
+  String getUserID(String username, String password, boolean firstLogin)
+      throws MessageClientException;
+
+  void addUserToGroup(String chatUserId, String chatId) throws MessageClientException;
+
+  List<String> findRoomIds(String chatUserId);
 
   Optional<Boolean> isLoggedIn(String chatUserId);
 

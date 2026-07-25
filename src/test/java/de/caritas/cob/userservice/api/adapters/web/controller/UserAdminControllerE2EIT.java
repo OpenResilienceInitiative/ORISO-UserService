@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -70,24 +71,22 @@ import org.springframework.web.client.RestTemplate;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"feature.topics.enabled=true", "multitenancy.enabled=false"})
 @Transactional
 class UserAdminControllerE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   public static final int PAGE_SIZE = 10;
   @Autowired private MockMvc mockMvc;
 
   @Autowired private ObjectMapper objectMapper;
 
-  @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-  @Autowired
-  private ConsultingTypeControllerApi consultingTypeControllerApi;
+  @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
   @Autowired private IdentityConfig identityConfig;
 
@@ -139,6 +138,7 @@ class UserAdminControllerE2EIT {
 
   @BeforeEach
   public void setUp() {
+    when(consultingTypeControllerApi.getApiClient()).thenReturn(new ApiClient(restTemplate));
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -344,7 +344,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(AGENCY_ADMIN_PATH + adminId)
+            put(AGENCY_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isOk())
@@ -473,7 +473,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(AGENCY_ADMIN_PATH + adminId)
+            put(AGENCY_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isForbidden());
@@ -498,7 +498,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(TENANT_ADMIN_PATH + adminId)
+            put(TENANT_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isOk())
@@ -524,7 +524,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(TENANT_ADMIN_PATH + existingAdminId)
+            put(TENANT_ADMIN_PATH + "/" + existingAdminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isForbidden());
@@ -539,7 +539,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(AGENCY_ADMIN_PATH + existingAdminId))
+        .perform(get(AGENCY_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.id", is(existingAdminId)))
         .andExpect(jsonPath("_embedded.username", is("bmachin1j")))
@@ -558,7 +558,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(AGENCY_ADMIN_PATH + existingAdminId))
+        .perform(get(AGENCY_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -571,7 +571,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(get(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.id", is(existingAdminId)))
         .andExpect(jsonPath("_embedded.username", is("cgenney5")))
@@ -808,7 +808,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(get(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -822,7 +822,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(delete(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(delete(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -834,10 +834,10 @@ class UserAdminControllerE2EIT {
     var adminId = givenNewTenantAdminIsCreated();
 
     // when
-    this.mockMvc.perform(delete(TENANT_ADMIN_PATH + adminId)).andExpect(status().isOk());
+    this.mockMvc.perform(delete(TENANT_ADMIN_PATH + "/" + adminId)).andExpect(status().isOk());
 
     // then
-    this.mockMvc.perform(get(TENANT_ADMIN_PATH + adminId)).andExpect(status().isNoContent());
+    this.mockMvc.perform(get(TENANT_ADMIN_PATH + "/" + adminId)).andExpect(status().isNoContent());
   }
 
   private String givenNewTenantAdminIsCreated() throws Exception {

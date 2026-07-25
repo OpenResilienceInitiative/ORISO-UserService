@@ -6,13 +6,19 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -25,6 +31,24 @@ public class ConsultantUpdateServiceBase {
   @MockitoBean protected IdentityClient identityClient;
 
   @MockitoBean protected RocketChatService rocketChatService;
+
+  @MockitoBean protected AgencyService agencyService;
+
+  @BeforeEach
+  void stubAssignedAgencies() {
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            invocation ->
+                invocation.<List<Long>>getArgument(0).stream()
+                    .map(
+                        agencyId -> {
+                          var agency = new AgencyDTO();
+                          agency.setId(agencyId);
+                          agency.setTenantId(1L);
+                          return agency;
+                        })
+                    .toList());
+  }
 
   public void updateConsultant_Should_returnUpdatedPersistedConsultant_When_inputDataIsValid() {
     UpdateAdminConsultantDTO updateConsultantDTO = new UpdateAdminConsultantDTO();

@@ -24,9 +24,9 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "statistics.enabled=true"})
 @SpringBootTest(classes = UserServiceApplication.class)
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class StatisticsServiceIT {
 
   private static final long MAX_TIMEOUT_MILLIS = 5000;

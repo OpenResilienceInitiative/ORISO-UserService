@@ -5,15 +5,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_E
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_TOO_LONG;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_TOO_SHORT;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,18 +16,17 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 public class EncodeUsernameJsonSerializationUtilsTest {
 
   private ObjectMapper objectMapper;
 
-  @InjectMocks private EncodeUsernameJsonDeserializer encodeUsernameJsonDeserializer;
-
-  @Mock private UserHelper userHelper;
+  private final EncodeUsernameJsonDeserializer encodeUsernameJsonDeserializer =
+      new EncodeUsernameJsonDeserializer();
 
   @BeforeEach
   public void setup() {
@@ -48,8 +41,6 @@ public class EncodeUsernameJsonSerializationUtilsTest {
 
   @Test
   public void deserialize_Should_EncodeDecodedUsername() throws IOException {
-    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
-
     String json = "{\"username:\":\"" + USERNAME_DECODED + "\"}";
     String result = deserializeUsername(json);
     assertEquals(USERNAME_ENCODED, result);
@@ -57,7 +48,6 @@ public class EncodeUsernameJsonSerializationUtilsTest {
 
   @Test
   public void deserialize_Should_ClearPlainPasswordFromPlainCredentialsHolder() throws IOException {
-    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
     PlainCredentialsHolder.set(null, "platform-password");
 
     String json = "{\"username:\":\"" + USERNAME_DECODED + "\"}";
@@ -69,8 +59,6 @@ public class EncodeUsernameJsonSerializationUtilsTest {
 
   @Test
   public void deserialize_ShouldNot_ReencodeEncodedUsername() throws IOException {
-    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
-
     String json = "{\"username:\":\"" + USERNAME_ENCODED + "\"}";
     String result = deserializeUsername(json);
     assertEquals(USERNAME_ENCODED, result);
@@ -106,11 +94,10 @@ public class EncodeUsernameJsonSerializationUtilsTest {
 
   private String deserializeUsername(String json) throws IOException {
     InputStream stream = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8));
-    JsonParser jsonParser = objectMapper.getFactory().createParser(stream);
+    JsonParser jsonParser = objectMapper.createParser(stream);
     jsonParser.nextToken();
     jsonParser.nextToken();
     jsonParser.nextToken();
-    DeserializationContext deserializationContext = objectMapper.getDeserializationContext();
-    return encodeUsernameJsonDeserializer.deserialize(jsonParser, deserializationContext);
+    return encodeUsernameJsonDeserializer.deserialize(jsonParser, null);
   }
 }

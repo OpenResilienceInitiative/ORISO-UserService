@@ -52,12 +52,12 @@ import org.springframework.test.web.servlet.MockMvc;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserAdminControllerAuthorizationIT {
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -252,7 +252,7 @@ class UserAdminControllerAuthorizationIT {
       throws Exception {
 
     mvc.perform(
-            get(CONSULTANT_PATH + "consultantId")
+            get(CONSULTANT_PATH + "/consultantId")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isOk());
@@ -395,7 +395,7 @@ class UserAdminControllerAuthorizationIT {
         easyRandom.nextObject(UpdateAdminConsultantDTO.class);
 
     mvc.perform(
-            put(CONSULTANT_PATH + "consultantId")
+            put(CONSULTANT_PATH + "/consultantId")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -509,10 +509,8 @@ class UserAdminControllerAuthorizationIT {
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
 
-    verify(consultantAdminFacade).markConsultantAgenciesForDeletion(anyString(), any());
-    verify(consultantAdminFacade).filterAgencyListForCreation(anyString(), any());
-    verify(consultantAdminFacade).prepareConsultantAgencyRelation(anyString(), any());
-    verify(consultantAdminFacade).completeConsultantAgencyAssigment(anyString(), any());
+    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
+    verify(consultantAdminFacade).setConsultantAgencies(anyString(), any());
   }
 
   @Test
@@ -695,7 +693,7 @@ class UserAdminControllerAuthorizationIT {
     // DEL-GUARD-01: real consultant ids are UUIDs; restricted agency admins must be able to
     // reach the endpoint (agency scoping is enforced in ConsultantAdminFacade).
     mvc.perform(
-            delete(CONSULTANT_PATH + UUID.randomUUID())
+            delete(CONSULTANT_PATH + "/" + UUID.randomUUID())
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON))
@@ -708,15 +706,15 @@ class UserAdminControllerAuthorizationIT {
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void deleteConsultant_Should_NotBeDeniedBySecurity_When_userAdminUsesServicePrefixedPath()
       throws Exception {
-    // DEL-GUARD-02: /service/useradmin/** used to fall through to denyAll (403). After the fix
-    // the security layer authorizes the request; no MVC mapping exists for the raw /service
-    // prefix inside the app, so 404 (not 403) proves the security gap is closed.
+    // DEL-GUARD-02: the service-prefixed path is both authorized and mapped inside the app.
     mvc.perform(
-            delete("/service" + CONSULTANT_PATH + UUID.randomUUID())
+            delete("/service" + CONSULTANT_PATH + "/" + UUID.randomUUID())
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isOk());
+
+    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion(any(), any());
   }
 
   @Test

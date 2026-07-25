@@ -16,7 +16,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 @DataJpaTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class AppointmentRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();

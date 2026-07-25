@@ -15,8 +15,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -53,6 +52,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUse
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -78,6 +78,8 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantSettings;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -91,7 +93,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import javax.transaction.Transactional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -101,6 +102,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -118,16 +122,19 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest(properties = "rocket-chat.enabled=true")
-@ExtendWith(OutputCaptureExtension.class)
+@ExtendWith({OutputCaptureExtension.class, MockitoExtension.class})
+@MockitoSettings(strictness = Strictness.LENIENT)
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class UserControllerChatE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
@@ -167,6 +174,8 @@ class UserControllerChatE2EIT {
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
+  @MockitoBean private TenantService tenantService;
+
   @Autowired private CacheManager cacheManager;
 
   @MockitoBean
@@ -177,7 +186,7 @@ class UserControllerChatE2EIT {
   @Qualifier("rocketChatRestTemplate")
   private RestTemplate rocketChatRestTemplate;
 
-  @Autowired private MongoClient mockedMongoClient;
+  @MockitoBean private MongoClient mockedMongoClient;
 
   @Mock private MongoDatabase mongoDatabase;
 
@@ -199,23 +208,25 @@ class UserControllerChatE2EIT {
 
   @AfterEach
   void reset() {
-    if (nonNull(user)) {
-      user.setDeleteDate(null);
-      userRepository.save(user);
-      user = null;
+    if (!TestTransaction.isActive()) {
+      if (nonNull(user)) {
+        user.setDeleteDate(null);
+        userRepository.save(user);
+      }
+      if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
+        chatRepository.deleteById(chat.getId());
+      }
+      if (nonNull(chatAgency) && chatAgencyRepository.existsById(chatAgency.getId())) {
+        chatAgencyRepository.deleteById(chatAgency.getId());
+      }
+      if (nonNull(userAgency) && userAgencyRepository.existsById(userAgency.getId())) {
+        userAgencyRepository.deleteById(userAgency.getId());
+      }
     }
+    user = null;
     consultant = null;
-    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
-      chatRepository.deleteById(chat.getId());
-    }
     chat = null;
-    if (nonNull(chatAgency) && chatAgencyRepository.existsById(chatAgency.getId())) {
-      chatAgencyRepository.deleteById(chatAgency.getId());
-    }
     chatAgency = null;
-    if (nonNull(userAgency) && userAgencyRepository.existsById(userAgency.getId())) {
-      userAgencyRepository.deleteById(userAgency.getId());
-    }
     userAgency = null;
     videoChatConfig.setE2eEncryptionEnabled(false);
     userInfoResponse = null;
@@ -258,6 +269,7 @@ class UserControllerChatE2EIT {
   @Transactional
   void createChatV2_Should_ReturnCreated_When_ChatWasCreated() throws Exception {
     givenAValidConsultant(true);
+    givenGroupChatFeatureEnabled();
     givenAValidRocketChatSystemUser();
 
     ConsultantAgency consultantAgency =
@@ -673,8 +685,8 @@ class UserControllerChatE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
-  void leaveChatShouldReturnOkAndDeleteOneTimeChatAndChatAgencyIfLastUser(CapturedOutput logOutput)
-      throws Exception {
+  void leaveLegacyRocketChatShouldKeepOneTimeChatWhenMatrixMembershipIsUnknown(
+      CapturedOutput logOutput) throws Exception {
     givenAValidUser(true);
     givenAValidConsultant();
     givenAValidChat(false);
@@ -692,11 +704,11 @@ class UserControllerChatE2EIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    assertFalse(chatRepository.existsById(chat.getId()));
-    assertFalse(chatAgencyRepository.existsById(chatAgency.getId()));
+    assertTrue(chatRepository.existsById(chat.getId()));
+    assertTrue(chatAgencyRepository.existsById(chatAgency.getId()));
 
     var urlSuffix = "/api/v1/groups.delete";
-    verify(restTemplate)
+    verify(restTemplate, never())
         .postForObject(
             endsWith(urlSuffix), any(HttpEntity.class), eq(GroupDeleteResponseDTO.class));
     verifyRocketChatUserRemovedFromGroup(logOutput, chat.getGroupId(), user.getRcUserId());
@@ -735,7 +747,7 @@ class UserControllerChatE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
-  void leaveChatShouldReturnOkAndDeleteRepetitiveChatAndChatAgencyAsWellAsRecreateIfLastUser(
+  void leaveLegacyRocketChatShouldKeepRepetitiveChatWhenMatrixMembershipIsUnknown(
       CapturedOutput logOutput) throws Exception {
     givenAValidUser(true);
     givenAValidConsultant();
@@ -770,7 +782,7 @@ class UserControllerChatE2EIT {
     assertTrue(chatAgencyRepository.existsById(chatAgency.getId()));
 
     var urlSuffix = "/api/v1/groups.delete";
-    verify(restTemplate)
+    verify(restTemplate, never())
         .postForObject(
             endsWith(urlSuffix), any(HttpEntity.class), eq(GroupDeleteResponseDTO.class));
     verifyRocketChatUserRemovedFromGroup(logOutput, chat.getGroupId(), user.getRcUserId());
@@ -782,18 +794,16 @@ class UserControllerChatE2EIT {
         chat.getInitialStartDate().truncatedTo(ChronoUnit.SECONDS),
         chatAfter.getInitialStartDate().truncatedTo(ChronoUnit.SECONDS));
     assertEquals(
-        chat.getStartDate().truncatedTo(ChronoUnit.SECONDS).plusWeeks(1),
+        chat.getStartDate().truncatedTo(ChronoUnit.SECONDS),
         chatAfter.getStartDate().truncatedTo(ChronoUnit.SECONDS));
     assertEquals(chat.getDuration(), chatAfter.getDuration());
     assertEquals(chat.isRepetitive(), chatAfter.isRepetitive());
     assertEquals(chat.getChatInterval(), chatAfter.getChatInterval());
-    assertFalse(chatAfter.isActive());
+    assertTrue(chatAfter.isActive());
     assertEquals(chat.getMaxParticipants(), chatAfter.getMaxParticipants());
-    assertNotEquals(chat.getGroupId(), chatAfter.getGroupId());
-    assertNotNull(chatAfter.getGroupId());
+    assertEquals(chat.getGroupId(), chatAfter.getGroupId());
     assertEquals(chat.getChatOwner(), chatAfter.getChatOwner());
-    assertTrue(chatAfter.getChatAgencies().size() > 0);
-    assertTrue(chat.getUpdateDate().isBefore(chatAfter.getUpdateDate()));
+    assertPersistedTimestampEquals(chat.getUpdateDate(), chatAfter.getUpdateDate());
   }
 
   @Test
@@ -1170,7 +1180,7 @@ class UserControllerChatE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.STOP_CHAT)
-  void stopChatShouldReturnOkAndRecreateChatIfRepetitive() throws Exception {
+  void stopChatShouldCompleteFiniteSeriesWhenNoNextOccurrenceRemains() throws Exception {
     givenAValidUser();
     givenAValidConsultant(true);
     givenAValidChat(true);
@@ -1178,6 +1188,10 @@ class UserControllerChatE2EIT {
     givenAValidRocketChatGroupDeleteResponse();
     givenAValidRocketChatRoomResponse(chat.getGroupId(), true);
     givenAValidRocketChatUnmuteResponse();
+    var originalStartDate = chat.getStartDate();
+    var originalGroupId = chat.getGroupId();
+    var originalUpdateDate = chat.getUpdateDate();
+    assertNull(chat.nextStart());
 
     var allChatsBefore =
         StreamSupport.stream(chatRepository.findAll().spliterator(), false)
@@ -1215,18 +1229,16 @@ class UserControllerChatE2EIT {
         chat.getInitialStartDate().truncatedTo(ChronoUnit.SECONDS),
         chatAfter.getInitialStartDate().truncatedTo(ChronoUnit.SECONDS));
     assertEquals(
-        chat.getStartDate().truncatedTo(ChronoUnit.SECONDS).plusWeeks(1),
+        originalStartDate.truncatedTo(ChronoUnit.SECONDS),
         chatAfter.getStartDate().truncatedTo(ChronoUnit.SECONDS));
     assertEquals(chat.getDuration(), chatAfter.getDuration());
     assertEquals(chat.isRepetitive(), chatAfter.isRepetitive());
     assertEquals(chat.getChatInterval(), chatAfter.getChatInterval());
     assertFalse(chatAfter.isActive());
     assertEquals(chat.getMaxParticipants(), chatAfter.getMaxParticipants());
-    assertNotEquals(chat.getGroupId(), chatAfter.getGroupId());
-    assertNotNull(chatAfter.getGroupId());
+    assertEquals(originalGroupId, chatAfter.getGroupId());
     assertEquals(chat.getChatOwner(), chatAfter.getChatOwner());
-    assertTrue(chatAfter.getChatAgencies().size() > 0);
-    assertTrue(chat.getUpdateDate().isBefore(chatAfter.getUpdateDate()));
+    assertPersistedTimestampEquals(originalUpdateDate, chatAfter.getUpdateDate());
   }
 
   @Test
@@ -1516,6 +1528,19 @@ class UserControllerChatE2EIT {
     }
   }
 
+  private void givenGroupChatFeatureEnabled() {
+    if (consultant.getTenantId() == null) {
+      consultant.setTenantId(1L);
+      consultantRepository.save(consultant);
+    }
+    var tenant =
+        new RestrictedTenantDTO()
+            .id(consultant.getTenantId())
+            .name("Test tenant")
+            .settings(new RestrictedTenantSettings().featureGroupChatV2Enabled(true));
+    when(tenantService.getRestrictedTenantDataFresh(consultant.getTenantId())).thenReturn(tenant);
+  }
+
   private void givenAValidUser() {
     givenAValidUser(false);
   }
@@ -1594,6 +1619,13 @@ class UserControllerChatE2EIT {
             logOutput.getOut(),
             "RocketChatTestConfig.removeUserFromGroup(" + chatUserId + "," + groupId + ") called");
     assertEquals(1, occurrencesOfRemoval);
+  }
+
+  private void assertPersistedTimestampEquals(
+      LocalDateTime expected, LocalDateTime persistedValue) {
+    assertTrue(
+        Math.abs(ChronoUnit.NANOS.between(expected, persistedValue)) <= 500,
+        () -> "Expected persisted timestamp " + expected + " but was " + persistedValue);
   }
 
   private void givenNoRocketChatSubscriptionUpdates() {
