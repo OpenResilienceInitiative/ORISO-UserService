@@ -74,4 +74,22 @@ class MatrixOnlyUserDeletionContractTest {
 
     assertThat(source).doesNotContain("RocketChat", "rocketChat", "RcUserId");
   }
+
+  @Test
+  void RocketChatDerivedInactivityWorkflowMustBeDeleted() throws IOException {
+    for (var sourcePath :
+        new String[] {
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/service/"
+              + "DeleteInactiveSessionsAndUserService.java",
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/service/provider/"
+              + "InactivePrivateGroupsProvider.java",
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/"
+              + "DeleteInactiveSessionsAndUserScheduler.java"
+        }) {
+      assertThat(Path.of(sourcePath)).doesNotExist();
+    }
+
+    assertThat(Files.readString(Path.of("src/main/resources/application.properties")))
+        .doesNotContain("session.inactive.deleteWorkflow");
+  }
 }
