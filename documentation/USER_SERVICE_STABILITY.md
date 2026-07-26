@@ -11,11 +11,25 @@ Spring Security assumptions, test-database replacement, Spring Boot 4 / Jackson
 3 migration gaps, incomplete external-service test doubles, stale chat migration
 expectations and two production regressions.
 
+The counted classification is machine-readable in
+[`user-service-historical-failure-classification.json`](user-service-historical-failure-classification.json).
+Its failure clusters sum exactly to 28: 19 obsolete security assertions, two
+Actuator contract mismatches, one Rocket.Chat configuration expectation, three
+session-locking test doubles and one case each for a Jackson request fixture,
+the public-consultant test double and a stale chat aggregate assertion. Its
+error clusters sum exactly to 704: 637 errors from replacement H2 datasources
+that lost MariaDB compatibility, 22 from the Spring Plugin/HATEOAS ABI mismatch
+and 45 whose initial XML retained only Spring's context-failure-threshold
+cascade. The artifact names all 15 suites and counts behind those 45 errors and
+records the staged reruns used to expose their underlying repair clusters. It
+does not invent a more specific original exception where the first report no
+longer contained one.
+
 After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,833 | 0 | 0 | 7 | `./mvnw -B test` |
+| Unit | 3,838 | 0 | 0 | 7 | `./mvnw -B test` |
 | Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis replica-safety contracts | 7 | 0 | 0 | 0 | required Redis job |
