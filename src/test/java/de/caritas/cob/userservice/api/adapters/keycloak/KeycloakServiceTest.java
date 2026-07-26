@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
@@ -48,6 +49,7 @@ import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -1273,10 +1275,15 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void getById_Should_getUserById() {
+  public void findProfileById_Should_MapUserRepresentation() {
 
     // given
-    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UserRepresentation userRepresentation = new UserRepresentation();
+    userRepresentation.setId("userId");
+    userRepresentation.setUsername("username");
+    userRepresentation.setFirstName("firstName");
+    userRepresentation.setLastName("lastName");
+    userRepresentation.setEmail("email");
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(userResource.toRepresentation()).thenReturn(userRepresentation);
@@ -1284,23 +1291,32 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(userResource);
 
     // when
-    UserRepresentation userId = this.keycloakService.getById("userId");
+    Optional<IdentityProfile> profile = this.keycloakService.findProfileById("userId");
 
     // then
     verify(keycloakClient, times(1)).getUsersResource();
-    assertThat(userId, equalTo(userRepresentation));
+    assertThat(
+        profile,
+        equalTo(
+            Optional.of(
+                new IdentityProfile("userId", "username", "firstName", "lastName", "email"))));
   }
 
   @Test
-  public void getById_Should_ThrowKeycloakExceptionIfUserNotFound() {
+  public void findProfileById_Should_ReturnEmptyIfKeycloakReportsUserNotFound() {
 
     // given
+    UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    when(usersResource.get("userId")).thenReturn(null);
+    when(usersResource.get("userId")).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException());
 
-    // when, then
-    assertThrows(KeycloakException.class, () -> this.keycloakService.getById("userId"));
+    // when
+    Optional<IdentityProfile> profile = this.keycloakService.findProfileById("userId");
+
+    // then
+    assertThat(profile, equalTo(Optional.empty()));
   }
 
   /**

@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.keycloak.representations.idm.UserRepresentation;
 
 public interface IdentityClient {
 
@@ -72,13 +71,11 @@ public interface IdentityClient {
 
   List<String> getRealmRoles(String userId);
 
-  List<UserRepresentation> findByUsername(String username);
-
   void closeSession(String sessionId);
 
   void deactivateUser(String userId);
 
   boolean verifyIgnoringOtp(String username, String password);
 
-  UserRepresentation getById(String userId);
+  Optional<IdentityProfile> findProfileById(String userId);
 }

@@ -123,6 +123,19 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "transport DTOs",
         )
 
+    def test_identity_port_does_not_expose_keycloak_sdk_types(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+
+        self.assertNotIn(
+            "org.keycloak",
+            identity_port.read_text(),
+            "IdentityClient must expose provider-neutral identity values instead of "
+            "Keycloak SDK types",
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

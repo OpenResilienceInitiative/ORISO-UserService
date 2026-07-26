@@ -238,17 +238,20 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
 
 ## Current dependency sequence
 
-1. Land the Redis-backed single-use token PR #740 in `pre-dev` before
-   publishing this stability stack. The stack already integrates its functional
-   commit locally and removes both obsolete authentication-token entries from
-   the local-state inventory.
+1. Land the Redis-backed single-use token PR #740 in `pre-dev` before merging
+   this stability stack. The draft stability PR may be published for review,
+   but it already integrates #740's functional commit and must not be merged or
+   deployed while that dependency remains open.
 2. Continue the provider-neutral identity boundary after the completed
    create-user slice. Application workflows now consume only the created
    identity ID; the Keycloak adapter owns missing-`Location` recovery and
    refuses ambiguous or absent authoritative matches. Password and technical
    user login also return the provider-neutral `IdentityLogin` value; Keycloak
-   token JSON remains inside the adapter. The remaining lookup and magic-link
-   transport seams are tracked separately.
+   token JSON remains inside the adapter. Profile reads now use
+   `Optional<IdentityProfile>`, Keycloak not-found behavior is mapped at the
+   adapter boundary and fuzzy username search is adapter-internal. The
+   remaining Magic-Link transport and broad identity command/configuration
+   seams are tracked separately.
 3. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
 4. Prove MailService idempotency and runtime replay before enabling

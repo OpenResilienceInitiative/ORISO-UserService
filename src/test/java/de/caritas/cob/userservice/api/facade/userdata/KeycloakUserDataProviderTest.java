@@ -3,13 +3,16 @@ package de.caritas.cob.userservice.api.facade.userdata;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -20,7 +23,7 @@ class KeycloakUserDataProviderTest {
 
   @Mock AuthenticatedUser authenticatedUser;
 
-  @Mock KeycloakService keycloakService;
+  @Mock IdentityClient identityClient;
 
   @InjectMocks KeycloakUserDataProvider keycloakUserDataProvider;
 
@@ -39,13 +42,14 @@ class KeycloakUserDataProviderTest {
     // given
     Mockito.when(authenticatedUser.isAnonymous()).thenReturn(false);
     Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
-    UserRepresentation userRepresentation = giveUserRepresentation();
-    Mockito.when(keycloakService.getById("userId")).thenReturn(userRepresentation);
+    IdentityProfile identityProfile =
+        new IdentityProfile("userId", "username", "firstName", "lastName", "email");
+    Mockito.when(identityClient.findProfileById("userId")).thenReturn(Optional.of(identityProfile));
     // when
     UserDataResponseDTO userDataResponseDTO =
         keycloakUserDataProvider.retrieveAuthenticatedUserData();
     // then
-    assertKeycloakUserRepresentationAttributesConverted(userRepresentation, userDataResponseDTO);
+    assertIdentityProfileAttributesConverted(identityProfile, userDataResponseDTO);
     assertRolesTakenFromAuthenticatedUserBean(userDataResponseDTO);
     assertOtherDtoAttributesSetToDefaults(userDataResponseDTO);
   }
@@ -58,11 +62,20 @@ class KeycloakUserDataProviderTest {
     Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
     Mockito.when(authenticatedUser.getRoles()).thenReturn(Set.of("tenant-admin"));
     Mockito.when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("tenant-admin"));
-    Mockito.when(keycloakService.getById("userId")).thenThrow(new RuntimeException("not found"));
+    Mockito.when(identityClient.findProfileById("userId"))
+        .thenThrow(new RuntimeException("not found"));
 
-    // when
-    UserDataResponseDTO userDataResponseDTO =
-        keycloakUserDataProvider.retrieveAuthenticatedUserData();
+    UserDataResponseDTO userDataResponseDTO;
+    try (var logs = LogbackCaptor.forClass(KeycloakUserDataProvider.class)) {
+      userDataResponseDTO = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      assertThat(logs.messages(Level.WARN)).hasSize(1);
+      assertThat(logs.messages(Level.WARN).get(0))
+          .contains("RuntimeException")
+          .doesNotContain("not found");
+      assertThat(logs.events())
+          .singleElement()
+          .satisfies(event -> assertThat(event.getThrowableProxy()).isNull());
+    }
 
     // then
     assertThat(userDataResponseDTO.getUserId()).isEqualTo("userId");
@@ -73,12 +86,12 @@ class KeycloakUserDataProviderTest {
   }
 
   @Test
-  void retrieveData_Should_ReturnTokenBasedUserData_When_KeycloakUserLookupReturnsNull() {
+  void retrieveData_Should_ReturnTokenBasedUserData_When_IdentityProfileIsAbsent() {
     // given
     Mockito.when(authenticatedUser.isAnonymous()).thenReturn(false);
     Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
     Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
-    Mockito.when(keycloakService.getById("userId")).thenReturn(null);
+    Mockito.when(identityClient.findProfileById("userId")).thenReturn(Optional.empty());
 
     // when
     UserDataResponseDTO userDataResponseDTO =
@@ -105,22 +118,12 @@ class KeycloakUserDataProviderTest {
     assertThat(userDataResponseDTO.getAgencies()).isEmpty();
   }
 
-  private void assertKeycloakUserRepresentationAttributesConverted(
-      UserRepresentation userRepresentation, UserDataResponseDTO userDataResponseDTO) {
-    assertThat(userDataResponseDTO.getUserId()).isEqualTo(userRepresentation.getId());
-    assertThat(userDataResponseDTO.getUserName()).isEqualTo(userRepresentation.getUsername());
-    assertThat(userDataResponseDTO.getEmail()).isEqualTo(userRepresentation.getEmail());
-    assertThat(userDataResponseDTO.getFirstName()).isEqualTo(userRepresentation.getFirstName());
-    assertThat(userDataResponseDTO.getLastName()).isEqualTo(userRepresentation.getLastName());
-  }
-
-  private UserRepresentation giveUserRepresentation() {
-    UserRepresentation userRepresentation = new UserRepresentation();
-    userRepresentation.setUsername("username");
-    userRepresentation.setFirstName("firstname");
-    userRepresentation.setLastName("lastname");
-    userRepresentation.setId("id");
-    userRepresentation.setEmail("email");
-    return userRepresentation;
+  private void assertIdentityProfileAttributesConverted(
+      IdentityProfile identityProfile, UserDataResponseDTO userDataResponseDTO) {
+    assertThat(userDataResponseDTO.getUserId()).isEqualTo(identityProfile.id());
+    assertThat(userDataResponseDTO.getUserName()).isEqualTo(identityProfile.username());
+    assertThat(userDataResponseDTO.getEmail()).isEqualTo(identityProfile.email());
+    assertThat(userDataResponseDTO.getFirstName()).isEqualTo(identityProfile.firstName());
+    assertThat(userDataResponseDTO.getLastName()).isEqualTo(identityProfile.lastName());
   }
 }

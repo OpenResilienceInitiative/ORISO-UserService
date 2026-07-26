@@ -30,7 +30,7 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,815 | 0 | 0 | 7 | `./mvnw -q clean test` |
+| Unit | 3,843 | 0 | 0 | 7 | `./mvnw -B -Dskip.integration-tests=true clean test` |
 | Integration + contract + E2E | 964 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
@@ -197,7 +197,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login now return the provider-neutral `IdentityLogin` value. | `IdentityClient` still exposes Keycloak SDK `UserRepresentation` lookup values. `MagicLinkLoginService` and its HTTP response still expose the Keycloak token transport separately from this port. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login return the provider-neutral `IdentityLogin` value. Profile lookup returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs, OTP values and provider configuration. `MagicLinkLoginService` and its HTTP response still expose the Keycloak token transport separately from this port. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -211,8 +211,9 @@ policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`. A separate creation
 contract rejects any reintroduction of the deleted
 `KeycloakCreateUserResponseDTO` outside the Keycloak adapter boundary. The
-identity port contract also rejects imports from the concrete Keycloak adapter,
-so its login result cannot regress from `IdentityLogin` to the provider DTO.
+identity port contract also rejects imports from the concrete Keycloak adapter
+and Keycloak SDK types, so its login and profile results cannot regress from
+`IdentityLogin` and `IdentityProfile` to provider transports.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current
@@ -220,10 +221,11 @@ runtime contract reports a maximum supported replica count of one; modular
 source layout must not be confused with proven multi-instance behavior.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next safe sequence is the remaining identity
-authentication/token transport decoupling, then the admin controller
-composition boundary, then session-list adapter removal. Each step must add a
-failing boundary contract before moving dependencies.
+domains are already isolated. The next safe sequence is the remaining
+Magic-Link token transport and broad identity command/configuration decoupling,
+then the admin controller composition boundary, then session-list adapter
+removal. Each step must add a failing boundary contract before moving
+dependencies.
 
 ## Microservice decision
 
