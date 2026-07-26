@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.util.List;
 import java.util.Map;
 import org.assertj.core.util.Maps;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,19 @@ class SessionTopicEnrichmentServiceTest {
     // then
     assertThat(session.getTopic().getName()).isEqualTo("first topic");
     assertThat(session.getTopic().getDescription()).isEqualTo("first desc");
+  }
+
+  @Test
+  void enrichSessionsWithTopicData_Should_LoadTopicsOnceForTheCompleteSessionList() {
+    givenAllTopicsMap();
+    var firstSession = new SessionDTO().topic(new SessionTopicDTO().id(1L));
+    var secondSession = new SessionDTO().topic(new SessionTopicDTO().id(2L));
+
+    sessionTopicEnrichmentService.enrichSessionsWithTopicData(List.of(firstSession, secondSession));
+
+    assertThat(firstSession.getTopic().getName()).isEqualTo("first topic");
+    assertThat(secondSession.getTopic().getName()).isEqualTo("second topic");
+    Mockito.verify(topicService, Mockito.times(1)).getAllTopicsMap();
   }
 
   @Test

@@ -97,8 +97,8 @@ class UserSessionListServiceTest {
             .getSession()
             .getMessagesRead());
 
-    verify(sessionTopicEnrichmentService, Mockito.times(USER_SESSION_RESPONSE_DTO_LIST.size()))
-        .enrichSessionWithTopicData(Mockito.any());
+    verify(sessionTopicEnrichmentService, Mockito.times(1))
+        .enrichSessionsWithTopicData(Mockito.anyList());
   }
 
   @Test

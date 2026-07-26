@@ -60,10 +60,12 @@ public class UserSessionListService {
   }
 
   private void enrichSessionsWithTopics(List<UserSessionResponseDTO> mergedSessions) {
-    mergedSessions.stream()
-        .map(UserSessionResponseDTO::getSession)
-        .filter(java.util.Objects::nonNull)
-        .forEach(sessionTopicEnrichmentService::enrichSessionWithTopicData);
+    var sessions =
+        mergedSessions.stream()
+            .map(UserSessionResponseDTO::getSession)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+    sessionTopicEnrichmentService.enrichSessionsWithTopicData(sessions);
   }
 
   /**

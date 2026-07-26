@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.util.Collection;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,23 @@ public class SessionTopicEnrichmentService {
           session.getId());
     }
     return session;
+  }
+
+  public void enrichSessionsWithTopicData(Collection<SessionDTO> sessions) {
+    if (sessions == null) {
+      return;
+    }
+    var sessionsToEnrich =
+        sessions.stream()
+            .filter(java.util.Objects::nonNull)
+            .filter(this::shouldEnrichTopic)
+            .toList();
+    if (sessionsToEnrich.isEmpty()) {
+      return;
+    }
+
+    var availableTopics = topicService.getAllTopicsMap();
+    sessionsToEnrich.forEach(session -> enrichSession(availableTopics, session));
   }
 
   private boolean shouldEnrichTopic(SessionDTO session) {
