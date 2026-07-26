@@ -376,24 +376,24 @@ class MessengerTest {
     assertThat(messenger.updateE2eKeys("rc-u1", "pub-key")).isFalse();
   }
 
-  // ── removeUserFromSession ──────────────────────────────────────────────────
+  // ── removeConsultantFromSession ────────────────────────────────────────────
 
   @Test
-  void removeUserFromSession_Should_SkipRemoval_When_ConsultantIsAdvisor() {
+  void removeConsultantFromSession_Should_SkipRemoval_When_ConsultantIsAdvisor() {
     var consultant = new Consultant();
     consultant.setId("c-1");
     var session = new Session();
     session.setConsultant(consultant);
-    when(sessionRepository.findByGroupId("group-1")).thenReturn(Optional.of(session));
-    when(consultantRepository.findByRocketChatIdAndDeleteDateIsNull("rc-1"))
+    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
         .thenReturn(Optional.of(consultant));
 
-    assertThat(messenger.removeUserFromSession("rc-1", "group-1")).isTrue();
-    verify(messageClient, never()).removeUserFromSession(anyString(), anyString());
+    assertThat(messenger.removeConsultantFromSession(1L, "c-1")).isTrue();
+    verify(groupChatMembershipService, never()).removeMemberFromRoom(anyString(), anyString());
   }
 
   @Test
-  void removeUserFromSession_Should_RemoveUser_When_NotAdvisorAndInMatrixRoom() {
+  void removeConsultantFromSession_Should_RemoveMember_When_NotAdvisorAndInMatrixRoom() {
     var sessionConsultant = new Consultant();
     sessionConsultant.setId("c-other");
     var requestConsultant = new Consultant();
@@ -403,8 +403,8 @@ class MessengerTest {
     session.setConsultant(sessionConsultant);
     session.setTeamSession(false);
     session.setMatrixRoomId("!room:matrix.oriso.org");
-    when(sessionRepository.findByGroupId("group-1")).thenReturn(Optional.of(session));
-    when(consultantRepository.findByRocketChatIdAndDeleteDateIsNull("rc-1"))
+    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
         .thenReturn(Optional.of(requestConsultant));
     when(groupChatMembershipService.resolveMatrixRoomId(session))
         .thenReturn("!room:matrix.oriso.org");
@@ -413,9 +413,8 @@ class MessengerTest {
             List.of(
                 new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
                     .ResolvedRoomMember("@c1:matrix.oriso.org", "c-1", "c1", "c1", true)));
-    when(messageClient.removeUserFromSession("rc-1", "group-1")).thenReturn(true);
-
-    assertThat(messenger.removeUserFromSession("rc-1", "group-1")).isTrue();
-    verify(messageClient).removeUserFromSession("rc-1", "group-1");
+    assertThat(messenger.removeConsultantFromSession(1L, "c-1")).isTrue();
+    verify(groupChatMembershipService)
+        .removeMemberFromRoom("!room:matrix.oriso.org", "@c1:matrix.oriso.org");
   }
 }

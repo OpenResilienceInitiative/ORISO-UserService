@@ -355,18 +355,15 @@ class UserSessionControllerDelegateTest {
   void removeFromSessionShouldRemoveConsultantAndReturnNoContent() {
     var consultantId = UUID.randomUUID();
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
-    var sessionMap = Map.<String, Object>of("chatId", "chat-id");
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
-    when(messenger.findSession(1L)).thenReturn(Optional.of(sessionMap));
-    when(consultantDtoMapper.chatIdOf(sessionMap)).thenReturn("chat-id");
-    when(userDtoMapper.chatUserIdOf(consultantMap)).thenReturn("chat-user-id");
-    when(messenger.removeUserFromSession("chat-user-id", "chat-id")).thenReturn(true);
+    when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
+    when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(true);
 
     var response = delegate.removeFromSession(1L, consultantId);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
-    verify(messenger).removeUserFromSession("chat-user-id", "chat-id");
+    verify(messenger).removeConsultantFromSession(1L, consultantId.toString());
   }
 
   @Test
@@ -382,13 +379,10 @@ class UserSessionControllerDelegateTest {
   void removeFromSessionShouldThrowInternalServerErrorWhenRemovalFails() {
     var consultantId = UUID.randomUUID();
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
-    var sessionMap = Map.<String, Object>of("chatId", "chat-id");
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
-    when(messenger.findSession(1L)).thenReturn(Optional.of(sessionMap));
-    when(consultantDtoMapper.chatIdOf(sessionMap)).thenReturn("chat-id");
-    when(userDtoMapper.chatUserIdOf(consultantMap)).thenReturn("chat-user-id");
-    when(messenger.removeUserFromSession("chat-user-id", "chat-id")).thenReturn(false);
+    when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
+    when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.removeFromSession(1L, consultantId))
         .isInstanceOf(InternalServerErrorException.class);

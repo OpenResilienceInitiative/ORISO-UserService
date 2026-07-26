@@ -216,20 +216,13 @@ class UserSessionControllerDelegate {
   }
 
   ResponseEntity<Void> removeFromSession(Long sessionId, UUID consultantId) {
-    var consultantMap =
-        accountManager
-            .findConsultant(consultantId.toString())
-            .orElseThrow(
-                () -> new NotFoundException("Consultant (%s) not found", consultantId.toString()));
-
-    var sessionMap =
-        messenger
-            .findSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session (%s) not found", sessionId));
-
-    var chatId = consultantDtoMapper.chatIdOf(sessionMap);
-    var chatUserId = userDtoMapper.chatUserIdOf(consultantMap);
-    if (!messenger.removeUserFromSession(chatUserId, chatId)) {
+    if (accountManager.findConsultant(consultantId.toString()).isEmpty()) {
+      throw new NotFoundException("Consultant (%s) not found", consultantId.toString());
+    }
+    if (messenger.findSession(sessionId).isEmpty()) {
+      throw new NotFoundException("Session (%s) not found", sessionId);
+    }
+    if (!messenger.removeConsultantFromSession(sessionId, consultantId.toString())) {
       var message =
           String.format(
               "Could not remove consultant (%s) from session (%s)", consultantId, sessionId);

@@ -15,7 +15,7 @@ public interface Messaging {
 
   Boolean updateE2eKeys(String chatUserId, String publicKey);
 
-  boolean removeUserFromSession(String chatUserId, String chatId);
+  boolean removeConsultantFromSession(Long sessionId, String consultantId);
 
   Optional<Map<String, Object>> findSession(Long sessionId);
 

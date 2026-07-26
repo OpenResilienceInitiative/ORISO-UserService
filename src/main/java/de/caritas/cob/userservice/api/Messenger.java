@@ -23,7 +23,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -170,19 +169,18 @@ public class Messenger implements Messaging {
   }
 
   @Override
-  public boolean removeUserFromSession(String chatUserId, String chatId) {
-    var session = sessionRepository.findByGroupId(chatId).orElseThrow();
-    var consultant =
-        consultantRepository.findByRocketChatIdAndDeleteDateIsNull(chatUserId).orElseThrow();
-    var removedOrIgnored = new AtomicBoolean(true);
+  public boolean removeConsultantFromSession(Long sessionId, String consultantId) {
+    var session = sessionRepository.findById(sessionId).orElseThrow();
+    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
 
     if (!session.isAdvisedBy(consultant) && !isResponsible(session, consultant)) {
       if (isInChat(session, consultant)) {
-        removedOrIgnored.set(messageClient.removeUserFromSession(chatUserId, chatId));
+        var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(session);
+        groupChatMembershipService.removeMemberFromRoom(matrixRoomId, consultant.getMatrixUserId());
       }
     }
 
-    return removedOrIgnored.get();
+    return true;
   }
 
   private boolean isResponsible(Session session, Consultant consultant) {
