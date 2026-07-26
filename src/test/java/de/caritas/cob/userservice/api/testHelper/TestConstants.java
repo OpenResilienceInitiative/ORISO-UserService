@@ -9,17 +9,6 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import com.google.api.client.util.Sets;
 import com.google.common.collect.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.DataDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.attachment.AttachmentDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.attachment.FileDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsLastMessageDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -27,7 +16,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionAttachmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
@@ -64,10 +52,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
 public class TestConstants {
 
@@ -144,85 +129,6 @@ public class TestConstants {
   public static final String RC_ATTACHMENT_FILE_TYPE = "image/jpeg";
   public static final String RC_ATTACHMENT_IMAGE_PREVIEW =
       "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAVACADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAAAAYDBAUH/8QAKBAAAQMDBAAFBQAAAAAAAAAAAQIDBAAFBhESITETIkFRgQcjQmHw/8QAGAEAAwEBAAAAAAAAAAAAAAAAAgMEAQX/xAAdEQADAAICAwAAAAAAAAAAAAAAAQIDEQQSIjEy/9oADAMBAAIRAxEAPwCjapLjU7YhHlA+77I+aY0XNgHxZGo52pI9RSvIx6LerBPbsd0U1JLv56jcNff4rHstquEF+PFuc0uBscacgfNc+uJExpMzrpGxdszGL5avw5BYQ+gHno1LdMzs0yKXX56FSFebeDyKzc6iW+4WZ5TzBelAbG3D6HQ/qlbHcPiSVoTKhLUdnSOdDxyafgfWFsKZO24JFiy8ZZfXFaCndSfL1/a1PZ7ZEl3p1l9lJbSNQANKKKg5NNNJDn7QqJsEef8AUB+1OrWIpOoHe3vqnqxYnGs8mT4D7i1ngKUOhRRV+L4AT8j/2Q==";
-  public static final GroupMemberDTO GROUP_MEMBER_SYS_USER =
-      new GroupMemberDTO(
-          ROCKET_CHAT_SYSTEM_USER_ID,
-          RC_STATUS_ONLINE,
-          RC_SYSTEM_USERNAME,
-          RC_SYSTEM_USERNAME,
-          RC_UTC_OFFSET);
-  public static final GroupMemberDTO GROUP_MEMBER_TECH_USER =
-      new GroupMemberDTO(
-          ROCKET_CHAT_TECHNICAL_USER_ID,
-          RC_STATUS_ONLINE,
-          RC_TECHNICAL_USERNAME,
-          RC_SYSTEM_USERNAME,
-          RC_UTC_OFFSET);
-  public static final DataDTO DATA_DTO_LOGIN = new DataDTO(RC_USER_ID, RC_TOKEN, null);
-  public static final DataDTO DATA_DTO_LOGIN_NO_TOKEN = new DataDTO(RC_USER_ID, null, null);
-  public static final String STATUS_OK = "OK";
-  public static final LoginResponseDTO LOGIN_RESPONSE_DTO =
-      new LoginResponseDTO(STATUS_OK, DATA_DTO_LOGIN);
-  public static final LoginResponseDTO LOGIN_RESPONSE_DTO_NO_TOKEN =
-      new LoginResponseDTO(STATUS_OK, DATA_DTO_LOGIN_NO_TOKEN);
-  public static final ResponseEntity<LoginResponseDTO> LOGIN_RESPONSE_ENTITY_OK =
-      new ResponseEntity<>(LOGIN_RESPONSE_DTO, HttpStatus.OK);
-  public static final ResponseEntity<LoginResponseDTO> LOGIN_RESPONSE_ENTITY_OK_NO_TOKEN =
-      new ResponseEntity<>(LOGIN_RESPONSE_DTO_NO_TOKEN, HttpStatus.OK);
-
-  public static final List<SubscriptionsUpdateDTO> SUBSCRIPTIONS_UPDATE_LIST_DTO =
-      Arrays.asList(
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null),
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID_2,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null),
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID_3,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null));
 
   /** Rocket.Chat credentials */
   public static final String TECHNICAL_USER_A_USERNAME = "techUserAName";
@@ -248,68 +154,6 @@ public class TestConstants {
   public static final String SYSTEM_USER_C_USERNAME = "sysUserBName";
   public static final String SYSTEM_USER_C_TOKEN = "sysUserBToken";
   public static final String SYSTEM_USER_C_ID = "sysUserBID";
-
-  public static final RocketChatCredentials RC_CREDENTIALS =
-      RocketChatCredentials.builder()
-          .rocketChatToken(RC_TOKEN)
-          .rocketChatUserId(RC_USER_ID)
-          .rocketChatUsername(RC_USERNAME)
-          .timeStampCreated(nowInUtc())
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_WITH_EMPTY_USER_VALUES =
-      RocketChatCredentials.builder()
-          .rocketChatToken(RC_TOKEN)
-          .timeStampCreated(nowInUtc())
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_A =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_A_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_A_ID)
-          .rocketChatUsername(TECHNICAL_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(5))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_B =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_B_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_B_ID)
-          .rocketChatUsername(TECHNICAL_USER_B_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(1))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_C =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_C_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_C_ID)
-          .rocketChatUsername(TECHNICAL_USER_C_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(10))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_A =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_A_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_A_ID)
-          .rocketChatUsername(SYSTEM_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(5))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_B =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_B_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_B_ID)
-          .rocketChatUsername(SYSTEM_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(1))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_C =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_C_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_C_ID)
-          .rocketChatUsername(SYSTEM_USER_C_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(10))
-          .build();
 
   /*
    * Agencies
@@ -432,18 +276,6 @@ public class TestConstants {
   public static final GroupSessionConsultantDTO GROUP_SESSION_CONSULTANT_DTO =
       new GroupSessionConsultantDTO();
   public static final AbsenceDTO ABSENCE_DTO_WITH_NULL_MESSAGE = new AbsenceDTO().absent(true);
-  public static final GroupMemberDTO GROUP_MEMBER_USER_1 =
-      new GroupMemberDTO(RC_USER_ID, RC_STATUS_ONLINE, USERNAME, USERNAME, RC_UTC_OFFSET);
-  public static final GroupMemberDTO GROUP_MEMBER_USER_2 =
-      new GroupMemberDTO(
-          RC_USER_ID_2,
-          RC_STATUS_ONLINE,
-          USERNAME_SIMPLE_ENCODED,
-          USERNAME_SIMPLE_ENCODED,
-          RC_UTC_OFFSET);
-  public static final List<GroupMemberDTO> GROUP_MEMBER_DTO_LIST =
-      Arrays.asList(
-          GROUP_MEMBER_SYS_USER, GROUP_MEMBER_TECH_USER, GROUP_MEMBER_USER_1, GROUP_MEMBER_USER_2);
   public static final User USER = new User(USER_ID, null, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
   public static final User USER_WITH_RC_ID =
       User.builder()
@@ -536,24 +368,8 @@ public class TestConstants {
       new UserDTO(null, INVALID_STATE, Integer.toString(CONSULTING_TYPE_ID_U25));
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_STATE =
       new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
-  public static final RocketChatUserDTO ROCKET_CHAT_USER_DTO =
-      new RocketChatUserDTO(RC_USER_ID, USERNAME, null, null);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO, SUCCESS, NULL, NULL);
-  public static final RocketChatUserDTO ROCKET_CHAT_USER_DTO_2 =
-      new RocketChatUserDTO(RC_USER_ID_2, USERNAME, null, null);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO_2 =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO_2, SUCCESS, NULL, NULL);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO_FAILED =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO, FAILED, ERROR, ERROR);
   public static final SessionConsultantForUserDTO SESSION_CONSULTANT_FOR_USER_DTO =
       new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null);
-  public static final RocketChatUserDTO USER_DTO_1 =
-      new RocketChatUserDTO("xyz", "123", null, null);
-  public static final RocketChatUserDTO USER_DTO_2 =
-      new RocketChatUserDTO(ROCKETCHAT_ID_2, "456", null, null);
-  public static final RocketChatUserDTO USER_DTO_3 =
-      new RocketChatUserDTO("adg", "789", null, null);
 
   /*
    * /* Messages
@@ -571,12 +387,6 @@ public class TestConstants {
   public static final String MESSAGE_EMPTY = StringUtils.EMPTY;
   public static final AbsenceDTO ABSENCE_DTO_WITH_EMPTY_MESSAGE =
       new AbsenceDTO().absent(true).message(TestConstants.MESSAGE_EMPTY);
-  /*
-   * Attachments
-   */
-  public static final FileDTO FILE_DTO = new FileDTO(RC_ATTACHMENT_TITLE, RC_ATTACHMENT_FILE_TYPE);
-  public static final AttachmentDTO ATTACHMENT_DTO = new AttachmentDTO(RC_ATTACHMENT_IMAGE_PREVIEW);
-
   /*
    * ConsultantAgency
    */
@@ -1067,252 +877,6 @@ public class TestConstants {
   public static final List<UserSessionResponseDTO> USER_CHAT_RESPONSE_DTO_LIST =
       Arrays.asList(USER_CHAT_RESPONSE_DTO, USER_CHAT_RESPONSE_DTO_2, USER_CHAT_RESPONSE_DTO_3);
 
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITHOUT_ATTACHMENT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          null,
-          null,
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_1 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_2 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_2,
-          NOW_MINUS_3_DAYS,
-          USER_DTO_2,
-          true,
-          NOW_MINUS_3_DAYS,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_3 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_2_DAYS,
-          USER_DTO_3,
-          true,
-          NOW_MINUS_2_DAYS,
-          MESSAGE,
-          "p",
-          null,
-          null,
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_4 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_4,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_5 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_5,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_6 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_6,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST =
-      Arrays.asList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_1,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_2,
-              "name2",
-              "fname2",
-              "P",
-              USER_DTO_2,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_2,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_3,
-              "name3",
-              "fname3",
-              "P",
-              USER_DTO_3,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_3,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_4,
-              "name4",
-              "fname4",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_4,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_5,
-              "name5",
-              "fname5",
-              "P",
-              USER_DTO_2,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_5,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_6,
-              "name6",
-              "fname6",
-              "P",
-              USER_DTO_3,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_6,
-              new Date()));
-  public static final Map<String, RoomsLastMessageDTO> ROOMS_LAST_MESSAGE_DTO_MAP =
-      new HashMap<>() {
-        {
-          put(RC_GROUP_ID, ROOMS_LAST_MESSAGE_DTO_1);
-          put(RC_GROUP_ID_2, ROOMS_LAST_MESSAGE_DTO_2);
-          put(RC_GROUP_ID_3, ROOMS_LAST_MESSAGE_DTO_3);
-          put(RC_GROUP_ID_4, ROOMS_LAST_MESSAGE_DTO_4);
-          put(RC_GROUP_ID_5, ROOMS_LAST_MESSAGE_DTO_5);
-          put(RC_GROUP_ID_6, ROOMS_LAST_MESSAGE_DTO_6);
-        }
-      };
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_6,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT =
-      Collections.singletonList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT,
-              new Date()));
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT_FOR_CHAT =
-      Arrays.asList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_4,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_6,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT,
-              new Date()));
-  public static final SessionAttachmentDTO SESSION_ATTACHMENT_DTO_RECEIVED =
-      new SessionAttachmentDTO()
-          .fileType(ROOMS_LAST_MESSAGE_DTO_1.getFile().getType())
-          .imagePreview(ROOMS_LAST_MESSAGE_DTO_1.getAttachements()[0].getImagePreview())
-          .fileReceived(true);
-  public static final SessionAttachmentDTO SESSION_ATTACHMENT_DTO_NOT_RECEIVED =
-      new SessionAttachmentDTO()
-          .fileType(ROOMS_LAST_MESSAGE_DTO_1.getFile().getType())
-          .imagePreview(ROOMS_LAST_MESSAGE_DTO_1.getAttachements()[0].getImagePreview())
-          .fileReceived(false);
-  public static final List<String> USERS_ROOMS_LIST =
-      ROOMS_UPDATE_DTO_LIST.stream().map(RoomsUpdateDTO::getId).collect(Collectors.toList());
-  public static final List<String> USERS_EMPTY_ROOMS_LIST = new ArrayList<>();
   public static final ConsultantSessionResponseDTO CONSULTANT_SESSION_RESPONSE_DTO =
       new ConsultantSessionResponseDTO().session(SESSION_DTO_1).latestMessage(NOW);
   public static final ConsultantSessionResponseDTO CONSULTANT_SESSION_RESPONSE_DTO_2 =
@@ -1345,14 +909,6 @@ public class TestConstants {
         }
       };
 
-  /** GroupMemberDTO */
-  public static final GroupMemberDTO GROUP_MEMBER_DTO =
-      new GroupMemberDTO(RC_USER_ID, null, USERNAME, null, null);
-
-  public static final GroupMemberDTO GROUP_MEMBER_DTO_2 =
-      new GroupMemberDTO(RC_USER_ID_2, null, USERNAME, null, null);
-  public static final List<GroupMemberDTO> LIST_GROUP_MEMBER_DTO =
-      Arrays.asList(GROUP_MEMBER_DTO, GROUP_MEMBER_DTO_2);
   /*
    * Passwords
    */

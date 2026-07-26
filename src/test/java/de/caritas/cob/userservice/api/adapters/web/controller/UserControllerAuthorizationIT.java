@@ -51,7 +51,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.Messenger;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
@@ -172,7 +171,6 @@ class UserControllerAuthorizationIT {
   @MockitoBean private StartChatFacade startChatFacade;
   @MockitoBean private JoinAndLeaveChatFacade joinChatFacade;
   @MockitoBean private GetChatFacade getChatFacade;
-  @MockitoBean private RocketChatService rocketChatService;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
@@ -1151,7 +1149,6 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isUnauthorized());
 
     verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(startChatFacade);
     verifyNoMoreInteractions(chatPermissionVerifier);
   }
@@ -1184,7 +1181,6 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(startChatFacade);
     verifyNoMoreInteractions(chatPermissionVerifier);
   }
@@ -1200,7 +1196,6 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(startChatFacade);
     verifyNoMoreInteractions(chatPermissionVerifier);
   }
@@ -1234,7 +1229,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 
@@ -1267,7 +1261,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 
@@ -1284,7 +1277,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 
@@ -1488,7 +1480,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(userService);
     verifyNoMoreInteractions(chatPermissionVerifier);
     verifyNoMoreInteractions(userHelper);
-    verifyNoMoreInteractions(rocketChatService);
   }
 
   @Test
@@ -1523,7 +1514,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(userService);
     verifyNoMoreInteractions(chatPermissionVerifier);
     verifyNoMoreInteractions(userHelper);
-    verifyNoMoreInteractions(rocketChatService);
   }
 
   @Test
@@ -1568,7 +1558,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 
@@ -1601,7 +1590,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 
@@ -1618,7 +1606,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(chatService);
     verifyNoMoreInteractions(consultantDataFacade);
     verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(joinChatFacade);
   }
 

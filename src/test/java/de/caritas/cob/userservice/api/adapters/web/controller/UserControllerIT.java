@@ -16,7 +16,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsernameJsonDeserializer;
@@ -292,7 +291,6 @@ class UserControllerIT {
   @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
-  @MockitoBean private RocketChatService rocketChatService;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
@@ -1795,7 +1793,6 @@ class UserControllerIT {
         .andExpect(status().isBadRequest());
 
     verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(startChatFacade);
     verifyNoMoreInteractions(chatPermissionVerifier);
   }
@@ -1971,7 +1968,6 @@ class UserControllerIT {
     verifyNoMoreInteractions(userAccountService);
     verifyNoMoreInteractions(chatPermissionVerifier);
     verifyNoMoreInteractions(userHelper);
-    verifyNoMoreInteractions(rocketChatService);
   }
 
   @Test
