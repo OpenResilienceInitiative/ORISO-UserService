@@ -392,12 +392,12 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveSessionsForAuthenticatedUserByGroupIds_Should_ReturnGroupSessionList() {
-    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
             Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+        sessionListFacade.retrieveSessionsForAuthenticatedUserByRoomIds(
             USER_ID, java.util.List.of(), java.util.Set.of());
 
     assertNotNull(result);
@@ -431,12 +431,12 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveSessionsForAuthenticatedConsultantByGroupIds_Should_ReturnGroupSessionList() {
-    when(consultantSessionListService.retrieveSessionsForConsultantAndGroupIds(
+    when(consultantSessionListService.retrieveSessionsForConsultantAndRoomIds(
             Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+        sessionListFacade.retrieveSessionsForAuthenticatedConsultantByRoomIds(
             CONSULTANT, java.util.List.of(), java.util.Set.of());
 
     assertNotNull(result);

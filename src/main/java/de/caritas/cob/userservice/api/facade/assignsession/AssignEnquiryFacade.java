@@ -68,8 +68,8 @@ public class AssignEnquiryFacade {
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
 
   /**
-   * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
-   * consultants from the Rocket.Chat group which don't have the right to view this session anymore.
+   * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
+   * no longer have permission from its Matrix room.
    *
    * <p>If the statistics function is enabled, the assignment of the enquired is processed as
    * statistical event.
@@ -402,7 +402,6 @@ public class AssignEnquiryFacade {
       }
 
       session.setMatrixRoomId(roomId);
-      session.setGroupId(roomId);
       sessionService.saveSession(session);
 
       // Best-effort: the notification listener syncs as the technical admin and must

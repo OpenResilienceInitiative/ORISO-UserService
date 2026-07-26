@@ -64,10 +64,8 @@ public class SessionMapper {
                 : de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.fromValue(
                     session.getConversationType().name()))
         .postcode(session.getPostcode())
-        .groupId(session.getGroupId())
-        .matrixRoomId(
-            session.getMatrixRoomId()) // MATRIX MIGRATION: Add Matrix room ID to API response
-        .askerRcId(
+        .matrixRoomId(session.getMatrixRoomId())
+        .askerMatrixUserId(
             nonNull(session.getUser()) && nonNull(session.getUser().getMatrixUserId())
                 ? session.getUser().getMatrixUserId()
                 : null)

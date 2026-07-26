@@ -23,7 +23,7 @@ import org.springframework.http.HttpStatus;
 @ExtendWith(MockitoExtension.class)
 class UserSupportControllerDelegateTest {
 
-  private static final String RC_GROUP_ID = "rc-group-id";
+  private static final String MATRIX_ROOM_ID = "!room-id:matrix.example";
   private static final String CONSULTANT_ID = "consultant-id";
   private static final String ASKER_ID = "asker-id";
   private static final UUID CONSULTANT_UUID =
@@ -47,7 +47,7 @@ class UserSupportControllerDelegateTest {
   @Test
   void sendReassignmentNotificationShouldSendConfirmationWhenConfirmed() {
     var reassignmentNotification =
-        new ReassignmentNotificationDTO(RC_GROUP_ID, CONSULTANT_UUID)
+        new ReassignmentNotificationDTO(MATRIX_ROOM_ID, CONSULTANT_UUID)
             .fromConsultantName("Consultant")
             .isConfirmed(true);
 
@@ -63,24 +63,24 @@ class UserSupportControllerDelegateTest {
   @Test
   void sendReassignmentNotificationShouldSendRequestWhenNotConfirmed() {
     var reassignmentNotification =
-        new ReassignmentNotificationDTO(RC_GROUP_ID, CONSULTANT_UUID).isConfirmed(false);
+        new ReassignmentNotificationDTO(MATRIX_ROOM_ID, CONSULTANT_UUID).isConfirmed(false);
 
     var response = delegate.sendReassignmentNotification(reassignmentNotification);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(emailNotificationFacade).sendReassignRequestNotification(RC_GROUP_ID, null);
+    verify(emailNotificationFacade).sendReassignRequestNotification(MATRIX_ROOM_ID, null);
     verify(emailNotificationFacade, never())
         .sendReassignConfirmationNotification(any(), any(TenantData.class));
   }
 
   @Test
   void sendReassignmentNotificationShouldSendRequestWhenConfirmationIsNull() {
-    var reassignmentNotification = new ReassignmentNotificationDTO(RC_GROUP_ID, CONSULTANT_UUID);
+    var reassignmentNotification = new ReassignmentNotificationDTO(MATRIX_ROOM_ID, CONSULTANT_UUID);
 
     var response = delegate.sendReassignmentNotification(reassignmentNotification);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(emailNotificationFacade).sendReassignRequestNotification(RC_GROUP_ID, null);
+    verify(emailNotificationFacade).sendReassignRequestNotification(MATRIX_ROOM_ID, null);
     verify(emailNotificationFacade, never())
         .sendReassignConfirmationNotification(any(), any(TenantData.class));
   }

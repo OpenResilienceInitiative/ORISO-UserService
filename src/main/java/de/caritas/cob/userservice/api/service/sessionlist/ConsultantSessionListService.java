@@ -38,12 +38,12 @@ public class ConsultantSessionListService {
    * @param roles roles of the consultant
    * @return List of {@link ConsultantSessionResponseDTO}
    */
-  public List<ConsultantSessionResponseDTO> retrieveSessionsForConsultantAndGroupIds(
+  public List<ConsultantSessionResponseDTO> retrieveSessionsForConsultantAndRoomIds(
       Consultant consultant, List<String> roomIds, Set<String> roles) {
-    var groupIds = new HashSet<>(roomIds);
+    var matrixRoomIds = new HashSet<>(roomIds);
     var sessions =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(consultant, groupIds, roles);
-    var chats = chatService.getChatSessionsForConsultantByGroupIds(groupIds);
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
   }
@@ -58,11 +58,11 @@ public class ConsultantSessionListService {
       Consultant consultant, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
     var sessions = sessionService.getSessionsByIds(consultant, uniqueSessionIds, roles);
-    var groupIds =
+    var matrixRoomIds =
         sessions.stream()
-            .map(sessionResponse -> sessionResponse.getSession().getGroupId())
+            .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsForConsultantByGroupIds(groupIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
   }
@@ -200,29 +200,26 @@ public class ConsultantSessionListService {
       enrichedChats = updateConsultantChatValues(chats, consultant);
     }
 
-    // MATRIX MIGRATION: Merge sessions and chats by groupId
-    // For group chats, we have BOTH a Session and a Chat entity with the same groupId
-    // We need to combine them into a single ConsultantSessionResponseDTO
-    var chatsByGroupId =
+    // A group chat has both a Session and a Chat with the same Matrix room ID.
+    var chatsByMatrixRoomId =
         enrichedChats.stream()
-            .filter(chat -> chat.getChat() != null && chat.getChat().getGroupId() != null)
-            .collect(Collectors.toMap(chat -> chat.getChat().getGroupId(), chat -> chat));
+            .filter(chat -> chat.getChat() != null && chat.getChat().getMatrixRoomId() != null)
+            .collect(Collectors.toMap(chat -> chat.getChat().getMatrixRoomId(), chat -> chat));
 
     // Add sessions, merging with matching chats
     for (ConsultantSessionResponseDTO session : enrichedSessions) {
-      if (session.getSession() != null && session.getSession().getGroupId() != null) {
-        var matchingChat = chatsByGroupId.get(session.getSession().getGroupId());
+      if (session.getSession() != null && session.getSession().getMatrixRoomId() != null) {
+        var matchingChat = chatsByMatrixRoomId.get(session.getSession().getMatrixRoomId());
         if (matchingChat != null) {
           // Merge: session already has session data, add chat data from matching chat
           session.setChat(matchingChat.getChat());
-          chatsByGroupId.remove(session.getSession().getGroupId()); // Mark as merged
+          chatsByMatrixRoomId.remove(session.getSession().getMatrixRoomId());
         }
       }
       allSessions.add(session);
     }
 
-    // Add remaining chats that didn't match any session (old-style chats without sessions)
-    allSessions.addAll(chatsByGroupId.values());
+    allSessions.addAll(chatsByMatrixRoomId.values());
 
     return allSessions;
   }

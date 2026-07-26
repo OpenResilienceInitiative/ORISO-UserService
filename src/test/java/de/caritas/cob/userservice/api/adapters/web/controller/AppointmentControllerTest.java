@@ -120,8 +120,8 @@ class AppointmentControllerTest {
   }
 
   @Test
-  void createEnquiryAppointment_optionalRocketChatHeadersAbsent_stillDelegatesWithoutThrow() {
-    // Business reason: clients without Rocket.Chat headers must still create enquiry appointments.
+  void createEnquiryAppointment_withExistingSession_delegatesWithoutThrow() {
+    // Business reason: an appointment request for an existing session must be delegated.
     var dto = org.mockito.Mockito.mock(EnquiryAppointmentDTO.class);
     var responseDto = org.mockito.Mockito.mock(CreateEnquiryMessageResponseDTO.class);
     var consultant = org.mockito.Mockito.mock(Consultant.class);

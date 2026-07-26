@@ -67,7 +67,7 @@ class ConsultantChatEnricherTest {
 
   private ConsultantSessionResponseDTO responseForRoom(String roomId) {
     var chat = new UserChatDTO();
-    chat.setGroupId(roomId);
+    chat.setMatrixRoomId(roomId);
     return new ConsultantSessionResponseDTO().chat(chat);
   }
 }

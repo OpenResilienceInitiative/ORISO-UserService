@@ -41,7 +41,7 @@ public class CreateAnonymousEnquiryFacadeTest {
   EasyRandom easyRandom = new EasyRandom();
 
   @Test
-  void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse_WithoutRocketChatCredentials() {
+  void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {
     CreateAnonymousEnquiryDTO request = new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT);
     AnonymousUserCredentials credentials =
         AnonymousUserCredentials.builder()
@@ -52,7 +52,7 @@ public class CreateAnonymousEnquiryFacadeTest {
             .refreshExpiresIn(600)
             .build();
     Session session = easyRandom.nextObject(Session.class);
-    session.setGroupId(null);
+    session.setMatrixRoomId(null);
     when(anonymousUserCreatorService.createAnonymousUser(any())).thenReturn(credentials);
     when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
         .thenReturn(session);

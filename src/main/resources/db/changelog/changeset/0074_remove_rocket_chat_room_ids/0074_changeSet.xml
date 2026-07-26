@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <changeSet id="0074-backfill-and-remove-rocket-chat-room-id-from-session" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="session" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      UPDATE session
+      SET matrix_room_id = rc_group_id
+      WHERE (matrix_room_id IS NULL OR matrix_room_id = '')
+        AND rc_group_id IS NOT NULL
+        AND rc_group_id LIKE '!%:%'
+    </sql>
+    <dropColumn tableName="session" columnName="rc_group_id"/>
+    <rollback>
+      <addColumn tableName="session">
+        <column name="rc_group_id" type="varchar(255)"/>
+      </addColumn>
+      <sql>
+        UPDATE session
+        SET rc_group_id = matrix_room_id
+        WHERE matrix_room_id IS NOT NULL
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0074-backfill-and-remove-rocket-chat-room-id-from-chat" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="chat" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      UPDATE chat
+      SET matrix_room_id = rc_group_id
+      WHERE (matrix_room_id IS NULL OR matrix_room_id = '')
+        AND rc_group_id IS NOT NULL
+        AND rc_group_id LIKE '!%:%'
+    </sql>
+    <dropColumn tableName="chat" columnName="rc_group_id"/>
+    <rollback>
+      <addColumn tableName="chat">
+        <column name="rc_group_id" type="varchar(255)"/>
+      </addColumn>
+      <sql>
+        UPDATE chat
+        SET rc_group_id = matrix_room_id
+        WHERE matrix_room_id IS NOT NULL
+      </sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

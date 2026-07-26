@@ -34,7 +34,7 @@ public class GroupChatReminderService {
                   series.getId(),
                   series.getCurrentOccurrenceIndex(),
                   series.getStartDate(),
-                  series.getMatrixRoomId() != null ? series.getMatrixRoomId() : series.getGroupId(),
+                  series.getMatrixRoomId(),
                   null,
                   series.getChatModality() == ChatModality.VIDEO,
                   notificationRecipientService.resolveRecipientIds(series));

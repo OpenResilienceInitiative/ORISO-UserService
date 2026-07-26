@@ -94,7 +94,7 @@ class ChatRepositoryIT {
   @Test
   @Sql(value = "/database/chatAndRelationData.sql")
   void findByGroupIds_Should_FetchChatAgencies() {
-    var chats = underTest.findByGroupIds(Set.of("x"));
+    var chats = underTest.findByMatrixRoomIdIn(Set.of("x"));
 
     assertEquals(1, chats.size());
     assertEquals(0, chats.get(0).getId());

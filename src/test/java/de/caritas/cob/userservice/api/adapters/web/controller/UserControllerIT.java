@@ -65,7 +65,6 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import jakarta.servlet.http.Cookie;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.hibernate.service.spi.ServiceException;
@@ -112,15 +111,12 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 class UserControllerIT {
 
-  private static final Cookie RC_TOKEN_COOKIE =
-      new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
-
   private final String VALID_ENQUIRY_MESSAGE_BODY = "{\"message\": \"" + MESSAGE + "\"}";
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Consultant TEAM_CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")
@@ -147,8 +143,8 @@ class UserControllerIT {
           .consultingType(0)
           .status(2)
           .postcode(POSTCODE)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(MESSAGE_DATE)
           .isTeamSession(IS_NO_TEAM_SESSION);
   private final AgencyDTO AGENCY_DTO =
@@ -180,7 +176,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.IN_PROGRESS)
           .createDate(nowInUtc())
@@ -196,7 +192,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.NEW)
           .createDate(nowInUtc())
@@ -213,7 +209,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.IN_PROGRESS)
           .createDate(nowInUtc())
@@ -652,8 +648,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_USER)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY_WITH_INVALID_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -670,8 +664,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_USER)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY_WITOUT_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -684,8 +676,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -696,8 +686,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_PostcodeIsInvalid() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITH_INVALID_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -708,8 +696,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_PostcodeIsMissing() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -723,8 +709,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_AGENCY_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -736,8 +720,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_CONSULTING_TYPE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -748,7 +730,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_RcUserIdIsMissing() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -759,7 +740,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_RcTokenIsMissing() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -779,8 +759,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -798,7 +776,6 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
@@ -813,15 +790,13 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
   }
 
   @Test
-  void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionHasNoRocketChatGroupId()
-      throws Exception {
+  void acceptEnquiry_Should_ReturnSuccess_WhenSessionHasNoMatrixRoomId() throws Exception {
 
     when(sessionService.getSessionForUpdate(SESSION_ID))
         .thenReturn(Optional.of(TEAM_SESSION_WITHOUT_GROUP_ID));
@@ -830,7 +805,6 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
@@ -845,7 +819,6 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
@@ -863,7 +836,6 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CONFLICT.value()));
@@ -880,8 +852,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, "xxx")
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, "xxx")
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -899,8 +869,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -914,18 +882,18 @@ class UserControllerIT {
     var expectedEnquiryData = new EnquiryData(USER, SESSION_ID, MESSAGE, null);
     when(createEnquiryMessageFacade.createEnquiryMessage(expectedEnquiryData))
         .thenReturn(
-            new CreateEnquiryMessageResponseDTO().rcGroupId(RC_GROUP_ID).sessionId(SESSION_ID));
+            new CreateEnquiryMessageResponseDTO()
+                .matrixRoomId(MATRIX_ROOM_ID)
+                .sessionId(SESSION_ID));
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CREATED.value()))
         .andExpect(jsonPath("$.sessionId", is(SESSION_ID.intValue())))
-        .andExpect(jsonPath("$.rcGroupId", is(RC_GROUP_ID)));
+        .andExpect(jsonPath("$.matrixRoomId", is(MATRIX_ROOM_ID)));
   }
 
   @Test
@@ -939,8 +907,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, "xxx")
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, "xxx")
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -1067,7 +1033,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_STATUS)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1076,11 +1041,7 @@ class UserControllerIT {
   }
 
   @Test
-  void getSessionsForAuthenticatedConsultant_Should_Succeed_WhenRcTokenHeaderIsMissing()
-      throws Exception {
-    // The RCToken header is a Rocket.Chat leftover: it is threaded through the
-    // session-list code and then dropped, because the room lookup runs against
-    // Matrix. Callers must not be forced to send a dummy value for it.
+  void getSessionsForAuthenticatedConsultant_Should_Succeed() throws Exception {
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -1099,7 +1060,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -1114,7 +1074,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is2xxSuccessful());
@@ -1130,7 +1089,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1146,7 +1104,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1158,7 +1115,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1171,7 +1127,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1183,7 +1138,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1196,7 +1150,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1211,7 +1164,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_INVALID_FILTER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1233,7 +1185,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
   }
@@ -1249,7 +1200,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
   }
@@ -1263,7 +1213,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1277,7 +1226,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1291,7 +1239,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1305,7 +1252,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1333,7 +1279,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -1350,7 +1295,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -1366,7 +1310,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1382,7 +1325,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is2xxSuccessful());
@@ -1393,7 +1335,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1405,7 +1346,6 @@ class UserControllerIT {
           throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1416,7 +1356,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1428,7 +1367,6 @@ class UserControllerIT {
           throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1443,7 +1381,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_INVALID_FILTER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1848,7 +1785,7 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(assignChatFacade).assignChat(RC_GROUP_ID, authenticatedUser);
+    verify(assignChatFacade).assignChat(MATRIX_ROOM_ID, authenticatedUser);
   }
 
   /** Method: joinChat */
@@ -1988,7 +1925,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSION_FOR_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
@@ -2006,7 +1942,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSION_FOR_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -2299,8 +2234,6 @@ class UserControllerIT {
     var result =
         mvc.perform(
                 post("/users/askers/session/new")
-                    .header("RCToken", "token")
-                    .header("RCUserId", "userId")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(new ObjectMapper().writeValueAsString(newRegistrationDto)))
             .andExpect(status().isCreated())

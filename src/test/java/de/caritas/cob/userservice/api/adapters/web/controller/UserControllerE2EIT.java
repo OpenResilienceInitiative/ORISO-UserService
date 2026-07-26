@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
 import static java.util.Objects.nonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -154,8 +153,6 @@ class UserControllerE2EIT {
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
-  private static final Cookie RC_TOKEN_COOKIE =
-      new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
 
   @Autowired private MockMvc mockMvc;
 
@@ -590,7 +587,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("offset", is(0)))
@@ -619,7 +615,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .param("offset", "-1")
                 .param("count", "1")
                 .param("status", "2")
@@ -642,7 +637,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .param("offset", "0")
                 .param("count", "0")
                 .param("status", "2")
@@ -850,7 +844,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -885,7 +878,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -920,7 +912,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -953,7 +944,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -976,7 +966,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -1038,7 +1027,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
@@ -1056,7 +1044,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(patchDtoJson)
@@ -1074,7 +1061,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDtoMap))
@@ -1092,7 +1078,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDtoMap))
@@ -1112,7 +1097,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
@@ -1131,7 +1115,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
@@ -1583,8 +1566,6 @@ class UserControllerE2EIT {
             post("/users/askers/session/new")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("RCToken", "token")
-                .header("RCUserId", "userId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
         .andExpect(status().isCreated());
@@ -1602,7 +1583,7 @@ class UserControllerE2EIT {
     var assignemtNotification =
         new ReassignmentNotificationDTO()
             .toConsultantId(UUID.randomUUID())
-            .rcGroupId(session.getGroupId());
+            .matrixRoomId(session.getMatrixRoomId());
 
     try {
       mockMvc

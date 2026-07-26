@@ -12,8 +12,8 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_NO_TEAM_SESSION;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.NAME;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_CONSULTANT_ENCODED;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_ENCODED;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.GroupChatDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.NewMessageDTO;
@@ -188,7 +189,7 @@ class EmailNotificationFacadeTest {
           .agencyId(AGENCY_ID)
           .status(SessionStatus.INITIAL)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .teamSession(IS_NO_TEAM_SESSION)
           .createDate(nowInUtc())
           .build();
@@ -204,7 +205,7 @@ class EmailNotificationFacadeTest {
           .agencyId(AGENCY_ID)
           .status(SessionStatus.IN_PROGRESS)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .teamSession(IS_NO_TEAM_SESSION)
           .createDate(nowInUtc())
           .build();
@@ -220,7 +221,7 @@ class EmailNotificationFacadeTest {
           .agencyId(AGENCY_ID)
           .status(SessionStatus.IN_PROGRESS)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .teamSession(IS_NO_TEAM_SESSION)
           .createDate(nowInUtc())
           .build();
@@ -236,7 +237,7 @@ class EmailNotificationFacadeTest {
           .agencyId(AGENCY_ID)
           .status(SessionStatus.IN_PROGRESS)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .teamSession(IS_TEAM_SESSION)
           .createDate(nowInUtc())
           .build();
@@ -425,7 +426,7 @@ class EmailNotificationFacadeTest {
   @Test
   void sendReassignRequestNotification_Should_SendEmail_When_askerHasValidMailAddress() {
     var session = new EasyRandom().nextObject(Session.class);
-    when(sessionService.getSessionByGroupId(any())).thenReturn(session);
+    when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
     session.getUser().setEmail("mail@valid.de");
     session
         .getUser()
@@ -440,19 +441,34 @@ class EmailNotificationFacadeTest {
   @Test
   void sendReassignRequestNotification_ShouldNot_SendEmail_When_askerHasDummyMailAddress() {
     var session = new EasyRandom().nextObject(Session.class);
-    when(sessionService.getSessionByGroupId(any())).thenReturn(session);
+    when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
     session.getUser().setEmail("mail@" + FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
 
-    emailNotificationFacade.sendReassignRequestNotification("id", null);
+    emailNotificationFacade.sendReassignRequestNotification("id", new TenantData(42L, "tenant"));
 
     verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void sendReassignRequestNotification_ShouldClearTenantContext_WhenSessionLookupFails() {
+    when(sessionService.getSessionByMatrixRoomId(MATRIX_ROOM_ID))
+        .thenThrow(new IllegalStateException("Matrix room lookup failed"));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            emailNotificationFacade.sendReassignRequestNotification(
+                MATRIX_ROOM_ID, new TenantData(42L, "tenant")));
+
+    assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
   @Test
   void
       sendReassignRequestNotification_Should_SendEmail_When_NewNotificationModeEnabledAndAskerDoesNotWantToReceiveNotifications() {
     var session = new EasyRandom().nextObject(Session.class);
-    when(sessionService.getSessionByGroupId(any())).thenReturn(session);
+    when(sessionService.getSessionByMatrixRoomId(any())).thenReturn(session);
     session.getUser().setEmail("mail@valid.de");
     session
         .getUser()

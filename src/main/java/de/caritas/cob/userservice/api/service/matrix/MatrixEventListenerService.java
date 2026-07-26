@@ -485,10 +485,10 @@ public class MatrixEventListenerService {
               try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, threadRootId, privacyEnvelope);
                 } else {
                   eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, privacyEnvelope);
                 }
                 if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
                   consultantMessageStatService.recordMessageSent(

@@ -252,7 +252,7 @@ paths:
         - user-controller
       summary: 'Returns sessions for given Matrix room IDs.
       [Authorization: Role: user, consultant]'
-      operationId: getSessionsForGroupIds
+      operationId: getSessionsForRoomIds
       parameters:
         - name: roomIds[]
           in: query
@@ -1303,16 +1303,16 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/chat/{groupId}/assign:
+  /users/chat/{matrixRoomId}/assign:
     put:
       tags:
         - user-controller
       summary: 'Assign the user to the given chat [Authorization: Role: consultant or user]'
       operationId: assignChat
       parameters:
-        - name: groupId
+        - name: matrixRoomId
           in: path
-          description: the chat room id (legacy Rocket.Chat-era naming; Matrix room ID in Matrix mode)
+          description: Matrix room ID of the chat
           required: true
           schema:
             type: string
@@ -1665,9 +1665,9 @@ paths:
       summary: 'Send a live notification event'
       operationId: sendLiveEvent
       parameters:
-        - name: rcGroupId
+        - name: matrixRoomId
           in: query
-          description: Chat room ID (legacy Rocket.Chat-era parameter name; Matrix room ID in Matrix mode)
+          description: Matrix room ID
           required: true
           schema:
             type: string
@@ -2076,18 +2076,14 @@ components:
           example: 79098
         language:
           $ref: '#/components/schemas/LanguageCode'
-        groupId:
-          type: string
-          example: xGklslk2JJKK
-          description: Chat room ID (legacy Rocket.Chat-era field; carries the Matrix room ID since the Matrix migration)
         matrixRoomId:
           type: string
           example: "!aBcDeF123:91.99.219.182"
           description: Matrix Synapse room ID
-        askerRcId:
+        askerMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Asker chat ID (legacy Rocket.Chat-era field)
+          example: "@asker:matrix.example"
+          description: Matrix user ID of the asker
         e2eLastMessage:
           $ref: '#/components/schemas/LastMessageDTO'
         lastMessage:
@@ -2227,26 +2223,26 @@ components:
           minLength: 1
           maxLength: 5
           example: 79098
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
-          description: Chat room ID (legacy Rocket.Chat-era field; carries the Matrix room ID since the Matrix migration)
+          example: "!aBcDeF123:matrix.example"
+          description: Matrix room ID
         consultantId:
           type: string
           example: 926b9777-4eef-443d-925a-4aa534797bd7
           description: keycloak id of assigned consultant
-        consultantRcId:
+        consultantMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Chat ID of assigned consultant (legacy Rocket.Chat-era field)
+          example: "@consultant:matrix.example"
+          description: Matrix user ID of assigned consultant
         askerId:
           type: string
           example: 926b9777-4eef-443d-925a-4aa534797bd7
           description: asker keycloak id
-        askerRcId:
+        askerMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Asker chat ID (legacy Rocket.Chat-era field)
+          example: "@asker:matrix.example"
+          description: Matrix user ID of the asker
         askerUserName:
           type: string
           example: asker123
@@ -2286,7 +2282,7 @@ components:
         - repetitive
         - active
         - consultingType
-        - groupId
+        - matrixRoomId
       properties:
         id:
           type: integer
@@ -2351,9 +2347,9 @@ components:
         messagesRead:
           type: boolean
           example: false
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
+          example: "!aBcDeF123:matrix.example"
         attachment:
           $ref: '#/components/schemas/SessionAttachmentDTO'
         subscribed:
@@ -2511,9 +2507,9 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         t:
           type: string
 
@@ -2923,7 +2919,7 @@ components:
     CreateChatResponseDTO:
       type: object
       required:
-        - groupId
+        - matrixRoomId
       properties:
         createdAt:
           type: string
@@ -2932,24 +2928,24 @@ components:
         creatorDisplayName:
           type: string
           example: Max M.
-        groupId:
+        matrixRoomId:
           type: string
-          example: WCET6GWir78pNMyyD
+          example: "!aBcDeF123:matrix.example"
 
     ChatInfoResponseDTO:
       type: object
       required:
         - id
-        - groupId
+        - matrixRoomId
         - active
       properties:
         id:
           type: integer
           format: int64
           example: 153918
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
+          example: "!aBcDeF123:matrix.example"
         active:
           type: boolean
           example: false
@@ -2986,11 +2982,11 @@ components:
     UpdateChatResponseDTO:
       type: object
       required:
-        - groupId
+        - matrixRoomId
       properties:
-        groupId:
+        matrixRoomId:
           type: string
-          example: WCET6GWir78pNMyyD
+          example: "!aBcDeF123:matrix.example"
 
     NewRegistrationDto:
       type: object
@@ -3045,7 +3041,7 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
         status:
           $ref: "#/components/schemas/HttpStatus"
@@ -3066,12 +3062,12 @@ components:
     ReassignmentNotificationDTO:
       type: object
       required:
-        - rcGroupId
+        - matrixRoomId
         - toConsultantId
       properties:
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         toConsultantId:
           type: string
           format: UUID

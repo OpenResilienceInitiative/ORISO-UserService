@@ -87,7 +87,7 @@ class SessionMapperTest {
   }
 
   @Test
-  void convertToSessionDTO_Should_leaveConversationTypeAndAskerRcIdNull_When_userIsNull() {
+  void convertToSessionDTO_Should_leaveConversationTypeAndAskerMatrixUserIdNull_When_userIsNull() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(null);
     session.setUser(null);
@@ -95,11 +95,11 @@ class SessionMapperTest {
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
-    assertNull(sessionDTO.getAskerRcId());
+    assertNull(sessionDTO.getAskerMatrixUserId());
   }
 
   @Test
-  void convertToSessionDTO_Should_leaveAskerRcIdNull_When_userRcIdMissing() {
+  void convertToSessionDTO_Should_leaveAskerMatrixUserIdNull_When_userRcIdMissing() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setRegistrationType(REGISTERED);
     User user = new User();
@@ -108,7 +108,7 @@ class SessionMapperTest {
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
-    assertNull(sessionDTO.getAskerRcId());
+    assertNull(sessionDTO.getAskerMatrixUserId());
   }
 
   @Test

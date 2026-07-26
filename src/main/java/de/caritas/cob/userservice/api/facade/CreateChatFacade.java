@@ -213,7 +213,7 @@ public class CreateChatFacade {
           participantIds.size() + 1); // +1 for creator
 
       return new CreateChatResponseDTO()
-          .groupId(matrixRoomId)
+          .matrixRoomId(matrixRoomId)
           .createdAt(session.getCreateDate().toString());
 
     } catch (Exception e) {

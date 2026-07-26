@@ -69,17 +69,17 @@ class UserSessionControllerDelegate {
         : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
-  ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(List<String> roomIds) {
+  ResponseEntity<GroupSessionListResponseDTO> getSessionsForRoomIds(List<String> roomIds) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+          sessionListFacade.retrieveSessionsForAuthenticatedConsultantByRoomIds(
               consultant, roomIds, authenticatedUser.getRoles());
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       groupSessionList =
-          sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+          sessionListFacade.retrieveSessionsForAuthenticatedUserByRoomIds(
               user.getUserId(), roomIds, authenticatedUser.getRoles());
     }
 

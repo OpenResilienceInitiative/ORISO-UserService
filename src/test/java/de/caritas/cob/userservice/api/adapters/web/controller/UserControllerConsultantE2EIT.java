@@ -905,7 +905,7 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("status", is(1)))
         .andExpect(jsonPath("groupId", is("ix7E7HzXKTgGeQMyb")))
         .andExpect(jsonPath("consultantId", is("473f7c4b-f011-4fc2-847c-ceb636a5b399")))
-        .andExpect(jsonPath("consultantRcId", is("CztX9SWF4SJPvgknZ")))
+        .andExpect(jsonPath("consultantMatrixUserId", is("@CztX9SWF4SJPvgknZ:matrix.example")))
         .andExpect(jsonPath("askerId", is("06c6601f-a5b4-4812-9260-20065390b1f5")))
         .andExpect(jsonPath("askerUserName", is("enc.OUZDK5DFON2DGNJVGU2Q....")))
         .andExpect(jsonPath("isTeamSession", is(true)))

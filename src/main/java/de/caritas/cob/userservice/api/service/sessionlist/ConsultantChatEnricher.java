@@ -25,7 +25,7 @@ public class ConsultantChatEnricher {
     consultantSessionResponseDTOs.forEach(
         consultantSessionResponseDTO -> {
           var chat = consultantSessionResponseDTO.getChat();
-          chat.setSubscribed(joinedRoomIds.contains(chat.getGroupId()));
+          chat.setSubscribed(joinedRoomIds.contains(chat.getMatrixRoomId()));
           chat.setMessagesRead(true);
           if (chat.getStartDateWithTime() != null) {
             consultantSessionResponseDTO.setLatestMessage(

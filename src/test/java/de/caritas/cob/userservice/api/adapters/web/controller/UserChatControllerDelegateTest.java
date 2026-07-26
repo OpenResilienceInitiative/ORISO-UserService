@@ -285,7 +285,7 @@ class UserChatControllerDelegateTest {
   private Consultant consultant() {
     return Consultant.builder()
         .id("consultant-id")
-        .matrixUserId("rocket-chat-id")
+        .matrixUserId("@member:matrix.example")
         .username("consultant")
         .firstName("Con")
         .lastName("Sultant")

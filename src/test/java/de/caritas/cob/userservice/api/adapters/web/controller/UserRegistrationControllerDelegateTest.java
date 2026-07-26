@@ -224,7 +224,9 @@ class UserRegistrationControllerDelegateTest {
     var user = newUser();
     var enquiryMessage = org.mockito.Mockito.mock(EnquiryMessageDTO.class);
     var messageResponse =
-        new CreateEnquiryMessageResponseDTO().sessionId(SESSION_ID).rcGroupId("rc-group-id");
+        new CreateEnquiryMessageResponseDTO()
+            .sessionId(SESSION_ID)
+            .matrixRoomId("!room-id:matrix.example");
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
     when(enquiryMessage.getMessage()).thenReturn("message");
     when(enquiryMessage.getLanguage()).thenReturn(LanguageCode.EN);

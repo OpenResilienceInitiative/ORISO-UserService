@@ -107,10 +107,6 @@ class UserAdminControllerE2EIT {
   private RestTemplate keycloakRestTemplate;
 
   @MockitoBean
-  @Qualifier("rocketChatRestTemplate")
-  private RestTemplate rocketChatRestTemplate;
-
-  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 

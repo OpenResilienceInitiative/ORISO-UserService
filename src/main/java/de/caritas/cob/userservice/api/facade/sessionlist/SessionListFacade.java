@@ -75,10 +75,10 @@ public class SessionListFacade {
    * @param roles the roles of given user
    * @return {@link UserSessionListResponseDTO}
    */
-  public GroupSessionListResponseDTO retrieveSessionsForAuthenticatedUserByGroupIds(
+  public GroupSessionListResponseDTO retrieveSessionsForAuthenticatedUserByRoomIds(
       String userId, List<String> roomIds, Set<String> roles) {
     List<UserSessionResponseDTO> userSessions =
-        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+        userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
             userId, roomIds, roles);
     userSessions.sort(
         comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
@@ -139,10 +139,10 @@ public class SessionListFacade {
    * @param roles the roles of given consultant
    * @return {@link GroupSessionListResponseDTO}
    */
-  public GroupSessionListResponseDTO retrieveSessionsForAuthenticatedConsultantByGroupIds(
+  public GroupSessionListResponseDTO retrieveSessionsForAuthenticatedConsultantByRoomIds(
       Consultant consultant, List<String> roomIds, Set<String> roles) {
     List<ConsultantSessionResponseDTO> consultantSessions =
-        consultantSessionListService.retrieveSessionsForConsultantAndGroupIds(
+        consultantSessionListService.retrieveSessionsForConsultantAndRoomIds(
             consultant, roomIds, roles);
     consultantSessions.sort(
         comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));

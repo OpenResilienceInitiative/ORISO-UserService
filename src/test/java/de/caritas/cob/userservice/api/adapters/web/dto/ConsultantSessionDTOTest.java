@@ -14,11 +14,11 @@ class ConsultantSessionDTOTest {
         .consultingType(3)
         .status(4)
         .postcode("88045")
-        .groupId("groupId")
+        .matrixRoomId("groupId")
         .consultantId("consultantId")
-        .consultantRcId("consultantRcId")
+        .consultantMatrixUserId("consultantMatrixUserId")
         .askerId("askerId")
-        .askerRcId("askerRcId")
+        .askerMatrixUserId("askerMatrixUserId")
         .askerUserName("askerUserName")
         .isTeamSession(true)
         .age(30)
@@ -38,11 +38,11 @@ class ConsultantSessionDTOTest {
     assertThat(dto.getConsultingType()).isEqualTo(3);
     assertThat(dto.getStatus()).isEqualTo(4);
     assertThat(dto.getPostcode()).isEqualTo("88045");
-    assertThat(dto.getGroupId()).isEqualTo("groupId");
+    assertThat(dto.getMatrixRoomId()).isEqualTo("groupId");
     assertThat(dto.getConsultantId()).isEqualTo("consultantId");
-    assertThat(dto.getConsultantRcId()).isEqualTo("consultantRcId");
+    assertThat(dto.getConsultantMatrixUserId()).isEqualTo("consultantMatrixUserId");
     assertThat(dto.getAskerId()).isEqualTo("askerId");
-    assertThat(dto.getAskerRcId()).isEqualTo("askerRcId");
+    assertThat(dto.getAskerMatrixUserId()).isEqualTo("askerMatrixUserId");
     assertThat(dto.getAskerUserName()).isEqualTo("askerUserName");
     assertThat(dto.getIsTeamSession()).isTrue();
     assertThat(dto.getAge()).isEqualTo(30);
@@ -61,11 +61,11 @@ class ConsultantSessionDTOTest {
     dto.setConsultingType(3);
     dto.setStatus(4);
     dto.setPostcode("88045");
-    dto.setGroupId("groupId");
+    dto.setMatrixRoomId("groupId");
     dto.setConsultantId("consultantId");
-    dto.setConsultantRcId("consultantRcId");
+    dto.setConsultantMatrixUserId("consultantMatrixUserId");
     dto.setAskerId("askerId");
-    dto.setAskerRcId("askerRcId");
+    dto.setAskerMatrixUserId("askerMatrixUserId");
     dto.setAskerUserName("askerUserName");
     dto.setIsTeamSession(true);
     dto.setAge(30);
@@ -165,11 +165,12 @@ class ConsultantSessionDTOTest {
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultingType(99));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().status(99));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().postcode("00000"));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().groupId("otherGroupId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().matrixRoomId("otherGroupId"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultantId("otherConsultantId"));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultantRcId("otherRcId"));
+    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().consultantMatrixUserId("otherRcId"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerId("otherAskerId"));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerRcId("otherAskerRcId"));
+    assertThat(base)
+        .isNotEqualTo(givenAFullyPopulatedDto().askerMatrixUserId("otherAskerMatrixUserId"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().askerUserName("otherAskerUserName"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().isTeamSession(false));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDto().age(99));

@@ -107,11 +107,11 @@ class UserSessionControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
-    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantByRoomIds(
             consultant, List.of("group-id"), roles))
         .thenReturn(responseDto);
 
-    var response = delegate.getSessionsForGroupIds(List.of("group-id"));
+    var response = delegate.getSessionsForRoomIds(List.of("group-id"));
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(consultantDataFacade).addConsultantDisplayNameToSessionList(responseDto);
@@ -125,17 +125,17 @@ class UserSessionControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user());
-    when(sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+    when(sessionListFacade.retrieveSessionsForAuthenticatedUserByRoomIds(
             eq("user-id"), eq(List.of("group-id")), eq(roles)))
         .thenReturn(responseDto);
 
-    var response = delegate.getSessionsForGroupIds(List.of("group-id"));
+    var response = delegate.getSessionsForRoomIds(List.of("group-id"));
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(responseDto);
 
     verify(sessionListFacade)
-        .retrieveSessionsForAuthenticatedUserByGroupIds("user-id", List.of("group-id"), roles);
+        .retrieveSessionsForAuthenticatedUserByRoomIds("user-id", List.of("group-id"), roles);
     verify(consultantDataFacade).addConsultantDisplayNameToSessionList(responseDto);
   }
 
@@ -147,15 +147,15 @@ class UserSessionControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user());
-    when(sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
+    when(sessionListFacade.retrieveSessionsForAuthenticatedUserByRoomIds(
             eq("user-id"), eq(List.of("group-id")), eq(roles)))
         .thenReturn(responseDto);
 
-    var response = delegate.getSessionsForGroupIds(List.of("group-id"));
+    var response = delegate.getSessionsForRoomIds(List.of("group-id"));
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(sessionListFacade)
-        .retrieveSessionsForAuthenticatedUserByGroupIds("user-id", List.of("group-id"), roles);
+        .retrieveSessionsForAuthenticatedUserByRoomIds("user-id", List.of("group-id"), roles);
   }
 
   @Test
@@ -422,11 +422,11 @@ class UserSessionControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
-    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantByRoomIds(
             consultant, List.of("group-id"), roles))
         .thenReturn(responseDto);
 
-    var response = delegate.getSessionsForGroupIds(List.of("group-id"));
+    var response = delegate.getSessionsForRoomIds(List.of("group-id"));
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(responseDto);

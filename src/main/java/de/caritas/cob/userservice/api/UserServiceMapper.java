@@ -367,8 +367,8 @@ public class UserServiceMapper {
 
     var session = optionalSession.get();
     var map = new ArrayMap<String, Object>();
-    if (nonNull(session.getGroupId())) {
-      map.put("chatId", session.getGroupId());
+    if (nonNull(session.getMatrixRoomId())) {
+      map.put("chatId", session.getMatrixRoomId());
     }
     map.put("adviceSeekerId", session.getUser().getUserId());
     map.put("status", session.getStatus().toString());

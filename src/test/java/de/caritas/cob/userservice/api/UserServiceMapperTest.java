@@ -186,7 +186,7 @@ class UserServiceMapperTest {
 
     Session session = new Session();
     session.setUser(user);
-    session.setGroupId("rc-group-1");
+    session.setMatrixRoomId("!room-1:matrix.example");
     session.setStatus(SessionStatus.NEW);
     session.setConsultingTypeId(1);
     session.setAgencyId(10L);
@@ -195,7 +195,7 @@ class UserServiceMapperTest {
 
     Map<String, Object> result = userServiceMapper.mapOf(Optional.of(session)).orElseThrow();
 
-    assertThat(result.get("chatId")).isEqualTo("rc-group-1");
+    assertThat(result.get("chatId")).isEqualTo("!room-1:matrix.example");
     assertThat(result.get("adviceSeekerId")).isEqualTo("u-1");
     assertThat(result.get("agencyId")).isEqualTo(10L);
     assertThat(result.get("mainTopicId")).isEqualTo(5L);
@@ -208,7 +208,7 @@ class UserServiceMapperTest {
 
     Session session = new Session();
     session.setUser(user);
-    session.setGroupId(null);
+    session.setMatrixRoomId(null);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setConsultingTypeId(2);
     session.setRegistrationType(RegistrationType.ANONYMOUS);

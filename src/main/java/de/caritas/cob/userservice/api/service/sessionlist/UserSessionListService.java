@@ -57,22 +57,23 @@ public class UserSessionListService {
         .forEach(sessionTopicEnrichmentService::enrichSessionWithTopicData);
   }
 
-  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndGroupIds(
+  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndRoomIds(
       String userId, List<String> roomIds, Set<String> roles) {
-    var groupIds = new HashSet<>(roomIds);
-    var chats = filterChatsVisibleToUser(userId, chatService.getChatSessionsByGroupIds(groupIds));
-    var chatGroupIds =
+    var matrixRoomIds = new HashSet<>(roomIds);
+    var chats =
+        filterChatsVisibleToUser(userId, chatService.getChatSessionsByRoomIds(matrixRoomIds));
+    var chatMatrixRoomIds =
         chats.stream()
             .map(UserSessionResponseDTO::getChat)
             .filter(java.util.Objects::nonNull)
-            .map(UserChatDTO::getGroupId)
+            .map(UserChatDTO::getMatrixRoomId)
             .filter(java.util.Objects::nonNull)
             .collect(Collectors.toSet());
-    groupIds.removeAll(chatGroupIds);
+    matrixRoomIds.removeAll(chatMatrixRoomIds);
     var sessions =
-        groupIds.isEmpty()
+        matrixRoomIds.isEmpty()
             ? List.<UserSessionResponseDTO>of()
-            : sessionService.getSessionsByUserAndGroupIds(userId, groupIds, roles);
+            : sessionService.getSessionsByUserAndRoomIds(userId, matrixRoomIds, roles);
 
     return mergeUserSessionsAndChats(userId, sessions, chats);
   }
@@ -81,11 +82,11 @@ public class UserSessionListService {
       String userId, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
     var sessions = sessionService.getSessionsByUserAndSessionIds(userId, uniqueSessionIds, roles);
-    var groupIds =
+    var matrixRoomIds =
         sessions.stream()
-            .map(sessionResponse -> sessionResponse.getSession().getGroupId())
+            .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsByGroupIds(groupIds);
+    var chats = chatService.getChatSessionsByRoomIds(matrixRoomIds);
     return mergeUserSessionsAndChats(userId, sessions, chats);
   }
 
@@ -147,7 +148,7 @@ public class UserSessionListService {
     chats.forEach(
         sessionResponse -> {
           var chat = sessionResponse.getChat();
-          chat.setSubscribed(joinedRoomIds.contains(chat.getGroupId()));
+          chat.setSubscribed(joinedRoomIds.contains(chat.getMatrixRoomId()));
           chat.setMessagesRead(true);
           if (sessionResponse.getLatestMessage() == null && chat.getStartDateWithTime() != null) {
             sessionResponse.setLatestMessage(Timestamp.valueOf(chat.getStartDateWithTime()));

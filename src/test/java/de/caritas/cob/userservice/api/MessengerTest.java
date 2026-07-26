@@ -246,7 +246,7 @@ class MessengerTest {
   @Test
   void isInChat_Should_ReturnFalse_When_SessionHasNoMatrixRoom() {
     var session = new Session();
-    session.setGroupId("group-1");
+    session.setMatrixRoomId("group-1");
     var consultant = new Consultant();
     when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(null);
 
@@ -263,7 +263,6 @@ class MessengerTest {
     owner.setMatrixUserId("@owner:matrix.oriso.org");
     var chat = new Chat();
     chat.setId(10L);
-    chat.setGroupId("!room:matrix.oriso.org");
     chat.setMatrixRoomId("!room:matrix.oriso.org");
     chat.setChatOwner(owner);
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
@@ -302,7 +301,7 @@ class MessengerTest {
     var user = new User("u-1", null, "seeker-username", "email@test.com", false);
     var chat = new Chat();
     chat.setId(10L);
-    chat.setGroupId("group-10");
+    chat.setMatrixRoomId("group-10");
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
     when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(null);

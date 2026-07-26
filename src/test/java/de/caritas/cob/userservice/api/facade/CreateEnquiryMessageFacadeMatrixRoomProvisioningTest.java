@@ -147,11 +147,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   }
 
   @Test
-  @DisplayName(
-      "RC-off enquiry with no existing room provisions Matrix room end-to-end and never touches"
-          + " Rocket.Chat")
-  void createEnquiryMessage_provisionsMatrixRoomEndToEnd_andNeverCallsRocketChat()
-      throws Exception {
+  @DisplayName("Enquiry with no existing room provisions Matrix room end-to-end")
+  void createEnquiryMessage_provisionsMatrixRoomEndToEnd() throws Exception {
     var consultant = new Consultant();
     consultant.setId("consultant-1");
     var consultantAgency = new ConsultantAgency();
@@ -195,11 +192,10 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // facade).
     verify(sessionService, Mockito.atLeastOnce()).saveSession(session);
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
-    assertEquals(NEW_ROOM_ID, session.getGroupId());
     assertEquals(SessionStatus.NEW, session.getStatus());
 
     // Response reflects the provisioned Matrix room + event.
-    assertEquals(NEW_ROOM_ID, response.getRcGroupId());
+    assertEquals(NEW_ROOM_ID, response.getMatrixRoomId());
     assertEquals(SESSION_ID, response.getSessionId());
     assertEquals(MATRIX_EVENT_ID, response.getT());
 

@@ -80,15 +80,15 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String groupId) {
-    if (groupId.matches("\\d+")) {
+  ResponseEntity<Void> assignChat(String matrixRoomId) {
+    if (matrixRoomId.matches("\\d+")) {
       try {
-        assignChatFacade.assignChat(Long.parseLong(groupId), authenticatedUser);
+        assignChatFacade.assignChat(Long.parseLong(matrixRoomId), authenticatedUser);
       } catch (NumberFormatException exception) {
         throw new BadRequestException("Numeric chat id is outside the supported range.");
       }
     } else {
-      assignChatFacade.assignChat(groupId, authenticatedUser);
+      assignChatFacade.assignChat(matrixRoomId, authenticatedUser);
     }
 
     return new ResponseEntity<>(HttpStatus.OK);

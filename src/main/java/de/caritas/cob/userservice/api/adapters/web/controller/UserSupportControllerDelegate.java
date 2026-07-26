@@ -36,7 +36,7 @@ class UserSupportControllerDelegate {
           reassignmentNotificationDTO, TenantContext.getCurrentTenantData());
     } else {
       emailNotificationFacade.sendReassignRequestNotification(
-          reassignmentNotificationDTO.getRcGroupId(), TenantContext.getCurrentTenantData());
+          reassignmentNotificationDTO.getMatrixRoomId(), TenantContext.getCurrentTenantData());
     }
 
     return new ResponseEntity<>(HttpStatus.OK);

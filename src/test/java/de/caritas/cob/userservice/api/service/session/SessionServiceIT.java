@@ -87,7 +87,7 @@ class SessionServiceIT {
     assertThrows(
         ForbiddenException.class,
         () ->
-            sessionService.getSessionsByUserAndGroupIds(
+            sessionService.getSessionsByUserAndRoomIds(
                 "9c4057d0-05ad-4e86-a47c-dc5bdeec03b9",
                 Set.of("9faSTWZ5gurHLXy4R"),
                 Collections.emptySet()));
@@ -111,13 +111,13 @@ class SessionServiceIT {
     assertEquals(session.isTeamSession(), result.getIsTeamSession());
     assertEquals(session.getAgencyId(), result.getAgencyId());
     assertEquals(session.getConsultant().getId(), result.getConsultantId());
-    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantRcId());
+    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantMatrixUserId());
     assertEquals(session.getUser().getUserId(), result.getAskerId());
-    assertEquals(session.getUser().getMatrixUserId(), result.getAskerRcId());
+    assertEquals(session.getUser().getMatrixUserId(), result.getAskerMatrixUserId());
     assertEquals(session.getUser().getUsername(), result.getAskerUserName());
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
-    assertEquals(session.getGroupId(), result.getGroupId());
+    assertEquals(session.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(session.getConsultingTypeId(), result.getConsultingType().intValue());
     assertEquals(session.getUserAge(), result.getAge());
     assertEquals(session.getUserGender(), result.getGender());

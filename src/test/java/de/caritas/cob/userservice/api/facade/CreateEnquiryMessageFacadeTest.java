@@ -84,10 +84,9 @@ class CreateEnquiryMessageFacadeTest {
 
     var response = facade.createEnquiryMessage(enquiryData);
 
-    assertThat(response.getRcGroupId()).isEqualTo(MATRIX_ROOM_ID);
+    assertThat(response.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(response.getSessionId()).isEqualTo(SESSION_ID);
     assertThat(response.getT()).isEqualTo(MATRIX_EVENT_ID);
-    assertThat(session.getGroupId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(session.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(session.getStatus()).isEqualTo(SessionStatus.NEW);
     assertThat(session.getEnquiryMessageDate()).isNotNull();
@@ -196,7 +195,7 @@ class CreateEnquiryMessageFacadeTest {
 
     var response = facade.createEnquiryMessage(enquiryData);
 
-    assertThat(response.getRcGroupId()).isEqualTo(MATRIX_ROOM_ID);
+    assertThat(response.getMatrixRoomId()).isEqualTo(MATRIX_ROOM_ID);
     assertThat(response.getT()).isEmpty();
     verify(matrixSynapseService, never()).loginAsUserAccessToken(MATRIX_USER_ID);
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);

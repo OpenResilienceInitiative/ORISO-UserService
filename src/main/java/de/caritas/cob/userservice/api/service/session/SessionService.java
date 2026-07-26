@@ -547,17 +547,17 @@ public class SessionService {
   }
 
   /**
-   * Retrieves user sessions by user ID and rocket chat group IDs
+   * Retrieves user sessions by user ID and Matrix room IDs.
    *
    * @param userId the user ID
-   * @param rcGroupIds rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
-  public List<UserSessionResponseDTO> getSessionsByUserAndGroupIds(
-      String userId, Set<String> rcGroupIds, Set<String> roles) {
+  public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
+      String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
-    var sessions = sessionRepository.findByGroupIds(rcGroupIds);
+    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
     sessions.forEach(session -> checkAskerPermissionForSession(session, userId, roles));
     List<AgencyDTO> agencies = fetchAgencies(sessions);
     return convertToUserSessionResponseDTO(sessions, agencies);
@@ -605,18 +605,18 @@ public class SessionService {
   }
 
   /**
-   * Retrieves consultant sessions by consultant ID and rocket chat group IDs
+   * Retrieves consultant sessions by consultant ID and Matrix room IDs.
    *
    * @param consultant the ID of the consultant
-   * @param rcGroupIds rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @param roles the roles of the given consultant
    * @return {@link ConsultantSessionResponseDTO}
    */
   @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndGroupIds(
-      Consultant consultant, Set<String> rcGroupIds, Set<String> roles) {
+  public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndRoomIds(
+      Consultant consultant, Set<String> matrixRoomIds, Set<String> roles) {
     checkForUserOrConsultantRole(roles);
-    var sessions = sessionRepository.findByGroupIds(rcGroupIds);
+    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
 
     List<Session> allowedSessions =
         sessions.stream()
@@ -725,25 +725,26 @@ public class SessionService {
   }
 
   /**
-   * Returns the session for the provided Rocket.Chat group ID. Logs a warning if the given user is
-   * not allowed to access this session.
+   * Returns the session for the provided Matrix room ID after verifying access.
    *
-   * @param rcGroupId Rocket.Chat group ID
-   * @param userId Rocket.Chat user ID
+   * @param matrixRoomId Matrix room ID
+   * @param userId application account ID
    * @param roles user roles
    * @return {@link Session}
    */
-  public Session getSessionByGroupIdAndUser(String rcGroupId, String userId, Set<String> roles) {
-    var session = getSessionByGroupId(rcGroupId);
+  public Session getSessionByMatrixRoomIdAndUser(
+      String matrixRoomId, String userId, Set<String> roles) {
+    var session = getSessionByMatrixRoomId(matrixRoomId);
     checkUserPermissionForSession(session, userId, roles);
 
     return session;
   }
 
-  public Session getSessionByGroupId(String rcGroupId) {
+  public Session getSessionByMatrixRoomId(String matrixRoomId) {
     return sessionRepository
-        .findByGroupId(rcGroupId)
-        .orElseThrow(() -> new NotFoundException("Session with groupId %s not found.", rcGroupId));
+        .findByMatrixRoomId(matrixRoomId)
+        .orElseThrow(
+            () -> new NotFoundException("Session with Matrix room ID %s not found.", matrixRoomId));
   }
 
   private void checkUserPermissionForSession(Session session, String userId, Set<String> roles) {
@@ -904,12 +905,12 @@ public class SessionService {
             .id(session.getId())
             .status(session.getStatus().getValue())
             .askerId(session.getUser().getUserId())
-            .askerRcId(session.getUser().getMatrixUserId())
+            .askerMatrixUserId(session.getUser().getMatrixUserId())
             .askerUserName(session.getUser().getUsername())
-            .groupId(session.getGroupId())
+            .matrixRoomId(session.getMatrixRoomId())
             .postcode(session.getPostcode())
             .consultantId(nonNull(session.getConsultant()) ? session.getConsultant().getId() : null)
-            .consultantRcId(
+            .consultantMatrixUserId(
                 nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
             .age(session.getUserAge())
             .gender(session.getUserGender())

@@ -156,7 +156,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
 
     CreateChatResponseDTO result = createChatFacade.createChatV1(chatDto, consultant);
 
-    assertThat(result.getGroupId()).isEqualTo(matrixRoomId);
+    assertThat(result.getMatrixRoomId()).isEqualTo(matrixRoomId);
   }
 
   @Test

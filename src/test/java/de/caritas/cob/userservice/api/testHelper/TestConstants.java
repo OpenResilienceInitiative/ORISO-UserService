@@ -101,59 +101,20 @@ public class TestConstants {
   public static final String AGE = "age";
 
   /*
-   * RocketChat
+   * Matrix
    */
-  public static final String ROCKETCHAT_ID = "xN3Mobksn3xdp7gEk";
-  public static final String ROCKETCHAT_ID_2 = "tZ6Mdfks5rtxdp7a8i";
-  public static final String RC_TOKEN = "2fUGwNSqvpiEDTsMJQ54XeYdx0XzzCWdu0PP0lXFNu8";
-  public static final String RC_USER_ID = "ogCRwt3ieDiBNJFaR";
-  public static final String RC_USER_ID_2 = "sd3ssdfFFGSGDGWww";
-  public static final String RC_USER_ID_3 = "abcdefsDefdfrWrt";
-  public static final String RC_USERNAME = "rcUsername";
-  public static final String RC_SYSTEM_USERNAME = "system";
-  public static final String ROCKET_CHAT_SYSTEM_USER_ID = "xN3Msb3ksnfxda7gEk";
-  public static final String RC_TOKEN_HEADER_PARAMETER_NAME = "RCToken";
-  public static final String RC_USER_ID_HEADER_PARAMETER_NAME = "RCUserId";
-  public static final String ROCKET_CHAT_TECHNICAL_USER_ID = "dasd83juiosdf";
-  public static final String RC_TECHNICAL_USERNAME = "technical";
-  public static final String RC_GROUP_ID = "jjjuuu";
-  public static final String RC_GROUP_ID_2 = "sdfsdff";
-  public static final String RC_GROUP_ID_3 = "gggewwww";
-  public static final String RC_GROUP_ID_4 = "ssssuuu";
-  public static final String RC_GROUP_ID_5 = "aldoeke";
-  public static final String RC_GROUP_ID_6 = "vmndsjk";
-  public static final String RC_GROUP_ID_7 = "juuuzte";
-  public static final String RC_STATUS_ONLINE = "online";
-  public static final String RC_UTC_OFFSET = "1";
-  public static final String RC_ATTACHMENT_TITLE = "filename.jpg";
-  public static final String RC_ATTACHMENT_FILE_TYPE = "image/jpeg";
-  public static final String RC_ATTACHMENT_IMAGE_PREVIEW =
-      "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAVACADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAAAAYDBAUH/8QAKBAAAQMDBAAFBQAAAAAAAAAAAQIDBAAFBhESITETIkFRgQcjQmHw/8QAGAEAAwEBAAAAAAAAAAAAAAAAAgMEAQX/xAAdEQADAAICAwAAAAAAAAAAAAAAAQIDEQQSIjEy/9oADAMBAAIRAxEAPwCjapLjU7YhHlA+77I+aY0XNgHxZGo52pI9RSvIx6LerBPbsd0U1JLv56jcNff4rHstquEF+PFuc0uBscacgfNc+uJExpMzrpGxdszGL5avw5BYQ+gHno1LdMzs0yKXX56FSFebeDyKzc6iW+4WZ5TzBelAbG3D6HQ/qlbHcPiSVoTKhLUdnSOdDxyafgfWFsKZO24JFiy8ZZfXFaCndSfL1/a1PZ7ZEl3p1l9lJbSNQANKKKg5NNNJDn7QqJsEef8AUB+1OrWIpOoHe3vqnqxYnGs8mT4D7i1ngKUOhRRV+L4AT8j/2Q==";
-
-  /** Rocket.Chat credentials */
-  public static final String TECHNICAL_USER_A_USERNAME = "techUserAName";
-
-  public static final String TECHNICAL_USER_A_TOKEN = "techUserAToken";
-  public static final String TECHNICAL_USER_A_ID = "techUserAID";
-
-  public static final String TECHNICAL_USER_B_USERNAME = "techUserBName";
-  public static final String TECHNICAL_USER_B_TOKEN = "techUserBToken";
-  public static final String TECHNICAL_USER_B_ID = "techUserBID";
-
-  public static final String TECHNICAL_USER_C_USERNAME = "techUserCName";
-  public static final String TECHNICAL_USER_C_TOKEN = "techUserCToken";
-  public static final String TECHNICAL_USER_C_ID = "techUserCID";
-
-  public static final String SYSTEM_USER_A_USERNAME = "sysUserAName";
-  public static final String SYSTEM_USER_A_TOKEN = "sysUserAToken";
-  public static final String SYSTEM_USER_A_ID = "sysUserAID";
-
-  public static final String SYSTEM_USER_B_TOKEN = "sysUserBToken";
-  public static final String SYSTEM_USER_B_ID = "sysUserBID";
-
-  public static final String SYSTEM_USER_C_USERNAME = "sysUserBName";
-  public static final String SYSTEM_USER_C_TOKEN = "sysUserBToken";
-  public static final String SYSTEM_USER_C_ID = "sysUserBID";
+  public static final String MATRIX_USER_ID = "@asker:matrix.example";
+  public static final String MATRIX_USER_ID_2 = "@consultant:matrix.example";
+  public static final String MATRIX_USER_ID_3 = "@member-3:matrix.example";
+  public static final String MATRIX_USER_ID_4 = "@member-4:matrix.example";
+  public static final String MATRIX_USER_ID_5 = "@member-5:matrix.example";
+  public static final String MATRIX_ROOM_ID = "!room-1:matrix.example";
+  public static final String MATRIX_ROOM_ID_2 = "!room-2:matrix.example";
+  public static final String MATRIX_ROOM_ID_3 = "!room-3:matrix.example";
+  public static final String MATRIX_ROOM_ID_4 = "!room-4:matrix.example";
+  public static final String MATRIX_ROOM_ID_5 = "!room-5:matrix.example";
+  public static final String MATRIX_ROOM_ID_6 = "!room-6:matrix.example";
+  public static final String MATRIX_ROOM_ID_7 = "!room-7:matrix.example";
 
   /*
    * Agencies
@@ -230,7 +191,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName(FIRST_NAME)
           .lastName(LAST_NAME)
@@ -251,7 +212,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -282,7 +243,7 @@ public class TestConstants {
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .matrixUserId(RC_USER_ID)
+          .matrixUserId(MATRIX_USER_ID_3)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .deleteDate(nowInUtc())
           .languageCode(LanguageCode.de)
@@ -404,7 +365,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -426,7 +387,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -481,7 +442,7 @@ public class TestConstants {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(IN_PROGRESS)
           .createDate(nowInUtc())
@@ -498,7 +459,7 @@ public class TestConstants {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(IN_PROGRESS)
           .createDate(nowInUtc())
@@ -513,7 +474,7 @@ public class TestConstants {
           .registrationType(ANONYMOUS)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -529,7 +490,7 @@ public class TestConstants {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(null)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.NEW)
           .createDate(nowInUtc())
@@ -545,7 +506,7 @@ public class TestConstants {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -561,7 +522,7 @@ public class TestConstants {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -577,7 +538,7 @@ public class TestConstants {
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .matrixUserId(RC_USER_ID)
+          .matrixUserId(MATRIX_USER_ID_3)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .sessions(SESSION_SET)
           .deleteDate(nowInUtc())
@@ -591,8 +552,8 @@ public class TestConstants {
           .consultingType(CONSULTING_TYPE_ID_U25)
           .status(SESSION_STATUS_IN_PROGRESS)
           .postcode(POSTCODE)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(MESSAGE_DATE)
           .isTeamSession(IS_TEAM_SESSION);
   public static final UserSessionResponseDTO USER_SESSION_RESPONSE_DTO_U25 =
@@ -608,8 +569,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(Helper.getUnixTimestampFromDate(NOW))
           .isTeamSession(IS_NO_TEAM_SESSION);
   public static final SessionDTO SESSION_DTO_2 =
@@ -618,8 +579,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID_2)
-          .askerRcId(RC_USER_ID_2)
+          .matrixRoomId(MATRIX_ROOM_ID_2)
+          .askerMatrixUserId(MATRIX_USER_ID_4)
           .messageDate(Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86400000)))
           .isTeamSession(IS_NO_TEAM_SESSION);
   public static final SessionDTO SESSION_DTO_3 =
@@ -628,8 +589,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID_3)
-          .askerRcId(RC_USER_ID_3)
+          .matrixRoomId(MATRIX_ROOM_ID_3)
+          .askerMatrixUserId(MATRIX_USER_ID_5)
           .messageDate(Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 8640000)))
           .isTeamSession(IS_NO_TEAM_SESSION);
 
@@ -674,7 +635,7 @@ public class TestConstants {
           null);
 
   public static final CreateChatResponseDTO CREATE_CHAT_RESPONSE_DTO =
-      new CreateChatResponseDTO().groupId(RC_GROUP_ID);
+      new CreateChatResponseDTO().matrixRoomId(MATRIX_ROOM_ID);
   public static final Chat ACTIVE_CHAT =
       Chat.builder()
           .id(CHAT_ID)
@@ -687,7 +648,7 @@ public class TestConstants {
           .chatInterval(CHAT_INTERVAL_WEEKLY)
           .active(IS_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatUsers(Sets.newHashSet())
           .updateDate(nowInUtc())
@@ -705,7 +666,7 @@ public class TestConstants {
           .chatInterval(ChatInterval.WEEKLY)
           .active(IS_NOT_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatUsers(Sets.newHashSet())
           .updateDate(nowInUtc())
@@ -722,7 +683,7 @@ public class TestConstants {
           .chatInterval(ChatInterval.WEEKLY)
           .active(IS_NOT_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatAgencies(Set.of(new ChatAgency(null, CHAT_AGENCY_ID)))
           .updateDate(nowInUtc())
@@ -745,7 +706,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86300000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_4,
+          MATRIX_ROOM_ID_4,
           null,
           false,
           null,
@@ -767,7 +728,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86200000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_5,
+          MATRIX_ROOM_ID_5,
           null,
           false,
           null,
@@ -789,7 +750,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86410000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_6,
+          MATRIX_ROOM_ID_6,
           null,
           false,
           null,
@@ -855,23 +816,23 @@ public class TestConstants {
   public static final Map<String, Boolean> MESSAGES_READ_MAP_WITH_UNREADS =
       new HashMap<>() {
         {
-          put(RC_GROUP_ID, false);
-          put(RC_GROUP_ID_2, false);
-          put(RC_GROUP_ID_3, false);
-          put(RC_GROUP_ID_4, false);
-          put(RC_GROUP_ID_5, false);
-          put(RC_GROUP_ID_6, false);
+          put(MATRIX_ROOM_ID, false);
+          put(MATRIX_ROOM_ID_2, false);
+          put(MATRIX_ROOM_ID_3, false);
+          put(MATRIX_ROOM_ID_4, false);
+          put(MATRIX_ROOM_ID_5, false);
+          put(MATRIX_ROOM_ID_6, false);
         }
       };
   public static final Map<String, Boolean> MESSAGES_READ_MAP_WITHOUT_UNREADS =
       new HashMap<>() {
         {
-          put(RC_GROUP_ID, true);
-          put(RC_GROUP_ID_2, true);
-          put(RC_GROUP_ID_3, true);
-          put(RC_GROUP_ID_4, true);
-          put(RC_GROUP_ID_5, true);
-          put(RC_GROUP_ID_6, true);
+          put(MATRIX_ROOM_ID, true);
+          put(MATRIX_ROOM_ID_2, true);
+          put(MATRIX_ROOM_ID_3, true);
+          put(MATRIX_ROOM_ID_4, true);
+          put(MATRIX_ROOM_ID_5, true);
+          put(MATRIX_ROOM_ID_6, true);
         }
       };
   public static final List<UserSessionResponseDTO> USER_CHAT_RESPONSE_DTO_LIST =
@@ -1204,7 +1165,7 @@ public class TestConstants {
           ENCRYPTED_MESSAGE,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86410000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_6,
+          MATRIX_ROOM_ID_6,
           null,
           false,
           null,

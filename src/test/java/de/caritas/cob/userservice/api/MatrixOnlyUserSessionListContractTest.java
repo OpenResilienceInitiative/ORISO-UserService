@@ -42,7 +42,7 @@ class MatrixOnlyUserSessionListContractTest {
     for (var operationId :
         new String[] {
           "getSessionsForAuthenticatedUser",
-          "getSessionsForGroupIds",
+          "getSessionsForRoomIds",
           "getSessionForId",
           "getSessionsForAuthenticatedConsultant",
           "getTeamSessionsForAuthenticatedConsultant",
@@ -51,7 +51,7 @@ class MatrixOnlyUserSessionListContractTest {
       assertThat(operationBlock(api, operationId)).doesNotContain("RCToken", "rcToken");
     }
 
-    assertThat(operationBlock(api, "getSessionsForGroupIds"))
+    assertThat(operationBlock(api, "getSessionsForRoomIds"))
         .contains("name: roomIds[]")
         .doesNotContain("rcGroupIds");
   }

@@ -99,13 +99,13 @@ public class CreateEnquiryMessageFacade {
     var exceptionInformation =
         CreateEnquiryExceptionInformation.builder()
             .session(session)
-            .rcGroupId(matrixRoomId)
+            .matrixRoomId(matrixRoomId)
             .build();
     updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
     sendEnquiryNotifications(session, agencyList);
 
     return new CreateEnquiryMessageResponseDTO()
-        .rcGroupId(matrixRoomId)
+        .matrixRoomId(matrixRoomId)
         .sessionId(enquiryData.getSessionId())
         .t(matrixMessageEventId);
   }
@@ -228,7 +228,6 @@ public class CreateEnquiryMessageFacade {
       CreateEnquiryExceptionInformation exceptionInformation)
       throws CreateEnquiryException {
     try {
-      session.setGroupId(matrixRoomId);
       session.setMatrixRoomId(matrixRoomId);
       session.setStatus(SessionStatus.NEW);
       session.setEnquiryMessageDate(nowInUtc());

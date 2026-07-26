@@ -33,8 +33,6 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_U
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_UPDATE_SESSION_DATA;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_UPDATE_KEY;
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_UPDATE_CHAT_BODY;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN_HEADER_PARAMETER_NAME;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
@@ -124,10 +122,6 @@ import org.springframework.test.web.servlet.MockMvc;
       "keycloak.config.admin-username=admin",
       "keycloak.config.admin-password=secret",
       "identity.openid-connect-url=https://auth.testing/realms/testing/protocol/openid-connect",
-      "rocket.technical.username=technical",
-      "rocket.technical.password=secret",
-      "rocket-chat.base-url=https://testing.com/api/v1",
-      "rocket-chat.mongo-url=mongodb://localhost:27017/testing",
       "consulting.type.service.api.url=https://consulting-type.testing/service",
       "tenant.service.api.url=https://tenant.testing/service",
       "matrix.apiUrl=https://matrix.testing",
@@ -148,8 +142,6 @@ class UserControllerAuthorizationIT {
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
-  private static final Cookie RC_TOKEN_COOKIE =
-      new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
 
   @Autowired private MockMvc mvc;
 
@@ -1642,7 +1634,6 @@ class UserControllerAuthorizationIT {
             post("/users/{userId}/chat/{chatId}/ban", UUID.randomUUID(), aPositiveLong())
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RandomStringUtils.randomAlphabetic(8))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
@@ -1670,7 +1661,6 @@ class UserControllerAuthorizationIT {
             post("/users/{userId}/chat/{chatId}/ban", UUID.randomUUID(), aPositiveLong())
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RandomStringUtils.randomAlphabetic(8))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -1682,7 +1672,6 @@ class UserControllerAuthorizationIT {
     mvc.perform(
             post("/users/{userId}/chat/{chatId}/ban", UUID.randomUUID(), aPositiveLong())
                 .contentType(MediaType.APPLICATION_JSON)
-                .header("rcToken", RandomStringUtils.randomAlphabetic(8))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
   }
@@ -2149,7 +2138,6 @@ class UserControllerAuthorizationIT {
     mvc.perform(
             patch(PATH_GET_USER_DATA)
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2175,7 +2163,6 @@ class UserControllerAuthorizationIT {
     mvc.perform(
             patch(PATH_GET_USER_DATA)
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2188,7 +2175,6 @@ class UserControllerAuthorizationIT {
     mvc.perform(
             patch(PATH_GET_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
   }
@@ -2277,7 +2263,6 @@ class UserControllerAuthorizationIT {
     mvc.perform(
             get(PATH_GET_USER_DATA)
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2296,7 +2281,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -2746,7 +2730,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_user_or_consultant_authority()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
+            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2760,7 +2744,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
+            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))

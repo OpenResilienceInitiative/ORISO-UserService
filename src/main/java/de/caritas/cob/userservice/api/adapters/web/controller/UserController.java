@@ -273,9 +273,9 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
+  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForRoomIds(
       @RequestParam List<String> roomIds) {
-    return userSessionControllerDelegate.getSessionsForGroupIds(roomIds);
+    return userSessionControllerDelegate.getSessionsForRoomIds(roomIds);
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
@@ -583,14 +583,14 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Assign a chat, resolved using the group id.
+   * Assign a chat, resolved using its Matrix room ID.
    *
-   * @param groupId the rocket chat group uuid part (required)
+   * @param matrixRoomId Matrix room ID (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(String groupId) {
-    return userChatControllerDelegate.assignChat(groupId);
+  public ResponseEntity<Void> assignChat(String matrixRoomId) {
+    return userChatControllerDelegate.assignChat(matrixRoomId);
   }
 
   /**
@@ -610,8 +610,7 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Stops the given chat (chatId). Deletes all users and messages from the Rocket.Chat room
-   * (repetitive chat) or deletes the whole room (singular chat).
+   * Stops the given chat and closes its Matrix room.
    *
    * @param chatId Chat Id (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}

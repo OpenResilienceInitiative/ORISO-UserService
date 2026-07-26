@@ -63,8 +63,7 @@ public class Messenger implements Messaging {
 
   /**
    * Bans the adviceseeker from the chat's Matrix room, acting as the chat owner (a consultant with
-   * ban power in the room). A Matrix ban both removes the user and blocks re-join, which is the
-   * Matrix-native replacement for the former Rocket.Chat mute/ban.
+   * ban power in the room). A Matrix ban both removes the user and blocks re-join.
    *
    * @return true when the ban succeeded (or the user was already gone), false when it could not be
    *     performed — the controller maps false to "user not found in chat".
@@ -146,10 +145,7 @@ public class Messenger implements Messaging {
   /**
    * Whether the consultant is currently a member of the session's chat room.
    *
-   * <p>Membership comes from the session's Matrix room (the only chat backend since Rocket.Chat was
-   * disabled, ADR-004). Previously this read Rocket.Chat members via {@code
-   * findMembers(...).orElseThrow()}, which threw once Rocket.Chat returned nothing — breaking the
-   * remove-from-session path entirely.
+   * <p>Membership comes from the session's Matrix room.
    *
    * <p>Fail-safe: when the room state cannot be determined we return {@code false}, so an uncertain
    * lookup never triggers the downstream removal.

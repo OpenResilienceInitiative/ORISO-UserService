@@ -36,7 +36,7 @@ class MatrixRoomMembershipProviderTest {
   }
 
   @Test
-  void joinedRoomsForAccountResolvesUserWithoutRocketChatIdentity() {
+  void joinedRoomsForAccountResolvesMatrixIdentity() {
     var user =
         User.builder()
             .userId("user")

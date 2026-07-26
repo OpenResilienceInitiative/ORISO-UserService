@@ -42,7 +42,7 @@ class RelevantUserAccountIdsByChatProviderTest {
   void collectUserIds_Should_ReturnAllAccountIds_When_MatrixRoomHasMembers() {
     var chat = new Chat();
     chat.setMatrixRoomId(MATRIX_ROOM_ID);
-    when(chatRepository.findByGroupId(GROUP_ID)).thenReturn(Optional.of(chat));
+    when(chatRepository.findByMatrixRoomId(GROUP_ID)).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
     when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID))
         .thenReturn(
@@ -57,7 +57,7 @@ class RelevantUserAccountIdsByChatProviderTest {
   void collectUserIds_Should_ReturnEmpty_When_RoomStateUnknown() {
     var chat = new Chat();
     chat.setMatrixRoomId(MATRIX_ROOM_ID);
-    when(chatRepository.findByGroupId(GROUP_ID)).thenReturn(Optional.of(chat));
+    when(chatRepository.findByMatrixRoomId(GROUP_ID)).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
     when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)).thenReturn(List.of());
 
@@ -68,7 +68,7 @@ class RelevantUserAccountIdsByChatProviderTest {
 
   @Test
   void collectUserIds_Should_FallBackToGroupId_When_ChatNotFound() {
-    when(chatRepository.findByGroupId(GROUP_ID)).thenReturn(Optional.empty());
+    when(chatRepository.findByMatrixRoomId(GROUP_ID)).thenReturn(Optional.empty());
     when(groupChatMembershipService.resolveHumanMembers(GROUP_ID))
         .thenReturn(List.of(member("user1", false)));
 
@@ -80,11 +80,11 @@ class RelevantUserAccountIdsByChatProviderTest {
   @Test
   void collectUserIds_Should_ReturnEmpty_When_ChatFoundButNoMatrixRoom() {
     var chat = new Chat();
-    when(chatRepository.findByGroupId("rcGroupId")).thenReturn(Optional.of(chat));
+    when(chatRepository.findByMatrixRoomId("matrixRoomId")).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(null);
     when(groupChatMembershipService.resolveHumanMembers(any())).thenReturn(List.of());
 
-    List<String> collectedUserIds = byChatProvider.collectUserIds("rcGroupId");
+    List<String> collectedUserIds = byChatProvider.collectUserIds("matrixRoomId");
 
     assertThat(collectedUserIds, empty());
   }

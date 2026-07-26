@@ -19,14 +19,14 @@ public class LiveProxyController implements LiveproxyApi {
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
 
   /**
-   * Sends a live event to all relevant users according to the rocket chat group id.
+   * Sends a live event to all relevant users in a Matrix room.
    *
-   * @param rcGroupId Rocket Chat group id (required)
+   * @param matrixRoomId Matrix room ID (required)
    * @return {@link ResponseEntity} with status ok if no error occurs
    */
   @Override
-  public ResponseEntity<Void> sendLiveEvent(@RequestParam String rcGroupId) {
-    this.liveEventNotificationService.sendLiveDirectMessageEventToUsers(rcGroupId);
+  public ResponseEntity<Void> sendLiveEvent(@RequestParam String matrixRoomId) {
+    this.liveEventNotificationService.sendLiveDirectMessageEventToUsers(matrixRoomId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
 }

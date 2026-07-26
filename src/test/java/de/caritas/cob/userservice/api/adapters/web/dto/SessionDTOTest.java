@@ -14,9 +14,8 @@ class SessionDTOTest {
         .status(0)
         .postcode("79098")
         .language(LanguageCode.DE)
-        .groupId("xGklslk2JJKK")
         .matrixRoomId("!aBcDeF123:91.99.219.182")
-        .askerRcId("8ertjlasdKJA")
+        .askerMatrixUserId("@asker:matrix.example")
         .e2eLastMessage(new LastMessageDTO().msg("hello").t("text"))
         .lastMessage("lastMessage")
         .lastMessageType(MessageType.VIDEOCALL)
@@ -53,9 +52,8 @@ class SessionDTOTest {
     assertThat(dto.getStatus()).isEqualTo(0);
     assertThat(dto.getPostcode()).isEqualTo("79098");
     assertThat(dto.getLanguage()).isEqualTo(LanguageCode.DE);
-    assertThat(dto.getGroupId()).isEqualTo("xGklslk2JJKK");
     assertThat(dto.getMatrixRoomId()).isEqualTo("!aBcDeF123:91.99.219.182");
-    assertThat(dto.getAskerRcId()).isEqualTo("8ertjlasdKJA");
+    assertThat(dto.getAskerMatrixUserId()).isEqualTo("@asker:matrix.example");
     assertThat(dto.getE2eLastMessage().getMsg()).isEqualTo("hello");
     assertThat(dto.getLastMessage()).isEqualTo("lastMessage");
     assertThat(dto.getLastMessageType()).isEqualTo(MessageType.VIDEOCALL);
@@ -78,9 +76,8 @@ class SessionDTOTest {
     dto.setStatus(0);
     dto.setPostcode("79098");
     dto.setLanguage(LanguageCode.DE);
-    dto.setGroupId("xGklslk2JJKK");
     dto.setMatrixRoomId("!aBcDeF123:91.99.219.182");
-    dto.setAskerRcId("8ertjlasdKJA");
+    dto.setAskerMatrixUserId("@asker:matrix.example");
     dto.setE2eLastMessage(new LastMessageDTO().msg("hello"));
     dto.setLastMessage("lastMessage");
     dto.setLastMessageType(MessageType.VIDEOCALL);
@@ -97,6 +94,7 @@ class SessionDTOTest {
 
     assertThat(dto.getId()).isEqualTo(153918L);
     assertThat(dto.getMatrixRoomId()).isEqualTo("!aBcDeF123:91.99.219.182");
+    assertThat(dto.getAskerMatrixUserId()).isEqualTo("@asker:matrix.example");
   }
 
   @Test
@@ -148,9 +146,9 @@ class SessionDTOTest {
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().status(3));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().postcode("00000"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().language(LanguageCode.EN));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().groupId("otherGroupId"));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().matrixRoomId("!otherRoomId:host"));
-    assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().askerRcId("otherAskerRcId"));
+    assertThat(base)
+        .isNotEqualTo(givenAFullyPopulatedDTO().askerMatrixUserId("otherAskerMatrixUserId"));
     assertThat(base)
         .isNotEqualTo(givenAFullyPopulatedDTO().e2eLastMessage(new LastMessageDTO().msg("other")));
     assertThat(base).isNotEqualTo(givenAFullyPopulatedDTO().lastMessage("otherLastMessage"));

@@ -15,9 +15,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ENQUIRY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ENQUIRY_ID_2;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.POSTCODE;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -102,7 +102,7 @@ class SessionServiceTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .matrixUserId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")
@@ -462,9 +462,10 @@ class SessionServiceTest {
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenAskerIsSessionOwner() {
     Session session = easyRandom.nextObject(Session.class);
     session.getUser().setUserId(USER_ID);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
-    Session result = sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, USER_ROLES);
+    Session result =
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -473,12 +474,12 @@ class SessionServiceTest {
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenConsultantIsAssignedToSession() {
     Session session = easyRandom.nextObject(Session.class);
     session.getConsultant().setId(USER_ID);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString()))
         .thenReturn(Optional.of(session.getConsultant()));
 
     Session result =
-        sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES);
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -486,7 +487,7 @@ class SessionServiceTest {
   @Test
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenConsultantIsAssignedToAgencyOfSession() {
     Session session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString()))
         .thenReturn(Optional.of(session.getConsultant()));
     session.setAgencyId(AGENCY_ID);
@@ -496,28 +497,30 @@ class SessionServiceTest {
         .forEach(consultantAgency -> consultantAgency.setAgencyId(AGENCY_ID));
 
     Session result =
-        sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES);
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowNotFoundException_When_SessionDoesNotExist() {
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.empty());
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.empty());
 
     assertThrows(
         NotFoundException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES));
+        () ->
+            sessionService.getSessionByMatrixRoomIdAndUser(
+                MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowForbiddenException_When_AskerIsNotOwnerOfSession() {
     Session session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, USER_ROLES));
+        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES));
   }
 
   @Test
@@ -526,23 +529,25 @@ class SessionServiceTest {
     Session session = easyRandom.nextObject(Session.class);
     session.getConsultant().setId("notDirectlyAssignedId");
     Consultant consultant = easyRandom.nextObject(Consultant.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(consultant));
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES));
+        () ->
+            sessionService.getSessionByMatrixRoomIdAndUser(
+                MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowForbiddenException_When_NotAskerOrConsultantRole() {
     var session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
     var roles = new HashSet<>(singletonList("no-role"));
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, roles));
+        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, roles));
   }
 
   /** method: getTeamSessionsForConsultant */
@@ -625,12 +630,12 @@ class SessionServiceTest {
     assertEquals(session.isTeamSession(), result.getIsTeamSession());
     assertEquals(session.getAgencyId(), result.getAgencyId());
     assertEquals(session.getConsultant().getId(), result.getConsultantId());
-    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantRcId());
+    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantMatrixUserId());
     assertEquals(session.getUser().getUserId(), result.getAskerId());
-    assertEquals(session.getUser().getMatrixUserId(), result.getAskerRcId());
+    assertEquals(session.getUser().getMatrixUserId(), result.getAskerMatrixUserId());
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
-    assertEquals(session.getGroupId(), result.getGroupId());
+    assertEquals(session.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(session.getConsultingTypeId(), result.getConsultingType().intValue());
     assertEquals(session.getUserAge(), result.getAge());
     assertEquals(session.getUserGender(), result.getGender());
@@ -808,7 +813,7 @@ class SessionServiceTest {
       getAllowedSessionsByConsultantAndGroupIds_should_find_new_anonymous_enquiry_if_consultant_may_advise_consulting_type() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
     when(agencyService.getAgencies(singletonList(4711L))).thenReturn(AGENCY_DTO_LIST);
     ConsultantAgency agency = new ConsultantAgency();
@@ -816,8 +821,8 @@ class SessionServiceTest {
     var consultant = createConsultantWithAgencies(agency);
 
     var sessionResponse =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(
-            consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(
+            consultant, singleton("matrixRoomId"), singleton(UserRole.CONSULTANT.getValue()));
 
     assertEquals(1, sessionResponse.size());
   }
@@ -833,11 +838,11 @@ class SessionServiceTest {
     var allowedSession = giveAllowedSessionWithID(1L, consultant);
     sessions.add(giveAllowedSessionWithID(2L, null));
     sessions.add(allowedSession);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId"))).thenReturn(sessions);
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId"))).thenReturn(sessions);
     // when
     var sessionResponse =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(
-            consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(
+            consultant, singleton("matrixRoomId"), singleton(UserRole.CONSULTANT.getValue()));
     // then
     assertThat(sessionResponse).hasSize(1);
     assertThat(sessionResponse.get(0).getSession().getId()).isEqualTo(allowedSession.getId());
@@ -894,10 +899,10 @@ class SessionServiceTest {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    var sessionResponse = getSessionsByUserAndGroupIds(USER_ID);
+    var sessionResponse = getSessionsByUserAndRoomIds(USER_ID);
 
     assertEquals(1, sessionResponse.size());
   }
@@ -907,15 +912,15 @@ class SessionServiceTest {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    assertThrows(ForbiddenException.class, () -> getSessionsByUserAndGroupIds("someOtherId"));
+    assertThrows(ForbiddenException.class, () -> getSessionsByUserAndRoomIds("someOtherId"));
   }
 
-  private List<UserSessionResponseDTO> getSessionsByUserAndGroupIds(String someOtherId) {
-    return sessionService.getSessionsByUserAndGroupIds(
-        someOtherId, singleton("rcGroupId"), singleton(UserRole.ANONYMOUS.getValue()));
+  private List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(String someOtherId) {
+    return sessionService.getSessionsByUserAndRoomIds(
+        someOtherId, singleton("matrixRoomId"), singleton(UserRole.ANONYMOUS.getValue()));
   }
 
   @Test
@@ -969,7 +974,7 @@ class SessionServiceTest {
   Consultant createConsultantWithAgencies(ConsultantAgency... agencies) {
     return Consultant.builder()
         .id(CONSULTANT_ID)
-        .matrixUserId(ROCKETCHAT_ID)
+        .matrixUserId(MATRIX_USER_ID)
         .username("consultant")
         .firstName("first name")
         .lastName("last name")

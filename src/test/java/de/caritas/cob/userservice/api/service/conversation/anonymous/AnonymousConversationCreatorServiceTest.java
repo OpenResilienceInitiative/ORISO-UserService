@@ -56,7 +56,6 @@ class AnonymousConversationCreatorServiceTest {
   @Test
   void createsWaitingLiveChatSessionWithoutTransportRoom() {
     var session = easyRandom.nextObject(Session.class);
-    session.setGroupId(null);
     session.setMatrixRoomId(null);
     session.setMainTopicId(11L);
     var credentials = AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
@@ -77,7 +76,6 @@ class AnonymousConversationCreatorServiceTest {
 
     assertThat(created).isSameAs(session);
     assertThat(created.getConversationType()).isEqualTo(ConversationType.LIVE_CHAT);
-    assertThat(created.getGroupId()).isNull();
     assertThat(created.getMatrixRoomId()).isNull();
     verify(sessionService).saveSession(session);
     verify(liveEventNotificationService)

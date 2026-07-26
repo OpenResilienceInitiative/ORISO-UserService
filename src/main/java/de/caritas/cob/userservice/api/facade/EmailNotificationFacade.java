@@ -154,37 +154,40 @@ public class EmailNotificationFacade {
 
   @Async
   @Transactional
-  public void sendReassignRequestNotification(String rcGroupId, TenantData tenantData) {
+  public void sendReassignRequestNotification(String matrixRoomId, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
-    var session = sessionService.getSessionByGroupId(rcGroupId);
-    var user = session.getUser();
+    try {
+      var session = sessionService.getSessionByMatrixRoomId(matrixRoomId);
+      var user = session.getUser();
 
-    if (!shouldSendReassignmentNotificationForAdviceSeeker(user)) {
-      log.info(
-          "Not sending email notification about reassignment because adviceseeker has this disabled this toggle.");
-      return;
-    }
-
-    if (hasUserValidEmailAddress(user)) {
-      var reassignmentRequestEmailSupplier =
-          ReassignmentRequestEmailSupplier.builder()
-              .receiverEmailAddress(user.getEmail())
-              .receiverLanguageCode(user.getLanguageCode())
-              .receiverUsername(user.getUsername())
-              .receiverDialect(user.getDialect())
-              .tenantTemplateSupplier(tenantTemplateSupplier)
-              .applicationBaseUrl(applicationBaseUrl)
-              .multiTenancyEnabled(multiTenancyEnabled)
-              .build();
-      try {
-        sendMailTasksToMailService(reassignmentRequestEmailSupplier);
-      } catch (Exception exception) {
-        log.error(
-            "EmailNotificationFacade error: Failed to send reassign request notification",
-            exception);
+      if (!shouldSendReassignmentNotificationForAdviceSeeker(user)) {
+        log.info(
+            "Not sending email notification about reassignment because adviceseeker has this disabled this toggle.");
+        return;
       }
+
+      if (hasUserValidEmailAddress(user)) {
+        var reassignmentRequestEmailSupplier =
+            ReassignmentRequestEmailSupplier.builder()
+                .receiverEmailAddress(user.getEmail())
+                .receiverLanguageCode(user.getLanguageCode())
+                .receiverUsername(user.getUsername())
+                .receiverDialect(user.getDialect())
+                .tenantTemplateSupplier(tenantTemplateSupplier)
+                .applicationBaseUrl(applicationBaseUrl)
+                .multiTenancyEnabled(multiTenancyEnabled)
+                .build();
+        try {
+          sendMailTasksToMailService(reassignmentRequestEmailSupplier);
+        } catch (Exception exception) {
+          log.error(
+              "EmailNotificationFacade error: Failed to send reassign request notification",
+              exception);
+        }
+      }
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
   }
 
   private boolean shouldSendReassignmentNotificationForAdviceSeeker(User user) {

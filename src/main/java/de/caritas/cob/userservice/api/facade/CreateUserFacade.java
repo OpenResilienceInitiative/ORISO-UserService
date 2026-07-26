@@ -5,7 +5,6 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -20,14 +19,11 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
-import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -35,14 +31,12 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
-import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -58,8 +52,6 @@ public class CreateUserFacade {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
-  private final @NonNull CreateSessionFacade createSessionFacade;
-  private final @NonNull SessionService sessionService;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -133,20 +125,8 @@ public class CreateUserFacade {
 
     var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
 
-    NewRegistrationResponseDto registration;
-    try {
-      registration =
-          createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
-    } catch (Exception e) {
-      log.error(
-          "RocketChat integration failed during registration, but user was created successfully",
-          e);
-      // Create a minimal session even if RocketChat fails
-      registration =
-          new NewRegistrationResponseDto()
-              .sessionId(createMinimalSession(userDTO, user, consultingTypeSettings))
-              .status(HttpStatus.CREATED);
-    }
+    NewRegistrationResponseDto registration =
+        createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
 
     try {
       RegistrationStatisticsEvent registrationEvent =
@@ -298,51 +278,6 @@ public class CreateUserFacade {
 
   private ExtendedConsultingTypeResponseDTO obtainConsultingTypeSettings(UserDTO userDTO) {
     return consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
-  }
-
-  private Long createMinimalSession(
-      UserDTO userDTO, User user, ExtendedConsultingTypeResponseDTO consultingTypeSettings) {
-    try {
-      return createSessionFacade.createUserSession(
-          userDTO,
-          user,
-          consultingTypeSettings,
-          Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
-    } catch (Exception e) {
-      Long existingSessionId = findExistingSessionId(user, consultingTypeSettings);
-      if (nonNull(existingSessionId)) {
-        log.warn(
-            "Using existing session {} for user {} after registration fallback failed",
-            existingSessionId,
-            user.getUsername());
-        return existingSessionId;
-      }
-      log.error("Could not create minimal session for user {}", user.getUsername(), e);
-      throw new InternalServerErrorException("Could not create session for user", e);
-    }
-  }
-
-  private Long findExistingSessionId(
-      User user, ExtendedConsultingTypeResponseDTO consultingTypeSettings) {
-    if (isNull(user) || isNull(consultingTypeSettings) || isNull(consultingTypeSettings.getId())) {
-      return null;
-    }
-
-    try {
-      List<Session> existingSessions =
-          sessionService.getSessionsForUserByConsultingTypeId(user, consultingTypeSettings.getId());
-      return existingSessions.stream()
-          .filter(session -> nonNull(session.getId()))
-          .findFirst()
-          .map(Session::getId)
-          .orElse(null);
-    } catch (Exception lookupException) {
-      log.warn(
-          "Could not lookup existing session for user {} after registration fallback failed",
-          user.getUsername(),
-          lookupException);
-      return null;
-    }
   }
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {

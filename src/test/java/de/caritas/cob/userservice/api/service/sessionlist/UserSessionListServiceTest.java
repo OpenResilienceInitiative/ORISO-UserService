@@ -98,17 +98,17 @@ class UserSessionListServiceTest {
     var chat =
         chatResponse(
             1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, LocalDateTime.now());
-    when(chatService.getChatSessionsByGroupIds(Set.of("!chat:matrix.example")))
+    when(chatService.getChatSessionsByRoomIds(Set.of("!chat:matrix.example")))
         .thenReturn(List.of(chat));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
 
     var result =
-        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+        userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
             USER_ID, List.of("!chat:matrix.example"), Set.of("user"));
 
     assertThat(result).containsExactly(chat);
     verify(sessionService, never())
-        .getSessionsByUserAndGroupIds(
+        .getSessionsByUserAndRoomIds(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anySet(),
             org.mockito.ArgumentMatchers.anySet());
@@ -122,13 +122,13 @@ class UserSessionListServiceTest {
             "!internal:matrix.example",
             ConversationType.INTERNAL_GROUP,
             LocalDateTime.now());
-    when(chatService.getChatSessionsByGroupIds(Set.of("!internal:matrix.example")))
+    when(chatService.getChatSessionsByRoomIds(Set.of("!internal:matrix.example")))
         .thenReturn(List.of(chat));
     when(chatService.getChatSessionsByIds(Set.of(1087L))).thenReturn(List.of(chat));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
 
     assertThat(
-            userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+            userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
                 USER_ID, List.of("!internal:matrix.example"), Set.of("user")))
         .isEmpty();
     assertThat(userSessionListService.retrieveChatsForUserAndChatIds(USER_ID, List.of(1087L)))
@@ -149,14 +149,15 @@ class UserSessionListServiceTest {
 
   private UserSessionResponseDTO sessionResponse(String roomId, long messageDate) {
     return new UserSessionResponseDTO()
-        .session(new SessionDTO().groupId(roomId).messageDate(messageDate).messagesRead(false));
+        .session(
+            new SessionDTO().matrixRoomId(roomId).messageDate(messageDate).messagesRead(false));
   }
 
   private UserSessionResponseDTO chatResponse(
       long id, String roomId, ConversationType conversationType, LocalDateTime start) {
     var chat = new UserChatDTO();
     chat.setId(id);
-    chat.setGroupId(roomId);
+    chat.setMatrixRoomId(roomId);
     chat.setConversationType(conversationType);
     chat.setStartDateWithTime(start);
     chat.setMessagesRead(false);

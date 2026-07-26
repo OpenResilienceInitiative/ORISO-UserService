@@ -170,7 +170,7 @@ class UserRegistrationControllerDelegate {
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
     var session = sessionService.getSessionForUpdate(sessionId);
 
-    // MATRIX MIGRATION: Removed groupId check - Matrix sessions don't have RocketChat groupId
+    // The session id is invalid when no persisted session can be loaded.
     if (session.isEmpty()) {
       log.error("Internal Server Error: Session id {} is invalid, session not found.", sessionId);
       return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);

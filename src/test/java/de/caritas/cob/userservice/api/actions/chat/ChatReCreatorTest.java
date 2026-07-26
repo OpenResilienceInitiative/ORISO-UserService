@@ -196,7 +196,7 @@ class ChatReCreatorTest {
 
     chatReCreator.updateAsNextChat(chat, NEW_MATRIX_ROOM_ID);
 
-    assertEquals(NEW_MATRIX_ROOM_ID, chat.getGroupId());
+    assertEquals(NEW_MATRIX_ROOM_ID, chat.getMatrixRoomId());
     assertEquals(NEW_MATRIX_ROOM_ID, chat.getMatrixRoomId());
     assertEquals(START_DATE.plusWeeks(1), chat.getStartDate());
     assertEquals(1, chat.getCurrentOccurrenceIndex());
@@ -231,7 +231,6 @@ class ChatReCreatorTest {
             .chatOwner(owner)
             .build();
     chat.setActive(true);
-    chat.setGroupId(OLD_MATRIX_ROOM_ID);
     chat.setMatrixRoomId(OLD_MATRIX_ROOM_ID);
     return chat;
   }

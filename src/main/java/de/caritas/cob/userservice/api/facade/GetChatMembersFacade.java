@@ -32,9 +32,8 @@ public class GetChatMembersFacade {
   /**
    * Get a filtered list of the members of a chat (without technical/system user).
    *
-   * <p>Members come from the Matrix room state (the only chat backend since Rocket.Chat was
-   * disabled, ADR-004). Each Matrix member is mapped back to its application account so the UI
-   * keeps showing usernames and display names. The response shape is unchanged.
+   * <p>Members come from the Matrix room state. Each Matrix member is mapped back to its
+   * application account so the UI keeps showing usernames and display names.
    *
    * @param chatId chat ID
    * @return {@link ChatMembersResponseDTO}
@@ -48,7 +47,7 @@ public class GetChatMembersFacade {
 
     verifyActiveStatus(chat);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
-    verifyRocketChatGroup(chat);
+    verifyMatrixRoom(chat);
 
     var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
     return convertResolvedMembersToChatMemberResponseDTO(
@@ -63,10 +62,10 @@ public class GetChatMembersFacade {
     }
   }
 
-  private void verifyRocketChatGroup(Chat chat) {
-    if (isNull(chat.getGroupId())) {
+  private void verifyMatrixRoom(Chat chat) {
+    if (isNull(chat.getMatrixRoomId())) {
       throw new InternalServerErrorException(
-          String.format("Chat with id %s has no chat group id", chat.getId()));
+          String.format("Chat with id %s has no Matrix room ID", chat.getId()));
     }
   }
 

@@ -136,7 +136,7 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(any(), any(), any(), anyBoolean(), anyBoolean(), any());
+        .createMessageNotificationFromRoom(any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
@@ -148,7 +148,6 @@ class EventNotificationControllerTest {
     var request = new EventNotificationController.MessageEventRequestDTO();
     request.setRoomId("room-2");
     request.setMessagePreview("hello");
-    request.setMatrixRoom(true);
     request.setSupervisorMessage(false);
     request.setSenderDisplayName("Sender");
 
@@ -156,7 +155,7 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", true, false, "Sender");
+        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender");
   }
 
   @Test
@@ -170,7 +169,6 @@ class EventNotificationControllerTest {
     request.setRoomId("room-3");
     request.setThreadRootId("thread-3");
     request.setMessagePreview("reply");
-    request.setMatrixRoom(false);
     request.setSupervisorMessage(true);
     request.setSenderDisplayName("Sender-3");
     request.setThreadParentPreview("parent");
@@ -180,7 +178,7 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", false, true, "Sender-3", "parent");
+            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent");
   }
 
   @Test
@@ -212,6 +210,6 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-5", "u-4", "preview", true, false, null);
+        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null);
   }
 }
