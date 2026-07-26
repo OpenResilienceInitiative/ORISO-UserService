@@ -52,4 +52,15 @@ class MatrixOnlyUserDeletionContractTest {
           .doesNotContain("RocketChat", "rocketChat", "ROCKET_CHAT");
     }
   }
+
+  @Test
+  void consultantChatDeletionMustOnlyPurgeMatrixRooms() throws IOException {
+    var source =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/consultant/"
+                    + "DeleteChatAction.java"));
+
+    assertThat(source).doesNotContain("RocketChat", "rocketChat", "ROCKET_CHAT");
+  }
 }

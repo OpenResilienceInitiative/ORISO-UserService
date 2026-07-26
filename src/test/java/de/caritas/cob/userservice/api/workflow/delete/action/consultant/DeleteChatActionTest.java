@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX;
-import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ROCKET_CHAT;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -20,8 +19,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -45,8 +42,6 @@ public class DeleteChatActionTest {
 
   @Mock private ChatRepository chatRepository;
 
-  @Mock private RocketChatService rocketChatService;
-
   @Mock private MatrixSynapseService matrixSynapseService;
 
   @BeforeEach
@@ -64,13 +59,11 @@ public class DeleteChatActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     verify(this.chatRepository, times(1)).findByChatOwner(any());
-    verifyNoInteractions(this.rocketChatService);
     verifyNoInteractions(this.matrixSynapseService);
   }
 
   @Test
-  public void execute_Should_returnEmptyListAndPerformDeletion_When_consultantIsChatOwner()
-      throws RocketChatDeleteGroupException {
+  public void execute_Should_returnEmptyListAndPerformDeletion_When_consultantIsChatOwner() {
     List<Chat> chats = new EasyRandom().objects(Chat.class, 5).collect(Collectors.toList());
     when(this.chatRepository.findByChatOwner(any())).thenReturn(chats);
     ConsultantDeletionWorkflowDTO workflowDTO =
@@ -80,20 +73,15 @@ public class DeleteChatActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(this.rocketChatService, times(5)).deleteGroupAsTechnicalUser(any());
     verify(this.matrixSynapseService, times(5)).purgeRoom(anyString());
     verify(this.chatRepository, times(1)).findByChatOwner(any());
     verify(this.chatRepository, times(1)).deleteAll(chats);
   }
 
   @Test
-  public void execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfChatsFailes()
-      throws RocketChatDeleteGroupException {
+  public void execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfChatsFailes() {
     List<Chat> chats = new EasyRandom().objects(Chat.class, 5).collect(Collectors.toList());
     when(this.chatRepository.findByChatOwner(any())).thenReturn(chats);
-    doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
-        .when(this.rocketChatService)
-        .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.chatRepository).deleteAll(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>());
@@ -101,18 +89,14 @@ public class DeleteChatActionTest {
     this.deleteChatAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(6));
+    assertThat(workflowErrors, hasSize(1));
   }
 
   @Test
   public void
-      execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfSingleChatFailes()
-          throws RocketChatDeleteGroupException {
+      execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfSingleChatFailes() {
     Chat chat = new EasyRandom().nextObject(Chat.class);
     when(this.chatRepository.findByChatOwner(any())).thenReturn(singletonList(chat));
-    doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
-        .when(this.rocketChatService)
-        .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.chatRepository).deleteAll(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>());
@@ -120,22 +104,16 @@ public class DeleteChatActionTest {
     this.deleteChatAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(2));
+    assertThat(workflowErrors, hasSize(1));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
-    assertThat(workflowErrors.get(0).getDeletionTargetType(), is(ROCKET_CHAT));
-    assertThat(workflowErrors.get(0).getIdentifier(), is(chat.getGroupId()));
-    assertThat(workflowErrors.get(0).getReason(), is("Deletion of Rocket.Chat group failed"));
+    assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
+    assertThat(workflowErrors.get(0).getIdentifier(), is(chat.getChatOwner().getId()));
+    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete chats in database"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    assertThat(workflowErrors.get(1).getDeletionSourceType(), is(CONSULTANT));
-    assertThat(workflowErrors.get(1).getDeletionTargetType(), is(DATABASE));
-    assertThat(workflowErrors.get(1).getIdentifier(), is(chat.getChatOwner().getId()));
-    assertThat(workflowErrors.get(1).getReason(), is("Unable to delete chats in database"));
-    assertThat(workflowErrors.get(1).getTimestamp(), notNullValue());
   }
 
   @Test
-  public void execute_Should_returnMatrixWorkflowError_When_matrixRoomPurgeFails()
-      throws RocketChatDeleteGroupException {
+  public void execute_Should_returnMatrixWorkflowError_When_matrixRoomPurgeFails() {
     Chat chat = new EasyRandom().nextObject(Chat.class);
     when(this.chatRepository.findByChatOwner(any())).thenReturn(singletonList(chat));
     when(this.matrixSynapseService.purgeRoom(chat.getMatrixRoomId())).thenReturn(false);
@@ -151,6 +129,5 @@ public class DeleteChatActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is(chat.getMatrixRoomId()));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete Matrix room"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(this.rocketChatService, times(1)).deleteGroupAsTechnicalUser(chat.getGroupId());
   }
 }
