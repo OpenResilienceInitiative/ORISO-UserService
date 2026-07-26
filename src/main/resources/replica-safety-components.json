@@ -58,7 +58,7 @@
       "kind": "scheduler",
       "owner": "session-lifecycle",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent database and external cleanup is covered by an idempotency contract.",
+      "decision": "A durable 12-hour scheduled-task claim and DeleteInactiveSessionsAndUserSchedulerReplicaIT prove that concurrent daily executions trigger one tenant-context setup and one inactive-session deletion workflow. The losing replica performs no database or external provider cleanup work.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

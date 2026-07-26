@@ -29,9 +29,9 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,838 | 0 | 0 | 7 | `./mvnw -B test` |
-| Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
-| MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
+| Unit | 3,839 | 0 | 0 | 7 | `./mvnw -B test` |
+| Integration + contract + E2E | 959 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| MariaDB schema contracts | 7 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis replica-safety contracts | 7 | 0 | 0 | 0 | required Redis job |
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -57,7 +57,7 @@ health; Redis and MariaDB availability remain independently required contracts.
 Making the MariaDB contract required exposed and repaired one real production
 schema drift: `ReservedPublicSlug.active` declared the SQL default as part of
 Hibernate's expected column type. The entity now expects `TINYINT`, while the
-default remains correctly owned by Liquibase. A fresh database applies all 91
+default remains correctly owned by Liquibase. A fresh database applies all 95
 changesets and passes Hibernate validation.
 
 ## Dependency and call measurements

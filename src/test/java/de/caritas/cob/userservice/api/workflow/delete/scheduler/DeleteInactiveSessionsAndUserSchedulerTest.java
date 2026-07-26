@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteInactiveSessionsAndUserService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -24,6 +28,13 @@ public class DeleteInactiveSessionsAndUserSchedulerTest {
 
   @Mock TenantContextProvider tenantContextProvider;
 
+  @Mock ScheduledTaskClaimService taskClaimService;
+
+  @BeforeEach
+  void setUp() {
+    setField(deleteInactiveSessionsAndUserScheduler, "claimDuration", Duration.ofHours(12));
+  }
+
   @Test
   public void
       performDeletionWorkflow_Should_executeDeleteInactiveSessionsAndUsers_WhenFeatureIsEnabled() {
@@ -32,10 +43,27 @@ public class DeleteInactiveSessionsAndUserSchedulerTest {
         deleteInactiveSessionsAndUserScheduler,
         FIELD_NAME_SESSION_INACTIVE_DELETE_WORKFLOW_ENABLED,
         true);
+    when(taskClaimService.tryClaim("inactive-session-deletion", Duration.ofHours(12)))
+        .thenReturn(true);
+
     deleteInactiveSessionsAndUserScheduler.performDeletionWorkflow();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(this.deleteInactiveSessionsAndUserService).deleteInactiveSessionsAndUsers();
+  }
+
+  @Test
+  void performDeletionWorkflow_Should_skipAllDownstreamCalls_WhenClaimIsLost() {
+    setField(
+        deleteInactiveSessionsAndUserScheduler,
+        FIELD_NAME_SESSION_INACTIVE_DELETE_WORKFLOW_ENABLED,
+        true);
+    when(taskClaimService.tryClaim("inactive-session-deletion", Duration.ofHours(12)))
+        .thenReturn(false);
+
+    deleteInactiveSessionsAndUserScheduler.performDeletionWorkflow();
+
+    verifyNoInteractions(tenantContextProvider, deleteInactiveSessionsAndUserService);
   }
 
   @Test
@@ -48,7 +76,7 @@ public class DeleteInactiveSessionsAndUserSchedulerTest {
         false);
     deleteInactiveSessionsAndUserScheduler.performDeletionWorkflow();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(this.deleteInactiveSessionsAndUserService, never()).deleteInactiveSessionsAndUsers();
+    verifyNoInteractions(
+        taskClaimService, tenantContextProvider, deleteInactiveSessionsAndUserService);
   }
 }

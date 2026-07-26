@@ -63,6 +63,14 @@ appointments. Both transactions complete successfully and exactly the 30
 current rows remain. The reusable MariaDB CI contract runs this proof together
 with schema-drift and statistics-repository validation on MariaDB 10.11.
 
+The daily inactive-session deletion scheduler has database and external
+provider side effects, so it uses the durable `inactive-session-deletion` claim
+with a 12-hour bound. `DeleteInactiveSessionsAndUserSchedulerReplicaIT`
+releases two scheduler instances concurrently against the same claim store and
+proves that only one instance sets tenant context or enters the destructive
+workflow. The losing replica performs no database, Keycloak, Matrix or legacy
+provider cleanup work.
+
 The one-minute group-chat deactivation scheduler also needs no coarse global
 claim. Its transactional active-chat selection takes a pessimistic database
 row lock, so concurrent instances serialize each active chat while its database

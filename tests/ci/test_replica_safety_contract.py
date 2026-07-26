@@ -29,6 +29,60 @@ def source_has_process_local_state(source: Path) -> bool:
 
 
 class ReplicaSafetyContractTest(unittest.TestCase):
+    def test_inactive_session_deletion_has_durable_replica_claim(self):
+        scheduler = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/"
+            "scheduler/DeleteInactiveSessionsAndUserScheduler.java"
+        ).read_text()
+        application_properties = (
+            ROOT / "src/main/resources/application.properties"
+        ).read_text()
+        master_changelog = (
+            ROOT / "src/main/resources/db/changelog/userservice-master.xml"
+        ).read_text()
+        mariadb_workflow = (
+            ROOT / ".github/workflows/mariadb-contract.yml"
+        ).read_text()
+        migration = (
+            ROOT
+            / "src/main/resources/db/changelog/changeset/"
+            "0080_inactive_session_deletion_claim/migrate.sql"
+        ).read_text()
+        replica_test = (
+            ROOT
+            / "src/test/java/de/caritas/cob/userservice/api/workflow/delete/"
+            "scheduler/DeleteInactiveSessionsAndUserSchedulerReplicaIT.java"
+        ).read_text()
+        catalog = json.loads(CATALOG.read_text())
+        decision = next(
+            entry["decision"]
+            for entry in catalog["components"]
+            if entry["id"] == "inactive-session-deletion"
+        )
+
+        self.assertIn('TASK_NAME = "inactive-session-deletion"', scheduler)
+        self.assertIn("taskClaimService.tryClaim(TASK_NAME, claimDuration)", scheduler)
+        self.assertIn(
+            "session.inactive.deleteWorkflow.claim.duration=PT12H",
+            application_properties,
+        )
+        self.assertIn(
+            "0080_inactive_session_deletion_claim/0080_changeSet.xml",
+            master_changelog,
+        )
+        self.assertIn(
+            "DeleteInactiveSessionsAndUserSchedulerReplicaIT",
+            mariadb_workflow,
+        )
+        self.assertIn("'inactive-session-deletion'", migration)
+        self.assertIn(
+            "twoSchedulerInstancesTriggerOneInactiveSessionDeletionWorkflow",
+            replica_test,
+        )
+        self.assertIn("durable 12-hour scheduled-task claim", decision)
+        self.assertIn("losing replica", decision)
+
     def test_reference_reads_use_tenant_scoped_bounded_shared_cache(self):
         catalog = json.loads(CATALOG.read_text())
         shared_cache = (

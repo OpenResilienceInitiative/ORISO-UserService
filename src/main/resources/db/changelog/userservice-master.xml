@@ -126,6 +126,8 @@
     file="db/changelog/changeset/0078_matrix_event_side_effect_deduplication/0078_changeSet.xml" />
   <include
     file="db/changelog/changeset/0079_inactive_account_notification_recovery/0079_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0080_inactive_session_deletion_claim/0080_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

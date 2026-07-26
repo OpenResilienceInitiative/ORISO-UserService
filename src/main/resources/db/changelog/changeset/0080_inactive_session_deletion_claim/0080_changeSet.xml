@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+  <changeSet id="0080-inactive-session-deletion-claim" author="codex">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="scheduled_task_claim" />
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0080_inactive_session_deletion_claim/migrate.sql"
+      relativeToChangelogFile="false" />
+    <rollback>
+      <delete tableName="scheduled_task_claim">
+        <where>task_name = 'inactive-session-deletion'</where>
+      </delete>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
