@@ -39,9 +39,8 @@ public class ChatReCreator {
   private final GroupChatMembershipService groupChatMembershipService;
 
   /**
-   * Resets the given chat to its next occurrence: the new Matrix room id is persisted both as
-   * legacy group id and as Matrix room id (mirroring chat creation) and the chat is deactivated
-   * until it is started again.
+   * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
+   * reference and the chat remains inactive until its next scheduled start.
    *
    * @param chat the repetitive {@link Chat} to update
    * @param matrixRoomId the id of the freshly created Matrix room

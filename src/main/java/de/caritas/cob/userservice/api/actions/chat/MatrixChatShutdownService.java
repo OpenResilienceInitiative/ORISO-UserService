@@ -18,8 +18,8 @@ import org.springframework.stereotype.Service;
  * workflow already uses, so there is one room teardown mechanism in the codebase.
  *
  * <p>The shutdown is best-effort: the database deletion of the chat is the source of truth, so a
- * failing Matrix call is logged but never fails the stop/delete operation. Legacy chats without a
- * Matrix room id are skipped silently.
+ * failing Matrix call is logged but never fails the stop/delete operation. Historical records
+ * without a Matrix room id are skipped because there is no remote room to shut down.
  */
 @Slf4j
 @Service
