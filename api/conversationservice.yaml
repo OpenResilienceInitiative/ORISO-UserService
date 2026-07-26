@@ -332,9 +332,6 @@ components:
         - expiresIn
         - refreshToken
         - refreshExpiresIn
-        - rcUserId
-        - rcToken
-        - rcGroupId
       properties:
         userName:
           type: string
@@ -359,19 +356,6 @@ components:
           type: integer
           example: 6000
           description: Number of seconds the refresh token is valid
-        rcUserId:
-          type: string
-          example: piYG2BAE9ng(...)
-          description: The Rocket.Chat X-User-Id for this user
-        rcToken:
-          type: string
-          example: hkmSBR_fHpjIx6amQ(...)
-          description: The Rocket.Chat X-Auth-Token for this user
-        rcGroupId:
-          type: string
-          example: 7shdJkasdj3(...)
-          description: The Rocket.Chat group ID for this anonymous conversation
-
     AnonymousEnquiry:
       type: object
       properties:
