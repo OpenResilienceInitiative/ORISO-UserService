@@ -20,7 +20,7 @@ class ReplicaSafetyMetricsTest {
                 .get("userservice.replica.local_state")
                 .tag("component", "matrix-event-listener-state")
                 .tag("owner", "matrix")
-                .tag("risk", "duplicate-side-effect")
+                .tag("risk", "performance-only")
                 .gauge()
                 .value())
         .isEqualTo(1);

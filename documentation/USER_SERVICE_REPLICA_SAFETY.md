@@ -2,11 +2,10 @@
 
 UserService is currently safe to deploy with one replica. A Kubernetes
 `Deployment` and stateless HTTP security do not make the whole process
-stateless: Matrix room-routing registration, authentication tokens, Ehcache
-reads and scheduled side effects still have process-local behavior.
-Notification active-view state and Matrix sync leadership/cursor state are now
-externalized as described below, but the remaining items still keep the global
-replica limit at one.
+stateless: authentication tokens, Ehcache reads and scheduled side effects still
+have process-local behavior. Notification active-view state and Matrix sync
+leadership/cursor state are now externalized as described below, but the
+remaining items still keep the global replica limit at one.
 
 The machine-readable inventory is
 [`src/main/resources/replica-safety-components.json`](../src/main/resources/replica-safety-components.json).
@@ -90,9 +89,15 @@ statistics use opaque Matrix-event identity keys, so a crash between a durable
 effect and cursor commit is replay-safe. A non-duplicate failure from either
 durable sink prevents the cursor commit. `MatrixSyncCoordinationRegistryRedisIT`
 proves exclusive acquisition, owner-only release, stale-owner rejection and
-cursor handover across two registry instances against Redis 7. The remaining
-Matrix replica blocker is the process-local room-to-session/recipient
-registration map, not the sync cursor.
+cursor handover across two registry instances against Redis 7. Room context is
+read from the canonical session repository once per joined room and sync batch.
+This refresh overwrites the local room-to-session/recipient scratch entries
+before any event is processed, so assignments changed by another replica are
+visible on the next batch. The scratch entries are cleared in a `finally` block
+after every room, including failed batches, so they cannot grow with historical
+rooms. The HTTP register/unregister contract no longer mutates listener-local
+state. Tests prove fresh context across successive batches, one repository
+lookup for multiple events in the same batch and post-batch scratch cleanup.
 
 The inactive-account notification proof starts two independent service
 instances against the same audit database. A transaction-isolated unique claim
@@ -162,8 +167,6 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
    two authentication-token entries from the local-state inventory.
 2. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
-3. Externalize Matrix room-routing registration; the Redis sync lease/cursor
-   and idempotent pre-commit notification/statistic effects are now covered.
-4. Define cache invalidation bounds for tenant and application-setting caches.
-5. Add concurrent scheduler contracts, then raise the Helm replica constraint
+3. Define cache invalidation bounds for tenant and application-setting caches.
+4. Add concurrent scheduler contracts, then raise the Helm replica constraint
    only when `userservice.replica.max_supported` can truthfully change.

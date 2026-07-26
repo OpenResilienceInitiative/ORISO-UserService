@@ -205,7 +205,7 @@
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/MatrixEventListenerService.java",
       "kind": "local-state",
       "owner": "matrix",
-      "risk": "duplicate-side-effect",
+      "risk": "performance-only",
       "components": [
         "roomToSessionMap",
         "roomToUsersMap",
@@ -215,7 +215,7 @@
         "hasLeadership",
         "running"
       ],
-      "decision": "The Redis lease and cursor allow one logical sync consumer, and durable notification/statistic effects are idempotent before cursor commit. Keep one replica until room routing registration state is shared across instances.",
+      "decision": "The Redis lease and cursor allow one logical sync consumer, durable effects are idempotent before cursor commit, and the canonical room/session/recipient context is refreshed from the database once per joined room and sync batch. Local room maps are bounded batch scratch, cleared after every room even on failure, never registration authority, and do not block multiple replicas.",
       "signals": [
         "userservice.replica.local_state"
       ]

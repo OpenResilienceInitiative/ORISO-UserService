@@ -44,10 +44,10 @@ public class MatrixEventListenerService {
 
   private OutboundHttpMetrics outboundHttpMetrics;
 
-  // Maps Matrix room ID to session ID for quick lookup
+  // Batch scratch refreshed from the canonical session repository before processing each room.
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
 
-  // Maps Matrix room ID to list of user IDs who should receive notifications
+  // Recipient scratch paired with roomToSessionMap; never populated by HTTP registration.
   private final Map<String, Set<String>> roomToUsersMap = new ConcurrentHashMap<>();
 
   // Executor for async event processing
@@ -111,37 +111,6 @@ public class MatrixEventListenerService {
         Thread.currentThread().interrupt();
       }
     }
-  }
-
-  /**
-   * Register a session's Matrix room for event listening. This should be called when a session is
-   * created or accessed.
-   *
-   * @param sessionId the session ID
-   * @param matrixRoomId the Matrix room ID
-   * @param userIds list of user IDs who should receive notifications
-   */
-  public void registerRoom(Long sessionId, String matrixRoomId, Set<String> userIds) {
-    if (matrixRoomId != null && !matrixRoomId.isEmpty()) {
-      roomToSessionMap.put(matrixRoomId, sessionId);
-      roomToUsersMap.put(matrixRoomId, userIds);
-      log.info(
-          "🔷 Registered Matrix room {} for session {} with {} users",
-          matrixRoomId,
-          sessionId,
-          userIds.size());
-    }
-  }
-
-  /**
-   * Unregister a Matrix room (when session ends).
-   *
-   * @param matrixRoomId the Matrix room ID
-   */
-  public void unregisterRoom(String matrixRoomId) {
-    roomToSessionMap.remove(matrixRoomId);
-    roomToUsersMap.remove(matrixRoomId);
-    log.info("🔷 Unregistered Matrix room {}", matrixRoomId);
   }
 
   /**
@@ -214,10 +183,7 @@ public class MatrixEventListenerService {
         // Heartbeat so a healthy/stuck loop is observable without log-spamming.
         iteration++;
         if (iteration % HEARTBEAT_EVERY_N_ITERATIONS == 0) {
-          log.info(
-              "💓 Matrix sync loop healthy (iteration {}, {} registered rooms)",
-              iteration,
-              roomToSessionMap.size());
+          log.info("💓 Matrix sync loop healthy (iteration {})", iteration);
         }
 
         // Small delay to prevent CPU spinning if sync returns immediately.
@@ -417,34 +383,34 @@ public class MatrixEventListenerService {
       return;
     }
 
-    // Log registered rooms (for debugging)
-    if (!roomToSessionMap.isEmpty()) {
-      log.debug("🔷 Registered rooms: {}", roomToSessionMap.keySet());
-    }
-
     // Process each room
     for (Map.Entry<String, Object> roomEntry : joinedRooms.entrySet()) {
       String roomId = roomEntry.getKey();
       Map<String, Object> roomData = (Map<String, Object>) roomEntry.getValue();
 
-      // Resolve session context even if room wasn't explicitly registered by UI.
-      Optional<Long> sessionIdOpt = resolveSessionIdForRoom(roomId);
-      if (sessionIdOpt.isEmpty()) {
+      // Refresh from the canonical database for every batch. A registration handled by another
+      // replica, or a reassignment since the previous batch, must never leave this listener using
+      // stale process-local routing state.
+      if (!refreshRoomContextForBatch(roomId)) {
         continue;
       }
 
-      log.info("🔷 Processing events for registered room: {}", roomId);
+      try {
+        log.info("🔷 Processing events for resolved room: {}", roomId);
 
-      // Process timeline events
-      if (roomData.containsKey("timeline")) {
-        Map<String, Object> timeline = (Map<String, Object>) roomData.get("timeline");
-        if (timeline.containsKey("events")) {
-          List<Map<String, Object>> events = (List<Map<String, Object>>) timeline.get("events");
+        // Process timeline events
+        if (roomData.containsKey("timeline")) {
+          Map<String, Object> timeline = (Map<String, Object>) roomData.get("timeline");
+          if (timeline.containsKey("events")) {
+            List<Map<String, Object>> events = (List<Map<String, Object>>) timeline.get("events");
 
-          for (Map<String, Object> event : events) {
-            processMatrixEvent(roomId, event);
+            for (Map<String, Object> event : events) {
+              processMatrixEvent(roomId, event);
+            }
           }
         }
+      } finally {
+        clearRoomContext(roomId);
       }
     }
   }
@@ -593,21 +559,22 @@ public class MatrixEventListenerService {
 
   private record ResolvedMatrixSender(String domainUserId, boolean consultant) {}
 
-  private Optional<Long> resolveSessionIdForRoom(String roomId) {
-    Long cached = roomToSessionMap.get(roomId);
-    if (cached != null) {
-      return Optional.of(cached);
-    }
-
+  private boolean refreshRoomContextForBatch(String roomId) {
     Optional<Session> sessionOpt = sessionRepository.findByMatrixRoomId(roomId);
     if (sessionOpt.isEmpty()) {
-      return Optional.empty();
+      clearRoomContext(roomId);
+      return false;
     }
 
     Session session = sessionOpt.get();
     roomToSessionMap.put(roomId, session.getId());
     roomToUsersMap.put(roomId, buildRecipientSet(session));
-    return Optional.of(session.getId());
+    return true;
+  }
+
+  private void clearRoomContext(String roomId) {
+    roomToSessionMap.remove(roomId);
+    roomToUsersMap.remove(roomId);
   }
 
   private Set<String> getRecipientCandidatesForRoom(String roomId) {
@@ -783,8 +750,8 @@ public class MatrixEventListenerService {
         lifetime);
 
     // Get users who should receive notification (exclude sender)
-    Set<String> userIds = roomToUsersMap.get(roomId);
-    if (userIds == null || userIds.isEmpty()) {
+    Set<String> userIds = getRecipientCandidatesForRoom(roomId);
+    if (userIds.isEmpty()) {
       return;
     }
 

@@ -2,11 +2,8 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,8 +12,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * Controller for Matrix session synchronization. Allows frontend to register Matrix rooms for
- * real-time event notifications via LiveService.
+ * Compatibility controller for Matrix session synchronization. Registration authorizes the caller
+ * and heals technical-admin room membership; listener routing is derived from canonical session
+ * data rather than request-local state.
  */
 @RestController
 @RequestMapping({"/matrix/sync", "/service/matrix/sync"})
@@ -24,14 +22,13 @@ import org.springframework.web.bind.annotation.*;
 @Slf4j
 public class MatrixSyncController {
 
-  private final @NonNull MatrixEventListenerService matrixEventListenerService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   /**
-   * Register a Matrix room for real-time event listening. When messages arrive in this room, the
-   * backend will trigger LiveService events to notify connected users.
+   * Prepare a Matrix room for real-time event listening. When messages arrive in this room, the
+   * backend resolves its current session context from the database and triggers LiveService events.
    *
    * @param sessionId the session ID
    * @return success response
@@ -56,16 +53,8 @@ public class MatrixSyncController {
       }
 
       String matrixRoomId = session.getMatrixRoomId();
-      String userId = session.getUser().getUserId();
-      String consultantId =
-          session.getConsultant() != null ? session.getConsultant().getId() : null;
-
-      // Build set of user IDs who should receive notifications
-      Set<String> userIds = new HashSet<>();
-      userIds.add(userId);
-      if (consultantId != null) {
-        userIds.add(consultantId);
-      }
+      int participantCount =
+          session.getConsultant() != null && session.getConsultant().getId() != null ? 2 : 1;
 
       // The listener /sync loop runs as the technical admin and only receives events
       // for rooms the admin has joined — heal the membership on every registration so
@@ -82,17 +71,14 @@ public class MatrixSyncController {
             "Ensuring Matrix admin membership in room {} failed: {}", matrixRoomId, e.getMessage());
       }
 
-      // Register room with MatrixEventListenerService
-      matrixEventListenerService.registerRoom(sessionId, matrixRoomId, userIds);
-
       log.info(
-          "✅ Registered Matrix room {} for session {} with {} users",
+          "✅ Matrix room {} ready for sync for session {} with {} users",
           matrixRoomId,
           sessionId,
-          userIds.size());
+          participantCount);
 
       return ResponseEntity.ok(
-          Map.of("success", true, "roomId", matrixRoomId, "userCount", userIds.size()));
+          Map.of("success", true, "roomId", matrixRoomId, "userCount", participantCount));
 
     } catch (Exception e) {
       log.error("❌ Error registering Matrix room for sync", e);
@@ -102,7 +88,8 @@ public class MatrixSyncController {
   }
 
   /**
-   * Unregister a Matrix room from event listening (when session is closed).
+   * Acknowledge the legacy unregister call. Closing the canonical session controls whether the
+   * listener can resolve the room; there is no process-local listener registration to tear down.
    *
    * @param sessionId the session ID
    * @return success response
@@ -121,9 +108,11 @@ public class MatrixSyncController {
       }
 
       String matrixRoomId = session.getMatrixRoomId();
-      matrixEventListenerService.unregisterRoom(matrixRoomId);
 
-      log.info("✅ Unregistered Matrix room {} for session {}", matrixRoomId, sessionId);
+      log.info(
+          "✅ Matrix sync unregister acknowledged for room {} and session {}",
+          matrixRoomId,
+          sessionId);
 
       return ResponseEntity.ok(Map.of("success", true));
 

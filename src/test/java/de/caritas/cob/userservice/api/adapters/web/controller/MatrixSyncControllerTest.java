@@ -2,12 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anySet;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,13 +13,10 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.Map;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,7 +30,6 @@ class MatrixSyncControllerTest {
   private static final String CONSULTANT_ID = "consultant-id";
   private static final String MATRIX_ROOM_ID = "!room:matrix";
 
-  @Mock private MatrixEventListenerService matrixEventListenerService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionService sessionService;
   @Mock private AuthenticatedUser authenticatedUser;
@@ -53,8 +43,7 @@ class MatrixSyncControllerTest {
 
     assertThrows(ForbiddenException.class, () -> controller.registerRoomForSync(SESSION_ID));
 
-    // IDOR is closed: no room is registered and no Matrix room id / user count is leaked.
-    verifyNoInteractions(matrixEventListenerService);
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
@@ -64,19 +53,18 @@ class MatrixSyncControllerTest {
 
     assertThrows(ForbiddenException.class, () -> controller.unregisterRoomFromSync(SESSION_ID));
 
-    // Denial-of-function is closed: an outsider cannot unregister another session's room.
-    verifyNoInteractions(matrixEventListenerService);
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
-  void registerRoomForSync_ShouldRegisterRoom_WhenAuthorizedParticipant() {
+  void registerRoomForSync_ShouldPrepareRoom_WhenAuthorizedParticipant() {
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     var response = controller.registerRoomForSync(SESSION_ID);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(matrixEventListenerService).registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
+    verify(matrixSynapseService).ensureAdminInRoom(MATRIX_ROOM_ID, "@seeker:matrix");
   }
 
   @Test
@@ -91,38 +79,31 @@ class MatrixSyncControllerTest {
     @SuppressWarnings("unchecked")
     var body = (Map<String, String>) response.getBody();
     assertEquals("Session not found or has no Matrix room", body.get("error"));
-    verifyNoInteractions(matrixEventListenerService);
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
-  void registerRoomForSync_withConsultant_registersTwoUserIds() {
-    // Business reason: assigned consultants must receive live-event notifications alongside askers.
+  void registerRoomForSync_withConsultant_reportsTwoParticipants() {
+    // The compatibility response still reports both current session participants.
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoomAndConsultant());
-    ArgumentCaptor<Set<String>> userIdsCaptor = ArgumentCaptor.forClass(Set.class);
+    var response = controller.registerRoomForSync(SESSION_ID);
 
-    controller.registerRoomForSync(SESSION_ID);
-
-    verify(matrixEventListenerService)
-        .registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), userIdsCaptor.capture());
-    assertEquals(2, userIdsCaptor.getValue().size());
-    assertTrue(userIdsCaptor.getValue().contains(USER_ID));
-    assertTrue(userIdsCaptor.getValue().contains(CONSULTANT_ID));
+    @SuppressWarnings("unchecked")
+    var body = (Map<String, Object>) response.getBody();
+    assertEquals(2, body.get("userCount"));
   }
 
   @Test
-  void registerRoomForSync_withoutConsultant_registersOneUserId() {
-    // Business reason: unassigned sessions should only notify the asker, not a missing consultant.
+  void registerRoomForSync_withoutConsultant_reportsOneParticipant() {
+    // An unassigned session still reports only its asker.
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
-    ArgumentCaptor<Set<String>> userIdsCaptor = ArgumentCaptor.forClass(Set.class);
+    var response = controller.registerRoomForSync(SESSION_ID);
 
-    controller.registerRoomForSync(SESSION_ID);
-
-    verify(matrixEventListenerService)
-        .registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), userIdsCaptor.capture());
-    assertEquals(1, userIdsCaptor.getValue().size());
-    assertTrue(userIdsCaptor.getValue().contains(USER_ID));
+    @SuppressWarnings("unchecked")
+    var body = (Map<String, Object>) response.getBody();
+    assertEquals(1, body.get("userCount"));
   }
 
   @Test
@@ -142,23 +123,6 @@ class MatrixSyncControllerTest {
   }
 
   @Test
-  void registerRoomForSync_registerRoomThrows_returnsInternalServerError() {
-    // Business reason: downstream listener failures must surface as 500, not crash the caller.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
-        .thenReturn(sessionWithMatrixRoom());
-    doThrow(new RuntimeException("listener down"))
-        .when(matrixEventListenerService)
-        .registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
-
-    var response = controller.registerRoomForSync(SESSION_ID);
-
-    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
-    @SuppressWarnings("unchecked")
-    var body = (Map<String, String>) response.getBody();
-    assertEquals("Internal server error: listener down", body.get("error"));
-  }
-
-  @Test
   void registerRoomForSync_sessionNotFound_propagatesNotFoundException() {
     // Business reason: missing sessions must reach the global handler as 404, not be swallowed.
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
@@ -166,19 +130,19 @@ class MatrixSyncControllerTest {
 
     assertThrows(NotFoundException.class, () -> controller.registerRoomForSync(SESSION_ID));
 
-    verifyNoInteractions(matrixEventListenerService);
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
-  void unregisterRoomFromSync_happyPath_unregistersRoomAndReturnsOk() {
-    // Business reason: closing a session must stop live-event delivery for its Matrix room.
+  void unregisterRoomFromSync_doesNotMutateProcessLocalListenerState() {
+    // Closing a session is represented by canonical session state. A request routed to one pod
+    // must not try to disable delivery only inside that pod.
     when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     var response = controller.unregisterRoomFromSync(SESSION_ID);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(matrixEventListenerService).unregisterRoom(MATRIX_ROOM_ID);
     @SuppressWarnings("unchecked")
     var body = (Map<String, Object>) response.getBody();
     assertEquals(true, body.get("success"));
@@ -193,27 +157,9 @@ class MatrixSyncControllerTest {
     var response = controller.unregisterRoomFromSync(SESSION_ID);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(matrixEventListenerService, never()).unregisterRoom(any());
     @SuppressWarnings("unchecked")
     var body = (Map<String, Object>) response.getBody();
     assertEquals(true, body.get("success"));
-  }
-
-  @Test
-  void unregisterRoomFromSync_unregisterThrows_returnsInternalServerError() {
-    // Business reason: listener teardown failures must not appear as silent success to the client.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
-        .thenReturn(sessionWithMatrixRoom());
-    doThrow(new RuntimeException("unregister failed"))
-        .when(matrixEventListenerService)
-        .unregisterRoom(MATRIX_ROOM_ID);
-
-    var response = controller.unregisterRoomFromSync(SESSION_ID);
-
-    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
-    @SuppressWarnings("unchecked")
-    var body = (Map<String, String>) response.getBody();
-    assertEquals("Internal server error", body.get("error"));
   }
 
   @Test
@@ -225,7 +171,7 @@ class MatrixSyncControllerTest {
 
     assertThrows(NotFoundException.class, () -> controller.unregisterRoomFromSync(SESSION_ID));
 
-    verifyNoInteractions(matrixEventListenerService);
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
@@ -250,7 +196,6 @@ class MatrixSyncControllerTest {
     var response = controller.registerRoomForSync(SESSION_ID);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(matrixEventListenerService).registerRoom(eq(SESSION_ID), eq(MATRIX_ROOM_ID), anySet());
   }
 
   private Session sessionWithMatrixRoom() {

@@ -40,11 +40,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -452,134 +449,6 @@ class MatrixEventListenerServiceTest {
         .containsExactly("user-1");
   }
 
-  // ── registerRoom / unregisterRoom ───────────────────────────────────────────
-
-  @Test
-  void registerRoom_shouldPopulateBothMaps_whenRoomIdValid() {
-    // UI sync registration must index the room for session lookup and recipient fan-out.
-    var service = newService();
-    service.registerRoom(99L, "!room:matrix", Set.of("user-a", "user-b"));
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    @SuppressWarnings("unchecked")
-    var roomToUsers =
-        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
-
-    assertThat(roomToSession).containsEntry("!room:matrix", 99L);
-    assertThat(roomToUsers).containsEntry("!room:matrix", Set.of("user-a", "user-b"));
-  }
-
-  @Test
-  void registerRoom_shouldBeNoOp_whenRoomIdBlank() {
-    // Invalid room ids must not pollute the in-memory registration indexes.
-    var service = newService();
-    service.registerRoom(1L, "", Set.of("user-a"));
-    service.registerRoom(2L, null, Set.of("user-b"));
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    assertThat(roomToSession).isEmpty();
-  }
-
-  @Test
-  void unregisterRoom_shouldRemoveFromBothMaps() {
-    // Ended sessions must stop generating live events for that Matrix room.
-    var service = newService();
-    service.registerRoom(5L, "!room:matrix", Set.of("user-a"));
-    service.unregisterRoom("!room:matrix");
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    @SuppressWarnings("unchecked")
-    var roomToUsers =
-        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
-
-    assertThat(roomToSession).doesNotContainKey("!room:matrix");
-    assertThat(roomToUsers).doesNotContainKey("!room:matrix");
-  }
-
-  @Test
-  void registerRoom_shouldRemainConsistent_underConcurrentRegistration() throws Exception {
-    // Multiple clients registering the same room must not corrupt the shared listener maps.
-    var service = newService();
-    var start = new CountDownLatch(1);
-    var done = new CountDownLatch(2);
-    var executor = Executors.newFixedThreadPool(2);
-
-    Runnable register =
-        () -> {
-          try {
-            start.await();
-            service.registerRoom(10L, "!room:concurrent", Set.of("user-x"));
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-          } finally {
-            done.countDown();
-          }
-        };
-
-    executor.submit(register);
-    executor.submit(register);
-    start.countDown();
-    assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
-    executor.shutdownNow();
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (ConcurrentHashMap<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    @SuppressWarnings("unchecked")
-    var roomToUsers =
-        (ConcurrentHashMap<String, Set<String>>)
-            ReflectionTestUtils.getField(service, "roomToUsersMap");
-
-    assertThat(roomToSession).containsEntry("!room:concurrent", 10L);
-    assertThat(roomToUsers).containsKey("!room:concurrent");
-    assertThat(roomToUsers.get("!room:concurrent")).contains("user-x");
-  }
-
-  @Test
-  void unregisterRoom_shouldLeaveMapsEmpty_underConcurrentUnregister() throws Exception {
-    // Concurrent unregister calls for the same room must not leave stale recipient entries.
-    var service = newService();
-    service.registerRoom(11L, "!room:gone", Set.of("user-y"));
-
-    var start = new CountDownLatch(1);
-    var done = new CountDownLatch(2);
-    var executor = Executors.newFixedThreadPool(2);
-
-    Runnable unregister =
-        () -> {
-          try {
-            start.await();
-            service.unregisterRoom("!room:gone");
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-          } finally {
-            done.countDown();
-          }
-        };
-
-    executor.submit(unregister);
-    executor.submit(unregister);
-    start.countDown();
-    assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
-    executor.shutdownNow();
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    @SuppressWarnings("unchecked")
-    var roomToUsers =
-        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
-
-    assertThat(roomToSession).isEmpty();
-    assertThat(roomToUsers).isEmpty();
-  }
-
   // ── safeContentLog ───────────────────────────────────────────────────────────
 
   @Test
@@ -740,49 +609,6 @@ class MatrixEventListenerServiceTest {
     assertThat(invokeResolveDomainUserId(newService(), SENDER_MATRIX_ID)).isNull();
   }
 
-  // ── resolveSessionIdForRoom / getRecipientCandidatesForRoom ────────────────
-
-  @Test
-  void resolveSessionIdForRoom_shouldReturnCachedValue_whenAlreadyRegistered() {
-    var service = newService();
-    service.registerRoom(77L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
-
-    assertThat(invokeResolveSessionIdForRoom(service, MATRIX_ROOM_ID)).contains(77L);
-    verifyNoInteractions(sessionRepository);
-  }
-
-  @Test
-  void resolveSessionIdForRoom_shouldLoadFromRepositoryAndCache_whenNotRegistered() {
-    var service = newService();
-    var session = sessionWithParticipants(userWithId(ASKER_DOMAIN_ID), null);
-    session.setId(88L);
-    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
-
-    assertThat(invokeResolveSessionIdForRoom(service, MATRIX_ROOM_ID)).contains(88L);
-
-    @SuppressWarnings("unchecked")
-    var roomToSession =
-        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
-    assertThat(roomToSession).containsEntry(MATRIX_ROOM_ID, 88L);
-  }
-
-  @Test
-  void resolveSessionIdForRoom_shouldReturnEmpty_whenRoomUnknown() {
-    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
-
-    assertThat(invokeResolveSessionIdForRoom(newService(), MATRIX_ROOM_ID)).isEmpty();
-  }
-
-  @Test
-  void getRecipientCandidatesForRoom_shouldReturnCachedRecipients_whenRegistered() {
-    var service = newService();
-    service.registerRoom(1L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
-
-    assertThat(invokeGetRecipientCandidatesForRoom(service, MATRIX_ROOM_ID))
-        .containsExactlyInAnyOrder(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID);
-    verifyNoInteractions(sessionRepository);
-  }
-
   @Test
   void getRecipientCandidatesForRoom_shouldLoadFromRepository_whenCacheEmpty() {
     var service = newService();
@@ -841,7 +667,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processAndCommitSyncResult_shouldCommitCursorAfterDurableNotification() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(10L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
@@ -870,7 +696,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processAndCommitSyncResult_shouldNotCommitCursorWhenDurableNotificationFails() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(10L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
@@ -898,7 +724,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processAndCommitSyncResult_shouldNotCommitCursorWhenDurableStatisticFails() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(10L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
@@ -1000,7 +826,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixSyncEvents_shouldTriggerDirectMessageNotification_onRegisteredRoomMessage() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(10L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     var sender = consultantWithId(CONSULTANT_DOMAIN_ID);
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
@@ -1032,7 +858,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixSyncEvents_shouldTriggerThreadReplyNotification_whenThreadRelationPresent() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(11L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(11L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     var user = userWithId(ASKER_DOMAIN_ID);
     user.setMatrixUserId(SENDER_MATRIX_ID);
@@ -1067,7 +893,7 @@ class MatrixEventListenerServiceTest {
   void processMatrixSyncEvents_shouldMirrorMessage_whenRedisMirrorPresent() {
     var service = newService(Optional.of(redisMessageMirrorService));
     wireSynchronousExecutor(service);
-    service.registerRoom(12L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    stubRoomContext(12L, Set.of(ASKER_DOMAIN_ID));
 
     var user = userWithId(ASKER_DOMAIN_ID);
     user.setMatrixUserId(SENDER_MATRIX_ID);
@@ -1094,7 +920,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixSyncEvents_shouldNotNotify_whenSenderIsOnlyRecipient() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(13L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    stubRoomContext(13L, Set.of(ASKER_DOMAIN_ID));
 
     var user = userWithId(ASKER_DOMAIN_ID);
     user.setMatrixUserId(SENDER_MATRIX_ID);
@@ -1115,7 +941,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixSyncEvents_shouldNotNotify_whenMessageContentIsNull() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(14L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(14L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     var event = new HashMap<String, Object>();
     event.put("type", "m.room.message");
@@ -1184,6 +1010,91 @@ class MatrixEventListenerServiceTest {
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
   }
 
+  @Test
+  void processMatrixSyncEvents_shouldUseCurrentRoomContextForEveryBatch() {
+    var service = newServiceWithSyncExecutor();
+    var firstSession =
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+    firstSession.setId(16L);
+    var reassignedSession =
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+    reassignedSession.setId(17L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(firstSession), Optional.of(reassignedSession));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "first", "$evt-first"))));
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "second", "$evt-second"))));
+
+    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 16L, "$evt-first");
+    verify(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 17L, "$evt-second");
+    verify(sessionRepository, times(2)).findByMatrixRoomId(MATRIX_ROOM_ID);
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldResolveRoomOnlyOnceForAllEventsInBatch() {
+    var service = newServiceWithSyncExecutor();
+    var session =
+        sessionWithParticipants(
+            userWithId(ASKER_DOMAIN_ID), consultantWithId(CONSULTANT_DOMAIN_ID));
+    session.setId(18L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(
+                messageEvent(CONSULTANT_MATRIX_ID, "m.text", "first", "$evt-batch-1"),
+                messageEvent(CONSULTANT_MATRIX_ID, "m.text", "second", "$evt-batch-2"))));
+
+    verify(sessionRepository).findByMatrixRoomId(MATRIX_ROOM_ID);
+    verify(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 18L, "$evt-batch-1");
+    verify(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 18L, "$evt-batch-2");
+  }
+
+  @Test
+  void processMatrixSyncEvents_shouldReleaseRoomScratchAfterBatch() {
+    var service = newServiceWithSyncExecutor();
+    var session = sessionWithParticipants(userWithId(ASKER_DOMAIN_ID), null);
+    session.setId(19L);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(Map.of("type", "m.room.member", "sender", SENDER_MATRIX_ID))));
+
+    @SuppressWarnings("unchecked")
+    var roomToSession =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    @SuppressWarnings("unchecked")
+    var roomToUsers =
+        (Map<String, Set<String>>) ReflectionTestUtils.getField(service, "roomToUsersMap");
+    assertThat(roomToSession).isEmpty();
+    assertThat(roomToUsers).isEmpty();
+  }
+
   // ── processMatrixEvent (call events) ───────────────────────────────────────
 
   @Test
@@ -1205,7 +1116,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void handleCallInvite_shouldWarnAboutUnimplementedLiveEvent_whenRecipientsExist() {
     var service = newService();
-    service.registerRoom(20L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(20L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     var event = new HashMap<String, Object>();
     event.put("type", "m.call.invite");
@@ -1225,7 +1136,6 @@ class MatrixEventListenerServiceTest {
   @Test
   void handleCallInvite_shouldReturnEarly_whenContentNull() {
     var service = newService();
-    service.registerRoom(21L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
 
     var event = new HashMap<String, Object>();
     event.put("type", "m.call.invite");
@@ -1270,7 +1180,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void handleRoomMessage_shouldSwallowNotificationErrors_withoutBreakingSync() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(30L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(30L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
@@ -1302,7 +1212,7 @@ class MatrixEventListenerServiceTest {
     // request-scoped AuthenticatedUser being unavailable on the sync-loop
     // thread) must not prevent the notification row from being written.
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(33L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(33L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
@@ -1383,7 +1293,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixEvent_shouldTreatEncryptedEventAsMessage_forE2eeRooms() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(31L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    stubRoomContext(31L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
         .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
@@ -1412,7 +1322,6 @@ class MatrixEventListenerServiceTest {
   @Test
   void processMatrixEvent_shouldIgnoreEncryptedEvent_whenContentIsNull() {
     var service = newServiceWithSyncExecutor();
-    service.registerRoom(32L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
     var event = new HashMap<String, Object>();
     event.put("type", "m.room.encrypted");
@@ -1422,6 +1331,17 @@ class MatrixEventListenerServiceTest {
 
     verifyNoInteractions(liveEventNotificationService);
     verifyNoInteractions(eventNotificationService);
+  }
+
+  private void stubRoomContext(Long sessionId, Set<String> participantIds) {
+    User user = participantIds.contains(ASKER_DOMAIN_ID) ? userWithId(ASKER_DOMAIN_ID) : null;
+    Consultant consultant =
+        participantIds.contains(CONSULTANT_DOMAIN_ID)
+            ? consultantWithId(CONSULTANT_DOMAIN_ID)
+            : null;
+    Session session = sessionWithParticipants(user, consultant);
+    session.setId(sessionId);
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
   }
 
   private static Session sessionWithId(long sessionId) {
@@ -1479,12 +1399,6 @@ class MatrixEventListenerServiceTest {
   private static void invokeProcessMatrixEvent(
       MatrixEventListenerService service, String roomId, Map<String, Object> event) {
     ReflectionTestUtils.invokeMethod(service, "processMatrixEvent", roomId, event);
-  }
-
-  private static Optional<Long> invokeResolveSessionIdForRoom(
-      MatrixEventListenerService service, String roomId) {
-    return (Optional<Long>)
-        ReflectionTestUtils.invokeMethod(service, "resolveSessionIdForRoom", roomId);
   }
 
   @SuppressWarnings("unchecked")
