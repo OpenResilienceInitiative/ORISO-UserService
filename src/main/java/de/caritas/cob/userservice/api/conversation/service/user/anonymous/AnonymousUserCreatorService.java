@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
@@ -15,6 +14,7 @@ import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.NonNull;
@@ -55,7 +55,7 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    KeycloakLoginResponseDTO kcLoginResponseDTO;
+    IdentityLogin identityLogin;
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
       var user =
@@ -63,7 +63,7 @@ public class AnonymousUserCreatorService {
       if (!rocketChatEnabled) {
         createUserFacade.provisionMatrixUser(user, userDto.getUsername());
       }
-      kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+      identityLogin = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
       if (rocketChatEnabled) {
         ensureRocketChatUserExists(userDto, identityId);
         rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
@@ -76,10 +76,10 @@ public class AnonymousUserCreatorService {
     var credentialsBuilder =
         AnonymousUserCredentials.builder()
             .userId(identityId)
-            .accessToken(kcLoginResponseDTO.getAccessToken())
-            .expiresIn(kcLoginResponseDTO.getExpiresIn())
-            .refreshToken(kcLoginResponseDTO.getRefreshToken())
-            .refreshExpiresIn(kcLoginResponseDTO.getRefreshExpiresIn());
+            .accessToken(identityLogin.accessToken())
+            .expiresIn(identityLogin.expiresIn())
+            .refreshToken(identityLogin.refreshToken())
+            .refreshExpiresIn(identityLogin.refreshExpiresIn());
 
     if (rocketChatEnabled) {
       credentialsBuilder.rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto));

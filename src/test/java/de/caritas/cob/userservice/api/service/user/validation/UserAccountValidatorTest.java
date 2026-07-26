@@ -9,10 +9,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import org.jeasy.random.EasyRandom;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -39,9 +38,8 @@ public class UserAccountValidatorTest {
 
   @Test
   public void checkPasswordValidity_Should_LogOutUser_When_LoginWasSuccessful() {
-    KeycloakLoginResponseDTO loginResponseDTO =
-        new EasyRandom().nextObject(KeycloakLoginResponseDTO.class);
-    when(identityClient.loginUser(anyString(), anyString())).thenReturn(loginResponseDTO);
+    IdentityLogin identityLogin = new IdentityLogin("access-token", 300, 600, "refresh-token");
+    when(identityClient.loginUser(anyString(), anyString())).thenReturn(identityLogin);
 
     this.userAccountValidator.checkPasswordValidity(USERNAME, PASSWORD);
 

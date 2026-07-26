@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.port.out;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
@@ -15,7 +14,7 @@ public interface IdentityClient {
 
   void changeLanguage(final String userId, final String language);
 
-  KeycloakLoginResponseDTO loginUser(final String userName, final String password);
+  IdentityLogin loginUser(final String userName, final String password);
 
   boolean logoutUser(final String refreshToken);
 

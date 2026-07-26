@@ -78,8 +78,7 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   private void addDefaultHeaders(ApiClient apiClient) {
     var techUser = identityClientConfig.getTechnicalUser();
     var keycloakLogin = identityClient.loginUser(techUser.getUsername(), techUser.getPassword());
-    var headers =
-        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.getAccessToken());
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }

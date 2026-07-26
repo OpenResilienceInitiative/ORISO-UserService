@@ -22,6 +22,6 @@ public class UserAccountValidator {
    */
   public void checkPasswordValidity(String username, String password) {
     var loginResponse = identityClient.loginUser(username, password);
-    identityClient.logoutUser(loginResponse.getRefreshToken());
+    identityClient.logoutUser(loginResponse.refreshToken());
   }
 }

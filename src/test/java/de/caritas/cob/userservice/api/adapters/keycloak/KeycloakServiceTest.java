@@ -8,7 +8,6 @@ import static org.apache.commons.lang3.RandomStringUtils.random;
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphabetic;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,6 +39,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
@@ -155,7 +155,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void loginUser_Should_ReturnKeycloakLoginResponseDTO_When_KeycloakLoginWasSuccessful() {
+  public void loginUser_Should_MapKeycloakResponseToProviderNeutralCredentials() {
     KeycloakLoginResponseDTO loginResponseDTO =
         new EasyRandom().nextObject(KeycloakLoginResponseDTO.class);
     when(restTemplate.postForEntity(
@@ -164,9 +164,12 @@ public class KeycloakServiceTest {
             ArgumentMatchers.<Class<KeycloakLoginResponseDTO>>any()))
         .thenReturn(new ResponseEntity<>(loginResponseDTO, HttpStatus.OK));
 
-    KeycloakLoginResponseDTO response = keycloakService.loginUser(USER_ID, OLD_PW);
+    IdentityLogin response = keycloakService.loginUser(USER_ID, OLD_PW);
 
-    assertThat(response, instanceOf(KeycloakLoginResponseDTO.class));
+    assertThat(response.accessToken(), is(loginResponseDTO.getAccessToken()));
+    assertThat(response.expiresIn(), is(loginResponseDTO.getExpiresIn()));
+    assertThat(response.refreshExpiresIn(), is(loginResponseDTO.getRefreshExpiresIn()));
+    assertThat(response.refreshToken(), is(loginResponseDTO.getRefreshToken()));
   }
 
   @Test

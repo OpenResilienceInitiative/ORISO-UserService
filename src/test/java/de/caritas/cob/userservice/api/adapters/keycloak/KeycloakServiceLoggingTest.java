@@ -85,11 +85,15 @@ class KeycloakServiceLoggingTest {
 
   @Test
   void loginUser_ShouldRedactPassword_WhenRequestBodyIsRenderedForDebugLogging() {
-    var loginResponse = new KeycloakLoginResponseDTO();
+    var loginResponse =
+        new KeycloakLoginResponseDTO(
+            "access-token", 300, 600, "refresh-token", "Bearer", "session", "scope");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(new ResponseEntity<>(loginResponse, HttpStatus.OK));
 
-    assertThat(keycloakService.loginUser(USERNAME, PASSWORD)).isSameAs(loginResponse);
+    var identityLogin = keycloakService.loginUser(USERNAME, PASSWORD);
+    assertThat(identityLogin.accessToken()).isEqualTo("access-token");
+    assertThat(identityLogin.refreshToken()).isEqualTo("refresh-token");
 
     var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)

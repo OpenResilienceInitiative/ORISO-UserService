@@ -5,13 +5,13 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -69,8 +69,8 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public KeycloakLoginResponseDTO loginUser(String userName, String password) {
-        return new KeycloakLoginResponseDTO("", 0, 0, "", "", "", "");
+      public IdentityLogin loginUser(String userName, String password) {
+        return new IdentityLogin("", 0, 0, "");
       }
 
       @Override

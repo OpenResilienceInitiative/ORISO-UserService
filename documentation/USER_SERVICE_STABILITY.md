@@ -197,7 +197,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. | The older `IdentityClient` contract and magic-link token exchange still expose other Keycloak transport types. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login now return the provider-neutral `IdentityLogin` value. | `IdentityClient` still exposes Keycloak SDK `UserRepresentation` lookup values. `MagicLinkLoginService` and its HTTP response still expose the Keycloak token transport separately from this port. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -210,7 +210,9 @@ also forbids the legacy admin Rocket.Chat operation implementation, so rollback
 policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`. A separate creation
 contract rejects any reintroduction of the deleted
-`KeycloakCreateUserResponseDTO` outside the Keycloak adapter boundary.
+`KeycloakCreateUserResponseDTO` outside the Keycloak adapter boundary. The
+identity port contract also rejects imports from the concrete Keycloak adapter,
+so its login result cannot regress from `IdentityLogin` to the provider DTO.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current

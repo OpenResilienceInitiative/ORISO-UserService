@@ -8,7 +8,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
@@ -25,6 +24,7 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -139,14 +139,19 @@ public class KeycloakService implements IdentityClient {
   }
 
   /**
-   * Performs a Keycloak login and returns the Keycloak {@link KeycloakLoginResponseDTO} on success.
+   * Performs a Keycloak login and returns provider-neutral credentials on success.
    *
    * @param userName the username
    * @param password the password
-   * @return {@link KeycloakLoginResponseDTO}
+   * @return provider-neutral identity credentials
    */
-  public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    return keycloakAuthClient.loginUser(userName, password);
+  public IdentityLogin loginUser(final String userName, final String password) {
+    var response = keycloakAuthClient.loginUser(userName, password);
+    return new IdentityLogin(
+        response.getAccessToken(),
+        response.getExpiresIn(),
+        response.getRefreshExpiresIn(),
+        response.getRefreshToken());
   }
 
   @Override

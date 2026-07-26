@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
@@ -29,6 +28,7 @@ import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -72,18 +72,17 @@ class AnonymousUserCreatorServiceTest {
     ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
     User user = mock(User.class);
     String responseDTO = "identity-id";
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
+    IdentityLogin identityLogin = identityLogin();
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
 
     AnonymousUserCredentials credentials =
         anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
 
-    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
-    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
+    assertThat(credentials.getAccessToken(), is(identityLogin.accessToken()));
+    assertThat(credentials.getRefreshToken(), is(identityLogin.refreshToken()));
     assertThat(credentials.getRocketChatCredentials(), is((Object) null));
     verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
     verifyNoInteractions(rocketChatService);
@@ -137,8 +136,7 @@ class AnonymousUserCreatorServiceTest {
         () -> {
           String responseDTO = "identity-id";
           when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-          when(keycloakService.loginUser(anyString(), anyString()))
-              .thenReturn(easyRandom.nextObject(KeycloakLoginResponseDTO.class));
+          when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin());
           when(userHelper.getDummyEmail(anyString())).thenReturn("user-id@beratungcaritas.de");
           when(rocketChatService.createUser(anyString(), anyString(), anyString()))
               .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
@@ -160,9 +158,8 @@ class AnonymousUserCreatorServiceTest {
   void createAnonymousUser_Should_ReturnAnonymousUserCredentials() throws RocketChatLoginException {
     String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+    IdentityLogin identityLogin = identityLogin();
+    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
@@ -178,11 +175,10 @@ class AnonymousUserCreatorServiceTest {
         anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
 
     assertThat(credentials, instanceOf(AnonymousUserCredentials.class));
-    assertThat(credentials.getExpiresIn(), is(keycloakLoginResponseDTO.getExpiresIn()));
-    assertThat(
-        credentials.getRefreshExpiresIn(), is(keycloakLoginResponseDTO.getRefreshExpiresIn()));
-    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
-    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
+    assertThat(credentials.getExpiresIn(), is(identityLogin.expiresIn()));
+    assertThat(credentials.getRefreshExpiresIn(), is(identityLogin.refreshExpiresIn()));
+    assertThat(credentials.getAccessToken(), is(identityLogin.accessToken()));
+    assertThat(credentials.getRefreshToken(), is(identityLogin.refreshToken()));
     verifyNoInteractions(rollbackFacade);
     verify(rocketChatService, times(1)).createUser(anyString(), anyString(), anyString());
     verify(userService, times(1)).updateRocketChatIdInDatabase(any(), any());
@@ -194,9 +190,8 @@ class AnonymousUserCreatorServiceTest {
           throws RocketChatLoginException {
     String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+    IdentityLogin identityLogin = identityLogin();
+    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
@@ -209,5 +204,9 @@ class AnonymousUserCreatorServiceTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT));
+  }
+
+  private static IdentityLogin identityLogin() {
+    return new IdentityLogin("access-token", 300, 600, "refresh-token");
   }
 }

@@ -245,7 +245,10 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
 2. Continue the provider-neutral identity boundary after the completed
    create-user slice. Application workflows now consume only the created
    identity ID; the Keycloak adapter owns missing-`Location` recovery and
-   refuses ambiguous or absent authoritative matches.
+   refuses ambiguous or absent authoritative matches. Password and technical
+   user login also return the provider-neutral `IdentityLogin` value; Keycloak
+   token JSON remains inside the adapter. The remaining lookup and magic-link
+   transport seams are tracked separately.
 3. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
 4. Prove MailService idempotency and runtime replay before enabling
