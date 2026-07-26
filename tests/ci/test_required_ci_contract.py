@@ -105,8 +105,27 @@ class RequiredCiContractTest(unittest.TestCase):
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
         self.assertIn("-Dskip.unit-tests=true clean integration-test", runner)
-        self.assertIn("tests < 900", runner)
-        self.assertIn("UserControllerE2EIT", runner)
+        minimum_reports = re.search(
+            r"^minimum_reports = (?P<value>\d+)$", runner, re.MULTILINE
+        )
+        minimum_tests = re.search(
+            r"^minimum_tests = (?P<value>\d+)$", runner, re.MULTILINE
+        )
+        self.assertIsNotNone(minimum_reports)
+        self.assertIsNotNone(minimum_tests)
+        self.assertGreaterEqual(int(minimum_reports.group("value")), 75)
+        self.assertGreaterEqual(int(minimum_tests.group("value")), 830)
+        self.assertIn("if len(reports) < minimum_reports:", runner)
+        self.assertIn("if tests < minimum_tests:", runner)
+
+        for required_e2e in (
+            "AppointmentControllerE2EIT",
+            "ConversationControllerAuthorizationIT",
+            "ConversationControllerIT",
+            "UserAdminControllerE2EIT",
+            "UserControllerE2EIT",
+        ):
+            self.assertIn(f'"{required_e2e}"', runner)
 
         for relative_path in (
             ".github/workflows/ci-pull-request.yml",
