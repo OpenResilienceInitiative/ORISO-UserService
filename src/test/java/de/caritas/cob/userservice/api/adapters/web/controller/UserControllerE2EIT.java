@@ -34,6 +34,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Maps;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO.PresenceStatus;
@@ -208,6 +210,8 @@ class UserControllerE2EIT {
 
   @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
+  @MockitoBean private MatrixSynapseService matrixSynapseService;
+
   @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
@@ -302,7 +306,7 @@ class UserControllerE2EIT {
   }
 
   @BeforeEach
-  public void setUp() {
+  public void setUp() throws Exception {
     when(consultingTypeControllerApi.getApiClient())
         .thenReturn(
             new de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient(restTemplate));
@@ -314,6 +318,12 @@ class UserControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+
+    var matrixUserResponse = new MatrixCreateUserResponseDTO();
+    matrixUserResponse.setUserId("@registered:matrix.test");
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(matrixUserResponse));
+    when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
   }
 
   @Test
@@ -1584,6 +1594,7 @@ class UserControllerE2EIT {
             .orElse(null);
     assertNotNull(savedUser);
     assertEquals("de", savedUser.getLanguageCode().toString());
+    assertEquals("@registered:matrix.test", savedUser.getMatrixUserId());
 
     var session = sessionRepository.findByUserUserId(savedUser.getUserId()).get(0);
     assertFalse(session.getIsConsultantDirectlySet());

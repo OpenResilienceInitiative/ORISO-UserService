@@ -1,11 +1,14 @@
 package de.caritas.cob.userservice.api.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,14 +32,18 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
@@ -48,8 +55,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -77,6 +87,10 @@ class AskerImportServiceTest {
   @Mock private UserAgencyService userAgencyService;
   @Mock private RocketChatCredentialsProvider rocketChatCredentialsProvider;
 
+  @Spy
+  private ProvisioningCompensator provisioningCompensator =
+      new ProvisioningCompensator(new SimpleMeterRegistry());
+
   private Path askerFile;
   private Path askerWithoutSessionFile;
   private Path protocolFile;
@@ -95,6 +109,7 @@ class AskerImportServiceTest {
     ReflectionTestUtils.setField(askerImportService, "protocolFilename", protocolFile.toString());
     ReflectionTestUtils.setField(askerImportService, "ROCKET_CHAT_SYSTEM_USER_USERNAME", "sysuser");
     ReflectionTestUtils.setField(askerImportService, "ROCKET_CHAT_SYSTEM_USER_PASSWORD", "syspass");
+    when(rocketChatService.deleteGroupAsSystemUser(anyString())).thenReturn(true);
   }
 
   @AfterEach
@@ -110,6 +125,7 @@ class AskerImportServiceTest {
     } catch (IOException ignored) {
     }
     try {
+      deleteGeneratedProtocolFiles();
       Files.deleteIfExists(protocolFile);
     } catch (IOException ignored) {
     }
@@ -212,6 +228,37 @@ class AskerImportServiceTest {
     verify(userAgencyService).saveUserAgency(any());
   }
 
+  @Test
+  void startImportForAskersWithoutSession_Should_CompensateRelation_When_RelationSaveFails()
+      throws Exception {
+    writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
+    when(userHelper.isUsernameValid("newasker")).thenReturn(true);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
+    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityClient.createUser(any(UserDTO.class), anyString(), anyString()))
+        .thenReturn(new CreatedIdentity("kc-user-id"));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(extendedConsultingType(true));
+    User dbUser = new User();
+    dbUser.setUserId("db-user-id");
+    when(userService.createUser(anyString(), any(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(dbUser);
+    when(rocketChatService.loginUserFirstTime(anyString(), anyString()))
+        .thenReturn(rcLoginResponse("rc-token", "rc-user-id"));
+    when(userService.saveUser(any(User.class))).thenReturn(dbUser);
+    when(userAgencyService.saveUserAgency(any()))
+        .thenThrow(new InternalServerErrorException("relation save failed"));
+
+    askerImportService.startImportForAskersWithoutSession();
+
+    ArgumentCaptor<UserAgency> relation = ArgumentCaptor.forClass(UserAgency.class);
+    verify(userAgencyService).saveUserAgency(relation.capture());
+    verify(userAgencyService).deleteUserAgency(relation.getValue());
+    verify(rocketChatService).deleteUser("rc-user-id");
+    verify(userService).deleteUser(dbUser);
+    verify(identityClient).rollBackUser("kc-user-id");
+  }
+
   // ---------------------------------------------------------------------------
   // startImportForAskersWithoutSession — dummy email when email is blank
   // ---------------------------------------------------------------------------
@@ -249,7 +296,7 @@ class AskerImportServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void startImportForAskersWithoutSession_Should_BreakOnImportException_When_RcTokenIsNull()
+  void startImportForAskersWithoutSession_Should_CompensateCreatedResources_When_RcTokenIsNull()
       throws Exception {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
@@ -265,11 +312,50 @@ class AskerImportServiceTest {
     when(userService.createUser(anyString(), any(), anyString(), anyString(), anyBoolean()))
         .thenReturn(dbUser);
     when(rocketChatService.loginUserFirstTime(anyString(), anyString()))
-        .thenReturn(rcLoginResponse(null, null));
+        .thenReturn(rcLoginResponse(null, "rc-user-id"));
 
     askerImportService.startImportForAskersWithoutSession();
 
     verify(userAgencyService, never()).saveUserAgency(any());
+    InOrder compensationOrder = inOrder(rocketChatService, userService, identityClient);
+    compensationOrder.verify(rocketChatService).deleteUser("rc-user-id");
+    compensationOrder.verify(userService).deleteUser(dbUser);
+    compensationOrder.verify(identityClient).rollBackUser("kc-user-id");
+  }
+
+  @Test
+  void startImportForAskersWithoutSession_Should_SucceedOnReplay_AfterCompensatedFailure()
+      throws Exception {
+    writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
+    when(userHelper.isUsernameValid("newasker")).thenReturn(true);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
+    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityClient.createUser(any(), anyString(), anyString()))
+        .thenReturn(new CreatedIdentity("kc-first"), new CreatedIdentity("kc-second"));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(extendedConsultingType(true));
+    User firstDbUser = new User();
+    firstDbUser.setUserId("db-first");
+    User replayDbUser = new User();
+    replayDbUser.setUserId("db-second");
+    when(userService.createUser(anyString(), any(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(firstDbUser, replayDbUser);
+    when(rocketChatService.loginUserFirstTime(anyString(), anyString()))
+        .thenReturn(
+            rcLoginResponse(null, "rc-first"), rcLoginResponse("rc-token-second", "rc-second"));
+    when(userService.saveUser(replayDbUser)).thenReturn(replayDbUser);
+
+    askerImportService.startImportForAskersWithoutSession();
+    askerImportService.startImportForAskersWithoutSession();
+
+    verify(identityClient, times(2)).createUser(any(), anyString(), anyString());
+    verify(rocketChatService).deleteUser("rc-first");
+    verify(userService).deleteUser(firstDbUser);
+    verify(identityClient).rollBackUser("kc-first");
+    verify(rocketChatService, never()).deleteUser("rc-second");
+    verify(userService, never()).deleteUser(replayDbUser);
+    verify(identityClient, never()).rollBackUser("kc-second");
+    verify(userAgencyService).saveUserAgency(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -951,7 +1037,7 @@ class AskerImportServiceTest {
   // --- startImport — saveUser returns null userId → ImportException ---
 
   @Test
-  void startImport_Should_BreakOnImportException_When_UpdatedUserIdIsNull() throws Exception {
+  void startImport_Should_CompensateCreatedResources_When_UpdatedUserIdIsNull() throws Exception {
     writeAskerCsv("1,validuser,valid@example.com,cons-id,12345,42,password\r\n");
     when(rocketChatCredentialsProvider.loginUser(anyString(), anyString()))
         .thenReturn(rcLoginResponse("sys-token", "sys-user-id"));
@@ -977,10 +1063,76 @@ class AskerImportServiceTest {
     when(rocketChatService.createPrivateGroup(anyString(), any()))
         .thenReturn(Optional.of(groupResponse("rc-group-id")));
     when(userService.saveUser(any(User.class))).thenReturn(new User());
+    when(rocketChatService.deleteGroupAsSystemUser("rc-group-id")).thenReturn(false);
 
     askerImportService.startImport();
 
     verify(sessionService, never()).saveSession(any(Session.class));
+    InOrder compensationOrder =
+        inOrder(rocketChatService, sessionService, userService, identityClient);
+    compensationOrder.verify(rocketChatService).deleteGroupAsSystemUser("rc-group-id");
+    compensationOrder.verify(rocketChatService).deleteUser("rc-user-id");
+    compensationOrder.verify(sessionService).deleteSession(session);
+    compensationOrder.verify(userService).deleteUser(dbUser);
+    compensationOrder.verify(identityClient).rollBackUser("kc-id");
+    assertThat(readGeneratedProtocol())
+        .contains(
+            "Provisioning compensation incomplete operationId=",
+            "failedResources=[LEGACY_CHAT_GROUP]")
+        .doesNotContain("Legacy chat group deletion was not acknowledged");
+  }
+
+  @Test
+  void startImport_Should_SucceedOnReplay_AfterCompensatedFailure() throws Exception {
+    writeAskerCsv("1,validuser,valid@example.com,cons-id,12345,42,password\r\n");
+    when(rocketChatCredentialsProvider.loginUser(anyString(), anyString()))
+        .thenReturn(rcLoginResponse("sys-token", "sys-user-id"));
+    when(userHelper.isUsernameValid("validuser")).thenReturn(true);
+    when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
+    Consultant consultant = consultantInAgency("cons-id", 42L);
+    consultant.setRocketChatId("rc-cons-id");
+    when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
+    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityClient.createUser(any(), anyString(), anyString()))
+        .thenReturn(new CreatedIdentity("kc-first"), new CreatedIdentity("kc-second"));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(extendedConsultingType(false));
+    User firstDbUser = new User();
+    firstDbUser.setUserId("db-first");
+    User replayDbUser = new User();
+    replayDbUser.setUserId("db-second");
+    when(userService.createUser(anyString(), any(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(firstDbUser, replayDbUser);
+    Session firstSession = new Session();
+    firstSession.setId(1L);
+    Session replaySession = new Session();
+    replaySession.setId(2L);
+    when(sessionService.initializeSession(any(), any(), anyBoolean()))
+        .thenReturn(firstSession, replaySession);
+    when(rocketChatService.loginUserFirstTime(anyString(), anyString()))
+        .thenReturn(
+            rcLoginResponse(null, "rc-first"), rcLoginResponse("rc-token-second", "rc-second"));
+    when(rocketChatService.createPrivateGroup(anyString(), any()))
+        .thenReturn(Optional.of(groupResponse("rc-group-second")));
+    when(userService.saveUser(replayDbUser)).thenReturn(replayDbUser);
+    when(sessionService.saveSession(replaySession)).thenReturn(replaySession);
+    when(consultantAgencyService.findConsultantsByAgencyId(any()))
+        .thenReturn(Collections.emptyList());
+
+    askerImportService.startImport();
+    askerImportService.startImport();
+
+    verify(identityClient, times(2)).createUser(any(), anyString(), anyString());
+    verify(rocketChatService).deleteUser("rc-first");
+    verify(sessionService).deleteSession(firstSession);
+    verify(userService).deleteUser(firstDbUser);
+    verify(identityClient).rollBackUser("kc-first");
+    verify(rocketChatService, never()).deleteUser("rc-second");
+    verify(rocketChatService, never()).deleteGroupAsSystemUser("rc-group-second");
+    verify(sessionService, never()).deleteSession(replaySession);
+    verify(userService, never()).deleteUser(replayDbUser);
+    verify(identityClient, never()).rollBackUser("kc-second");
+    verify(sessionDataService).saveSessionData(eq(replaySession), any());
   }
 
   // --- startImport — saveSession returns null id → ImportException ---
@@ -1181,6 +1333,27 @@ class AskerImportServiceTest {
   // ---------------------------------------------------------------------------
   // helpers
   // ---------------------------------------------------------------------------
+
+  private String readGeneratedProtocol() throws IOException {
+    try (DirectoryStream<Path> files =
+        Files.newDirectoryStream(
+            protocolFile.getParent(), protocolFile.getFileName().toString() + ".*")) {
+      for (Path file : files) {
+        return Files.readString(file);
+      }
+    }
+    throw new IllegalStateException("Generated import protocol was not found");
+  }
+
+  private void deleteGeneratedProtocolFiles() throws IOException {
+    try (DirectoryStream<Path> files =
+        Files.newDirectoryStream(
+            protocolFile.getParent(), protocolFile.getFileName().toString() + ".*")) {
+      for (Path file : files) {
+        Files.deleteIfExists(file);
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Branch coverage — empty-string and null-id edge cases — 2026-07-03

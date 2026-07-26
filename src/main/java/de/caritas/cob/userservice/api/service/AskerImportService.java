@@ -2,6 +2,12 @@ package de.caritas.cob.userservice.api.service;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.helper.SessionDataProvider.fromUserDTO;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.DATABASE_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.IDENTITY_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.LEGACY_CHAT_GROUP;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.LEGACY_CHAT_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.SESSION;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.USER_AGENCY;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
@@ -33,6 +39,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
+import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningWorkflow;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
@@ -95,6 +105,7 @@ public class AskerImportService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserAgencyService userAgencyService;
   private final @NonNull RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  private final @NonNull ProvisioningCompensator provisioningCompensator;
   private final RocketChatRoomNameGenerator rocketChatRoomNameGenerator =
       new RocketChatRoomNameGenerator();
 
@@ -120,6 +131,7 @@ public class AskerImportService {
     }
 
     for (CSVRecord csvRecord : records) {
+      ProvisioningAttempt provisioningAttempt = null;
 
       try {
         ImportRecordAskerWithoutSession record = getImportRecordAskerWithoutSession(csvRecord);
@@ -157,8 +169,12 @@ public class AskerImportService {
             convertAskerWithoutSessionToUserDTO(record, agencyDTO.getConsultingType());
 
         // Create Keycloak user
+        provisioningAttempt =
+            provisioningCompensator.begin(ProvisioningWorkflow.LEGACY_ASKER_WITHOUT_SESSION);
         CreatedIdentity response = identityClient.createUser(userDTO, "", "");
         String keycloakUserId = CreatedIdentity.requireUserId(response);
+        provisioningAttempt.register(
+            IDENTITY_USER, () -> identityClient.rollBackUser(keycloakUserId));
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
@@ -181,6 +197,9 @@ public class AskerImportService {
                 record.getUsernameEncoded(),
                 userDTO.getEmail(),
                 extendedConsultingTypeResponseDTO.getLanguageFormal());
+        if (dbUser != null) {
+          provisioningAttempt.register(DATABASE_USER, () -> userService.deleteUser(dbUser));
+        }
         if (dbUser.getUserId() == null || dbUser.getUserId().equals(StringUtils.EMPTY)) {
           throw new ImportException(
               String.format("Could not create user %s in mariaDB", record.getUsername()));
@@ -191,6 +210,10 @@ public class AskerImportService {
             rocketChatService.loginUserFirstTime(record.getUsernameEncoded(), record.getPassword());
         String rcUserToken = rcUserResponse.getBody().getData().getAuthToken();
         String rcUserId = rcUserResponse.getBody().getData().getUserId();
+        if (StringUtils.isNotBlank(rcUserId)) {
+          provisioningAttempt.register(
+              LEGACY_CHAT_USER, () -> rocketChatService.deleteUser(rcUserId));
+        }
         if (rcUserToken == null
             || rcUserToken.equals(StringUtils.EMPTY)
             || rcUserId == null
@@ -218,6 +241,8 @@ public class AskerImportService {
 
         // Create user-agency-relation
         UserAgency userAgency = getUserAgency(dbUser, agencyDTO.getId());
+        provisioningAttempt.register(
+            USER_AGENCY, () -> userAgencyService.deleteUserAgency(userAgency));
         userAgencyService.saveUserAgency(userAgency);
 
         writeToImportLog(
@@ -225,6 +250,7 @@ public class AskerImportService {
                 "User with old id %s and username %s imported. New id: %s",
                 record.getIdOld(), record.getUsername(), dbUser.getUserId()),
             protocolFile);
+        provisioningAttempt.complete();
 
       } catch (ImportException importException) {
         writeToImportLog(importException.getMessage(), protocolFile);
@@ -247,6 +273,8 @@ public class AskerImportService {
             org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace(exception),
             protocolFile);
         break;
+      } finally {
+        compensateIfIncomplete(provisioningAttempt, protocolFile);
       }
     }
   }
@@ -292,6 +320,7 @@ public class AskerImportService {
     }
 
     for (CSVRecord csvRecord : records) {
+      ProvisioningAttempt provisioningAttempt = null;
 
       try {
         ImportRecordAsker record = getImportRecordAsker(csvRecord);
@@ -348,8 +377,12 @@ public class AskerImportService {
         }
 
         // Create Keycloak user
+        provisioningAttempt =
+            provisioningCompensator.begin(ProvisioningWorkflow.LEGACY_ASKER_WITH_SESSION);
         CreatedIdentity response = identityClient.createUser(userDTO, "", "");
         String keycloakUserId = CreatedIdentity.requireUserId(response);
+        provisioningAttempt.register(
+            IDENTITY_USER, () -> identityClient.rollBackUser(keycloakUserId));
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
@@ -372,6 +405,9 @@ public class AskerImportService {
                 record.getUsernameEncoded(),
                 userDTO.getEmail(),
                 extendedConsultingTypeResponseDTO.getLanguageFormal());
+        if (dbUser != null) {
+          provisioningAttempt.register(DATABASE_USER, () -> userService.deleteUser(dbUser));
+        }
         if (dbUser.getUserId() == null || dbUser.getUserId().equals(StringUtils.EMPTY)) {
           throw new ImportException(
               String.format("Could not create user %s in mariaDB", record.getUsername()));
@@ -380,6 +416,9 @@ public class AskerImportService {
         // Initialize Session (need session id for Rocket.Chat group name)
         Session session =
             sessionService.initializeSession(dbUser, userDTO, isTrue(agencyDTO.getTeamAgency()));
+        if (session != null) {
+          provisioningAttempt.register(SESSION, () -> sessionService.deleteSession(session));
+        }
         if (session.getId() == null) {
           throw new ImportException(
               String.format("Could not create session for user %s", record.getUsername()));
@@ -390,6 +429,10 @@ public class AskerImportService {
             rocketChatService.loginUserFirstTime(record.getUsernameEncoded(), record.getPassword());
         String rcUserToken = rcUserResponse.getBody().getData().getAuthToken();
         String rcUserId = rcUserResponse.getBody().getData().getUserId();
+        if (StringUtils.isNotBlank(rcUserId)) {
+          provisioningAttempt.register(
+              LEGACY_CHAT_USER, () -> rocketChatService.deleteUser(rcUserId));
+        }
         if (rcUserToken == null
             || rcUserToken.equals(StringUtils.EMPTY)
             || rcUserId == null
@@ -412,6 +455,16 @@ public class AskerImportService {
                 .get()
                 .getGroup()
                 .getId();
+        if (StringUtils.isNotBlank(rcGroupId)) {
+          provisioningAttempt.register(
+              LEGACY_CHAT_GROUP,
+              () -> {
+                if (!rocketChatService.deleteGroupAsSystemUser(rcGroupId)) {
+                  throw new IllegalStateException(
+                      "Legacy chat group deletion was not acknowledged");
+                }
+              });
+        }
         if (rcGroupId == null || rcGroupId.equals(StringUtils.EMPTY)) {
           throw new ImportException(
               String.format(
@@ -493,6 +546,7 @@ public class AskerImportService {
                 "User with old id %s and username %s imported. New id: %s",
                 record.getIdOld(), record.getUsername(), dbUser.getUserId()),
             protocolFile);
+        provisioningAttempt.complete();
 
       } catch (ImportException importException) {
         writeToImportLog(importException.getMessage(), protocolFile);
@@ -512,6 +566,8 @@ public class AskerImportService {
             org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace(exception),
             protocolFile);
         break;
+      } finally {
+        compensateIfIncomplete(provisioningAttempt, protocolFile);
       }
     }
 
@@ -531,6 +587,21 @@ public class AskerImportService {
           StandardOpenOption.APPEND);
     } catch (IOException e) {
       e.printStackTrace();
+    }
+  }
+
+  private void compensateIfIncomplete(
+      ProvisioningAttempt provisioningAttempt, String protocolFile) {
+    if (provisioningAttempt == null) {
+      return;
+    }
+    CompensationResult result = provisioningAttempt.compensateIfIncomplete();
+    if (!result.successful()) {
+      writeToImportLog(
+          String.format(
+              "Provisioning compensation incomplete operationId=%s failedResources=%s",
+              result.operationId(), result.failedResources()),
+          protocolFile);
     }
   }
 
