@@ -61,6 +61,7 @@ import de.caritas.cob.userservice.api.model.OtpType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -182,6 +183,8 @@ class UserControllerE2EIT {
 
   @Autowired private UserVerifier userVerifier;
 
+  @Autowired private Messaging messenger;
+
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
   @MockitoBean
@@ -234,7 +237,10 @@ class UserControllerE2EIT {
       userRepository.save(user);
       user = null;
     }
-    consultant = null;
+    if (nonNull(consultant)) {
+      messenger.setAvailability(consultant.getId(), false);
+      consultant = null;
+    }
     updateConsultantDTO = null;
     consultantsToReset.forEach(
         consultantToReset -> {
@@ -288,6 +294,8 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(false);
     givenKeycloakRespondsOtpByAppHasBeenSetup(consultant.getUsername());
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
     var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
@@ -400,6 +408,8 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(true);
     givenKeycloakRespondsOtpByEmailHasBeenSetup(consultant.getUsername());
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
     var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
@@ -651,6 +661,8 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(false);
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
     var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
@@ -695,7 +707,6 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("twoFactorAuth.qrCode", is(notNullValue())))
         .andExpect(jsonPath("twoFactorAuth.type", is(nullValue())))
         .andExpect(jsonPath("twoFactorAuth.isToEncourage", is(consultant.getEncourage2fa())))
-        .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("absent", is(consultant.isAbsent())))
         .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
@@ -1800,6 +1811,15 @@ class UserControllerE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+  }
+
+  private void givenConsultantHasDisplayName() {
+    consultant.setDisplayName(consultant.getUsername());
+    consultant = consultantRepository.save(consultant);
+  }
+
+  private void givenConsultantAvailability(boolean available) {
+    messenger.setAvailability(consultant.getId(), available);
   }
 
   @SuppressWarnings("SameParameterValue")

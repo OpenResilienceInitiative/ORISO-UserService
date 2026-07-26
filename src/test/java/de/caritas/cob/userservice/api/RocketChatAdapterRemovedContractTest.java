@@ -167,8 +167,18 @@ class RocketChatAdapterRemovedContractTest {
 
   @Test
   void currentSqlFixturesMustNotUseDroppedRocketChatColumns() throws IOException {
-    assertThat(Files.readString(Path.of("src/test/resources/database/UserServiceDatabase.sql")))
-        .doesNotContain("rc_user_id", "rc_group_id");
+    var userServiceDatabase =
+        Files.readString(Path.of("src/test/resources/database/UserServiceDatabase.sql"));
+    assertThat(userServiceDatabase).doesNotContain("rc_user_id", "rc_group_id");
+
+    var sessionFixtures =
+        userServiceDatabase.substring(
+            userServiceDatabase.indexOf("INSERT INTO session"),
+            userServiceDatabase.indexOf("INSERT INTO session_topic"));
+    assertThat(sessionFixtures)
+        .as("Matrix room fixture values must be fully-qualified room IDs")
+        .doesNotMatch("(?s).*'[A-Za-z0-9]{17}'.*");
+
     assertThat(Files.readString(Path.of("src/test/resources/database/chatAndRelationData.sql")))
         .doesNotContain("rc_group_id");
   }
