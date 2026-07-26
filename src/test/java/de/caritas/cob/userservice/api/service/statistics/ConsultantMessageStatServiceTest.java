@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.statistics;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -82,6 +83,18 @@ class ConsultantMessageStatServiceTest {
     when(consultantMessageStatRepository.save(any())).thenThrow(new RuntimeException("db down"));
 
     assertThatCode(() -> service.recordMessageSent(CONSULTANT_ID, 100L)).doesNotThrowAnyException();
+  }
+
+  @Test
+  void recordMessageSentShouldPropagatePersistFailureForMatrixCursorRetry() {
+    when(consultantIdentityHasher.hash(CONSULTANT_ID)).thenReturn(CONSULTANT_HMAC);
+    when(sessionRepository.findById(100L)).thenReturn(Optional.empty());
+    when(consultantMessageStatRepository.saveAndFlush(any()))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThatThrownBy(() -> service.recordMessageSent(CONSULTANT_ID, 100L, MATRIX_EVENT_ID))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("db down");
   }
 
   @Test

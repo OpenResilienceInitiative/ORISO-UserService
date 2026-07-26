@@ -2,10 +2,11 @@
 
 UserService is currently safe to deploy with one replica. A Kubernetes
 `Deployment` and stateless HTTP security do not make the whole process
-stateless: Matrix listener coordination, authentication tokens, Ehcache reads
-and scheduled side effects still have process-local behavior. Notification
-active-view state is now externalized as described below, but the remaining
-items still keep the global replica limit at one.
+stateless: Matrix room-routing registration, authentication tokens, Ehcache
+reads and scheduled side effects still have process-local behavior.
+Notification active-view state and Matrix sync leadership/cursor state are now
+externalized as described below, but the remaining items still keep the global
+replica limit at one.
 
 The machine-readable inventory is
 [`src/main/resources/replica-safety-components.json`](../src/main/resources/replica-safety-components.json).
@@ -29,6 +30,9 @@ the inventory fails `tests/ci/test_replica_safety_contract.py`.
 - `userservice.scheduler.duration` measures the corresponding duration.
 - `userservice.notification.active_view.store.operations` records only bounded
   Redis operation/outcome tags for active-view writes, reads and deletes.
+- `userservice.matrix.sync.coordination.operations` records only bounded Redis
+  lease/cursor operation and outcome tags; it never contains owner, room,
+  token or event identifiers.
 
 SigNoz already receives `service.instance.id` as a resource attribute. Grouping
 `userservice.scheduler.executions` by task and service instance makes duplicate
@@ -75,6 +79,20 @@ but cannot make them disappear. `ActiveViewRegistryRedisIT` reconstructs a
 second registry over the same Redis 7 store and proves shared reads, immediate
 clear and expiry. The reusable Redis workflow runs this contract together with
 consultant availability before PR, branch and publish workflows can succeed.
+
+Matrix `/sync` leadership and cursor state are no longer process-local.
+`MatrixSyncCoordinationRegistry` gives one logical consumer a short Redis lease,
+loads a shared cursor after acquisition and atomically commits the next cursor
+only while the same owner still holds the lease. A listener renews before and
+after the 30-second long poll and processes a batch synchronously before
+committing its cursor. Persisted feed notifications and consultant-message
+statistics use opaque Matrix-event identity keys, so a crash between a durable
+effect and cursor commit is replay-safe. A non-duplicate failure from either
+durable sink prevents the cursor commit. `MatrixSyncCoordinationRegistryRedisIT`
+proves exclusive acquisition, owner-only release, stale-owner rejection and
+cursor handover across two registry instances against Redis 7. The remaining
+Matrix replica blocker is the process-local room-to-session/recipient
+registration map, not the sync cursor.
 
 The inactive-account notification proof starts two independent service
 instances against the same audit database. A transaction-isolated unique claim
@@ -144,8 +162,8 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
    two authentication-token entries from the local-state inventory.
 2. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
-3. Externalize or lease the Matrix sync/listener state and prove notification
-   idempotency under two instances.
+3. Externalize Matrix room-routing registration; the Redis sync lease/cursor
+   and idempotent pre-commit notification/statistic effects are now covered.
 4. Define cache invalidation bounds for tenant and application-setting caches.
 5. Add concurrent scheduler contracts, then raise the Helm replica constraint
    only when `userservice.replica.max_supported` can truthfully change.

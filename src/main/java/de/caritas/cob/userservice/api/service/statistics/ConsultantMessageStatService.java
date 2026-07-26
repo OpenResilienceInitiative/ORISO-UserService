@@ -32,49 +32,60 @@ public class ConsultantMessageStatService {
    * logged and swallowed.
    */
   public void recordMessageSent(String consultantId, Long sessionId) {
-    recordMessageSent(consultantId, sessionId, null);
+    try {
+      persistMessageSent(consultantId, sessionId, null);
+    } catch (Exception e) {
+      log.error("Failed to record consultant message-sent statistic", e);
+    }
   }
 
   /**
    * Records a Matrix message once across retries and service replicas when an event id is
-   * available. Legacy callers without an event id retain the historical append-only behaviour.
+   * available. Non-duplicate persistence failures propagate so the Matrix sync cursor is not
+   * committed before this durable side effect succeeds.
    */
   public void recordMessageSent(String consultantId, Long sessionId, String matrixEventId) {
+    String sourceEventHash = MatrixEventIdentity.opaqueHash(matrixEventId);
+    if (sourceEventHash == null) {
+      recordMessageSent(consultantId, sessionId);
+      return;
+    }
+
     try {
-      String sourceEventHash = MatrixEventIdentity.opaqueHash(matrixEventId);
-      if (sourceEventHash != null
-          && consultantMessageStatRepository.existsBySourceEventHash(sourceEventHash)) {
+      if (consultantMessageStatRepository.existsBySourceEventHash(sourceEventHash)) {
         return;
       }
 
-      Long tenantId = null;
-      Long agencyId = null;
-      if (sessionId != null) {
-        Session session = sessionRepository.findById(sessionId).orElse(null);
-        if (session != null) {
-          tenantId = session.getTenantId();
-          agencyId = session.getAgencyId();
-        }
-      }
-
-      var stat =
-          ConsultantMessageStat.builder()
-              .consultantHmac(consultantIdentityHasher.hash(consultantId))
-              .tenantId(tenantId)
-              .agencyId(agencyId)
-              .sourceSessionId(sessionId)
-              .sourceEventHash(sourceEventHash)
-              .sentDate(LocalDateTime.now())
-              .build();
-      if (sourceEventHash == null) {
-        consultantMessageStatRepository.save(stat);
-      } else {
-        consultantMessageStatRepository.saveAndFlush(stat);
-      }
+      persistMessageSent(consultantId, sessionId, sourceEventHash);
     } catch (DataIntegrityViolationException duplicate) {
       log.debug("Consultant message statistic already recorded for Matrix event");
-    } catch (Exception e) {
-      log.error("Failed to record consultant message-sent statistic", e);
+    }
+  }
+
+  private void persistMessageSent(String consultantId, Long sessionId, String sourceEventHash) {
+    Long tenantId = null;
+    Long agencyId = null;
+    if (sessionId != null) {
+      Session session = sessionRepository.findById(sessionId).orElse(null);
+      if (session != null) {
+        tenantId = session.getTenantId();
+        agencyId = session.getAgencyId();
+      }
+    }
+
+    var stat =
+        ConsultantMessageStat.builder()
+            .consultantHmac(consultantIdentityHasher.hash(consultantId))
+            .tenantId(tenantId)
+            .agencyId(agencyId)
+            .sourceSessionId(sessionId)
+            .sourceEventHash(sourceEventHash)
+            .sentDate(LocalDateTime.now())
+            .build();
+    if (sourceEventHash == null) {
+      consultantMessageStatRepository.save(stat);
+    } else {
+      consultantMessageStatRepository.saveAndFlush(stat);
     }
   }
 

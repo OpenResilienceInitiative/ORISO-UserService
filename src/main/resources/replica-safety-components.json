@@ -212,9 +212,10 @@
         "executorService",
         "adminAccessToken",
         "syncToken",
+        "hasLeadership",
         "running"
       ],
-      "decision": "Keep one replica until the sync lease, room routing state and notification effects have shared or idempotent multi-instance contracts.",
+      "decision": "The Redis lease and cursor allow one logical sync consumer, and durable notification/statistic effects are idempotent before cursor commit. Keep one replica until room routing registration state is shared across instances.",
       "signals": [
         "userservice.replica.local_state"
       ]

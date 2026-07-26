@@ -2,11 +2,14 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -72,6 +75,7 @@ class MatrixEventListenerServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
+  @Mock private MatrixSyncCoordinationRegistry matrixSyncCoordinationRegistry;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -110,7 +114,8 @@ class MatrixEventListenerServiceTest {
         userRepository,
         consultantRepository,
         sessionRepository,
-        consultantMessageStatService);
+        consultantMessageStatService,
+        matrixSyncCoordinationRegistry);
   }
 
   private MatrixEventListenerService newServiceWithSyncExecutor() {
@@ -180,7 +185,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            matrixSyncCoordinationRegistry) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -625,7 +631,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            matrixSyncCoordinationRegistry) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -657,7 +664,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            matrixSyncCoordinationRegistry) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -798,7 +806,7 @@ class MatrixEventListenerServiceTest {
   // ── performMatrixSync ──────────────────────────────────────────────────────
 
   @Test
-  void performMatrixSync_shouldAppendSinceToken_whenSyncTokenPresent() {
+  void performMatrixSync_shouldAppendSinceTokenWithoutAdvancingCursorBeforeProcessing() {
     var service = newService();
     ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
     ReflectionTestUtils.setField(service, "syncToken", "s0");
@@ -815,7 +823,105 @@ class MatrixEventListenerServiceTest {
         (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
 
     assertThat(result).containsEntry("next_batch", "s1");
-    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s0");
+  }
+
+  @Test
+  void acquireLeadership_shouldLoadSharedCursorBeforeSyncing() {
+    var service = newService();
+    when(matrixSyncCoordinationRegistry.tryAcquireLease()).thenReturn(true);
+    when(matrixSyncCoordinationRegistry.readCursor()).thenReturn(Optional.of("shared-cursor"));
+
+    boolean acquired = (boolean) ReflectionTestUtils.invokeMethod(service, "tryAcquireLeadership");
+
+    assertThat(acquired).isTrue();
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("shared-cursor");
+  }
+
+  @Test
+  void processAndCommitSyncResult_shouldCommitCursorAfterDurableNotification() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    when(matrixSyncCoordinationRegistry.commitCursor("batch-1")).thenReturn(true);
+    var syncResult =
+        new HashMap<String, Object>(
+            syncResultWithEvents(
+                MATRIX_ROOM_ID,
+                List.of(
+                    messageEvent(
+                        CONSULTANT_MATRIX_ID, "m.text", "hello", "$event-before-cursor"))));
+    syncResult.put("next_batch", "batch-1");
+
+    ReflectionTestUtils.invokeMethod(service, "processAndCommitSyncResult", syncResult);
+
+    var ordered = inOrder(eventNotificationService, matrixSyncCoordinationRegistry);
+    ordered
+        .verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    ordered.verify(matrixSyncCoordinationRegistry).commitCursor("batch-1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("batch-1");
+  }
+
+  @Test
+  void processAndCommitSyncResult_shouldNotCommitCursorWhenDurableNotificationFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    doThrow(new IllegalStateException("notification store down"))
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    var syncResult =
+        new HashMap<String, Object>(
+            syncResultWithEvents(
+                MATRIX_ROOM_ID,
+                List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$event-retry"))));
+    syncResult.put("next_batch", "batch-must-not-commit");
+
+    assertThatThrownBy(
+            () ->
+                ReflectionTestUtils.invokeMethod(service, "processAndCommitSyncResult", syncResult))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("notification store down");
+
+    verify(matrixSyncCoordinationRegistry, never()).commitCursor(anyString());
+  }
+
+  @Test
+  void processAndCommitSyncResult_shouldNotCommitCursorWhenDurableStatisticFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    doThrow(new IllegalStateException("statistic store down"))
+        .when(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 10L, "$event-statistic-retry");
+    var syncResult =
+        new HashMap<String, Object>(
+            syncResultWithEvents(
+                MATRIX_ROOM_ID,
+                List.of(
+                    messageEvent(
+                        CONSULTANT_MATRIX_ID, "m.text", "hello", "$event-statistic-retry"))));
+    syncResult.put("next_batch", "batch-statistic-must-not-commit");
+
+    assertThatThrownBy(
+            () ->
+                ReflectionTestUtils.invokeMethod(service, "processAndCommitSyncResult", syncResult))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("statistic store down");
+
+    verify(matrixSyncCoordinationRegistry, never()).commitCursor(anyString());
   }
 
   @Test

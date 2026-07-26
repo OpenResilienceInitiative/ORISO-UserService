@@ -40,6 +40,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull MatrixSyncCoordinationRegistry matrixSyncCoordinationRegistry;
 
   private OutboundHttpMetrics outboundHttpMetrics;
 
@@ -58,6 +59,9 @@ public class MatrixEventListenerService {
   // Matrix sync token (updated after each sync)
   private String syncToken = null;
 
+  // True only while this instance owns the shared Redis lease.
+  private volatile boolean hasLeadership = false;
+
   // Flag to control sync loop
   private volatile boolean running = false;
 
@@ -72,6 +76,7 @@ public class MatrixEventListenerService {
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
   static final long INITIAL_BACKOFF_MS = 5_000L;
   static final long MAX_BACKOFF_MS = 60_000L;
+  static final long LEASE_RETRY_MS = 1_000L;
 
   // Emit a heartbeat every N successful sync iterations so a healthy/stuck loop is observable.
   // performMatrixSync uses a 30s long-poll, so ~10 iterations is roughly every 5 minutes.
@@ -87,7 +92,7 @@ public class MatrixEventListenerService {
       return;
     }
     log.info("🔷 Initializing Matrix Event Listener Service...");
-    executorService = Executors.newFixedThreadPool(2);
+    executorService = Executors.newSingleThreadExecutor();
 
     // Start Matrix sync loop in background
     executorService.submit(this::startMatrixSyncLoop);
@@ -97,6 +102,7 @@ public class MatrixEventListenerService {
   public void shutdown() {
     log.info("🔷 Shutting down Matrix Event Listener Service...");
     running = false;
+    releaseLeadership();
     if (executorService != null) {
       executorService.shutdownNow();
       try {
@@ -142,20 +148,12 @@ public class MatrixEventListenerService {
    * Main sync loop - continuously polls Matrix /sync for new events. Uses long-polling with timeout
    * to get real-time updates.
    *
-   * <p>Deployment is a single replica with no HPA, so no multi-replica leader election is needed
-   * here; a transient admin-token failure must not silently disable real-time events, so the loop
-   * bootstraps the token with backoff and re-acquires it on repeated sync failures.
+   * <p>A Redis lease ensures that only one service replica consumes the shared Matrix account at a
+   * time. The durable cursor is committed only after the whole batch has completed.
    */
   private void startMatrixSyncLoop() {
     running = true;
     log.info("🔷 Starting Matrix sync loop...");
-
-    // Keep trying to obtain the admin token; a transient failure must not permanently kill events.
-    if (!bootstrapAdminToken()) {
-      // Only returns false on shutdown/interrupt.
-      log.info("🔷 Matrix sync loop stopped before obtaining admin token");
-      return;
-    }
 
     long errorBackoffMs = INITIAL_BACKOFF_MS;
     long iteration = 0;
@@ -163,12 +161,36 @@ public class MatrixEventListenerService {
 
     while (running) {
       try {
+        if (!hasLeadership) {
+          if (!tryAcquireLeadership()) {
+            sleep(LEASE_RETRY_MS);
+            continue;
+          }
+          adminAccessToken = null;
+        }
+
+        if (adminAccessToken == null && !bootstrapAdminToken()) {
+          if (!running) {
+            break;
+          }
+          continue;
+        }
+
+        if (!matrixSyncCoordinationRegistry.renewLease()) {
+          stepDownAfterLostLease();
+          continue;
+        }
+
         // Perform Matrix sync (long-polling with 30-second timeout)
         Map<String, Object> syncResult = performMatrixSync();
 
         if (syncResult != null) {
-          // Process events from sync result
-          processMatrixSyncEvents(syncResult);
+          // Re-check ownership after the long poll. A stale owner must never process or commit.
+          if (!matrixSyncCoordinationRegistry.renewLease()) {
+            stepDownAfterLostLease();
+            continue;
+          }
+          processAndCommitSyncResult(syncResult);
           // Successful sync: reset the error backoff and failure counter.
           errorBackoffMs = INITIAL_BACKOFF_MS;
           consecutiveSyncFailures = 0;
@@ -218,7 +240,49 @@ public class MatrixEventListenerService {
       }
     }
 
+    releaseLeadership();
     log.info("🔷 Matrix sync loop stopped");
+  }
+
+  private boolean tryAcquireLeadership() {
+    if (!matrixSyncCoordinationRegistry.tryAcquireLease()) {
+      return false;
+    }
+    try {
+      syncToken = matrixSyncCoordinationRegistry.readCursor().orElse(null);
+      hasLeadership = true;
+      log.info("🔷 Matrix sync leadership acquired");
+      return true;
+    } catch (RuntimeException exception) {
+      try {
+        matrixSyncCoordinationRegistry.releaseLease();
+      } catch (RuntimeException releaseFailure) {
+        exception.addSuppressed(releaseFailure);
+      }
+      throw exception;
+    }
+  }
+
+  private void stepDownAfterLostLease() {
+    hasLeadership = false;
+    adminAccessToken = null;
+    syncToken = null;
+    log.warn("⚠️ Matrix sync leadership lost; listener stepping down");
+  }
+
+  private void releaseLeadership() {
+    if (!hasLeadership) {
+      return;
+    }
+    try {
+      matrixSyncCoordinationRegistry.releaseLease();
+    } catch (RuntimeException exception) {
+      log.warn("Matrix sync lease release failed; TTL remains the safety bound");
+    } finally {
+      hasLeadership = false;
+      adminAccessToken = null;
+      syncToken = null;
+    }
   }
 
   /**
@@ -231,6 +295,10 @@ public class MatrixEventListenerService {
   private boolean bootstrapAdminToken() {
     long backoffMs = INITIAL_BACKOFF_MS;
     while (running) {
+      if (hasLeadership && !matrixSyncCoordinationRegistry.renewLease()) {
+        stepDownAfterLostLease();
+        return false;
+      }
       try {
         adminAccessToken = matrixSynapseService.getAdminToken();
         if (adminAccessToken != null) {
@@ -303,18 +371,29 @@ public class MatrixEventListenerService {
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
 
-      // Update sync token for next request
-      if (syncResult != null && syncResult.containsKey("next_batch")) {
-        syncToken = (String) syncResult.get("next_batch");
-        log.debug("🔷 Matrix sync cursor updated");
-      }
-
       return syncResult;
 
     } catch (Exception e) {
       log.error("❌ Matrix sync failed", e);
       return null;
     }
+  }
+
+  private void processAndCommitSyncResult(Map<String, Object> syncResult) {
+    Object nextBatch = syncResult.get("next_batch");
+    if (!(nextBatch instanceof String) || ((String) nextBatch).isBlank()) {
+      throw new IllegalStateException("Matrix sync response did not contain a next_batch cursor");
+    }
+
+    processMatrixSyncEvents(syncResult);
+
+    String nextCursor = (String) nextBatch;
+    if (!matrixSyncCoordinationRegistry.commitCursor(nextCursor)) {
+      stepDownAfterLostLease();
+      throw new IllegalStateException("Matrix sync cursor commit rejected after lease loss");
+    }
+    syncToken = nextCursor;
+    log.debug("🔷 Matrix sync cursor committed");
   }
 
   /**
@@ -473,33 +552,23 @@ public class MatrixEventListenerService {
       // Note: We need to convert Matrix room ID to session/group ID
       Long mappedSessionId = roomToSessionMap.get(roomId);
       if (mappedSessionId != null) {
-        // Trigger notification asynchronously to not block sync loop
-        executorService.submit(
-            () -> {
-              // The live STOMP push is best-effort; the persisted feed entry is the
-              // source of truth for the notification timeline. Isolate the failure
-              // domains so a live-send problem cannot swallow the notification row.
-              try {
-                liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
-              } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
-              }
-              try {
-                if (threadRootId != null && !threadRootId.isBlank()) {
-                  eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
-                } else {
-                  eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, true, privacyEnvelope);
-                }
-                if (senderDomainUserId != null && senderIsConsultant) {
-                  consultantMessageStatService.recordMessageSent(
-                      senderDomainUserId, mappedSessionId, privacyEnvelope.getMessageId());
-                }
-              } catch (Exception e) {
-                log.error("❌ Failed to create event notification from room", e);
-              }
-            });
+        // The live STOMP push is best-effort; the persisted feed entry is the source of truth.
+        try {
+          liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+        } catch (Exception e) {
+          log.error("❌ Failed to send LiveService notification", e);
+        }
+        if (threadRootId != null && !threadRootId.isBlank()) {
+          eventNotificationService.createThreadReplyNotificationFromRoom(
+              roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
+        } else {
+          eventNotificationService.createMessageNotificationFromRoom(
+              roomId, senderDomainUserId, true, privacyEnvelope);
+        }
+        if (senderDomainUserId != null && senderIsConsultant) {
+          consultantMessageStatService.recordMessageSent(
+              senderDomainUserId, mappedSessionId, privacyEnvelope.getMessageId());
+        }
       }
     }
   }
