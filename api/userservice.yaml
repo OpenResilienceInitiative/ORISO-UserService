@@ -1176,19 +1176,12 @@ paths:
         [Authorization: Role: consultant with authority UPDATE_CHAT]'
       operationId: banFromChat
       parameters:
-        - name: rcToken
-          in: header
-          required: true
-          schema:
-            type: string
         - name: matrixUserId
           in: path
           required: true
-          example: Dd2WYSdFXP4No7bW6
+          example: "@user:matrix.example"
           schema:
             type: string
-            minLength: 17
-            maxLength: 17
         - name: chatId
           in: path
           required: true
@@ -2161,7 +2154,7 @@ components:
       required:
         - eventType
         - initiatorUserName
-        - initiatorRcUserId
+        - initiatorMatrixUserId
       properties:
         eventType:
           type: string
@@ -2170,11 +2163,9 @@ components:
         initiatorUserName:
           type: string
           example: "consultant23"
-        rcUserId:
+        initiatorMatrixUserId:
           type: string
-        initiatorRcUserId:
-          type: string
-          example: "ag89h3tjkerg94t"
+          example: "@consultant23:matrix.example"
 
     MessageType:
       type: string

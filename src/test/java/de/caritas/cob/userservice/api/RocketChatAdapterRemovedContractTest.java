@@ -70,7 +70,8 @@ class RocketChatAdapterRemovedContractTest {
             "getRocketChatGroupId",
             "RocketChatGroupIdDTO",
             "name: RCToken",
-            "name: RCUserId");
+            "name: RCUserId",
+            "name: rcToken");
     assertThat(Files.readString(Path.of("api/appointmentservice.yaml")))
         .doesNotContain("name: RCToken", "name: RCUserId");
 
@@ -79,6 +80,20 @@ class RocketChatAdapterRemovedContractTest {
                 "src/main/java/de/caritas/cob/userservice/api/exception/httpresponses/"
                     + "RocketChatUnauthorizedException.java"))
         .doesNotExist();
+    assertThat(Files.readString(Path.of("config.env.example"))).doesNotContain("ROCKET_");
+  }
+
+  @Test
+  void matrixBanContractMustNotRetainRocketChatTokenOrIdentifierLength() throws IOException {
+    var api = Files.readString(USER_SERVICE_API);
+    var banOperation =
+        api.substring(
+            api.indexOf("/users/{matrixUserId}/chat/{chatId}/ban:"),
+            api.indexOf("/users/chat/{chatId}/start:"));
+
+    assertThat(banOperation)
+        .doesNotContain("rcToken", "minLength: 17", "maxLength: 17")
+        .contains("name: matrixUserId");
   }
 
   @Test
@@ -107,13 +122,18 @@ class RocketChatAdapterRemovedContractTest {
     }
 
     assertThat(Files.readString(USER_SERVICE_API))
-        .doesNotContain("rcGroupId", "askerRcId", "consultantRcId")
+        .doesNotContain("rcGroupId", "askerRcId", "consultantRcId", "rcUserId", "initiatorRcUserId")
         .contains("matrixRoomId", "askerMatrixUserId", "consultantMatrixUserId");
     assertThat(Files.readString(Path.of("api/appointmentservice.yaml")))
         .doesNotContain("rcGroupId")
         .contains("matrixRoomId");
     assertThat(Files.readString(Path.of("api/userstatisticsservice.yaml")))
         .doesNotContain("rcGroupId")
+        .contains("matrixRoomId");
+    assertThat(Files.readString(Path.of("services/liveservice.yaml")))
+        .doesNotContain("rcGroupId", "initiatorRcUserId", "Rocket.Chat");
+    assertThat(Files.readString(Path.of("services/statisticsservice.yaml")))
+        .doesNotContain("rcGroupId", "Rocket.Chat")
         .contains("matrixRoomId");
     assertThat(Files.readString(MASTER_CHANGELOG))
         .contains("db/changelog/changeset/0074_remove_rocket_chat_room_ids/0074_changeSet.xml");
