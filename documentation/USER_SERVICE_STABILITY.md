@@ -80,6 +80,9 @@ The asynchronous Java `HttpClient` used by LiveService is wrapped at its
 generated-client boundary without editing generated sources. Its attempts,
 latency, exact serialized request size, known response size and coarse HTTP or
 transport outcome therefore use the same `userservice.outbound.http.*` series.
+The client also uses the shared finite transport policy: a 3 s connect timeout
+and a 10 s per-request read timeout replace the generated client's otherwise
+unbounded waits.
 Exceptional futures are observed and logged while live-event delivery remains
 best-effort for the initiating business flow.
 

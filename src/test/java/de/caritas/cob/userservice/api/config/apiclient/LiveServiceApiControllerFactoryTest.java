@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.config.apiclient;
 
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.CONNECT_TIMEOUT;
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.READ_TIMEOUT;
 import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.DIRECT_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,6 +60,20 @@ class LiveServiceApiControllerFactoryTest {
                 .summary()
                 .totalAmount())
         .isEqualTo(objectMapper.writeValueAsBytes(message).length);
+  }
+
+  @Test
+  void shouldApplyBoundedConnectAndReadTimeoutsToLiveServiceClient() {
+    var factory =
+        new LiveServiceApiControllerFactory(
+            new ObjectMapper(), new OutboundHttpMetrics(new SimpleMeterRegistry()));
+    ReflectionTestUtils.setField(factory, "liveServiceApiUrl", "https://live.example");
+
+    var apiClient = factory.createApiClient();
+
+    assertThat(apiClient.getConnectTimeout()).isEqualTo(CONNECT_TIMEOUT);
+    assertThat(apiClient.getReadTimeout()).isEqualTo(READ_TIMEOUT);
+    assertThat(apiClient.getHttpClient().connectTimeout()).contains(CONNECT_TIMEOUT);
   }
 
   @Test

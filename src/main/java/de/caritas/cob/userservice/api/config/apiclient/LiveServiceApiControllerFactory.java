@@ -1,5 +1,8 @@
 package de.caritas.cob.userservice.api.config.apiclient;
 
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.CONNECT_TIMEOUT;
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.READ_TIMEOUT;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.liveservice.generated.ApiClient;
@@ -28,13 +31,19 @@ public class LiveServiceApiControllerFactory {
   private final OutboundHttpMetrics outboundHttpMetrics;
 
   public LiveControllerApi createControllerApi() {
-    var apiClient = new ApiClient(HttpClient.newBuilder(), objectMapper, liveServiceApiUrl);
+    var apiClient = createApiClient();
 
     return new MeasuredLiveControllerApi(
         apiClient,
         objectMapper,
         outboundHttpMetrics,
         URI.create(liveServiceApiUrl + "/liveevent/send"));
+  }
+
+  ApiClient createApiClient() {
+    return new ApiClient(HttpClient.newBuilder(), objectMapper, liveServiceApiUrl)
+        .setConnectTimeout(CONNECT_TIMEOUT)
+        .setReadTimeout(READ_TIMEOUT);
   }
 
   private static final class MeasuredLiveControllerApi extends LiveControllerApi {
