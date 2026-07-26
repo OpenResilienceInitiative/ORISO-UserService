@@ -98,6 +98,14 @@ the losing replica performs no downstream work. The 12-hour claim remains
 shorter than the configured daily schedule and must stay above the measured
 `userservice.scheduler.duration` for this task.
 
+The daily registered-only-user deletion scheduler now returns without tenant
+context or database access when both deletion modes are disabled. When either
+mode is enabled, it acquires a separate durable claim before tenant context,
+database reads, provider cleanup or error-mail work.
+`DeleteUsersRegisteredOnlySchedulerReplicaIT` enables both modes and observes
+one context setup and one invocation of each mode under two concurrent
+scheduler instances. Its 12-hour claim has the same daily duration constraint.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the
