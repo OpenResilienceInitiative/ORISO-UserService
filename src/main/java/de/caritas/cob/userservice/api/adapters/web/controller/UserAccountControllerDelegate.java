@@ -212,20 +212,10 @@ class UserAccountControllerDelegate {
         .preferredLanguageOf(patchUserDTO)
         .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
 
-    // MATRIX MIGRATION: Gracefully handle RocketChat unavailability
     userDtoMapper
         .availableOf(patchUserDTO)
         .filter(available -> authenticatedUser.isConsultant())
-        .ifPresent(
-            available -> {
-              try {
-                messenger.setAvailability(userId, available);
-              } catch (Exception e) {
-                log.warn(
-                    "RocketChat is not available (expected during Matrix migration), skipping setAvailability: {}",
-                    e.getMessage());
-              }
-            });
+        .ifPresent(available -> messenger.setAvailability(userId, available));
 
     return ResponseEntity.noContent().build();
   }

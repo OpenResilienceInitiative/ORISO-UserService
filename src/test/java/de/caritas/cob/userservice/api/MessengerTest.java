@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.StringConverter;
+import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,7 @@ class MessengerTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserServiceMapper mapper;
   @Mock private StringConverter stringConverter;
+  @Mock private ConsultantActivityRegistry consultantActivityRegistry;
 
   @Mock
   private de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
@@ -56,24 +58,23 @@ class MessengerTest {
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 30L);
-    ReflectionTestUtils.setField(messenger, "rocketChatEnabled", false);
+    ReflectionTestUtils.setField(messenger, "consultantAvailabilityActiveWindowMs", 120000L);
   }
 
   // ── getAvailability ───────────────────────────────────────────────────────
 
   @Test
-  void getAvailability_Should_ReturnTrue_When_RocketChatIsDisabled() {
+  void getAvailability_Should_ReturnTrue_When_RegistryContainsConsultant() {
+    when(consultantActivityRegistry.filterActive(List.of("consultant-1"), 120000L))
+        .thenReturn(java.util.Set.of("consultant-1"));
+
     assertThat(messenger.getAvailability("consultant-1")).isTrue();
   }
 
   @Test
-  void getAvailability_Should_ReturnRocketChatPresence_When_IntegrationIsEnabled() {
-    var consultant = new Consultant();
-    consultant.setRocketChatId("chat-consultant-1");
-    ReflectionTestUtils.setField(messenger, "rocketChatEnabled", true);
-    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant-1"))
-        .thenReturn(Optional.of(consultant));
-    when(messageClient.isAvailable("chat-consultant-1")).thenReturn(Optional.of(false));
+  void getAvailability_Should_ReturnFalse_When_RegistryDoesNotContainConsultant() {
+    when(consultantActivityRegistry.filterActive(List.of("consultant-1"), 120000L))
+        .thenReturn(java.util.Set.of());
 
     assertThat(messenger.getAvailability("consultant-1")).isFalse();
   }
@@ -317,17 +318,17 @@ class MessengerTest {
   // ── setAvailability ────────────────────────────────────────────────────────
 
   @Test
-  void setAvailability_Should_SetPresenceViaClient() {
-    var consultant = new Consultant();
-    consultant.setId("c-1");
-    consultant.setRocketChatId("rc-c-1");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
-        .thenReturn(Optional.of(consultant));
-    when(mapper.statusOf(true)).thenReturn("online");
-
+  void setAvailability_Should_MarkConsultantAvailableInRegistry() {
     messenger.setAvailability("c-1", true);
 
-    verify(messageClient).setUserPresence("rc-c-1", "online");
+    verify(consultantActivityRegistry).markAvailable("c-1");
+  }
+
+  @Test
+  void setAvailability_Should_MarkConsultantUnavailableInRegistry() {
+    messenger.setAvailability("c-1", false);
+
+    verify(consultantActivityRegistry).markUnavailable("c-1");
   }
 
   // ── updateE2eKeys ──────────────────────────────────────────────────────────

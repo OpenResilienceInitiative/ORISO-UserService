@@ -16,9 +16,11 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.StringConverter;
+import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,12 +45,13 @@ public class Messenger implements Messaging {
   private final StringConverter stringConverter;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixSynapseService matrixSynapseService;
+  private final ConsultantActivityRegistry consultantActivityRegistry;
 
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
 
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
+  @Value("${consultant.availability.activeWindowMs:120000}")
+  private long consultantAvailabilityActiveWindowMs;
 
   @Override
   public boolean banUserFromChat(String adviceSeekerId, long chatId) {
@@ -96,23 +99,18 @@ public class Messenger implements Messaging {
 
   @Override
   public void setAvailability(String consultantId, boolean available) {
-    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
-    var status = mapper.statusOf(available);
-    var userChatId = consultant.getRocketChatId();
-
-    messageClient.setUserPresence(userChatId, status);
+    if (available) {
+      consultantActivityRegistry.markAvailable(consultantId);
+    } else {
+      consultantActivityRegistry.markUnavailable(consultantId);
+    }
   }
 
   @Override
   public boolean getAvailability(String consultantId) {
-    if (!rocketChatEnabled) {
-      return true;
-    }
-
-    return consultantRepository
-        .findByIdAndDeleteDateIsNull(consultantId)
-        .flatMap(consultant -> messageClient.isAvailable(consultant.getRocketChatId()))
-        .orElse(false);
+    return consultantActivityRegistry
+        .filterActive(List.of(consultantId), consultantAvailabilityActiveWindowMs)
+        .contains(consultantId);
   }
 
   @Override

@@ -594,8 +594,7 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void patchUser_messengerExceptionSwallowed_doesNotThrow() {
-    // Chat unavailability during migration must not fail profile updates.
+  void patchUser_availabilityStoreFailureIsPropagated() {
     var patchUserDTO = new PatchUserDTO();
     patchUserDTO.setAvailable(false);
     var patchMap = Map.<String, Object>of("available", false);
@@ -605,11 +604,13 @@ class UserAccountControllerDelegateTest {
     when(accountManager.patchUser(patchMap)).thenReturn(Optional.of(patchMap));
     when(userDtoMapper.preferredLanguageOf(patchUserDTO)).thenReturn(Optional.empty());
     when(userDtoMapper.availableOf(patchUserDTO)).thenReturn(Optional.of(false));
-    doThrow(new RuntimeException("chat down")).when(messenger).setAvailability(USER_ID, false);
+    doThrow(new RuntimeException("availability store down"))
+        .when(messenger)
+        .setAvailability(USER_ID, false);
 
-    var response = delegate.patchUser(patchUserDTO);
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    assertThatThrownBy(() -> delegate.patchUser(patchUserDTO))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("availability store down");
   }
 
   @Test

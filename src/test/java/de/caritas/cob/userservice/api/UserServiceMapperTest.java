@@ -247,18 +247,6 @@ class UserServiceMapperTest {
     assertThat(result.containsKey("chatId")).isFalse();
   }
 
-  // ── statusOf ──────────────────────────────────────────────────────────────
-
-  @Test
-  void statusOf_Should_ReturnOnline_When_Available() {
-    assertThat(userServiceMapper.statusOf(true)).isEqualTo("online");
-  }
-
-  @Test
-  void statusOf_Should_ReturnBusy_When_NotAvailable() {
-    assertThat(userServiceMapper.statusOf(false)).isEqualTo("busy");
-  }
-
   @Test
   void chatUserIdOf_Should_ExtractChatUserIds() {
     List<Map<String, String>> members =
