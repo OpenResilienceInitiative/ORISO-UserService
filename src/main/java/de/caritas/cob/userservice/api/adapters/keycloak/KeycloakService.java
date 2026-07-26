@@ -8,8 +8,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
@@ -26,6 +24,9 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
+import de.caritas.cob.userservice.api.port.out.identity.IdentityUserProfile;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -140,14 +141,22 @@ public class KeycloakService implements IdentityClient {
   }
 
   /**
-   * Performs a Keycloak login and returns the Keycloak {@link KeycloakLoginResponseDTO} on success.
+   * Performs a Keycloak login and maps the wire response to the application-owned identity session.
    *
    * @param userName the username
    * @param password the password
-   * @return {@link KeycloakLoginResponseDTO}
+   * @return provider-neutral authenticated identity session
    */
-  public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    return keycloakAuthClient.loginUser(userName, password);
+  public IdentitySession loginUser(final String userName, final String password) {
+    var response = keycloakAuthClient.loginUser(userName, password);
+    return new IdentitySession(
+        response.getAccessToken(),
+        response.getExpiresIn(),
+        response.getRefreshExpiresIn(),
+        response.getRefreshToken(),
+        response.getTokenType(),
+        response.getSessionState(),
+        response.getScope());
   }
 
   @Override
@@ -300,10 +309,10 @@ public class KeycloakService implements IdentityClient {
    * Creates a user in Keycloak and returns its Keycloak user ID.
    *
    * @param user {@link UserDTO}
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user) {
-    return createKeycloakUser(user, null, null);
+  public CreatedIdentity createUser(final UserDTO user) {
+    return createUser(user, null, null);
   }
 
   /**
@@ -312,9 +321,9 @@ public class KeycloakService implements IdentityClient {
    * @param user {@link UserDTO}
    * @param firstName first name of user
    * @param lastName last name of user
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(
+  public CreatedIdentity createUser(
       final UserDTO user, final String firstName, final String lastName) {
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
@@ -336,7 +345,7 @@ public class KeycloakService implements IdentityClient {
                   createdUserId),
               exception);
         }
-        return new KeycloakCreateUserResponseDTO(createdUserId);
+        return new CreatedIdentity(createdUserId);
       }
       handleCreateKeycloakUserError(response);
     }
@@ -890,13 +899,15 @@ public class KeycloakService implements IdentityClient {
     }
   }
 
-  public UserRepresentation getById(String userId) {
+  public IdentityUserProfile getUserProfile(String userId) {
     UserResource userResource = keycloakClient.getUsersResource().get(userId);
     if (userResource == null) {
       log.error("Could not get user with id {} from keycloak", userId);
       throw new KeycloakException("User with id not found in keycloak: " + userId);
     }
-    return userResource.toRepresentation();
+    var user = userResource.toRepresentation();
+    return new IdentityUserProfile(
+        user.getId(), user.getUsername(), user.getFirstName(), user.getLastName(), user.getEmail());
   }
 
   /**

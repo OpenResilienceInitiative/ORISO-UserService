@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
@@ -16,6 +14,8 @@ import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.NonNull;
@@ -50,38 +50,38 @@ public class AnonymousUserCreatorService {
    */
   public AnonymousUserCredentials createAnonymousUser(UserDTO userDto) {
 
-    KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDto);
+    CreatedIdentity response = identityClient.createUser(userDto);
+    String identityUserId = CreatedIdentity.requireUserId(response);
     // Use the existing "user" realm role instead of "anonymous": the Keycloak realm does not
     // define an "anonymous" role, so assigning it 404s, the password step is skipped, and the
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    KeycloakLoginResponseDTO kcLoginResponseDTO;
+    IdentitySession identitySession;
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
       var user =
-          createUserFacade.updateIdentityAndCreateAccount(
-              response.getUserId(), userDto, UserRole.USER);
+          createUserFacade.updateIdentityAndCreateAccount(identityUserId, userDto, UserRole.USER);
       if (!rocketChatEnabled) {
         createUserFacade.provisionMatrixUser(user, userDto.getUsername());
       }
-      kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+      identitySession = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
       if (rocketChatEnabled) {
-        ensureRocketChatUserExists(userDto, response.getUserId());
+        ensureRocketChatUserExists(userDto, identityUserId);
         rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
       }
     } catch (RocketChatLoginException | BadRequestException | InternalServerErrorException e) {
-      rollBackAnonymousUserAccount(response.getUserId());
+      rollBackAnonymousUserAccount(identityUserId);
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
     }
 
     var credentialsBuilder =
         AnonymousUserCredentials.builder()
-            .userId(response.getUserId())
-            .accessToken(kcLoginResponseDTO.getAccessToken())
-            .expiresIn(kcLoginResponseDTO.getExpiresIn())
-            .refreshToken(kcLoginResponseDTO.getRefreshToken())
-            .refreshExpiresIn(kcLoginResponseDTO.getRefreshExpiresIn());
+            .userId(identityUserId)
+            .accessToken(identitySession.getAccessToken())
+            .expiresIn(identitySession.getExpiresIn())
+            .refreshToken(identitySession.getRefreshToken())
+            .refreshExpiresIn(identitySession.getRefreshExpiresIn());
 
     if (rocketChatEnabled) {
       credentialsBuilder.rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto));

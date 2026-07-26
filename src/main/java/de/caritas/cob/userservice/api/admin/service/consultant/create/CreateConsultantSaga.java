@@ -11,7 +11,6 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -39,6 +38,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -220,7 +220,7 @@ public class CreateConsultantSaga {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
-    String keycloakUserId = createKeycloakUser(consultantCreationInput);
+    String keycloakUserId = createUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
     if ((password == null || password.isEmpty())
@@ -429,7 +429,7 @@ public class CreateConsultantSaga {
     }
   }
 
-  private String createKeycloakUser(ConsultantCreationInput consultantCreationInput) {
+  private String createUser(ConsultantCreationInput consultantCreationInput) {
     // MATRIX MIGRATION: Use PLAIN username for Keycloak (Keycloak rejects encrypted usernames)
     String plainUsername = consultantCreationInput.getUserName();
 
@@ -444,13 +444,11 @@ public class CreateConsultantSaga {
 
     this.userAccountInputValidator.validateUserDTO(userDto);
 
-    KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
+    CreatedIdentity response =
+        identityClient.createUser(
             userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
 
-    this.userAccountInputValidator.validateKeycloakResponse(response);
-
-    return response.getUserId();
+    return CreatedIdentity.requireUserId(response);
   }
 
   private String createRocketChatUserOrRollback(

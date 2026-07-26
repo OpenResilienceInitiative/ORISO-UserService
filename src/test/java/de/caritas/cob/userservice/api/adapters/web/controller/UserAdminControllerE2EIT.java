@@ -20,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -38,6 +37,7 @@ import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -148,9 +148,9 @@ class UserAdminControllerE2EIT {
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
   }
 

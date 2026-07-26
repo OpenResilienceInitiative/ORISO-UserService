@@ -11,7 +11,6 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
@@ -20,6 +19,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
@@ -75,7 +75,7 @@ class AppointmentServiceTest {
 
   @Mock ConsultantAdminResponseDTO consultantAdminResponseDTO;
 
-  @Mock KeycloakLoginResponseDTO keycloakLoginResponseDTO;
+  @Mock IdentitySession keycloakLoginResponseDTO;
 
   @Mock org.springframework.http.HttpHeaders httpHeaders;
 

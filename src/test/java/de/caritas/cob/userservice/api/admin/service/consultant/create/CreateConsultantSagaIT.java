@@ -22,7 +22,6 @@ import static org.mockito.Mockito.when;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -36,6 +35,7 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGr
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -90,8 +90,8 @@ public class CreateConsultantSagaIT {
       throws RocketChatLoginException, RocketChatAddUserToGroupException {
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -128,8 +128,8 @@ public class CreateConsultantSagaIT {
     doThrow(BadRequestException.class)
         .when(rocketChatService)
         .getUserID(anyString(), anyString(), anyBoolean());
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -147,8 +147,8 @@ public class CreateConsultantSagaIT {
       throws RocketChatLoginException {
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
     doThrow(BadRequestException.class).when(appointmentService).createConsultant(any());
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
@@ -173,8 +173,8 @@ public class CreateConsultantSagaIT {
 
   @Test
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdatePasswordThrowsException() {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
         .updatePassword(any(), any());
@@ -196,8 +196,8 @@ public class CreateConsultantSagaIT {
   @Test
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdateRoleThrowsException()
       throws RocketChatLoginException {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     doThrow(BadRequestException.class).when(keycloakService).updateRole(anyString(), anyString());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
@@ -223,8 +223,8 @@ public class CreateConsultantSagaIT {
     // given
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant = new TenantDTO().settings(new Settings().featureGroupChatV2Enabled(false));
     when(tenantAdminService.getTenantById((long) TENANT_ID)).thenReturn(tenant);
 
@@ -252,8 +252,8 @@ public class CreateConsultantSagaIT {
           throws RocketChatLoginException {
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     ImportRecord importRecord = this.easyRandom.nextObject(ImportRecord.class);
     importRecord.setUsername(VALID_USERNAME);
     importRecord.setEmail(VALID_EMAILADDRESS);
@@ -279,10 +279,8 @@ public class CreateConsultantSagaIT {
       throws RocketChatLoginException {
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenThrow(new RocketChatLoginException(""));
-    KeycloakCreateUserResponseDTO validKeycloakResponse =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(validKeycloakResponse);
+    CreatedIdentity validKeycloakResponse = easyRandom.nextObject(CreatedIdentity.class);
+    when(keycloakService.createUser(any(), anyString(), any())).thenReturn(validKeycloakResponse);
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -302,11 +300,9 @@ public class CreateConsultantSagaIT {
         () -> {
           when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
               .thenReturn(DUMMY_RC_ID);
-          KeycloakCreateUserResponseDTO keycloakResponse =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+          CreatedIdentity keycloakResponse = easyRandom.nextObject(CreatedIdentity.class);
           keycloakResponse.setUserId(null);
-          when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-              .thenReturn(keycloakResponse);
+          when(keycloakService.createUser(any(), anyString(), any())).thenReturn(keycloakResponse);
           CreateConsultantDTO createConsultantDTO =
               this.easyRandom.nextObject(CreateConsultantDTO.class);
 

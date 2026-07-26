@@ -4,7 +4,6 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static de.caritas.cob.userservice.api.helper.SessionDataProvider.fromUserDTO;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
@@ -31,6 +30,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -157,8 +157,8 @@ public class AskerImportService {
             convertAskerWithoutSessionToUserDTO(record, agencyDTO.getConsultingType());
 
         // Create Keycloak user
-        KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDTO, "", "");
-        String keycloakUserId = response.getUserId();
+        CreatedIdentity response = identityClient.createUser(userDTO, "", "");
+        String keycloakUserId = CreatedIdentity.requireUserId(response);
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
@@ -348,8 +348,8 @@ public class AskerImportService {
         }
 
         // Create Keycloak user
-        KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDTO, "", "");
-        String keycloakUserId = response.getUserId();
+        CreatedIdentity response = identityClient.createUser(userDTO, "", "");
+        String keycloakUserId = CreatedIdentity.requireUserId(response);
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));

@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Date: 2026-07-26
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -15,7 +15,7 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,801 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
@@ -147,8 +147,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `IdentitySession`, `CreatedIdentity` and `IdentityUserProfile` results, and an executable boundary prevents those result types from importing Keycloak or Spring HTTP models. Profile email propagation uses the `MessageClient` port. | Identity creation still accepts the web-layer `UserDTO`, the port remains broad, and the separate magic-link web/token-exchange path still exposes `KeycloakLoginResponseDTO`. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -161,10 +161,11 @@ policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next safe sequence is the remaining identity
-token/create-user DTO decoupling, then the admin controller composition
-boundary, then session-list adapter removal. Each step must add a failing
-boundary contract before moving dependencies.
+domains are already isolated. Identity result types are now provider-neutral;
+the next safe sequence is an application-owned identity creation command and
+magic-link response, then the admin controller composition boundary, then
+session-list adapter removal. Each step must add a failing boundary contract
+before moving dependencies.
 
 ## Microservice decision
 

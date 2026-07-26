@@ -8,12 +8,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.config.apiclient.MessageServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
@@ -67,7 +67,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
 
   @Test
   void execute_Should_postFinishedConversationMessage_When_sessionHasGroupId() {
-    var keycloakLoginResponseDTO = new KeycloakLoginResponseDTO();
+    var keycloakLoginResponseDTO = new IdentitySession();
     keycloakLoginResponseDTO.setAccessToken("token");
     when(this.identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
     when(identityClientConfig.getTechnicalUser()).thenReturn(new TechnicalUserConfig());

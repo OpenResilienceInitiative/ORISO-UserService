@@ -10,12 +10,12 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -139,7 +139,7 @@ class AgencyMatrixCredentialClientTest {
     technicalUser.setUsername("technical");
     technicalUser.setPassword("secret");
 
-    var loginResponse = new KeycloakLoginResponseDTO();
+    var loginResponse = new IdentitySession();
     loginResponse.setAccessToken(accessToken);
 
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
