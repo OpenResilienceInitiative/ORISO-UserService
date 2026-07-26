@@ -25,14 +25,17 @@ public class MailService {
    * Send a email notification via the MailService.
    *
    * @param mailsDTO the transfer object to be handled in MailService
+   * @return whether MailService accepted the request
    */
-  public void sendEmailNotification(MailsDTO mailsDTO) {
+  public boolean sendEmailNotification(MailsDTO mailsDTO) {
     MailsControllerApi controllerApi = mailServiceApiControllerFactory.createControllerApi();
     addSecurityHeaders(controllerApi);
     try {
       controllerApi.sendMails(mailsDTO);
+      return true;
     } catch (Exception e) {
       log.error("MailServiceHelper error: Error while calling the MailService", e);
+      return false;
     }
   }
 
