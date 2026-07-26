@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.AccountManager;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -48,10 +47,6 @@ public class SessionArchiveServiceTest {
   AuthenticatedUser authenticatedUser;
 
   @Mock SessionArchiveValidator sessionArchiveValidator;
-
-  @Mock
-  @SuppressWarnings("unused")
-  RocketChatService rocketChatService;
 
   @Mock
   @SuppressWarnings("unused")
