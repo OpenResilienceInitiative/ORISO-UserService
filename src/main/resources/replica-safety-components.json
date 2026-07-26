@@ -46,7 +46,7 @@
       "kind": "scheduler",
       "owner": "session-lifecycle",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent execution proves Matrix and notification effects idempotent.",
+      "decision": "The pessimistic active-chat row lock and DeactivateGroupChatSchedulerMariaDbReplicaIT prove that two concurrent scheduler instances serialize one expired Matrix chat, delete it once and purge its Matrix room exactly once. Per-chat database coordination preserves the one-minute schedule without a coarse global lease.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

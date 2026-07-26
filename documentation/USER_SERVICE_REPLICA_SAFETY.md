@@ -52,6 +52,17 @@ appointments. Both transactions complete successfully and exactly the 30
 current rows remain. The reusable MariaDB CI contract runs this proof together
 with schema-drift and statistics-repository validation on MariaDB 10.11.
 
+The one-minute group-chat deactivation scheduler also needs no coarse global
+claim. Its transactional active-chat selection takes a pessimistic database
+row lock, so concurrent instances serialize each active chat while its database
+transition and Matrix shutdown are in progress.
+`DeactivateGroupChatSchedulerMariaDbReplicaIT` starts two scheduler instances
+against MariaDB 11.0.6 and one expired Matrix chat. Both instances enter the
+workflow, but the chat is deleted once and its Matrix room is purged exactly
+once. This per-chat coordination keeps the one-minute schedule intact and
+remains part of the Matrix-only target after the separate Rocket.Chat branch is
+physically removed.
+
 The inactive-account notification proof starts two independent service
 instances against the same audit database. A transaction-isolated unique claim
 is committed before the external mail call, so the losing instance performs no
