@@ -106,7 +106,7 @@
       "kind": "scheduler",
       "owner": "notification",
       "risk": "duplicate-side-effect",
-      "decision": "Retain database uniqueness as the duplicate guard and add concurrent multi-instance proof before scaling.",
+      "decision": "A durable 30-minute scheduled-task claim and EnquiryNotificationServiceReplicaIT prove that concurrent instances send one mail batch and the loser performs no downstream reads. Keep claim duration above measured execution time and below the configured hourly interval.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

@@ -58,6 +58,18 @@ audit update. Automatic replay therefore requires a provider idempotency key or
 an outbox/lease protocol that can reconcile that ambiguous state. The global
 replica limit remains one.
 
+The hourly enquiry-notification scheduler now acquires a global, durable
+`scheduled_task_claim` before reading sessions, agencies or consultants. Its
+30-minute claim is shorter than the configured hourly schedule and must remain
+longer than the measured `userservice.scheduler.duration` for this task.
+`EnquiryNotificationServiceReplicaIT` releases two independent instances
+concurrently against the same database and observes one mail batch and one
+claim. The losing instance performs no downstream database or service reads.
+Expired claims are renewable; a concurrent first insert loses safely on the
+database primary-key conflict. The contract also passed on MariaDB 11.0.6,
+where the race surfaced as an InnoDB deadlock rather than H2's unique-key
+violation; the losing transaction read back the active winning claim.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the

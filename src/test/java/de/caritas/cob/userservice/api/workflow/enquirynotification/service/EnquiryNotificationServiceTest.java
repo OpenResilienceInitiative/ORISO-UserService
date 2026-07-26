@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
@@ -53,10 +54,16 @@ class EnquiryNotificationServiceTest {
 
   @Mock private ReleaseToggleService releaseToggleService;
 
+  @Mock private ScheduledTaskClaimService taskClaimService;
+
   @BeforeEach
   public void setup() {
     setField(enquiryNotificationService, "openEnquiryCheckHours", 12L);
     setField(enquiryNotificationService, "applicationBaseUrl", "base/url");
+    setField(enquiryNotificationService, "claimDuration", java.time.Duration.ofMinutes(30));
+    when(taskClaimService.tryClaim(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
   }
 
   @Test
@@ -125,6 +132,22 @@ class EnquiryNotificationServiceTest {
     enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
 
     verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void sendEmailNotificationsForOpenEnquiries_Should_skipAllDownstreamCalls_When_claimIsLost() {
+    when(taskClaimService.tryClaim(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(false);
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    verifyNoInteractions(
+        sessionRepository,
+        consultantAgencyService,
+        agencyService,
+        mailService,
+        releaseToggleService);
   }
 
   @Test
