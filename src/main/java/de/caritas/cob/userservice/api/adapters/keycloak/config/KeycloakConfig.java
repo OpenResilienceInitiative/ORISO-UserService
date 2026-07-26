@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.keycloak.config;
 
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.CONNECT_TIMEOUT;
+import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.READ_TIMEOUT;
 import static java.util.Objects.nonNull;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -16,6 +18,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
+import org.jboss.resteasy.client.jaxrs.ResteasyClientBuilder;
+import org.keycloak.admin.client.ClientBuilderWrapper;
+import org.keycloak.admin.client.JacksonProvider;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -42,10 +47,7 @@ public class KeycloakConfig {
 
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
-    return restTemplateBuilder
-        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
-        .build();
+    return restTemplateBuilder.connectTimeout(CONNECT_TIMEOUT).readTimeout(READ_TIMEOUT).build();
   }
 
   @Bean
@@ -129,7 +131,17 @@ public class KeycloakConfig {
         .username(config.getAdminUsername())
         .password(config.getAdminPassword())
         .clientId(config.getAdminClientId())
+        .resteasyClient(keycloakAdminHttpClientBuilder().build())
         .build();
+  }
+
+  ResteasyClientBuilder keycloakAdminHttpClientBuilder() {
+    var builder = (ResteasyClientBuilder) ClientBuilderWrapper.create(null, false);
+    builder
+        .connectTimeout(CONNECT_TIMEOUT.toMillis(), MILLISECONDS)
+        .readTimeout(READ_TIMEOUT.toMillis(), MILLISECONDS)
+        .register(JacksonProvider.class, 100);
+    return builder;
   }
 
   @URL private String authServerUrl;

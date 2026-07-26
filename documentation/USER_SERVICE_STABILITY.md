@@ -86,9 +86,11 @@ unbounded waits.
 Exceptional futures are observed and logged while live-event delivery remains
 best-effort for the initiating business flow.
 
-Keycloak's own admin-client transport is not covered by the payload
-interceptor; its higher-level retry paths are covered by the explicit retry
-counter. This is a known measurement boundary, not an implied zero.
+Keycloak's own admin-client transport uses the same finite 3 s connect and 10 s
+read limits through a Keycloak-compatible RESTEasy client, retaining
+Keycloak's JSON provider. It is not covered by the payload interceptor; its
+higher-level retry paths are covered by the explicit retry counter. This is a
+known measurement boundary, not an implied zero.
 
 ### Live PreDev baseline before this change
 
