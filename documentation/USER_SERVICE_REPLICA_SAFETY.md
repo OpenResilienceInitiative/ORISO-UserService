@@ -37,6 +37,13 @@ until the catalog decision for every correctness or duplicate-side-effect item
 is resolved and a two-instance integration suite passes without sticky
 sessions.
 
+The first resolved scheduler contract is the group-chat reminder:
+`EventNotificationServiceReplicaIT` starts two independent service instances
+against the same database and releases them concurrently with the same
+recipient/deduplication key. The JPA model and MariaDB migration now express the
+same unique constraint. Exactly one event row and one live refresh are
+observable after the race.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the

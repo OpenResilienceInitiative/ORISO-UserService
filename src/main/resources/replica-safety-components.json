@@ -118,7 +118,7 @@
       "kind": "scheduler",
       "owner": "notification",
       "risk": "duplicate-side-effect",
-      "decision": "Retain the event idempotency key and add concurrent multi-instance proof before scaling.",
+      "decision": "The database unique key and EventNotificationServiceReplicaIT prove that two concurrent instances persist one reminder and emit one live refresh.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
