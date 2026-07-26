@@ -70,6 +70,15 @@ database primary-key conflict. The contract also passed on MariaDB 11.0.6,
 where the race surfaced as an InnoDB deadlock rather than H2's unique-key
 violation; the losing transaction read back the active winning claim.
 
+The hourly anonymous-user deactivation scheduler uses the same durable claim
+before it establishes technical tenant context or enters the lifecycle
+workflow. `DeactivateAnonymousUserSchedulerReplicaIT` releases two independent
+scheduler instances concurrently and observes exactly one tenant-context setup
+and one deactivation workflow invocation. The losing replica performs no
+session query, database transition or external provider action. The 30-minute
+claim remains shorter than the configured hourly schedule and must stay above
+the measured task duration.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the

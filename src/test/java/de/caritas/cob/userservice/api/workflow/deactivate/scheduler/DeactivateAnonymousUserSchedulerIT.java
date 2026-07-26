@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiry
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
@@ -43,11 +44,15 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @Import({KeycloakTestConfig.class, RocketChatTestConfig.class, ApiControllerTestConfig.class})
 class DeactivateAnonymousUserSchedulerIT {
 
+  private static final String TASK_NAME = "anonymous-user-deactivation";
+
   @Autowired private DeactivateAnonymousUserScheduler deactivateAnonymousUserScheduler;
 
   @Autowired private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
   @Autowired private SessionRepository sessionRepository;
+
+  @Autowired private ScheduledTaskClaimRepository claimRepository;
 
   @Autowired private UserService userService;
 
@@ -64,6 +69,7 @@ class DeactivateAnonymousUserSchedulerIT {
 
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
+    deleteSchedulerClaim();
     var matrixUserResponse = new MatrixCreateUserResponseDTO();
     matrixUserResponse.setUserId("@anonymous:matrix.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
@@ -84,6 +90,11 @@ class DeactivateAnonymousUserSchedulerIT {
   @AfterEach
   public void cleanDatabase() {
     this.sessionRepository.deleteAll();
+    deleteSchedulerClaim();
+  }
+
+  private void deleteSchedulerClaim() {
+    claimRepository.findById(TASK_NAME).ifPresent(claimRepository::delete);
   }
 
   @Test

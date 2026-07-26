@@ -34,7 +34,7 @@
       "kind": "scheduler",
       "owner": "account-lifecycle",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent execution proves lifecycle transitions and external effects idempotent.",
+      "decision": "A durable 30-minute scheduled-task claim and DeactivateAnonymousUserSchedulerReplicaIT prove that concurrent hourly executions trigger one tenant-context setup and one lifecycle workflow. The losing replica performs no downstream work.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
