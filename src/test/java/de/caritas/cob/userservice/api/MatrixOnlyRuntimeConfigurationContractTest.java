@@ -12,6 +12,16 @@ class MatrixOnlyRuntimeConfigurationContractTest {
   private static final Path RESOURCES = Path.of("src/main/resources");
 
   @Test
+  void releaseContainerBaseMustBePinnedByDigest() throws IOException {
+    var fromLines =
+        Files.readAllLines(Path.of("Dockerfile")).stream()
+            .filter(line -> line.startsWith("FROM "))
+            .toList();
+
+    assertThat(fromLines).isNotEmpty().allMatch(line -> line.matches(".*@sha256:[a-f0-9]{64}.*"));
+  }
+
+  @Test
   void runtimeConfigurationMustNotExposeRocketChatPropertiesOrCaches() throws IOException {
     var configurationValidator =
         Files.readString(
