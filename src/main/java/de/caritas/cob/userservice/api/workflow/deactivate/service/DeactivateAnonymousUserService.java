@@ -6,7 +6,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
+import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
@@ -76,7 +76,7 @@ public class DeactivateAnonymousUserService {
         staleSession ->
             sessionDeactivationActions
                 .addActionToExecute(DeactivateSessionActionCommand.class)
-                .addActionToExecute(PostConversationFinishedAliasMessageActionCommand.class)
+                .addActionToExecute(PostMatrixUserLeftMessageActionCommand.class)
                 .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
                 .executeActions(staleSession));
   }

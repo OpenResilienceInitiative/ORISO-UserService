@@ -5,7 +5,7 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
+import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -44,7 +44,7 @@ public class FinishAnonymousConversationFacade {
     // Notify the room first while user/consultant Matrix credentials are still valid.
     this.actionsRegistry
         .buildContainerForType(Session.class)
-        .addActionToExecute(PostConversationFinishedAliasMessageActionCommand.class)
+        .addActionToExecute(PostMatrixUserLeftMessageActionCommand.class)
         .executeActions(session);
 
     this.actionsRegistry
