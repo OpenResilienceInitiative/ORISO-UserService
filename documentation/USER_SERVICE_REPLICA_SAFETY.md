@@ -220,6 +220,14 @@ losing replica performs no database deletion, provider cleanup or error-mail
 work. All four existing domain integration cases remain green with isolated
 claim state. Its 30-minute bound has the same hourly duration constraint.
 
+The claim prevents concurrent duplicate execution, while transaction ordering
+prevents sequential replay. `AnonymousUserDeletionBatch` owns the database
+transaction and returns before `DeleteUserAnonymousService` sends workflow
+error mail. `DeleteUserAnonymousSchedulerIT` forces a Matrix deletion error and
+a subsequent notification failure, then proves the user and session deletion
+already committed. Keycloak deletion also treats `NotFound` after its one
+unauthorized-session refresh as the idempotent already-deleted outcome.
+
 The daily account-deletion scheduler acquires a separate durable claim before
 technical tenant context and before any database or external-provider cleanup.
 `DeleteUserAccountSchedulerReplicaIT` releases two scheduler instances

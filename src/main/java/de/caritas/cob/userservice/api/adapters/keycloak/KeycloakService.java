@@ -813,16 +813,22 @@ public class KeycloakService implements IdentityClient {
    */
   public void deleteUser(String userId) {
     try {
-      keycloakClient.getUsersResource().get(userId).remove();
-    } catch (NotFoundException e) {
-      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+      removeUserIfPresent(userId);
     } catch (NotAuthorizedException e) {
       log.warn(
           "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
               + " and retrying once",
           userId);
       keycloakClient.refreshAdminSession();
+      removeUserIfPresent(userId);
+    }
+  }
+
+  private void removeUserIfPresent(String userId) {
+    try {
       keycloakClient.getUsersResource().get(userId).remove();
+    } catch (NotFoundException e) {
+      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
     }
   }
 

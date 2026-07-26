@@ -30,8 +30,8 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,843 | 0 | 0 | 7 | `./mvnw -B -Dskip.integration-tests=true clean test` |
-| Integration + contract + E2E | 964 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,849 | 0 | 0 | 7 | `./mvnw -B -Dskip.integration-tests=true clean test` |
+| Integration + contract + E2E | 965 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
@@ -40,7 +40,7 @@ replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
 later serial Maven completions. The latest clean integration completion
-independently reports 964/0/0/5.
+independently reports 965/0/0/5.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -152,11 +152,55 @@ their runtime registration, tags and finite buckets; the exact image still has
 to be deployed and queried through SigNoz before the observability gate is
 closed.
 
+### Live PreDev measurement after the observability subset
+
+A second read-only SigNoz audit on 2026-07-26 found the bounded custom metrics
+in the running pod. The pod still predates the final PR head, so this proves
+that an observability subset is live, not that the full candidate was deployed.
+The metric attributes were limited to dependency, method, outcome, direction
+and histogram bucket. No path, query, user, room or message identifier appeared
+in custom metric attributes.
+
+Across the pod lifetime from 10:30 UTC, the custom call counter recorded 937
+successful Matrix GETs, 737 successful Matrix POSTs, 350 successful Matrix
+DELETEs and nine successful Matrix PUTs. It also recorded bounded
+AgencyService, ConsultingTypeService, Keycloak and TenantService outcomes.
+`Content-Length` supplied 19,543 Matrix request bytes and 7,844 Keycloak
+response bytes. Chunked Matrix responses and upstream responses without
+`Content-Length` remain deliberately uncounted rather than estimated. No
+`userservice.outbound.retries` series existed, which means no instrumented
+retry had emitted an event during that process lifetime.
+
+The last-24-hour traces exposed one high-fan-out workflow. A 13:00 UTC
+`deleteUserAnonymousScheduler.performDeletionWorkflow` execution made:
+
+| Matrix/Tenant operation | Calls | Errors | p95 |
+| --- | ---: | ---: | ---: |
+| Matrix admin login | 1 | 0 | 270.18 ms |
+| Matrix user deactivation | 141 | 0 | 42.83 ms |
+| Matrix room purge | 70 | 0 | 14.18 ms |
+| Tenant lookup | 1 | 1 | 15.12 ms |
+
+The same 141 Matrix user deactivations appeared in every measured scheduler
+execution; room purges alternated between 70 and 130. The single admin login per
+execution proves the 50-minute token cache works and is not the fan-out cause.
+PreDev logs instead show a Keycloak `NotFound` after an unauthorized-session
+refresh, followed by a workflow-error mail lookup for technical tenant `0`
+that returns 404. Notification was inside the deletion transaction, so the
+database work rolled back after the irreversible Matrix and Keycloak calls had
+already run.
+
 ## Chatty-call reductions
 
 - With the default `rocket-chat.enabled=false`, account and availability reads
   no longer call Rocket.Chat. Matrix-only deployments also do not create the
   Rocket.Chat MongoDB client or credential job.
+- Anonymous deletion now treats Keycloak `NotFound` as idempotent even after
+  its one unauthorized-session refresh. The database deletion batch commits
+  before workflow-error notification begins, so tenant or mail failures cannot
+  replay already completed Matrix and Keycloak side effects. A Spring/H2
+  integration test forces both the Matrix workflow error and notification
+  failure and proves that the user and session remain deleted.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
