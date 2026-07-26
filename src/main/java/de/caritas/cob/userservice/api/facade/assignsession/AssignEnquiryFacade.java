@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.facade.assignsession;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
-import static java.util.concurrent.CompletableFuture.supplyAsync;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -17,10 +16,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -28,12 +25,9 @@ import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole;
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.List;
 import java.util.UUID;
-import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,13 +44,10 @@ import org.springframework.stereotype.Service;
 public class AssignEnquiryFacade {
 
   private final @NonNull SessionService sessionService;
-  private final @NonNull SessionAssignmentChatGateway sessionAssignmentChatGateway;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionToConsultantVerifier sessionToConsultantVerifier;
-  private final @NonNull UnauthorizedMembersProvider unauthorizedMembersProvider;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
-  private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull HttpServletRequest httpServletRequest;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull UserRepository userRepository;
@@ -106,40 +97,23 @@ public class AssignEnquiryFacade {
     liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
         session.getUser().getUserId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
-    supplyAsync(updateRocketChatRooms(session, consultant, TenantContext.getCurrentTenant()))
-        .thenRun(
-            () -> {
-              var event =
-                  new AssignSessionStatisticsEvent(
-                      consultant.getId(), UserRole.CONSULTANT, session.getId());
-              event.setRequestUri(requestURI);
-              event.setRequestReferer(requestReferer);
-              event.setRequestUserId(consultant.getId());
-
-              statisticsService.fireEvent(event);
-            });
+    var event =
+        new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
+    event.setRequestUri(requestURI);
+    event.setRequestReferer(requestReferer);
+    event.setRequestUserId(consultant.getId());
+    statisticsService.fireEvent(event);
   }
 
   /**
-   * Assigns the given {@link Session} session to the given {@link Consultant}. Add the given {@link
-   * Consultant} to the Rocket.Chat group.
+   * Assigns the given {@link Session} session to the given {@link Consultant} and provisions the
+   * Matrix room.
    *
    * @param session the session to assign the consultant
    * @param consultant the consultant to assign
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
     assignEnquiry(session, consultant);
-    try {
-      sessionAssignmentChatGateway.addUserToGroup(
-          consultant.getRocketChatId(), session.getGroupId());
-      sessionAssignmentChatGateway.removeSystemMessages(session.getGroupId());
-    } catch (Exception e) {
-      rollbackSessionUpdate(session);
-      throw new InternalServerErrorException(
-          String.format(
-              "Could not add consultant %s to group %s",
-              consultant.getRocketChatId(), session.getGroupId()));
-    }
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {
@@ -346,39 +320,6 @@ public class AssignEnquiryFacade {
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
-  }
-
-  private Supplier<Object> updateRocketChatRooms(
-      Session session, Consultant consultant, Long currentTenantId) {
-    return () -> {
-      tenantContextProvider.setCurrentTenantContextIfMissing(currentTenantId);
-      updateRocketChatRooms(session.getGroupId(), session, consultant);
-      return null;
-    };
-  }
-
-  public void updateRocketChatRooms(String rcGroupId, Session session, Consultant consultant) {
-    try {
-      var memberIds = sessionAssignmentChatGateway.findMemberIds(rcGroupId);
-      removeUnauthorizedMembers(rcGroupId, session, consultant, memberIds);
-      sessionAssignmentChatGateway.removeSystemMessages(rcGroupId);
-
-    } catch (Exception e) {
-      LogService.logRocketChatError(e);
-      throw e;
-    }
-  }
-
-  private void removeUnauthorizedMembers(
-      String rcGroupId, Session session, Consultant consultant, List<String> memberIds) {
-    var consultantsToRemoveFromRocketChat =
-        unauthorizedMembersProvider.obtainConsultantsToRemove(
-            rcGroupId, session, consultant, memberIds);
-
-    if (rcGroupId.equalsIgnoreCase(session.getGroupId())) {
-      sessionAssignmentChatGateway.removeConsultantsIgnoringMissingGroup(
-          session, consultantsToRemoveFromRocketChat);
-    }
   }
 
   private void rollbackSessionUpdate(Session session) {
