@@ -92,4 +92,14 @@ class MatrixOnlyUserDeletionContractTest {
     assertThat(Files.readString(Path.of("src/main/resources/application.properties")))
         .doesNotContain("session.inactive.deleteWorkflow");
   }
+
+  @Test
+  void deletionErrorTargetsMustOnlyNameActiveSystems() throws IOException {
+    assertThat(
+            Files.readString(
+                Path.of(
+                    "src/main/java/de/caritas/cob/userservice/api/workflow/delete/model/"
+                        + "DeletionTargetType.java")))
+        .doesNotContain("ROCKET_CHAT");
+  }
 }
