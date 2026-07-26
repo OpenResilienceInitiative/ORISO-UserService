@@ -82,7 +82,7 @@
       "kind": "scheduler",
       "owner": "account-lifecycle",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent deletion and provider cleanup is proven single-effect.",
+      "decision": "A durable 30-minute scheduled-task claim and DeleteUserAnonymousSchedulerReplicaIT prove that concurrent hourly executions trigger one tenant-context setup and one anonymous-account deletion workflow. The losing replica performs no database, provider-cleanup or error-mail work.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

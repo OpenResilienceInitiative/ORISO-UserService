@@ -79,6 +79,14 @@ session query, database transition or external provider action. The 30-minute
 claim remains shorter than the configured hourly schedule and must stay above
 the measured task duration.
 
+The hourly anonymous-user deletion scheduler acquires its own durable claim
+before technical tenant context and before the account/provider deletion
+workflow. `DeleteUserAnonymousSchedulerReplicaIT` observes exactly one context
+setup and one deletion workflow under two concurrent scheduler instances. The
+losing replica performs no database deletion, provider cleanup or error-mail
+work. All four existing domain integration cases remain green with isolated
+claim state. Its 30-minute bound has the same hourly duration constraint.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the
