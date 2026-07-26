@@ -19,13 +19,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
-class RemoveConsultantFromRocketChatServiceTest {
+class RemoveConsultantFromSessionRoomsServiceTest {
 
   private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
   private static final String ASSIGNED_MATRIX_ID = "@assigned:matrix.oriso.org";
   private static final String SURPLUS_MATRIX_ID = "@surplus:matrix.oriso.org";
 
-  @InjectMocks private RemoveConsultantFromRocketChatService removeConsultantFromRocketChatService;
+  @InjectMocks
+  private RemoveConsultantFromSessionRoomsService removeConsultantFromSessionRoomsService;
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
@@ -57,7 +58,7 @@ class RemoveConsultantFromRocketChatServiceTest {
                 consultantMember("assigned-id", ASSIGNED_MATRIX_ID),
                 consultantMember("surplus-id", SURPLUS_MATRIX_ID)));
 
-    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+    removeConsultantFromSessionRoomsService.removeConsultantFromSessions(singletonList(session));
 
     verify(groupChatMembershipService).removeMemberFromRoom(MATRIX_ROOM_ID, SURPLUS_MATRIX_ID);
     verify(groupChatMembershipService, never())
@@ -74,7 +75,7 @@ class RemoveConsultantFromRocketChatServiceTest {
                 consultantMember("assigned-id", ASSIGNED_MATRIX_ID),
                 askerMember("asker-id", "@asker:matrix.oriso.org")));
 
-    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+    removeConsultantFromSessionRoomsService.removeConsultantFromSessions(singletonList(session));
 
     verify(groupChatMembershipService, never())
         .removeMemberFromRoom(eq(MATRIX_ROOM_ID), eq("@asker:matrix.oriso.org"));
@@ -88,7 +89,7 @@ class RemoveConsultantFromRocketChatServiceTest {
     when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(MATRIX_ROOM_ID);
     when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID)).thenReturn(List.of());
 
-    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+    removeConsultantFromSessionRoomsService.removeConsultantFromSessions(singletonList(session));
 
     verify(groupChatMembershipService, never())
         .removeMemberFromRoom(
@@ -101,7 +102,7 @@ class RemoveConsultantFromRocketChatServiceTest {
     session.setId(2L);
     when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(null);
 
-    removeConsultantFromRocketChatService.removeConsultantFromSessions(singletonList(session));
+    removeConsultantFromSessionRoomsService.removeConsultantFromSessions(singletonList(session));
 
     verify(groupChatMembershipService, never())
         .removeMemberFromRoom(
@@ -112,7 +113,7 @@ class RemoveConsultantFromRocketChatServiceTest {
 
   @Test
   void removeConsultantFromSessions_Should_DoNothing_When_NoSessions() {
-    removeConsultantFromRocketChatService.removeConsultantFromSessions(List.of());
+    removeConsultantFromSessionRoomsService.removeConsultantFromSessions(List.of());
 
     verifyNoInteractions(groupChatMembershipService);
   }

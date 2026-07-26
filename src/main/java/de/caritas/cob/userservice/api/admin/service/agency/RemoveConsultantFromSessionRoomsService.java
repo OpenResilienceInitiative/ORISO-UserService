@@ -16,14 +16,12 @@ import org.springframework.stereotype.Service;
  *
  * <p>Matrix-native: when an agency is detached from a consultant, that consultant must lose access
  * to the team sessions of that agency. Membership and removal both go through Matrix (the only chat
- * backend since Rocket.Chat was disabled, ADR-004). With Rocket.Chat disabled the former
- * Rocket.Chat member query returned nobody, so no consultant was ever removed and detached
- * consultants silently kept room access.
+ * backend). Room membership is resolved from Matrix before detached consultants lose access.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class RemoveConsultantFromRocketChatService {
+public class RemoveConsultantFromSessionRoomsService {
 
   private final @NonNull GroupChatMembershipService groupChatMembershipService;
 

@@ -39,7 +39,7 @@ class ConsultantAgencyAdminServiceTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionRepository sessionRepository;
-  @Mock private RemoveConsultantFromRocketChatService removeFromRocketChatService;
+  @Mock private RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   @Mock private AgencyService agencyService;
   @Mock private AgencyAdminService agencyAdminService;
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
@@ -141,7 +141,7 @@ class ConsultantAgencyAdminServiceTest {
 
     assertThat(session.isTeamSession()).isFalse();
     verify(sessionRepository).save(session);
-    verify(removeFromRocketChatService).removeConsultantFromSessions(List.of(session));
+    verify(removeFromSessionRoomsService).removeConsultantFromSessions(List.of(session));
   }
 
   @Test
