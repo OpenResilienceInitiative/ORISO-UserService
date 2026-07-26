@@ -1,175 +1,73 @@
 package de.caritas.cob.userservice.api.service.sessionlist;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ATTACHMENT_DTO;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_2;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.FILE_DTO;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.MESSAGES_READ_MAP_WITHOUT_UNREADS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.MESSAGES_READ_MAP_WITH_UNREADS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_LAST_MESSAGE_DTO_MAP;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ATTACHMENT_DTO_NOT_RECEIVED;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERS_EMPTY_ROOMS_LIST;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERS_ROOMS_LIST;
-import static java.util.Collections.singletonList;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
-import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
-import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
-import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
+import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
-public class ConsultantChatEnricherTest {
+class ConsultantChatEnricherTest {
 
   @InjectMocks private ConsultantChatEnricher consultantChatEnricher;
-
-  @Mock private SessionListAnalyser sessionListAnalyser;
-
-  @Mock private RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
-
+  @Mock private MatrixRoomMembershipProvider matrixRoomMembershipProvider;
   @Mock private ConsultantDataFacade consultantDataFacade;
 
   @Test
-  public void
-      updateRequiredConsultantChatValues_Should_SetSubscribedFlagToTrue_WhenConsultantIsAttendeeOfAChat() {
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .userRooms(USERS_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
-            Mockito.any(), Mockito.any()))
-        .thenReturn(rocketChatRoomInformation);
+  void marksChatAsSubscribedWhenConsultantJoinedTheMatrixRoom() {
+    var response = responseForRoom("!joined:matrix.example");
+    when(matrixRoomMembershipProvider.joinedRoomsForConsultant(CONSULTANT))
+        .thenReturn(Set.of("!joined:matrix.example"));
 
-    ConsultantSessionResponseDTO result =
-        consultantChatEnricher
-            .updateRequiredConsultantChatValues(
-                singletonList(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE),
-                RC_TOKEN,
-                CONSULTANT)
-            .get(0);
+    consultantChatEnricher.updateRequiredConsultantChatValues(List.of(response), CONSULTANT);
 
-    verify(consultantDataFacade).addConsultantDisplayNameToSessionList(Mockito.any(List.class));
-    assertTrue(result.getChat().isSubscribed());
+    assertThat(response.getChat().isSubscribed()).isTrue();
   }
 
   @Test
-  public void
-      updateRequiredConsultantChatValues_Should_SetSubscribedFlagToFalse_WhenConsultantIsNotAttendeeOfAChat() {
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .userRooms(USERS_EMPTY_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
-            Mockito.any(), Mockito.any()))
-        .thenReturn(rocketChatRoomInformation);
+  void marksChatAsNotSubscribedWhenConsultantDidNotJoinTheMatrixRoom() {
+    var response = responseForRoom("!other:matrix.example");
+    when(matrixRoomMembershipProvider.joinedRoomsForConsultant(CONSULTANT))
+        .thenReturn(Set.of("!joined:matrix.example"));
 
-    ConsultantSessionResponseDTO result =
-        consultantChatEnricher
-            .updateRequiredConsultantChatValues(
-                singletonList(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE),
-                RC_TOKEN,
-                CONSULTANT)
-            .get(0);
+    consultantChatEnricher.updateRequiredConsultantChatValues(List.of(response), CONSULTANT);
 
-    assertFalse(result.getChat().isSubscribed());
+    assertThat(response.getChat().isSubscribed()).isFalse();
   }
 
   @Test
-  public void
-      updateRequiredConsultantChatValues_Should_ReturnCorrectFileTypeAndImagePreviewForChat() {
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .userRooms(USERS_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
-            Mockito.any(), Mockito.any()))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.getAttachmentFromRocketChatMessageIfAvailable(
-            Mockito.eq(CONSULTANT_2.getRocketChatId()), Mockito.any()))
-        .thenReturn(SESSION_ATTACHMENT_DTO_NOT_RECEIVED);
+  void usesDatabaseMetadataAndAddsConsultantDisplayNames() {
+    var start = LocalDateTime.of(2026, 7, 26, 9, 30);
+    var response = responseForRoom("!room:matrix.example");
+    response.getChat().setMessagesRead(false);
+    response.getChat().setStartDateWithTime(start);
+    when(matrixRoomMembershipProvider.joinedRoomsForConsultant(CONSULTANT)).thenReturn(Set.of());
 
-    ConsultantSessionResponseDTO result =
-        consultantChatEnricher
-            .updateRequiredConsultantChatValues(
-                singletonList(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE),
-                RC_TOKEN,
-                CONSULTANT)
-            .get(0);
+    var result =
+        consultantChatEnricher.updateRequiredConsultantChatValues(List.of(response), CONSULTANT);
 
-    assertEquals(FILE_DTO.getType(), result.getChat().getAttachment().getFileType());
-    assertEquals(
-        ATTACHMENT_DTO.getImagePreview(), result.getChat().getAttachment().getImagePreview());
+    assertThat(result).containsExactly(response);
+    assertThat(response.getChat().isMessagesRead()).isTrue();
+    assertThat(response.getLatestMessage()).isEqualTo(Timestamp.valueOf(start));
+    verify(consultantDataFacade).addConsultantDisplayNameToSessionList(List.of(response));
   }
 
-  @Test
-  public void
-      updateRequiredConsultantChatValues_Should_ReturnSessionListWithChatMessagesReadFalse_WhenThereAreUnreadChatMessages() {
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .userRooms(USERS_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
-            Mockito.any(), Mockito.any()))
-        .thenReturn(rocketChatRoomInformation);
-
-    ConsultantSessionResponseDTO result =
-        consultantChatEnricher
-            .updateRequiredConsultantChatValues(
-                singletonList(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE),
-                RC_TOKEN,
-                CONSULTANT)
-            .get(0);
-
-    assertFalse(result.getChat().isMessagesRead());
-  }
-
-  @Test
-  public void
-      updateRequiredConsultantChatValues_Should_ReturnSessionListWithChatMessagesReadTrue_WhenThereAreNoUnreadChatMessages() {
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .userRooms(USERS_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(
-            Mockito.any(), Mockito.any()))
-        .thenReturn(rocketChatRoomInformation);
-
-    ConsultantSessionResponseDTO result =
-        consultantChatEnricher
-            .updateRequiredConsultantChatValues(
-                singletonList(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE),
-                RC_TOKEN,
-                CONSULTANT)
-            .get(0);
-
-    assertTrue(result.getChat().isMessagesRead());
+  private ConsultantSessionResponseDTO responseForRoom(String roomId) {
+    var chat = new UserChatDTO();
+    chat.setGroupId(roomId);
+    return new ConsultantSessionResponseDTO().chat(chat);
   }
 }

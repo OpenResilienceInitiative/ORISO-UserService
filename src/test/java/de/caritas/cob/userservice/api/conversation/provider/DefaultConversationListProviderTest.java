@@ -2,9 +2,7 @@ package de.caritas.cob.userservice.api.conversation.provider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,7 +18,6 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -36,8 +33,7 @@ class DefaultConversationListProviderTest {
 
   @BeforeEach
   void setUp() {
-    when(consultantSessionEnricher.updateRequiredConsultantSessionValues(
-            anyList(), anyString(), any()))
+    when(consultantSessionEnricher.updateRequiredConsultantSessionValues(anyList()))
         .thenAnswer(inv -> inv.getArgument(0));
 
     provider =
@@ -127,19 +123,15 @@ class DefaultConversationListProviderTest {
   }
 
   @Test
-  void buildConversations_Should_CallEnricher_With_CorrectArgs() {
+  void buildConversations_Should_CallEnricher_With_Sessions() {
     List<ConsultantSessionResponseDTO> sessions = new ArrayList<>();
     sessions.add(new ConsultantSessionResponseDTO());
     PageableListRequest request =
         PageableListRequest.builder().offset(0).count(10).rcToken("rc-token-123").build();
     Consultant consultant = new Consultant();
-    ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
-
     provider.buildConversations(request, consultant, sessions);
 
-    verify(consultantSessionEnricher)
-        .updateRequiredConsultantSessionValues(anyList(), tokenCaptor.capture(), any());
-    assertThat(tokenCaptor.getValue()).isEqualTo("rc-token-123");
+    verify(consultantSessionEnricher).updateRequiredConsultantSessionValues(sessions);
   }
 
   @Test

@@ -135,7 +135,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -278,7 +278,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -301,7 +301,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_CHAT_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -321,7 +321,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -339,7 +339,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -360,7 +360,7 @@ public class SessionListFacadeTest {
             SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -378,7 +378,7 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_1, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
@@ -466,7 +466,7 @@ public class SessionListFacadeTest {
   @Test
   public void retrieveChatsForConsultantByChatIds_Should_ReturnGroupSessionList() {
     when(consultantSessionListService.retrieveChatsForConsultantAndChatIds(
-            Mockito.any(), Mockito.any(), Mockito.any()))
+            Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =

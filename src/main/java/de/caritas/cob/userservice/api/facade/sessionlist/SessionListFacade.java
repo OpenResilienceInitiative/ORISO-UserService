@@ -238,8 +238,7 @@ public class SessionListFacade {
   public GroupSessionListResponseDTO retrieveChatsForConsultantByChatIds(
       Consultant consultant, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     List<ConsultantSessionResponseDTO> consultantChatSessions =
-        consultantSessionListService.retrieveChatsForConsultantAndChatIds(
-            consultant, chatIds, rocketChatCredentials.getRocketChatToken());
+        consultantSessionListService.retrieveChatsForConsultantAndChatIds(consultant, chatIds);
     consultantChatSessions.sort(
         comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
@@ -344,7 +343,7 @@ public class SessionListFacade {
 
     List<ConsultantSessionResponseDTO> teamSessions =
         consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            consultant, rcAuthToken, sessionListQueryParameter);
+            consultant, sessionListQueryParameter);
 
     List<ConsultantSessionResponseDTO> teamSessionsSublist = new ArrayList<>();
     if (areMoreConsultantSessionsAvailable(sessionListQueryParameter.getOffset(), teamSessions)) {
