@@ -4,10 +4,12 @@ import de.caritas.cob.userservice.api.model.ConsultantMessageStat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixEventIdentity;
 import java.time.LocalDateTime;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -30,7 +32,21 @@ public class ConsultantMessageStatService {
    * logged and swallowed.
    */
   public void recordMessageSent(String consultantId, Long sessionId) {
+    recordMessageSent(consultantId, sessionId, null);
+  }
+
+  /**
+   * Records a Matrix message once across retries and service replicas when an event id is
+   * available. Legacy callers without an event id retain the historical append-only behaviour.
+   */
+  public void recordMessageSent(String consultantId, Long sessionId, String matrixEventId) {
     try {
+      String sourceEventHash = MatrixEventIdentity.opaqueHash(matrixEventId);
+      if (sourceEventHash != null
+          && consultantMessageStatRepository.existsBySourceEventHash(sourceEventHash)) {
+        return;
+      }
+
       Long tenantId = null;
       Long agencyId = null;
       if (sessionId != null) {
@@ -47,9 +63,16 @@ public class ConsultantMessageStatService {
               .tenantId(tenantId)
               .agencyId(agencyId)
               .sourceSessionId(sessionId)
+              .sourceEventHash(sourceEventHash)
               .sentDate(LocalDateTime.now())
               .build();
-      consultantMessageStatRepository.save(stat);
+      if (sourceEventHash == null) {
+        consultantMessageStatRepository.save(stat);
+      } else {
+        consultantMessageStatRepository.saveAndFlush(stat);
+      }
+    } catch (DataIntegrityViolationException duplicate) {
+      log.debug("Consultant message statistic already recorded for Matrix event");
     } catch (Exception e) {
       log.error("Failed to record consultant message-sent statistic", e);
     }

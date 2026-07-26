@@ -917,7 +917,8 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), anyBoolean(), any());
-    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+    verify(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 10L, "$evt-direct");
     verify(consultantRepository, times(1))
         .findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID);
   }
@@ -953,7 +954,7 @@ class MatrixEventListenerServiceTest {
             any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
-    verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
+    verify(consultantMessageStatService, never()).recordMessageSent(any(), any(), any());
   }
 
   @Test
@@ -1212,7 +1213,8 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
-    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
+    verify(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 33L, "$evt-live-or-push-down");
   }
 
   @Test

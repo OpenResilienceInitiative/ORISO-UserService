@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.ConsultantMessageStat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixEventIdentity;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,7 @@ class ConsultantMessageStatServiceTest {
 
   private static final String CONSULTANT_ID = "consultant-1";
   private static final String CONSULTANT_HMAC = "hmac-of-consultant-1";
+  private static final String MATRIX_EVENT_ID = "$event:matrix.oriso";
 
   @Mock private ConsultantMessageStatRepository consultantMessageStatRepository;
   @Mock private SessionRepository sessionRepository;
@@ -57,6 +59,20 @@ class ConsultantMessageStatServiceTest {
     assertThat(saved.getAgencyId()).isEqualTo(9L);
     assertThat(saved.getSourceSessionId()).isEqualTo(100L);
     assertThat(saved.getSentDate()).isNotNull();
+  }
+
+  @Test
+  void recordMessageSentShouldPersistOpaqueEventHashForDeduplication() {
+    when(consultantIdentityHasher.hash(CONSULTANT_ID)).thenReturn(CONSULTANT_HMAC);
+    when(sessionRepository.findById(100L)).thenReturn(Optional.empty());
+
+    service.recordMessageSent(CONSULTANT_ID, 100L, MATRIX_EVENT_ID);
+
+    var captor = ArgumentCaptor.forClass(ConsultantMessageStat.class);
+    verify(consultantMessageStatRepository).saveAndFlush(captor.capture());
+    assertThat(captor.getValue().getSourceEventHash())
+        .isEqualTo(MatrixEventIdentity.opaqueHash(MATRIX_EVENT_ID))
+        .doesNotContain(MATRIX_EVENT_ID);
   }
 
   @Test

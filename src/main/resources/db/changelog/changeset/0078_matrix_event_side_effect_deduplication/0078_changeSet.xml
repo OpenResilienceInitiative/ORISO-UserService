@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+  <changeSet id="0078-matrix-event-side-effect-deduplication" author="codex">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="consultant_message_stat" />
+      <not>
+        <columnExists tableName="consultant_message_stat" columnName="source_event_hash" />
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0078_matrix_event_side_effect_deduplication/migrate.sql"
+      relativeToChangelogFile="false" />
+    <rollback>
+      <dropUniqueConstraint
+        tableName="consultant_message_stat"
+        constraintName="uk_consultant_message_stat_source_event_hash" />
+      <dropColumn tableName="consultant_message_stat" columnName="source_event_hash" />
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

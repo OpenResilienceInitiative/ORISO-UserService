@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,7 +28,12 @@ import lombok.Setter;
  */
 @Entity
 @Builder
-@Table(name = "consultant_message_stat")
+@Table(
+    name = "consultant_message_stat",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uk_consultant_message_stat_source_event_hash",
+            columnNames = "source_event_hash"))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -49,6 +55,9 @@ public class ConsultantMessageStat {
 
   @Column(name = "source_session_id")
   private Long sourceSessionId;
+
+  @Column(name = "source_event_hash", length = 64)
+  private String sourceEventHash;
 
   @Column(name = "sent_date", nullable = false)
   private LocalDateTime sentDate;

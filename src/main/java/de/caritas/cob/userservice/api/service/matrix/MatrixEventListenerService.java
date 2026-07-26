@@ -494,7 +494,7 @@ public class MatrixEventListenerService {
                 }
                 if (senderDomainUserId != null && senderIsConsultant) {
                   consultantMessageStatService.recordMessageSent(
-                      senderDomainUserId, mappedSessionId);
+                      senderDomainUserId, mappedSessionId, privacyEnvelope.getMessageId());
                 }
               } catch (Exception e) {
                 log.error("❌ Failed to create event notification from room", e);

@@ -1128,7 +1128,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_envelopeOverloadDelegatesAndCreatesNotification() {
+  void createMessageNotificationFromRoom_envelopeUsesOpaqueMatrixEventDeduplicationKey() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1143,12 +1143,18 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", false, envelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getEventType()).isEqualTo("message.new");
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    EventNotification persisted = eventCaptor.getValue();
+    assertThat(persisted.getEventType()).isEqualTo("message.new");
+    assertThat(persisted.getDeduplicationKey())
+        .startsWith("matrix-event:")
+        .doesNotContain("msg-1")
+        .hasSize(77);
+    verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_envelopeOverloadDelegatesAndCreatesNotification() {
+  void createThreadReplyNotificationFromRoom_envelopeUsesOpaqueMatrixEventDeduplicationKey() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -1163,8 +1169,14 @@ class EventNotificationServiceTest {
     eventNotificationService.createThreadReplyNotificationFromRoom(
         "rc-group-1", "sender", "thread-root-1", false, envelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getEventType()).isEqualTo("thread.reply.new");
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    EventNotification persisted = eventCaptor.getValue();
+    assertThat(persisted.getEventType()).isEqualTo("thread.reply.new");
+    assertThat(persisted.getDeduplicationKey())
+        .startsWith("matrix-event:")
+        .doesNotContain("msg-2")
+        .hasSize(77);
+    verify(eventNotificationRepository, never()).save(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -1188,7 +1200,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", null, false, false, null, imageEnvelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("image");
   }
 
@@ -1209,7 +1221,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", null, false, false, null, fileEnvelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("file");
   }
 
@@ -1230,7 +1242,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", null, false, false, null, audioEnvelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("audio message");
   }
 
@@ -1251,7 +1263,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", null, false, false, null, videoEnvelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("video message");
   }
 
@@ -1301,7 +1313,7 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", null, false, false, null, envelope);
 
-    verify(eventNotificationRepository).save(eventCaptor.capture());
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
     assertThat(text).contains("evt-123");
   }

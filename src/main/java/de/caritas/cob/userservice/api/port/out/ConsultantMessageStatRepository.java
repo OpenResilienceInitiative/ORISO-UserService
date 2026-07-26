@@ -2,8 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.ConsultantMessageStat;
 import java.time.LocalDateTime;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 
 /**
@@ -13,7 +13,9 @@ import org.springframework.data.repository.query.Param;
  * ConsultantStatisticsRepository} aggregates and to keep the tenant predicate explicit.
  */
 public interface ConsultantMessageStatRepository
-    extends CrudRepository<ConsultantMessageStat, Long> {
+    extends JpaRepository<ConsultantMessageStat, Long> {
+
+  boolean existsBySourceEventHash(String sourceEventHash);
 
   @Query(
       nativeQuery = true,

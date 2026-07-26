@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixEventIdentity;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -384,7 +385,8 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, null)) {
-      createEvent(
+      createMatrixMessageEvent(
+          envelope,
           session.getUser().getUserId(),
           "message.new",
           CATEGORY_MESSAGE,
@@ -400,7 +402,8 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, null)) {
-      createEvent(
+      createMatrixMessageEvent(
+          envelope,
           session.getConsultant().getId(),
           "message.new",
           CATEGORY_MESSAGE,
@@ -495,7 +498,8 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId)) {
-      createEvent(
+      createMatrixMessageEvent(
+          envelope,
           session.getUser().getUserId(),
           "thread.reply.new",
           CATEGORY_MESSAGE,
@@ -511,7 +515,8 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId)) {
-      createEvent(
+      createMatrixMessageEvent(
+          envelope,
           session.getConsultant().getId(),
           "thread.reply.new",
           CATEGORY_MESSAGE,
@@ -638,6 +643,45 @@ public class EventNotificationService {
     // Real-time backbone: nudge the recipient's client to refresh the Activity Timeline now
     // instead of on the next 15s poll. Best-effort; carries only the recipient id (no content).
     liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
+  }
+
+  private void createMatrixMessageEvent(
+      PrivacyEnvelope envelope,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    String deduplicationKey =
+        envelope == null ? null : MatrixEventIdentity.deduplicationKey(envelope.getMessageId());
+    if (deduplicationKey == null) {
+      createEvent(
+          recipientUserId,
+          eventType,
+          category,
+          title,
+          text,
+          params,
+          actionPath,
+          sourceSessionId,
+          tenantId);
+      return;
+    }
+    createEventOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */

@@ -122,6 +122,8 @@
     file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
   <include
     file="db/changelog/changeset/0077_scheduled_task_claim/0077_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0078_matrix_event_side_effect_deduplication/0078_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
