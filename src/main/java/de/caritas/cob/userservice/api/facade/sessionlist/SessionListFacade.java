@@ -215,6 +215,26 @@ public class SessionListFacade {
     return new GroupSessionListResponseDTO().sessions(sessions);
   }
 
+  /**
+   * Resolves a cross-tenant session the consultant is directly assigned to (#774 follow-up). Used
+   * as the open-path fallback after a cross-tenant live chat is accepted, so routing to the
+   * accepted conversation resolves it instead of 204-ing.
+   */
+  public GroupSessionListResponseDTO retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+      Consultant consultant, List<Long> sessionIds) {
+    List<ConsultantSessionResponseDTO> consultantSessions =
+        consultantSessionListService.retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+            consultant, sessionIds);
+
+    SessionMapper sessionMapper = new SessionMapper();
+    var sessions =
+        consultantSessions.stream()
+            .map(sessionMapper::toGroupSessionResponse)
+            .collect(Collectors.toList());
+
+    return new GroupSessionListResponseDTO().sessions(sessions);
+  }
+
   public GroupSessionListResponseDTO retrieveChatsForConsultantByChatIds(
       Consultant consultant, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     List<ConsultantSessionResponseDTO> consultantChatSessions =

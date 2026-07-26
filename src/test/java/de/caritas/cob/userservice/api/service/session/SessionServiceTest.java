@@ -1212,6 +1212,36 @@ class SessionServiceTest {
 
   @Test
   void
+      getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnSession_When_ConsultantIsAssignedAdvisor() {
+    Consultant consultant = mock(Consultant.class);
+
+    // Only the directly-assigned advisor may resolve a cross-tenant session this way.
+    Session spied = org.mockito.Mockito.spy(easyRandom.nextObject(Session.class));
+    when(sessionRepository.findAllById(Set.of(103510L))).thenReturn(List.of(spied));
+    org.mockito.Mockito.doReturn(true).when(spied).isAdvisedBy(consultant);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnEmpty_When_ConsultantIsNotAssigned() {
+    Consultant consultant = mock(Consultant.class);
+    Session spied = org.mockito.Mockito.spy(easyRandom.nextObject(Session.class));
+    when(sessionRepository.findAllById(Set.of(103510L))).thenReturn(List.of(spied));
+    org.mockito.Mockito.doReturn(false).when(spied).isAdvisedBy(consultant);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void
       getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEmptyAndNotQuery_When_ConsultantHasNoTopics() {
     Consultant consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn(CONSULTANT_ID);
