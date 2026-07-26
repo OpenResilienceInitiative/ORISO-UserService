@@ -25,23 +25,22 @@ records the staged reruns used to expose their underlying repair clusters. It
 does not invent a more specific original exception where the first report no
 longer contained one.
 
-After repairing those clusters, the last fully completed broad-suite baseline
-was:
+After repairing those clusters, the current candidate completed both broad
+suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,838 | 0 | 0 | 7 | `./mvnw -B test` |
-| Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
-| MariaDB schema contracts | 7 | 0 | 0 | 0 | required fresh MariaDB job |
+| Unit | 3,841 | 0 | 0 | 7 | `./mvnw -B test` |
+| Integration + contract + E2E | 961 | 0 | 0 | 14 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 9 | 0 | 0 | 0 | required Redis job |
 
-The current candidate adds focused scheduler and Matrix browser-login unit and
+The candidate includes focused scheduler and Matrix browser-login unit and
 replica tests. Those focused tests pass, including the scheduler proof on fresh
-MariaDB 10.11 and the browser-login proof on Redis 7, but no new aggregate
-broad-suite totals may be claimed until both broad suites complete serially.
-Two attempted broad runs overlapped and were terminated after their Surefire
-JVMs continued beyond the tool output; partial reports from those attempts are
-not completion evidence.
+MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
+attempts remain excluded from evidence; the totals above come only from the
+later serial Maven completions. The fresh integration report directory contains
+96 XML suites whose attributes independently sum to 961/0/0/14.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -52,9 +51,12 @@ is skipped or quarantined.
 suite, starts from a clean build, requires at least 900 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The three environment-gated cases are not quarantined: Redis has
-its own required service-container job, and both MariaDB cases run in a required
-fresh-MariaDB job on branch, pull-request and publish workflows.
+were removed. The fourteen environment-gated integration tests are not
+quarantined: all nine Redis tests pass in their required Redis 7
+service-container job. The five MariaDB tests skipped without an external
+database are covered by the required fresh-MariaDB 10.11 job; its seven selected
+schema and replica contract classes execute nine tests on branch, pull-request
+and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
