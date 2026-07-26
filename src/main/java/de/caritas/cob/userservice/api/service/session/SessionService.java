@@ -678,6 +678,33 @@ public class SessionService {
   }
 
   /**
+   * Loads sessions the consultant is <b>directly assigned to</b> by id, bypassing the tenant
+   * filter.
+   *
+   * <p>#774 follow-up: once a consultant accepts a cross-tenant anonymous Live Chat, the session
+   * becomes IN_PROGRESS and keeps the asker's tenant. The frontend then re-reads it by id to route
+   * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
+   * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
+   * chat never opens. This scoped fallback resolves such a session across tenants, but only when
+   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
+   * never widens access by agency or topic, and it does not change the session's tenant ownership
+   * (the asker keeps seeing their own chat).
+   */
+  public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
+      Consultant consultant, Set<Long> sessionIds) {
+    if (!isNotEmpty(sessionIds)) {
+      return emptyList();
+    }
+    var sessions =
+        runCrossTenant(
+            () ->
+                StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
+                    .filter(session -> session.isAdvisedBy(consultant))
+                    .collect(Collectors.toList()));
+    return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
    * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
    * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
    * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
