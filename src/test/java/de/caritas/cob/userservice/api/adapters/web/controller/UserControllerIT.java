@@ -8,6 +8,7 @@ import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.*;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.*;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -68,6 +69,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.servlet.http.Cookie;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -446,9 +448,17 @@ class UserControllerIT {
         .thenThrow(new RuntimeException("Keycloak 401"));
 
     /* when */
-    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
-        /* then */
-        .andExpect(status().isNoContent());
+    try (var logCaptor = LogbackCaptor.forClass(UserController.class)) {
+      mvc.perform(
+              get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+          /* then */
+          .andExpect(status().isNoContent());
+
+      assertEquals(1, logCaptor.events().size());
+      assertNull(logCaptor.events().getFirst().getThrowableProxy());
+      assertTrue(
+          logCaptor.events().getFirst().getFormattedMessage().contains("cause=RuntimeException"));
+    }
   }
 
   /** Method: registerUser */

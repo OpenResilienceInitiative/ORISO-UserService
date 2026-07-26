@@ -161,9 +161,9 @@ public class UserController implements UsersApi {
       usernameAvailable = identityClient.isUsernameAvailable(username);
     } catch (RuntimeException exception) {
       log.warn(
-          "Could not check username availability for {}. Treating it as available so registration is not blocked.",
+          "Could not check username availability for {}. Treating it as available so registration is not blocked. cause={}",
           username,
-          exception);
+          exception.getClass().getSimpleName());
       usernameAvailable = true;
     }
     return usernameAvailable
