@@ -68,8 +68,30 @@ public class InactiveAccountNotificationAuditLog implements TenantAware {
   @Column(name = "recipient_email", nullable = false, length = 255)
   private String recipientEmail;
 
+  @Column(name = "email_idempotency_key", length = 128)
+  private String emailIdempotencyKey;
+
+  @Column(name = "email_template", length = 64)
+  private String emailTemplate;
+
+  @Column(name = "email_subject", length = 255)
+  private String emailSubject;
+
+  @Column(name = "email_body", columnDefinition = "text")
+  private String emailBody;
+
+  @Column(name = "email_url", length = 2048)
+  private String emailUrl;
+
   @Column(name = "email_dispatched", nullable = false, columnDefinition = "tinyint")
   private boolean emailDispatched;
+
+  @Column(name = "email_dispatch_started_at", columnDefinition = "datetime")
+  private LocalDateTime emailDispatchStartedAt;
+
+  @Builder.Default
+  @Column(name = "email_dispatch_attempt_count", nullable = false)
+  private int emailDispatchAttemptCount = 0;
 
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
   private LocalDateTime createDate;

@@ -29,6 +29,53 @@ def source_has_process_local_state(source: Path) -> bool:
 
 
 class ReplicaSafetyContractTest(unittest.TestCase):
+    def test_inactive_account_recovery_remains_provider_gated_and_migrated(self):
+        application_properties = (
+            ROOT / "src/main/resources/application.properties"
+        ).read_text()
+        mail_contract = (ROOT / "services/mailservice.yaml").read_text()
+        master_changelog = (
+            ROOT / "src/main/resources/db/changelog/userservice-master.xml"
+        ).read_text()
+        migration = (
+            ROOT
+            / "src/main/resources/db/changelog/changeset/"
+            "0079_inactive_account_notification_recovery/migrate.sql"
+        ).read_text()
+        replica_test = (
+            ROOT
+            / "src/test/java/de/caritas/cob/userservice/api/workflow/"
+            "inactiveaccountnotification/service/"
+            "InactiveAccountNotificationServiceReplicaIT.java"
+        ).read_text()
+        catalog = json.loads(CATALOG.read_text())
+        decision = next(
+            entry["decision"]
+            for entry in catalog["components"]
+            if entry["id"] == "inactive-account-notification"
+        )
+
+        self.assertIn(
+            "inactive.account.notification.idempotent-recovery.enabled=false",
+            application_properties,
+        )
+        self.assertIn("Idempotency-Key", mail_contract)
+        self.assertIn(
+            "0079_inactive_account_notification_recovery/0079_changeSet.xml",
+            master_changelog,
+        )
+        self.assertIn("email_dispatch_started_at", migration)
+        self.assertIn("email_dispatch_attempt_count", migration)
+        self.assertIn("email_idempotency_key", migration)
+        self.assertIn("email_body", migration)
+        self.assertIn(
+            "acceptedMailIsRecoveredAfterCrashWithSameOpaqueIdempotencyKey",
+            replica_test,
+        )
+        self.assertIn("Recovery is disabled by default", decision)
+        self.assertIn("deployed MailService", decision)
+        self.assertIn("keep one replica", decision)
+
     def test_every_scheduled_component_has_a_decision_and_runtime_signal(self):
         catalog = json.loads(CATALOG.read_text())
         self.assertEqual(

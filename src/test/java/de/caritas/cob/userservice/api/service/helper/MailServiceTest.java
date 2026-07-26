@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.helper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -50,7 +52,18 @@ public class MailServiceTest {
 
     boolean accepted = mailService.sendEmailNotification(new MailsDTO());
 
-    verify(mailsControllerApi, times(1)).sendMails(any());
+    verify(mailsControllerApi, times(1)).sendMails(any(), isNull());
+    assertThat(accepted).isTrue();
+  }
+
+  @Test
+  void sendEmailNotificationWithIdempotencyKey_ShouldForwardOpaqueKeyToMailService() {
+    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
+    var mails = new MailsDTO();
+
+    boolean accepted = mailService.sendEmailNotification(mails, "inactive-account-opaque-key");
+
+    verify(mailsControllerApi).sendMails(eq(mails), eq("inactive-account-opaque-key"));
     assertThat(accepted).isTrue();
   }
 
@@ -58,7 +71,7 @@ public class MailServiceTest {
   public void
       sendEmailNotification_ShouldLogException_WhenExceptionOccursWhileCallingTheMailService() {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
-    doThrow(new RuntimeException()).when(this.mailsControllerApi).sendMails(any());
+    doThrow(new RuntimeException()).when(this.mailsControllerApi).sendMails(any(), isNull());
 
     try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
       boolean accepted = mailService.sendEmailNotification(new MailsDTO());

@@ -2,6 +2,9 @@ package de.caritas.cob.userservice.api.workflow.inactiveaccountnotification.serv
 
 import de.caritas.cob.userservice.api.model.InactiveAccountNotificationAuditLog;
 import de.caritas.cob.userservice.api.port.out.InactiveAccountNotificationAuditLogRepository;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,10 +23,37 @@ public class InactiveAccountNotificationClaimWriter {
     return auditLogRepository.saveAndFlush(auditLog);
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+  public Optional<InactiveAccountNotificationAuditLog> findByFingerprint(String fingerprint) {
+    return auditLogRepository.findByNotificationFingerprint(fingerprint);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Optional<Integer> tryStartEmailDispatch(
+      Long auditLogId, LocalDateTime now, Duration recoveryAfter) {
+    if (recoveryAfter == null || recoveryAfter.isNegative()) {
+      throw new IllegalArgumentException("recoveryAfter must not be negative");
+    }
+    var auditLog = auditLogRepository.findByIdForUpdate(auditLogId);
+    if (auditLog.isEmpty() || auditLog.get().isEmailDispatched()) {
+      return Optional.empty();
+    }
+    var claimedAuditLog = auditLog.get();
+    var startedAt = claimedAuditLog.getEmailDispatchStartedAt();
+    if (startedAt != null && startedAt.plus(recoveryAfter).isAfter(now)) {
+      return Optional.empty();
+    }
+    claimedAuditLog.setEmailDispatchStartedAt(now);
+    claimedAuditLog.setEmailDispatchAttemptCount(
+        claimedAuditLog.getEmailDispatchAttemptCount() + 1);
+    auditLogRepository.saveAndFlush(claimedAuditLog);
+    return Optional.of(claimedAuditLog.getEmailDispatchAttemptCount());
+  }
+
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markEmailDispatched(Long auditLogId) {
     auditLogRepository
-        .findById(auditLogId)
+        .findByIdForUpdate(auditLogId)
         .ifPresent(
             auditLog -> {
               auditLog.setEmailDispatched(true);

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+  <changeSet id="0079-inactive-account-notification-recovery" author="codex">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="inactive_account_notification_audit_log" />
+      <not>
+        <columnExists
+          tableName="inactive_account_notification_audit_log"
+          columnName="email_dispatch_started_at" />
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0079_inactive_account_notification_recovery/migrate.sql"
+      relativeToChangelogFile="false" />
+    <rollback>
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_url" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_body" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_subject" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_template" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_idempotency_key" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_dispatch_attempt_count" />
+      <dropColumn
+        tableName="inactive_account_notification_audit_log"
+        columnName="email_dispatch_started_at" />
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

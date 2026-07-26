@@ -12,6 +12,18 @@ paths:
         - mails-controller
       summary: Send e-mails via the mail service
       operationId: sendMails
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: >-
+            Opaque stable key for replay-safe delivery. A compliant MailService
+            must accept repeated requests with the same key without sending the
+            same logical mail more than once.
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
       requestBody:
         content:
           'application/json':

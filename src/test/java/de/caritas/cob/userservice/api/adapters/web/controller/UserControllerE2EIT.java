@@ -1736,7 +1736,8 @@ class UserControllerE2EIT {
                   .accept(MediaType.APPLICATION_JSON))
           .andExpect(status().isOk());
 
-      Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+      Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1))
+          .sendMails(any(), Mockito.isNull());
     } finally {
       sessionRepository.deleteById(session.getId());
       userRepository.deleteById(session.getUser().getUserId());

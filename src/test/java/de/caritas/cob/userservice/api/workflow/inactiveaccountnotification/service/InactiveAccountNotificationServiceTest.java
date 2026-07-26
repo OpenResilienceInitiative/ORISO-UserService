@@ -4,6 +4,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Optional;
@@ -59,6 +61,8 @@ class InactiveAccountNotificationServiceTest {
   void setUp() {
     setField(service, "inactivityThresholdDays", 365L);
     setField(service, "emailDispatchEnabled", false);
+    setField(service, "idempotentRecoveryEnabled", false);
+    setField(service, "emailDispatchRecoveryAfter", Duration.ofMinutes(5));
     setField(service, "appBaseUrl", "https://app.oriso.org");
 
     recipientAdmin =
@@ -82,6 +86,7 @@ class InactiveAccountNotificationServiceTest {
               auditLog.setId(1L);
               return auditLog;
             });
+    when(claimWriter.tryStartEmailDispatch(any(), any(), any())).thenReturn(Optional.of(1));
   }
 
   @Test
@@ -99,7 +104,7 @@ class InactiveAccountNotificationServiceTest {
     service.scanAndNotifyInactiveAccounts();
 
     verify(claimWriter).claim(any());
-    verify(mailService, never()).sendEmailNotification(any());
+    verify(mailService, never()).sendEmailNotification(any(), anyString());
   }
 
   @Test
@@ -206,7 +211,34 @@ class InactiveAccountNotificationServiceTest {
     service.scanAndNotifyInactiveAccounts();
 
     verify(claimWriter).claim(any());
-    verify(mailService, never()).sendEmailNotification(any());
+    verify(mailService, never()).sendEmailNotification(any(), anyString());
+  }
+
+  @Test
+  void scanAndNotifyInactiveAccounts_Should_notRecoverHistoricalClaimWithoutIdempotencyKey() {
+    setField(service, "emailDispatchEnabled", true);
+    setField(service, "idempotentRecoveryEnabled", true);
+    User user = new User("user-1", null, "user1", "u1@example.com", true);
+    user.setTenantId(1L);
+    LocalDateTime now = LocalDateTime.now();
+    when(userRepository.findAllByDeleteDateIsNull()).thenReturn(singletonList(user));
+    when(askerActivityCalculator.lastActivity(user)).thenReturn(Optional.of(now.minusDays(400)));
+    doThrow(new DataIntegrityViolationException("duplicate fingerprint"))
+        .when(claimWriter)
+        .claim(any());
+    when(claimWriter.findByFingerprint(anyString()))
+        .thenReturn(
+            Optional.of(
+                InactiveAccountNotificationAuditLog.builder()
+                    .id(99L)
+                    .notificationFingerprint("historical")
+                    .emailDispatched(false)
+                    .build()));
+
+    service.scanAndNotifyInactiveAccounts();
+
+    verify(claimWriter, never()).tryStartEmailDispatch(any(), any(), any());
+    verify(mailService, never()).sendEmailNotification(any(), anyString());
   }
 
   @Test
@@ -237,7 +269,7 @@ class InactiveAccountNotificationServiceTest {
   @Test
   void scanAndNotifyInactiveAccounts_Should_dispatchEmail_When_emailDispatchEnabled() {
     setField(service, "emailDispatchEnabled", true);
-    when(mailService.sendEmailNotification(any())).thenReturn(true);
+    when(mailService.sendEmailNotification(any(), anyString())).thenReturn(true);
     User user = new User("user-1", null, "user1", "u1@example.com", true);
     user.setTenantId(1L);
     LocalDateTime now = LocalDateTime.now();
@@ -247,10 +279,12 @@ class InactiveAccountNotificationServiceTest {
     service.scanAndNotifyInactiveAccounts();
 
     ArgumentCaptor<MailsDTO> mailCaptor = ArgumentCaptor.forClass(MailsDTO.class);
-    verify(mailService).sendEmailNotification(mailCaptor.capture());
+    ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(mailService).sendEmailNotification(mailCaptor.capture(), keyCaptor.capture());
     assertThat(mailCaptor.getValue().getMails()).hasSize(1);
     assertThat(mailCaptor.getValue().getMails().get(0).getEmail())
         .isEqualTo(recipientAdmin.getEmail());
+    assertThat(keyCaptor.getValue()).matches("inactive-account-[0-9a-f]{64}");
     ArgumentCaptor<InactiveAccountNotificationAuditLog> auditCaptor =
         ArgumentCaptor.forClass(InactiveAccountNotificationAuditLog.class);
     verify(claimWriter).claim(auditCaptor.capture());
@@ -261,7 +295,7 @@ class InactiveAccountNotificationServiceTest {
   @Test
   void scanAndNotifyInactiveAccounts_Should_keepAuditUndispatched_When_mailTransportRejects() {
     setField(service, "emailDispatchEnabled", true);
-    when(mailService.sendEmailNotification(any())).thenReturn(false);
+    when(mailService.sendEmailNotification(any(), anyString())).thenReturn(false);
     User user = new User("user-1", null, "user1", "u1@example.com", true);
     user.setTenantId(1L);
     LocalDateTime now = LocalDateTime.now();
@@ -270,7 +304,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(mailService).sendEmailNotification(any());
+    verify(mailService).sendEmailNotification(any(), anyString());
     verify(claimWriter).claim(any());
     verify(claimWriter, never()).markEmailDispatched(any());
   }
@@ -285,7 +319,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(mailService, never()).sendEmailNotification(any());
+    verify(mailService, never()).sendEmailNotification(any(), anyString());
     ArgumentCaptor<InactiveAccountNotificationAuditLog> auditCaptor =
         ArgumentCaptor.forClass(InactiveAccountNotificationAuditLog.class);
     verify(claimWriter).claim(auditCaptor.capture());

@@ -124,13 +124,24 @@ is committed before the external mail call, so the losing instance performs no
 mail call and no longer needs a separate existence query. MailService reports
 whether it accepted the request; only accepted requests set
 `emailDispatched=true`, while rejected requests remain auditable as
-undispatched.
+undispatched. Every attempt now carries a deterministic opaque
+`Idempotency-Key`, while the persisted audit row owns the recipient and message
+payload used for all replays. A pessimistic row lock records the attempt start
+and count before the external call, preventing normal concurrent dispatch.
+Audit rows created before this protocol have no persisted key or payload and
+are deliberately ineligible for automatic recovery.
 
-This is an at-most-once concurrency guarantee, not a crash-recovery guarantee.
-A process can still stop after MailService accepts the request but before the
-audit update. Automatic replay therefore requires a provider idempotency key or
-an outbox/lease protocol that can reconcile that ambiguous state. The global
-replica limit remains one.
+`InactiveAccountNotificationServiceReplicaIT` also simulates a process stop
+after MailService accepts the request but before the audit update. With
+idempotent recovery explicitly enabled, the stale undispatched row is retried
+with exactly the same key and payload and then completed. Recovery is disabled
+by default (`inactive.account.notification.idempotent-recovery.enabled=false`)
+and must not be enabled until the deployed MailService proves that repeated
+requests with the same key are accepted while producing one physical email.
+The UserService test uses a conforming fake provider; it is not evidence about
+the deployed provider. Until that provider conformance and runtime replay proof
+exist, this remains a staged caller-side contract and the global replica limit
+remains one.
 
 The hourly enquiry-notification scheduler now acquires a global, durable
 `scheduled_task_claim` before reading sessions, agencies or consultants. Its

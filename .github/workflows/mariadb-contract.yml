@@ -38,5 +38,5 @@ jobs:
     - name: Verify real MariaDB schema contracts
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
-        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,ConsultantMessageStatServiceMariaDbReplicaIT
+        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,ConsultantMessageStatServiceMariaDbReplicaIT,InactiveAccountNotificationServiceReplicaIT
         integration-test

@@ -116,6 +116,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("OrganizerMariaDbReplicaIT", reusable)
         self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("ConsultantMessageStatServiceMariaDbReplicaIT", reusable)
+        self.assertIn("InactiveAccountNotificationServiceReplicaIT", reusable)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (

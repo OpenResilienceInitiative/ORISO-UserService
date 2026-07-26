@@ -25,7 +25,7 @@ public class TestMailsControllerApi extends MailsControllerApi {
   }
 
   @Override
-  public void sendMails(MailsDTO mailsDTO) {
+  public void sendMails(MailsDTO mailsDTO, String idempotencyKey) {
     var size = mailsDTO.getMails().size();
     log.info("Sending {} emails", size);
     if (size > 0) {
@@ -35,7 +35,7 @@ public class TestMailsControllerApi extends MailsControllerApi {
   }
 
   @Override
-  public ResponseEntity<Void> sendMailsWithHttpInfo(MailsDTO mailsDTO) {
+  public ResponseEntity<Void> sendMailsWithHttpInfo(MailsDTO mailsDTO, String idempotencyKey) {
     return ResponseEntity.ok().build();
   }
 }

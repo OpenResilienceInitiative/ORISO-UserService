@@ -28,10 +28,21 @@ public class MailService {
    * @return whether MailService accepted the request
    */
   public boolean sendEmailNotification(MailsDTO mailsDTO) {
+    return sendEmailNotification(mailsDTO, null);
+  }
+
+  /**
+   * Send an email notification with an optional provider idempotency key.
+   *
+   * @param mailsDTO the transfer object to be handled in MailService
+   * @param idempotencyKey opaque stable key for replay-safe provider delivery
+   * @return whether MailService accepted the request
+   */
+  public boolean sendEmailNotification(MailsDTO mailsDTO, String idempotencyKey) {
     MailsControllerApi controllerApi = mailServiceApiControllerFactory.createControllerApi();
     addSecurityHeaders(controllerApi);
     try {
-      controllerApi.sendMails(mailsDTO);
+      controllerApi.sendMails(mailsDTO, idempotencyKey);
       return true;
     } catch (Exception e) {
       log.error("MailServiceHelper error: Error while calling the MailService", e);

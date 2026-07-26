@@ -130,7 +130,7 @@
       "kind": "scheduler",
       "owner": "notification",
       "risk": "duplicate-side-effect",
-      "decision": "A unique pre-dispatch claim and InactiveAccountNotificationServiceReplicaIT prove at most one email under concurrent instances. Mail rejection remains auditable as undispatched; keep one replica until crash recovery has an idempotent delivery contract.",
+      "decision": "A unique pre-dispatch claim and database-locked attempt state prove one call under normal concurrent instances. Every attempt uses the same opaque idempotency key and the replica test proves crash replay against a conforming fake provider. Recovery is disabled by default; keep one replica until the deployed MailService proves same-key deduplication and runtime replay succeeds.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
