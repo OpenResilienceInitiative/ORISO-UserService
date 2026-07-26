@@ -46,6 +46,10 @@ public class HandshakeService {
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
   private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
+
+  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClientConfig
+      identityClientConfig;
+
   private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
 
   private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
@@ -234,6 +238,18 @@ public class HandshakeService {
         || !roles.contains(
             de.caritas.cob.userservice.api.config.auth.UserRole.GLOBAL_SUPPORT_ADMIN.getValue())) {
       return;
+    }
+    // A role policy that denies OTP for support admins makes this gate unsatisfiable —
+    // the same deadlock class fixed for platform admins on pre-dev (adadd471). Fail
+    // closed (privileged access without 2FA is never granted), but name it as a
+    // deployment misconfiguration instead of telling the admin to do the impossible.
+    if (!identityClientConfig.isOtpAllowed(roles)) {
+      throw new ForbiddenException(
+          String.format(
+              "Support access is unavailable: the OTP policy denies OTP for the support-admin role,"
+                  + " so support admin %s cannot satisfy the mandatory 2FA gate."
+                  + " This is a deployment configuration error (identity.otp-allowed-*).",
+              initiator.getUserId()));
     }
     boolean otpActive;
     try {

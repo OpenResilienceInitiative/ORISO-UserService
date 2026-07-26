@@ -40,6 +40,7 @@ class HandshakeServiceTest {
   @Mock private KeycloakAuthClient keycloakAuthClient;
   @Mock private HandshakeCompletionHandler completionHandler;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig;
 
   private HandshakeService handshakeService;
 
@@ -51,10 +52,12 @@ class HandshakeServiceTest {
             handshakeAuditEventRepository,
             keycloakAuthClient,
             identityClient,
+            identityClientConfig,
             List.of(completionHandler));
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
     ReflectionTestUtils.setField(handshakeService, "maxConfirmAttempts", 5);
     ReflectionTestUtils.setField(handshakeService, "sweepBatchSize", 200);
+    org.mockito.Mockito.lenient().when(identityClientConfig.isOtpAllowed(any())).thenReturn(true);
     org.mockito.Mockito.lenient()
         .when(identityClient.getOtpCredential(anyString()))
         .thenReturn(new de.caritas.cob.userservice.api.model.OtpInfoDTO().otpSetup(true));
@@ -139,6 +142,22 @@ class HandshakeServiceTest {
         .hasMessageContaining("2FA");
 
     verify(keycloakAuthClient, never()).verifyWithOtp(anyString(), anyString(), anyString());
+    verify(handshakeSessionRepository, never()).save(any());
+  }
+
+  @Test
+  void initiate_Should_ReportConfigurationError_When_OtpPolicyDeniesOtpForSupportAdmins() {
+    // Deadlock lesson from pre-dev adadd471 (platform admins locked behind an
+    // unsatisfiable 2FA gate): if the OTP role policy denies OTP for the support
+    // role, the admin can never enroll. Still fail closed — but say it is a
+    // deployment misconfiguration instead of demanding the impossible.
+    when(identityClientConfig.isOtpAllowed(any())).thenReturn(false);
+
+    assertThatThrownBy(() -> handshakeService.initiate(supportAdmin(), supportRequest()))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessageContaining("OTP policy");
+
+    verify(identityClient, never()).getOtpCredential(anyString());
     verify(handshakeSessionRepository, never()).save(any());
   }
 
