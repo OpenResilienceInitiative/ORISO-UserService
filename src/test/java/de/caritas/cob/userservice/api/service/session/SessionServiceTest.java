@@ -22,7 +22,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ID
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ROLES;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_MATRIX_ID;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -620,7 +620,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
@@ -652,7 +652,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
@@ -675,7 +675,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
@@ -693,7 +693,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY_2);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setTeamSession(true);
     session.setAgencyId(AGENCY_3);
     Long sessionId = session.getId();
@@ -709,7 +709,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setAgencyId(
         CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
@@ -724,7 +724,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY_2);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setTeamSession(true);
     session.setAgencyId(
         CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());

@@ -5,7 +5,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.ANONYMOUS_
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_WITH_AGENCY;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_MATRIX_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -92,10 +92,10 @@ class AssignEnquiryFacadeTest {
     // session.getUser().getMatrixUserId() / consultant.getMatrixUserId(). The shared
     // TestConstants do not set these, so populate them here (reset in tearDown) and stub the
     // MatrixSynapseService happy path so room creation succeeds for every assignment test.
-    USER_WITH_RC_ID.setMatrixUserId(USER_MATRIX_ID);
+    USER_WITH_MATRIX_ID.setMatrixUserId(USER_MATRIX_ID);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(CONSULTANT_MATRIX_ID);
     // Anonymous enquiry constant has no user wired; assignEnquiry now dereferences it.
-    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_RC_ID);
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_MATRIX_ID);
 
     lenient()
         .when(usernameTranscoder.decodeUsername(anyString()))
@@ -122,8 +122,8 @@ class AssignEnquiryFacadeTest {
   @org.junit.jupiter.api.AfterEach
   public void tearDown() {
     // Undo mutations of the shared TestConstants so other test classes are not affected.
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername(USERNAME);
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
@@ -150,14 +150,14 @@ class AssignEnquiryFacadeTest {
   void assignEnquiry_Should_ProvisionMissingUserMatrixAccountBeforeRoomCreation()
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    USER_WITH_RC_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
     when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
         .thenReturn(USER_MATRIX_ID);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
-    verify(userRepository).save(USER_WITH_RC_ID);
-    assertEquals(USER_MATRIX_ID, USER_WITH_RC_ID.getMatrixUserId());
+    verify(userRepository).save(USER_WITH_MATRIX_ID);
+    assertEquals(USER_MATRIX_ID, USER_WITH_MATRIX_ID.getMatrixUserId());
   }
 
   @Test
@@ -176,16 +176,16 @@ class AssignEnquiryFacadeTest {
   void assignEnquiry_Should_ResolveExistingUserMatrixAccount_WhenCreateFails()
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername("asker");
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername("asker");
     when(sessionRoomGateway.createUser(eq("asker"), anyString(), eq("asker")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
     when(sessionRoomGateway.loginAsUser("@asker:matrix.example.com")).thenReturn(MATRIX_TOKEN);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
-    verify(userRepository).save(USER_WITH_RC_ID);
-    assertEquals("@asker:matrix.example.com", USER_WITH_RC_ID.getMatrixUserId());
+    verify(userRepository).save(USER_WITH_MATRIX_ID);
+    assertEquals("@asker:matrix.example.com", USER_WITH_MATRIX_ID.getMatrixUserId());
     verify(sessionRoomGateway, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
   }
 
@@ -200,8 +200,8 @@ class AssignEnquiryFacadeTest {
     // change the MXID.
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     when(sessionRoomGateway.userIdFor("probeuser")).thenReturn("@probeuser:test.example.org");
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername("probeuser");
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername("probeuser");
     // Force the create path to fail so the MXID-construction fallback branch runs.
     when(sessionRoomGateway.createUser(eq("probeuser"), anyString(), eq("probeuser")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
@@ -209,7 +209,7 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     // The constructed candidate MXID must use the configured server name verbatim.
-    assertThat(USER_WITH_RC_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
+    assertThat(USER_WITH_MATRIX_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
     verify(sessionRoomGateway, atLeastOnce()).loginAsUser("@probeuser:test.example.org");
   }
 

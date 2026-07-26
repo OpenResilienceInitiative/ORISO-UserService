@@ -727,26 +727,6 @@ class UserControllerIT {
   }
 
   @Test
-  void registerNewConsultingType_Should_ReturnBadRequest_When_RcUserIdIsMissing() throws Exception {
-    mvc.perform(
-            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .content(VALID_NEW_REGISTRATION_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-  }
-
-  @Test
-  void registerNewConsultingType_Should_ReturnBadRequest_When_RcTokenIsMissing() throws Exception {
-    mvc.perform(
-            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .content(VALID_NEW_REGISTRATION_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-  }
-
-  @Test
   void registerNewConsultingTyp_Should_ReturnCreated_When_ProvidedWithValidRequestBody()
       throws Exception {
 
@@ -1258,9 +1238,8 @@ class UserControllerIT {
 
   /** Method: getTeamSessionsForAuthenticatedConsultant (role: consultant) */
   @Test
-  void getTeamSessionsForAuthenticatedConsultant_Should_Succeed_WhenRcTokenHeaderIsMissing()
+  void getTeamSessionsForAuthenticatedConsultant_Should_ReturnNoContent_WhenNoSessionsExist()
       throws Exception {
-    // See above: RCToken is optional, a missing one is not a client error.
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)

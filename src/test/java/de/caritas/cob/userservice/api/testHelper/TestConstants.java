@@ -238,7 +238,7 @@ public class TestConstants {
       new GroupSessionConsultantDTO();
   public static final AbsenceDTO ABSENCE_DTO_WITH_NULL_MESSAGE = new AbsenceDTO().absent(true);
   public static final User USER = new User(USER_ID, null, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
-  public static final User USER_WITH_RC_ID =
+  public static final User USER_WITH_MATRIX_ID =
       User.builder()
           .userId(USER_ID)
           .username(USERNAME)
@@ -249,7 +249,7 @@ public class TestConstants {
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
-  public static final User USER_NO_RC_USER_ID =
+  public static final User USER_WITHOUT_MATRIX_ID =
       User.builder()
           .userId(USER_ID)
           .username(USERNAME)
@@ -259,7 +259,7 @@ public class TestConstants {
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
-  public static final User USER_NO_RC_USER_ID_2 =
+  public static final User USER_WITHOUT_MATRIX_ID_2 =
       User.builder()
           .userId(USER_ID_2)
           .username(USERNAME)
@@ -436,7 +436,7 @@ public class TestConstants {
   public static final Session SESSION_WITH_ASKER_AND_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultant(CONSULTANT_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
@@ -453,7 +453,7 @@ public class TestConstants {
   public static final Session TEAM_SESSION_WITH_ASKER_AND_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultant(CONSULTANT_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
@@ -485,7 +485,7 @@ public class TestConstants {
   public static final Session SESSION_WITHOUT_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultingTypeId(CONSULTING_TYPE_ID_U25)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
@@ -498,10 +498,10 @@ public class TestConstants {
           .teamSession(true)
           .build();
 
-  public static final Session SESSION_WITHOUT_CONSULTANT_NO_RC_USER_ID =
+  public static final Session SESSION_WITHOUT_CONSULTANT_OR_MATRIX_USER_ID =
       Session.builder()
           .id(TEAM_SESSION_ID)
-          .user(USER_NO_RC_USER_ID_2)
+          .user(USER_WITHOUT_MATRIX_ID_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
@@ -517,7 +517,7 @@ public class TestConstants {
   public static final Session U25_SESSION_WITHOUT_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultingTypeId(CONSULTING_TYPE_ID_U25)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
@@ -532,7 +532,8 @@ public class TestConstants {
   public static final List<Session> SESSION_LIST = Collections.singletonList(SESSION);
   public static final Set<Session> SESSION_SET =
       new HashSet<>(
-          Arrays.asList(U25_SESSION_WITHOUT_CONSULTANT, SESSION_WITHOUT_CONSULTANT_NO_RC_USER_ID));
+          Arrays.asList(
+              U25_SESSION_WITHOUT_CONSULTANT, SESSION_WITHOUT_CONSULTANT_OR_MATRIX_USER_ID));
   public static final User USER_WITH_SESSIONS =
       User.builder()
           .userId(USER_ID)
