@@ -145,8 +145,7 @@ def run_workload(
         raise ValueError("base_url must contain at least one target")
     if requests < len(base_urls):
         raise ValueError(
-            "requests must reach every target "
-            f"({len(base_urls)} requests)"
+            "requests must reach every target " f"({len(base_urls)} requests)"
         )
 
     headers = headers or {}

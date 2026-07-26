@@ -2,6 +2,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${repo_root}/scripts/load/ensure-java-21.sh"
+ensure_java_21
+
 replica_one_port="${USERSERVICE_REPLICA_ONE_PORT:-18082}"
 replica_two_port="${USERSERVICE_REPLICA_TWO_PORT:-18084}"
 agency_stub_port="${AGENCY_STUB_PORT:-18083}"
