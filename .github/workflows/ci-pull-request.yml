@@ -81,10 +81,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Report aggregate required conclusion to SigNoz
+    - name: Report the aggregate required conclusion
       env:
-        REPO: ${{ github.event.repository.name }}
-        WORKFLOW: ${{ github.workflow }}
         VALIDATE_RESULT: ${{ needs.validate.result }}
         REDIS_RESULT: ${{ needs.redis-contract.result }}
         MARIADB_RESULT: ${{ needs.mariadb-contract.result }}
@@ -94,13 +92,6 @@ jobs:
         if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success ]]; then
           conclusion=failure
         fi
-        now_ns="$(date +%s)000000000"
-        payload="{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"ci-cd\"}}]},\"scopeMetrics\":[{\"scope\":{\"name\":\"ci-health\"},\"metrics\":[{\"name\":\"ci_run_result\",\"sum\":{\"dataPoints\":[{\"attributes\":[{\"key\":\"repo\",\"value\":{\"stringValue\":\"${REPO}\"}},{\"key\":\"workflow\",\"value\":{\"stringValue\":\"${WORKFLOW}\"}},{\"key\":\"conclusion\",\"value\":{\"stringValue\":\"${conclusion}\"}}],\"startTimeUnixNano\":\"${now_ns}\",\"timeUnixNano\":\"${now_ns}\",\"asInt\":\"1\"}],\"aggregationTemporality\":2,\"isMonotonic\":true}}]}]}]}"
-        curl --fail-with-body --silent --show-error \
-          -X POST "https://signoz.oriso-dev.site/v1/metrics" \
-          -H "Content-Type: application/json" \
-          -d "${payload}" \
-          || echo "::warning::Failed to POST aggregate CI health metric to SigNoz"
         if [[ "${conclusion}" != success ]]; then
           echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}"
           exit 1
