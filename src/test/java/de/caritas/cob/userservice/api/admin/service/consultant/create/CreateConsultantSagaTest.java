@@ -19,7 +19,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -457,9 +456,7 @@ class CreateConsultantSagaTest {
         .thenAnswer(
             invocation -> {
               PlainCredentialsHolder.set(VALID_USERNAME, null);
-              KeycloakCreateUserResponseDTO response = new KeycloakCreateUserResponseDTO();
-              response.setUserId(KEYCLOAK_USER_ID);
-              return response;
+              return KEYCLOAK_USER_ID;
             });
   }
 

@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
@@ -72,8 +71,7 @@ class AnonymousUserCreatorServiceTest {
   void createAnonymousUser_Should_ReturnKeycloakCredentials_When_RocketChatIsDisabled() {
     ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
     User user = mock(User.class);
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    String responseDTO = "identity-id";
     KeycloakLoginResponseDTO keycloakLoginResponseDTO =
         easyRandom.nextObject(KeycloakLoginResponseDTO.class);
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
@@ -98,8 +96,7 @@ class AnonymousUserCreatorServiceTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
-          KeycloakCreateUserResponseDTO responseDTO =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+          String responseDTO = "identity-id";
           when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
           when(keycloakService.loginUser(anyString(), anyString()))
               .thenThrow(new BadRequestException(ERROR));
@@ -115,8 +112,7 @@ class AnonymousUserCreatorServiceTest {
   void createAnonymousUser_Should_RollBack_When_MatrixProvisioningFails() {
     ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
     User user = mock(User.class);
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
@@ -139,8 +135,7 @@ class AnonymousUserCreatorServiceTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
-          KeycloakCreateUserResponseDTO responseDTO =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+          String responseDTO = "identity-id";
           when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
           when(keycloakService.loginUser(anyString(), anyString()))
               .thenReturn(easyRandom.nextObject(KeycloakLoginResponseDTO.class));
@@ -163,8 +158,7 @@ class AnonymousUserCreatorServiceTest {
 
   @Test
   void createAnonymousUser_Should_ReturnAnonymousUserCredentials() throws RocketChatLoginException {
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     KeycloakLoginResponseDTO keycloakLoginResponseDTO =
         easyRandom.nextObject(KeycloakLoginResponseDTO.class);
@@ -198,8 +192,7 @@ class AnonymousUserCreatorServiceTest {
   void
       createAnonymousUser_Should_throwInternalServerError_When_userToUpdateRocketChatIdDoesNotExist()
           throws RocketChatLoginException {
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
+    String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     KeycloakLoginResponseDTO keycloakLoginResponseDTO =
         easyRandom.nextObject(KeycloakLoginResponseDTO.class);

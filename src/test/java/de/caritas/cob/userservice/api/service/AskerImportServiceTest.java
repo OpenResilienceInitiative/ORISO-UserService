@@ -9,7 +9,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupDTO;
@@ -188,8 +187,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId("kc-user-id");
+    String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(UserDTO.class), anyString(), anyString()))
         .thenReturn(keycloakResponse);
 
@@ -224,8 +222,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId("kc-user-id");
+    String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     when(userHelper.getDummyEmail("kc-user-id")).thenReturn("dummy@example.com");
@@ -256,8 +253,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId("kc-user-id");
+    String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -344,8 +340,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -368,8 +363,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -397,8 +391,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -546,8 +539,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -572,8 +564,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -602,8 +593,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -637,8 +627,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -682,8 +671,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -730,8 +718,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -802,8 +789,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -845,8 +831,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(userHelper.getDummyEmail("kc-id")).thenReturn("dummy@example.com");
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -896,8 +881,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -928,8 +912,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -962,8 +945,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -998,8 +980,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1040,8 +1021,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1087,8 +1067,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1121,8 +1100,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1213,8 +1191,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -1237,8 +1214,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -1263,8 +1239,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -1289,8 +1264,7 @@ class AskerImportServiceTest {
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
@@ -1350,8 +1324,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1377,8 +1350,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1409,8 +1381,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1441,8 +1412,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1476,8 +1446,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
@@ -1514,8 +1483,7 @@ class AskerImportServiceTest {
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
     when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
-    KeycloakCreateUserResponseDTO kc = new KeycloakCreateUserResponseDTO();
-    kc.setUserId("kc-id");
+    String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));

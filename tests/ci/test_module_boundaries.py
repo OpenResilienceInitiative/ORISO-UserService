@@ -90,6 +90,26 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "concrete identity or chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_application_modules_do_not_import_keycloak_user_creation_transport(self):
+        production_root = ROOT / "src/main/java/de/caritas/cob/userservice/api"
+        keycloak_adapter_root = production_root / "adapters/keycloak"
+        forbidden_type = "KeycloakCreateUserResponseDTO"
+        offenders = []
+
+        for source in production_root.rglob("*.java"):
+            if source.is_relative_to(keycloak_adapter_root):
+                continue
+            if forbidden_type in source.read_text():
+                offenders.append(str(source.relative_to(ROOT)))
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Application modules must receive a provider-neutral created identity "
+            "identifier instead of importing the Keycloak response transport:\n"
+            + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

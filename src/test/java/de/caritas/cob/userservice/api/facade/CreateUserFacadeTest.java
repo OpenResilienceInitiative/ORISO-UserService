@@ -2,8 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USER_ALREADY_REGISTERED_TO_CONSULTING_TYPE;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID;
+import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
@@ -148,31 +147,11 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_StillCreateAccountAndNotRollback_When_CreateKeycloakUserReturnsNoUserId() {
-    // Matrix migration: a missing Keycloak user id no longer aborts registration for registered
-    // users; the Keycloak failure is swallowed and the database user account is still created.
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID);
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenReturn(mock(NewRegistrationResponseDto.class));
-
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
-
-    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
-  }
-
-  @Test
-  public void
       createUserAccountWithInitializedConsultingType_Should_LogOutFromRocketChat_When_ConsultingTypeIsKreuzbundAndRocketChatLoginSucceeded() {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(CREATED_IDENTITY_ID);
     doNothing().when(keycloakService).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
@@ -190,8 +169,7 @@ public class CreateUserFacadeTest {
     TenantContext.setCurrentTenant(1L);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(CREATED_IDENTITY_ID);
     doNothing().when(keycloakService).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
@@ -230,8 +208,7 @@ public class CreateUserFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(CREATED_IDENTITY_ID);
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(user);
     when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
     when(createNewSessionFacade.initializeNewSession(
@@ -334,8 +311,7 @@ public class CreateUserFacadeTest {
   private void givenBasicRegistrationStubs() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(CREATED_IDENTITY_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
@@ -433,8 +409,7 @@ public class CreateUserFacadeTest {
       createUserAccountWithInitializedConsultingType_Should_CreateMinimalSession_When_InitializeNewSessionThrows() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createKeycloakUser(any())).thenReturn(CREATED_IDENTITY_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new RuntimeException("rc down"));

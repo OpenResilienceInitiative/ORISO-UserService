@@ -13,7 +13,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -74,8 +73,7 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() {
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId("kc-user-id");
+    String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     doThrow(new RuntimeException("role assignment failed"))
@@ -95,8 +93,7 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing() {
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId("kc-user-id");
+    String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     doThrow(new NotFoundException("HTTP 404 Not Found"))

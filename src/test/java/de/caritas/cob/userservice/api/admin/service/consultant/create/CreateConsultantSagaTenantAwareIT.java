@@ -3,12 +3,12 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,7 +16,6 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -52,6 +51,7 @@ public class CreateConsultantSagaTenantAwareIT {
   private static final String DUMMY_RC_ID = "rcUserId";
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
+  private static final String IDENTITY_ID = "identity-id";
   private static final long TENANT_ID = 1;
 
   @Autowired private CreateConsultantSaga createConsultantSaga;
@@ -103,8 +103,7 @@ public class CreateConsultantSagaTenantAwareIT {
 
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createKeycloakUser(any(), anyString(), any())).thenReturn(IDENTITY_ID);
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(2))
@@ -125,7 +124,7 @@ public class CreateConsultantSagaTenantAwareIT {
 
     // then
     assertThat(consultant.getEmbedded(), notNullValue());
-    assertThat(consultant.getEmbedded().getId(), notNullValue());
+    assertThat(consultant.getEmbedded().getId(), is(IDENTITY_ID));
     rollbackDBState();
   }
 
@@ -137,8 +136,7 @@ public class CreateConsultantSagaTenantAwareIT {
     TenantContext.setCurrentTenant(1L);
     when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
         .thenReturn(DUMMY_RC_ID);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createKeycloakUser(any(), anyString(), any())).thenReturn(IDENTITY_ID);
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(1))
@@ -160,11 +158,11 @@ public class CreateConsultantSagaTenantAwareIT {
 
     // then
     verify(keycloakService, times(2)).updateRole(anyString(), anyString());
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-    verify(keycloakService).updateRole(anyString(), eq(GROUP_CHAT_CONSULTANT.getValue()));
+    verify(keycloakService).updateRole(IDENTITY_ID, CONSULTANT.getValue());
+    verify(keycloakService).updateRole(IDENTITY_ID, GROUP_CHAT_CONSULTANT.getValue());
 
     assertThat(consultant.getEmbedded(), notNullValue());
-    assertThat(consultant.getEmbedded().getId(), notNullValue());
+    assertThat(consultant.getEmbedded().getId(), is(IDENTITY_ID));
   }
 
   private void createConsultant(String username) {

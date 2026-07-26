@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static org.apache.commons.lang3.Validate.notNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -118,12 +117,8 @@ public class CreateAdminService {
   private String createKeycloakUser(final CreateAdminDTO createAgencyAdminDTO) {
     final UserDTO userDto = buildValidatedUserDTO(createAgencyAdminDTO);
 
-    final KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
-            userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
-    this.userAccountInputValidator.validateKeycloakResponse(response);
-
-    return response.getUserId();
+    return identityClient.createKeycloakUser(
+        userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
   }
 
   private UserDTO buildValidatedUserDTO(final CreateAdminDTO createAdminDTO) {

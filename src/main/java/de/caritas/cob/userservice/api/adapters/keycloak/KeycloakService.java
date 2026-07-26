@@ -8,7 +8,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -300,9 +299,9 @@ public class KeycloakService implements IdentityClient {
    * Creates a user in Keycloak and returns its Keycloak user ID.
    *
    * @param user {@link UserDTO}
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return the provider-neutral created identity identifier
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user) {
+  public String createKeycloakUser(final UserDTO user) {
     return createKeycloakUser(user, null, null);
   }
 
@@ -312,16 +311,17 @@ public class KeycloakService implements IdentityClient {
    * @param user {@link UserDTO}
    * @param firstName first name of user
    * @param lastName last name of user
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return the provider-neutral created identity identifier
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(
+  public String createKeycloakUser(
       final UserDTO user, final String firstName, final String lastName) {
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
     try (var response = keycloakClient.getUsersResource().create(kcUser)) {
       if (response.getStatus() == HttpStatus.CREATED.value()) {
-        final String createdUserId = getCreatedUserId(response.getLocation());
+        final String createdUserId =
+            resolveCreatedUserId(response.getLocation(), kcUser.getUsername());
         try {
           updateIdentityAttributesAfterCreate(user, createdUserId);
         } catch (Exception exception) {
@@ -336,7 +336,7 @@ public class KeycloakService implements IdentityClient {
                   createdUserId),
               exception);
         }
-        return new KeycloakCreateUserResponseDTO(createdUserId);
+        return createdUserId;
       }
       handleCreateKeycloakUserError(response);
     }
@@ -512,6 +512,26 @@ public class KeycloakService implements IdentityClient {
     }
 
     return null;
+  }
+
+  private String resolveCreatedUserId(URI location, String username) {
+    var locationIdentityId = getCreatedUserId(location);
+    if (locationIdentityId != null && !locationIdentityId.isBlank()) {
+      return locationIdentityId;
+    }
+
+    var matchingIdentityIds =
+        findByUsername(username).stream()
+            .filter(user -> username != null && username.equalsIgnoreCase(user.getUsername()))
+            .map(UserRepresentation::getId)
+            .filter(identityId -> identityId != null && !identityId.isBlank())
+            .distinct()
+            .toList();
+    if (matchingIdentityIds.size() == 1) {
+      return matchingIdentityIds.get(0);
+    }
+
+    throw new KeycloakException("ERROR: Keycloak user id is missing");
   }
 
   /**

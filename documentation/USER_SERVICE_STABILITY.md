@@ -30,8 +30,8 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,844 | 0 | 0 | 7 | `./mvnw -B test` |
-| Integration + contract + E2E | 966 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,815 | 0 | 0 | 7 | `./mvnw -q clean test` |
+| Integration + contract + E2E | 964 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
@@ -39,8 +39,8 @@ The candidate includes focused scheduler and Matrix browser-login unit and
 replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
-later serial Maven completions. The fresh integration report directory contains
-97 XML suites whose attributes independently sum to 966/0/0/5.
+later serial Maven completions. The latest clean integration completion
+independently reports 964/0/0/5.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -197,8 +197,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. | The older `IdentityClient` contract and magic-link token exchange still expose other Keycloak transport types. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -208,7 +208,9 @@ adapters. It also prevents the Identity/Profile packages and the Admin module
 from importing their protected concrete chat adapters. The assignment boundary
 also forbids the legacy admin Rocket.Chat operation implementation, so rollback
 policy cannot leak back into orchestration. The appointment deletion repair
-stays behind `Organizing` and `AppointmentRepository`.
+stays behind `Organizing` and `AppointmentRepository`. A separate creation
+contract rejects any reintroduction of the deleted
+`KeycloakCreateUserResponseDTO` outside the Keycloak adapter boundary.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current
@@ -217,9 +219,9 @@ source layout must not be confused with proven multi-instance behavior.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
-transport/create-user DTO decoupling, then the admin controller composition
-boundary, then session-list adapter removal. Each step must add a failing
-boundary contract before moving dependencies.
+authentication/token transport decoupling, then the admin controller
+composition boundary, then session-list adapter removal. Each step must add a
+failing boundary contract before moving dependencies.
 
 ## Microservice decision
 

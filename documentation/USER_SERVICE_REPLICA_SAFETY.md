@@ -242,10 +242,14 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
    publishing this stability stack. The stack already integrates its functional
    commit locally and removes both obsolete authentication-token entries from
    the local-state inventory.
-2. Complete the Matrix-only removal workstream, which deletes all three
+2. Continue the provider-neutral identity boundary after the completed
+   create-user slice. Application workflows now consume only the created
+   identity ID; the Keycloak adapter owns missing-`Location` recovery and
+   refuses ambiguous or absent authoritative matches.
+3. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
-3. Prove MailService idempotency and runtime replay before enabling
+4. Prove MailService idempotency and runtime replay before enabling
    inactive-account notification recovery.
-4. Run the complete two-instance integration/E2E suite without sticky sessions,
+5. Run the complete two-instance integration/E2E suite without sticky sessions,
    then raise the Helm replica constraint only when
    `userservice.replica.max_supported` can truthfully change.

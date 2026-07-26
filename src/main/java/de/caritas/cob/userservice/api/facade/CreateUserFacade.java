@@ -6,7 +6,6 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -96,8 +95,8 @@ public class CreateUserFacade {
     userVerifier.checkIfUsernameIsAvailable(userDTO);
     agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
 
-    KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDTO);
-    var user = updateIdentityAndCreateAccount(response.getUserId(), userDTO, UserRole.USER);
+    String identityId = identityClient.createKeycloakUser(userDTO);
+    var user = updateIdentityAndCreateAccount(identityId, userDTO, UserRole.USER);
 
     // Ensure user is fully persisted before creating session
     User savedUser = userService.saveUser(user);

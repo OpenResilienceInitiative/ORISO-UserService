@@ -11,7 +11,6 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -444,13 +443,8 @@ public class CreateConsultantSaga {
 
     this.userAccountInputValidator.validateUserDTO(userDto);
 
-    KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
-            userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
-
-    this.userAccountInputValidator.validateKeycloakResponse(response);
-
-    return response.getUserId();
+    return identityClient.createKeycloakUser(
+        userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
   }
 
   private String createRocketChatUserOrRollback(

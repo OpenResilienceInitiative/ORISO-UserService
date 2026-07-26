@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
@@ -50,7 +49,7 @@ public class AnonymousUserCreatorService {
    */
   public AnonymousUserCredentials createAnonymousUser(UserDTO userDto) {
 
-    KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDto);
+    String identityId = identityClient.createKeycloakUser(userDto);
     // Use the existing "user" realm role instead of "anonymous": the Keycloak realm does not
     // define an "anonymous" role, so assigning it 404s, the password step is skipped, and the
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
@@ -60,24 +59,23 @@ public class AnonymousUserCreatorService {
     ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
     try {
       var user =
-          createUserFacade.updateIdentityAndCreateAccount(
-              response.getUserId(), userDto, UserRole.USER);
+          createUserFacade.updateIdentityAndCreateAccount(identityId, userDto, UserRole.USER);
       if (!rocketChatEnabled) {
         createUserFacade.provisionMatrixUser(user, userDto.getUsername());
       }
       kcLoginResponseDTO = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
       if (rocketChatEnabled) {
-        ensureRocketChatUserExists(userDto, response.getUserId());
+        ensureRocketChatUserExists(userDto, identityId);
         rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
       }
     } catch (RocketChatLoginException | BadRequestException | InternalServerErrorException e) {
-      rollBackAnonymousUserAccount(response.getUserId());
+      rollBackAnonymousUserAccount(identityId);
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
     }
 
     var credentialsBuilder =
         AnonymousUserCredentials.builder()
-            .userId(response.getUserId())
+            .userId(identityId)
             .accessToken(kcLoginResponseDTO.getAccessToken())
             .expiresIn(kcLoginResponseDTO.getExpiresIn())
             .refreshToken(kcLoginResponseDTO.getRefreshToken())

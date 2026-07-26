@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.port.out;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -38,10 +37,9 @@ public interface IdentityClient {
 
   Map<String, String> findUserByEmail(String email);
 
-  KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
+  String createKeycloakUser(final UserDTO user);
 
-  KeycloakCreateUserResponseDTO createKeycloakUser(
-      final UserDTO user, final String firstName, final String lastName);
+  String createKeycloakUser(final UserDTO user, final String firstName, final String lastName);
 
   boolean isUsernameAvailable(String username);
 

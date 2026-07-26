@@ -26,7 +26,6 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import ch.qos.logback.classic.Level;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -464,11 +463,50 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    String identityId = this.keycloakService.createKeycloakUser(userDTO);
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(identityId, is(USER_ID));
+  }
+
+  @Test
+  void createKeycloakUserShouldRecoverIdentityIdWhenCreatedResponseOmitsLocation() {
+    var userDTO = easyRandom.nextObject(UserDTO.class);
+    var usersResource = mock(UsersResource.class);
+    var response = mock(Response.class);
+    var recoveredUser = new UserRepresentation();
+    recoveredUser.setId(USER_ID);
+    recoveredUser.setUsername("decoded-user");
+    when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(usersResource.create(any())).thenReturn(response);
+    when(usersResource.search("decoded-user")).thenReturn(List.of(recoveredUser));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usernameTranscoder.decodeUsername(userDTO.getUsername())).thenReturn("decoded-user");
+    givenAUserResourceForCreatedUser(usersResource);
+
+    var identityId = keycloakService.createKeycloakUser(userDTO);
+
+    assertThat(identityId, is(USER_ID));
+    verify(usersResource).search("decoded-user");
+    verify(usersResource).get(USER_ID);
+  }
+
+  @Test
+  void createKeycloakUserShouldRejectCreatedResponseWhenIdentityIdCannotBeRecovered() {
+    var userDTO = easyRandom.nextObject(UserDTO.class);
+    var usersResource = mock(UsersResource.class);
+    var response = mock(Response.class);
+    when(response.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(usersResource.create(any())).thenReturn(response);
+    when(usersResource.search("decoded-user")).thenReturn(List.of());
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usernameTranscoder.decodeUsername(userDTO.getUsername())).thenReturn("decoded-user");
+
+    var exception =
+        assertThrows(KeycloakException.class, () -> keycloakService.createKeycloakUser(userDTO));
+
+    assertThat(exception.getMessage(), is("ERROR: Keycloak user id is missing"));
+    verify(usersResource).search("decoded-user");
+    verify(usersResource, never()).get(any());
   }
 
   @Test
@@ -489,10 +527,9 @@ public class KeycloakServiceTest {
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    String identityId = this.keycloakService.createKeycloakUser(userDTO);
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(identityId, is(USER_ID));
 
     ArgumentCaptor<UserRepresentation> argumentCaptor =
         ArgumentCaptor.forClass(UserRepresentation.class);
@@ -528,9 +565,9 @@ public class KeycloakServiceTest {
     when(userResource.toRepresentation()).thenReturn(storedRepresentation);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    var identityId = this.keycloakService.createKeycloakUser(userDTO);
 
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(identityId, is(USER_ID));
 
     var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(userResource).update(representationCaptor.capture());
@@ -557,9 +594,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var identityId = keycloakService.createKeycloakUser(userDTO);
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(identityId, is(USER_ID));
 
     var argumentCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(usersResource).create(argumentCaptor.capture());
@@ -1761,9 +1798,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var identityId = keycloakService.createKeycloakUser(userDTO);
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(identityId, is(USER_ID));
     setField(keycloakService, "multiTenancyEnabled", false);
   }
 
