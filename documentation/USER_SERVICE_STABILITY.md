@@ -152,6 +152,38 @@ their runtime registration, tags and finite buckets; the exact image still has
 to be deployed and queried through SigNoz before the observability gate is
 closed.
 
+### Matrix background-sync trace attribution
+
+A second read-only seven-day SigNoz audit on 2026-07-26 found 2,870
+`/_matrix/client/r0/sync` calls emitted as standalone one-span traces. Their
+approximately 30-second p50 and p95 match the configured long poll and are not
+a latency defect. Of the sampled calls, 2,744 returned HTTP 200. A burst of 123
+HTTP 404 responses was confined to the two minutes from 06:00 through 06:02 on
+2026-07-22; successful responses resumed afterwards. Three other sampled calls
+ended as transport-level client errors.
+
+The listener intentionally runs on a background executor, so it has no incoming
+web-request parent. It now opens one `userservice.matrix.sync` observation for
+each leader-owned cycle and keeps that scope active across the long poll, lease
+re-check, event processing and durable cursor commit. The only custom
+low-cardinality attribute is `result`, bounded to `success`, `soft_failure`,
+`leadership_lost` or `exception`. Matrix tokens, cursors, room/user identifiers
+and URL values are not added.
+
+Lease loss detected before processing is a normal ownership transition and
+continues without an error. A rejected cursor commit occurs after processing
+may already have produced durable side effects; it is tagged
+`leadership_lost` but remains an error and preserves the existing outer-loop
+backoff to avoid a hot duplicate replay.
+
+The audited PreDev pod predates this observation. After the branch image is
+deployed, the required readback is:
+
+- sampled Matrix `/sync` client spans have a `userservice.matrix.sync` parent;
+- downstream work from the processed batch remains in the same trace;
+- expected successful 30-second polls are not marked as errors;
+- exported custom attributes contain only the bounded `result` key.
+
 ## Chatty-call reductions
 
 - With the default `rocket-chat.enabled=false`, account and availability reads

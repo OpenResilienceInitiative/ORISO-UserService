@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -35,6 +36,10 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import io.micrometer.common.KeyValue;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +47,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -790,6 +796,154 @@ class MatrixEventListenerServiceTest {
                     && e.getFormattedMessage().contains("Matrix sync failed"));
   }
 
+  @Test
+  void executeObservedSyncCycle_shouldKeepObservationActiveThroughSyncAndCursorCommit() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newServiceWithSyncExecutor();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    stubRoomContext(10L, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var syncObservation = new AtomicReference<Observation>();
+    var processingObservation = new AtomicReference<Observation>();
+    var commitObservation = new AtomicReference<Observation>();
+    when(matrixSynapseService.makeMatrixRequest(
+            eq("https://matrix.example/_matrix/client/r0/sync?timeout=30000"),
+            eq("GET"),
+            eq("admin-token"),
+            eq(null)))
+        .thenAnswer(
+            ignored -> {
+              syncObservation.set(registry.getCurrentObservation());
+              var syncResult =
+                  new HashMap<String, Object>(
+                      syncResultWithEvents(
+                          MATRIX_ROOM_ID,
+                          List.of(
+                              messageEvent(
+                                  CONSULTANT_MATRIX_ID, "m.text", "observed", "$event-observed"))));
+              syncResult.put("next_batch", "batch-observed");
+              return syncResult;
+            });
+    doAnswer(
+            ignored -> {
+              processingObservation.set(registry.getCurrentObservation());
+              return null;
+            })
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    when(matrixSyncCoordinationRegistry.renewLease()).thenReturn(true);
+    when(matrixSyncCoordinationRegistry.commitCursor("batch-observed"))
+        .thenAnswer(
+            ignored -> {
+              commitObservation.set(registry.getCurrentObservation());
+              return true;
+            });
+
+    Object result = ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+    assertThat(result).hasToString("SUCCESS");
+    verify(matrixSyncCoordinationRegistry).commitCursor("batch-observed");
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(syncObservation.get()).isNotNull();
+    assertThat(processingObservation.get()).isSameAs(syncObservation.get());
+    assertThat(commitObservation.get()).isSameAs(syncObservation.get());
+    assertThat(handler.stopCount).isEqualTo(1);
+    assertThat(handler.stoppedContext).isNotNull();
+    assertThat(handler.stoppedContext.getName()).isEqualTo("userservice.matrix.sync");
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("success");
+    assertThat(handler.stoppedContext.getError()).isNull();
+  }
+
+  @Test
+  void executeObservedSyncCycle_shouldRecordSoftFailureWithoutSensitiveAttributes() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newService();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(null);
+
+    Object result = ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+    assertThat(result).hasToString("SOFT_FAILURE");
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("soft_failure");
+    assertThat(handler.stoppedContext.getLowCardinalityKeyValues())
+        .extracting(KeyValue::getKey)
+        .containsExactly("result");
+    assertThat(handler.stoppedContext.getHighCardinalityKeyValues()).isEmpty();
+    assertThat(handler.stoppedContext.getError()).isNull();
+  }
+
+  @Test
+  void executeObservedSyncCycle_shouldRecordAndRethrowUnexpectedFailure() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newService();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(Map.of("next_batch", "batch-failing"));
+    when(matrixSyncCoordinationRegistry.renewLease())
+        .thenThrow(new IllegalStateException("coordination unavailable"));
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("coordination unavailable");
+
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("exception");
+    assertThat(handler.stoppedContext.getError())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("coordination unavailable");
+  }
+
+  @Test
+  void executeObservedSyncCycle_shouldRecordLeadershipLostAndRethrowRejectedCommitForBackoff() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newService();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    ReflectionTestUtils.setField(service, "hasLeadership", true);
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(Map.of("next_batch", "batch-rejected"));
+    when(matrixSyncCoordinationRegistry.renewLease()).thenReturn(true);
+    when(matrixSyncCoordinationRegistry.commitCursor("batch-rejected")).thenReturn(false);
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Matrix sync cursor commit rejected after lease loss");
+
+    verify(matrixSyncCoordinationRegistry).commitCursor("batch-rejected");
+    assertThat(ReflectionTestUtils.getField(service, "hasLeadership")).isEqualTo(false);
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("leadership_lost");
+    assertThat(handler.stoppedContext.getError())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Matrix sync cursor commit rejected after lease loss");
+  }
+
   // ── processMatrixSyncEvents ────────────────────────────────────────────────
 
   @Test
@@ -1423,6 +1577,32 @@ class MatrixEventListenerServiceTest {
 
   private static String invokeClassifyContent(MatrixEventListenerService service, String msgtype) {
     return (String) ReflectionTestUtils.invokeMethod(service, "classifyContent", msgtype);
+  }
+
+  private static String lowCardinalityValue(Observation.Context context, String expectedKey) {
+    return context.getLowCardinalityKeyValues().stream()
+        .filter(keyValue -> keyValue.getKey().equals(expectedKey))
+        .map(KeyValue::getValue)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static final class CapturingObservationHandler
+      implements ObservationHandler<Observation.Context> {
+
+    private Observation.Context stoppedContext;
+    private int stopCount;
+
+    @Override
+    public void onStop(Observation.Context context) {
+      stoppedContext = context;
+      stopCount++;
+    }
+
+    @Override
+    public boolean supportsContext(Observation.Context context) {
+      return true;
+    }
   }
 
   private static String invokeExtractThreadRootId(
