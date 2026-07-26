@@ -121,7 +121,7 @@
   <include
     file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0073_scheduled_task_claim/0073_changeSet.xml" />
+    file="db/changelog/changeset/0077_scheduled_task_claim/0077_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
