@@ -2,14 +2,12 @@ package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -20,12 +18,10 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.StringConverter;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,7 +43,6 @@ class MessengerTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserServiceMapper mapper;
   @Mock private StringConverter stringConverter;
-  @Mock private AgencyService agencyService;
 
   @Mock
   private de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
@@ -369,28 +364,6 @@ class MessengerTest {
     messenger.setAvailability("c-1", true);
 
     verify(messageClient).setUserPresence("rc-c-1", "online");
-  }
-
-  // ── findAvailableConsultants ───────────────────────────────────────────────
-
-  @Test
-  void findAvailableConsultants_Should_ReturnEmpty_When_NoPresentUsers() {
-    when(messageClient.findAllAvailableUserIds()).thenReturn(new java.util.HashSet<>());
-
-    assertThat(messenger.findAvailableConsultants(1)).isEmpty();
-    verify(agencyService, never()).getAgenciesByConsultingType(anyInt());
-  }
-
-  @Test
-  void findAvailableConsultants_Should_ReturnIntersection_When_PresentUsersExist() {
-    var agency = new AgencyDTO();
-    agency.setId(100L);
-    when(messageClient.findAllAvailableUserIds())
-        .thenReturn(new java.util.HashSet<>(Set.of("rc-1", "rc-2", "rc-99")));
-    when(agencyService.getAgenciesByConsultingType(1)).thenReturn(List.of(agency));
-    when(consultantRepository.findAllByAgencyIds(Set.of(100L))).thenReturn(Set.of("rc-1", "rc-2"));
-
-    assertThat(messenger.findAvailableConsultants(1)).containsExactlyInAnyOrder("rc-1", "rc-2");
   }
 
   // ── updateE2eKeys ──────────────────────────────────────────────────────────

@@ -88,8 +88,7 @@ public class AnonymousConversationCreatorService {
   private List<ConsultantAgency> obtainConsultants(Session session) {
     if (session.getMainTopicId() != null) {
       List<String> topicConsultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(
-              session.getMainTopicId(), session.getConsultingTypeId());
+          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
       if (!topicConsultantIds.isEmpty()) {
         return consultantAgencyService.getConsultantAgenciesByConsultantIds(topicConsultantIds);
       }
@@ -120,8 +119,7 @@ public class AnonymousConversationCreatorService {
       Session session, List<ConsultantAgency> consultantAgencies) {
     List<String> consultantIds =
         session.getMainTopicId() != null
-            ? topicConsultantRoutingService.findEligibleConsultantIds(
-                session.getMainTopicId(), session.getConsultingTypeId())
+            ? topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId())
             : consultantAgencies.stream()
                 .map(agency -> agency.getConsultant().getId())
                 .collect(Collectors.toList());

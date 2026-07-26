@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api;
 import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -17,16 +16,13 @@ import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.StringConverter;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -45,7 +41,6 @@ public class Messenger implements Messaging {
   private final SessionRepository sessionRepository;
   private final UserServiceMapper mapper;
   private final StringConverter stringConverter;
-  private final AgencyService agencyService;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixSynapseService matrixSynapseService;
 
@@ -130,23 +125,6 @@ public class Messenger implements Messaging {
         .findByIdAndDeleteDateIsNull(consultantId)
         .flatMap(consultant -> messageClient.isAvailable(consultant.getRocketChatId()))
         .orElse(false);
-  }
-
-  @Override
-  public Set<String> findAvailableConsultants(int consultingTypeId) {
-    var presentUserIds = messageClient.findAllAvailableUserIds();
-
-    if (!presentUserIds.isEmpty()) {
-      var agencyIds =
-          agencyService.getAgenciesByConsultingType(consultingTypeId).stream()
-              .map(AgencyDTO::getId)
-              .collect(Collectors.toSet());
-
-      var consultantIdsInType = consultantRepository.findAllByAgencyIds(agencyIds);
-      presentUserIds.retainAll(consultantIdsInType);
-    }
-
-    return presentUserIds;
   }
 
   @Override

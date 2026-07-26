@@ -7,7 +7,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.Messenger;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -15,7 +14,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -36,7 +34,6 @@ class TopicConsultantRoutingServiceTest {
 
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private ConsultantRepository consultantRepository;
-  @Mock private Messenger messenger;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
 
@@ -59,12 +56,6 @@ class TopicConsultantRoutingServiceTest {
   private Consultant consultantWithMatrix(String id, String matrixUserId, boolean absent) {
     Consultant c = consultant(id, absent);
     c.setMatrixUserId(matrixUserId);
-    return c;
-  }
-
-  private Consultant consultantWithRc(String id, String rcId, boolean absent) {
-    Consultant c = consultant(id, absent);
-    c.setRocketChatId(rcId);
     return c;
   }
 
@@ -176,7 +167,7 @@ class TopicConsultantRoutingServiceTest {
 
   @Test
   void findEligibleConsultantIds_Should_ReturnEmpty_When_TopicIdIsNull() {
-    List<String> result = service.findEligibleConsultantIds(null, 1);
+    List<String> result = service.findEligibleConsultantIds(null);
 
     assertThat(result).isEmpty();
     verify(consultantTopicRepository, never()).findConsultantIdsByTopicId(any());
@@ -187,7 +178,7 @@ class TopicConsultantRoutingServiceTest {
     when(consultantTopicRepository.findConsultantIdsByTopicId(2L))
         .thenReturn(Collections.emptyList());
 
-    List<String> result = service.findEligibleConsultantIds(2L, 1);
+    List<String> result = service.findEligibleConsultantIds(2L);
 
     assertThat(result).isEmpty();
   }
@@ -198,7 +189,7 @@ class TopicConsultantRoutingServiceTest {
     when(consultantRepository.findAllByIdIn(List.of("c1")))
         .thenReturn(List.of(consultant("c1", true)));
 
-    List<String> result = service.findEligibleConsultantIds(3L, 1);
+    List<String> result = service.findEligibleConsultantIds(3L);
 
     assertThat(result).isEmpty();
     verify(matrixSynapseService, never()).findOnlineMatrixUserIds(any());
@@ -214,10 +205,9 @@ class TopicConsultantRoutingServiceTest {
     when(matrixSynapseService.findOnlineMatrixUserIds(List.of("@c1:matrix.org", "@c2:matrix.org")))
         .thenReturn(Optional.of(Set.of("@c1:matrix.org")));
 
-    List<String> result = service.findEligibleConsultantIds(4L, 10);
+    List<String> result = service.findEligibleConsultantIds(4L);
 
     assertThat(result).containsExactly("c1");
-    verify(messenger, never()).findAvailableConsultants(any(int.class));
   }
 
   @Test
@@ -228,92 +218,21 @@ class TopicConsultantRoutingServiceTest {
     when(matrixSynapseService.findOnlineMatrixUserIds(List.of("@c1:matrix.org")))
         .thenReturn(Optional.of(Collections.emptySet()));
 
-    List<String> result = service.findEligibleConsultantIds(4L, 10);
+    List<String> result = service.findEligibleConsultantIds(4L);
 
     // Matrix said nobody online — authoritative empty, do NOT fall back
     assertThat(result).isEmpty();
   }
 
   @Test
-  void
-      findEligibleConsultantIds_Should_FallbackToActiveIds_When_MatrixUnavailableAndConsultingTypeNull() {
+  void findEligibleConsultantIds_Should_ReturnActiveIds_When_MatrixPresenceIsUnavailable() {
     Consultant c1 = consultantWithMatrix("c1", "@c1:matrix.org", false);
     when(consultantTopicRepository.findConsultantIdsByTopicId(5L)).thenReturn(List.of("c1"));
     when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
     when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
 
-    List<String> result = service.findEligibleConsultantIds(5L, null);
+    List<String> result = service.findEligibleConsultantIds(5L);
 
-    assertThat(result).containsExactly("c1");
-    verify(messenger, never()).findAvailableConsultants(any(int.class));
-  }
-
-  @Test
-  void findEligibleConsultantIds_Should_FallbackToActiveIds_When_MessengerThrowsException() {
-    Consultant c1 = consultantWithMatrix("c1", "@c1:matrix.org", false);
-    when(consultantTopicRepository.findConsultantIdsByTopicId(6L)).thenReturn(List.of("c1"));
-    when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
-    when(messenger.findAvailableConsultants(99)).thenThrow(new RuntimeException("RC down"));
-
-    List<String> result = service.findEligibleConsultantIds(6L, 99);
-
-    assertThat(result).containsExactly("c1");
-  }
-
-  @Test
-  void findEligibleConsultantIds_Should_FallbackToActiveIds_When_MessengerReturnsEmptySet() {
-    Consultant c1 = consultantWithMatrix("c1", null, false);
-    when(consultantTopicRepository.findConsultantIdsByTopicId(7L)).thenReturn(List.of("c1"));
-    when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
-    when(messenger.findAvailableConsultants(5)).thenReturn(Collections.emptySet());
-
-    List<String> result = service.findEligibleConsultantIds(7L, 5);
-
-    assertThat(result).containsExactly("c1");
-  }
-
-  @Test
-  void findEligibleConsultantIds_Should_ReturnIntersection_When_MessengerMatchesByConsultantId() {
-    Consultant c1 = consultant("c1", false);
-    Consultant c2 = consultant("c2", false);
-    when(consultantTopicRepository.findConsultantIdsByTopicId(8L)).thenReturn(List.of("c1", "c2"));
-    when(consultantRepository.findAllByIdIn(List.of("c1", "c2"))).thenReturn(List.of(c1, c2));
-    when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
-    when(messenger.findAvailableConsultants(3)).thenReturn(Set.of("c1"));
-
-    List<String> result = service.findEligibleConsultantIds(8L, 3);
-
-    assertThat(result).containsExactly("c1");
-  }
-
-  @Test
-  void findEligibleConsultantIds_Should_MatchByRocketChatId_When_MessengerUsesRcIds() {
-    Consultant c1 = consultantWithRc("c1", "rc-c1", false);
-    when(consultantTopicRepository.findConsultantIdsByTopicId(9L)).thenReturn(List.of("c1"));
-    when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
-    // messenger returns RC id, not consultant id
-    when(messenger.findAvailableConsultants(7)).thenReturn(Set.of("rc-c1"));
-
-    List<String> result = service.findEligibleConsultantIds(9L, 7);
-
-    assertThat(result).containsExactly("c1");
-  }
-
-  @Test
-  void findEligibleConsultantIds_Should_FallbackToActiveIds_When_MessengerMatchesNobody() {
-    Consultant c1 = consultant("c1", false);
-    when(consultantTopicRepository.findConsultantIdsByTopicId(10L)).thenReturn(List.of("c1"));
-    when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
-    // online set is populated but no overlap with this topic's consultants
-    when(messenger.findAvailableConsultants(4)).thenReturn(Set.of("someone-else"));
-
-    List<String> result = service.findEligibleConsultantIds(10L, 4);
-
-    // best-effort fallback: return all active topic consultants rather than empty
     assertThat(result).containsExactly("c1");
   }
 
@@ -328,7 +247,7 @@ class TopicConsultantRoutingServiceTest {
     when(matrixSynapseService.findOnlineMatrixUserIds(List.of("@c1:matrix.org")))
         .thenReturn(Optional.of(Set.of("@c1:matrix.org")));
 
-    List<String> result = service.findEligibleConsultantIds(11L, 1);
+    List<String> result = service.findEligibleConsultantIds(11L);
 
     assertThat(result).containsExactly("c1");
   }
@@ -338,9 +257,7 @@ class TopicConsultantRoutingServiceTest {
     Consultant c1 = consultant("c1", false); // matrixUserId is null
     when(consultantTopicRepository.findConsultantIdsByTopicId(12L)).thenReturn(List.of("c1"));
     when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(messenger.findAvailableConsultants(2)).thenReturn(Set.of("c1"));
-
-    List<String> result = service.findEligibleConsultantIds(12L, 2);
+    List<String> result = service.findEligibleConsultantIds(12L);
 
     // no Matrix user IDs → Optional.empty without calling matrixSynapseService
     verify(matrixSynapseService, never()).findOnlineMatrixUserIds(any());
@@ -370,7 +287,7 @@ class TopicConsultantRoutingServiceTest {
     when(consultantTopicRepository.findConsultantIdsByTopicId(21L)).thenReturn(topicIds);
     when(consultantRepository.findAllByIdIn(topicIds)).thenReturn(Collections.emptyList());
 
-    service.findEligibleConsultantIds(21L, 1);
+    service.findEligibleConsultantIds(21L);
 
     ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
     verify(consultantRepository).findAllByIdIn(captor.capture());
@@ -400,7 +317,7 @@ class TopicConsultantRoutingServiceTest {
     when(matrixSynapseService.findOnlineMatrixUserIds(List.of("@c1:matrix.org")))
         .thenReturn(Optional.of(Set.of("@c1:matrix.org")));
 
-    List<String> result = service.findEligibleConsultantIds(23L, 5);
+    List<String> result = service.findEligibleConsultantIds(23L);
 
     assertThat(result).containsExactly("c1");
   }
@@ -429,9 +346,7 @@ class TopicConsultantRoutingServiceTest {
     Consultant c1 = consultantWithMatrix("c1", "   ", false);
     when(consultantTopicRepository.findConsultantIdsByTopicId(40L)).thenReturn(List.of("c1"));
     when(consultantRepository.findAllByIdIn(List.of("c1"))).thenReturn(List.of(c1));
-    when(messenger.findAvailableConsultants(1)).thenReturn(new HashSet<>(Set.of("c1")));
-
-    List<String> result = service.findEligibleConsultantIds(40L, 1);
+    List<String> result = service.findEligibleConsultantIds(40L);
 
     verify(matrixSynapseService, never()).findOnlineMatrixUserIds(any());
     assertThat(result).containsExactly("c1");
@@ -450,7 +365,7 @@ class TopicConsultantRoutingServiceTest {
             List.of("@c1:matrix.org", "@c2:matrix.org", "@c3:matrix.org")))
         .thenReturn(Optional.of(Set.of("@c1:matrix.org", "@c3:matrix.org")));
 
-    List<String> result = service.findEligibleConsultantIds(41L, 1);
+    List<String> result = service.findEligibleConsultantIds(41L);
 
     assertThat(result).containsExactlyInAnyOrder("c1", "c3");
   }

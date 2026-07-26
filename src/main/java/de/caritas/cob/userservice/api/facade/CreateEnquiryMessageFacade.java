@@ -147,8 +147,7 @@ public class CreateEnquiryMessageFacade {
   private List<ConsultantAgency> resolveConsultantAgenciesForEnquiry(Session session) {
     if (session.getMainTopicId() != null) {
       List<String> topicConsultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(
-              session.getMainTopicId(), session.getConsultingTypeId());
+          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
       if (!topicConsultantIds.isEmpty()) {
         List<ConsultantAgency> topicConsultantAgencies =
             consultantAgencyService.getConsultantAgenciesByConsultantIds(topicConsultantIds);
@@ -183,8 +182,7 @@ public class CreateEnquiryMessageFacade {
     List<String> consultantIds;
     if (session.getMainTopicId() != null) {
       consultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(
-              session.getMainTopicId(), session.getConsultingTypeId());
+          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
     } else {
       consultantIds =
           consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId()).stream()

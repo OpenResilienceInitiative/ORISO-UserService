@@ -68,8 +68,7 @@ class AnonymousConversationCreatorServiceTest {
             any(RegistrationType.class),
             any(SessionStatus.class)))
         .thenReturn(session);
-    when(topicConsultantRoutingService.findEligibleConsultantIds(
-            session.getMainTopicId(), session.getConsultingTypeId()))
+    when(topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId()))
         .thenReturn(List.of("consultant-id"));
     when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of("consultant-id")))
         .thenReturn(List.of());
