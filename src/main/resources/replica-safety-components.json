@@ -257,13 +257,10 @@
       "components": [
         "agencyCache",
         "consultingTypeCache",
-        "applicationSettingsCache",
-        "tenantCache",
-        "tenantAdminCache",
         "topicsCache",
         "rocketChatUserCache"
       ],
-      "decision": "Classify each cache as performance-only or add shared invalidation before enabling multiple replicas; remove the Rocket.Chat cache.",
+      "decision": "Agency, consulting-type and topic entries are bounded performance-only read optimizations. Correctness-relevant tenant and application-setting reads use SharedReadCache in Redis with a hard 60-second freshness limit. Remove the Rocket.Chat cache.",
       "signals": [
         "userservice.replica.local_state"
       ]
@@ -297,20 +294,6 @@
       ]
     },
     {
-      "id": "application-settings-read-cache",
-      "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/ApplicationSettingsService.java",
-      "kind": "local-state",
-      "owner": "consulting-type",
-      "risk": "correctness",
-      "components": [
-        "applicationSettingsCache"
-      ],
-      "decision": "Add an explicit freshness and invalidation contract because stale settings can change application behavior across replicas.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
       "id": "topic-read-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/TopicService.java",
       "kind": "local-state",
@@ -320,34 +303,6 @@
         "topicsCache"
       ],
       "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
-      "id": "tenant-read-cache",
-      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantService.java",
-      "kind": "local-state",
-      "owner": "tenant-administration",
-      "risk": "correctness",
-      "components": [
-        "tenantCache"
-      ],
-      "decision": "Add explicit invalidation on tenant changes before enabling multiple replicas.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
-      "id": "tenant-admin-read-cache",
-      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantAdminService.java",
-      "kind": "local-state",
-      "owner": "tenant-administration",
-      "risk": "correctness",
-      "components": [
-        "tenantAdminCache"
-      ],
-      "decision": "Add explicit invalidation on tenant-administrator changes before enabling multiple replicas.",
       "signals": [
         "userservice.replica.local_state"
       ]

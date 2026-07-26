@@ -2,33 +2,36 @@ package de.caritas.cob.userservice.api.service.consultingtype;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.ApiClient;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.ApplicationsettingsControllerApi;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cache.concurrent.ConcurrentMapCache;
-import org.springframework.cache.support.SimpleCacheManager;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.TestPropertySource;
@@ -50,6 +53,7 @@ class ApplicationSettingsServiceTest {
   private RecordingApiClient apiClient;
   private SecurityHeaderSupplier securityHeaderSupplier;
   private TenantHeaderSupplier tenantHeaderSupplier;
+  private SharedReadCache sharedReadCache;
   private ApplicationSettingsService applicationSettingsService;
 
   @BeforeEach
@@ -58,11 +62,13 @@ class ApplicationSettingsServiceTest {
     controllerApi = new StubApplicationsettingsControllerApi(apiClient);
     securityHeaderSupplier = createSecurityHeaderSupplier();
     tenantHeaderSupplier = createTenantHeaderSupplier();
+    sharedReadCache = passThroughSharedReadCache();
     applicationSettingsService =
         new ApplicationSettingsService(
             new StubApplicationSettingsApiControllerFactory(controllerApi),
             securityHeaderSupplier,
-            tenantHeaderSupplier);
+            tenantHeaderSupplier,
+            sharedReadCache);
   }
 
   // Feature toggles and multitenancy config are loaded from application settings service.
@@ -175,7 +181,8 @@ class ApplicationSettingsServiceTest {
         new ApplicationSettingsService(
             new StubApplicationSettingsApiControllerFactory(controllerApi),
             keycloakSupplier,
-            tenantHeaderSupplier);
+            tenantHeaderSupplier,
+            sharedReadCache);
 
     applicationSettingsService.getGlobalSmtpCredentials();
 
@@ -231,17 +238,26 @@ class ApplicationSettingsServiceTest {
 
     @Autowired private TrackingSecurityHeaderSupplier securityHeaderSupplier;
 
-    @Autowired private CacheManager cacheManager;
+    @Autowired private SharedReadCache sharedReadCache;
+
+    private final Map<String, Object> cachedValues = new ConcurrentHashMap<>();
 
     @BeforeEach
     void clearCache() {
-      cacheManager.getCache(CacheManagerConfig.APPLICATION_SETTINGS_CACHE).clear();
+      reset(sharedReadCache);
+      cachedValues.clear();
+      configureMapBackedCache(sharedReadCache, cachedValues);
       controllerApi.reset();
       apiClient.recordedHeaders.clear();
       securityHeaderSupplier.reset();
     }
 
-    // Application settings are stable and safe to cache for the lifetime of the process.
+    @AfterEach
+    void clearTenantContext() {
+      TenantContext.clear();
+    }
+
+    // Repeated reads use the shared bounded cache rather than calling upstream each time.
     @Test
     void getApplicationSettings_calledTwice_callsApiOnce() {
       controllerApi.settingsResult = new ApplicationSettingsDTO();
@@ -262,6 +278,20 @@ class ApplicationSettingsServiceTest {
 
       assertThat(securityHeaderSupplier.csrfOnlyHeaderCalls.get()).isEqualTo(1);
       assertThat(apiClient.recordedHeaders).containsKey(CSRF_HEADER);
+    }
+
+    @Test
+    void getApplicationSettings_usesSeparateSharedEntryPerTenant() {
+      controllerApi.settingsResult = new ApplicationSettingsDTO();
+
+      TenantContext.setCurrentTenant(7L);
+      cachedApplicationSettingsService.getApplicationSettings();
+      TenantContext.setCurrentTenant(8L);
+      cachedApplicationSettingsService.getApplicationSettings();
+      TenantContext.setCurrentTenant(7L);
+      cachedApplicationSettingsService.getApplicationSettings();
+
+      assertThat(controllerApi.settingsCallCount.get()).isEqualTo(2);
     }
   }
 
@@ -294,8 +324,6 @@ class ApplicationSettingsServiceTest {
     return supplier;
   }
 
-  @Configuration
-  @EnableCaching
   static class CacheTestConfig {
 
     @Bean
@@ -313,11 +341,13 @@ class ApplicationSettingsServiceTest {
     ApplicationSettingsService applicationSettingsService(
         StubApplicationsettingsControllerApi stubApplicationsettingsControllerApi,
         TrackingSecurityHeaderSupplier trackingSecurityHeaderSupplier,
-        TenantHeaderSupplier tenantHeaderSupplier) {
+        TenantHeaderSupplier tenantHeaderSupplier,
+        SharedReadCache sharedReadCache) {
       return new ApplicationSettingsService(
           new StubApplicationSettingsApiControllerFactory(stubApplicationsettingsControllerApi),
           trackingSecurityHeaderSupplier,
-          tenantHeaderSupplier);
+          tenantHeaderSupplier,
+          sharedReadCache);
     }
 
     @Bean
@@ -331,13 +361,29 @@ class ApplicationSettingsServiceTest {
     }
 
     @Bean
-    CacheManager cacheManager() {
-      var cacheManager = new SimpleCacheManager();
-      cacheManager.setCaches(
-          List.of(new ConcurrentMapCache(CacheManagerConfig.APPLICATION_SETTINGS_CACHE)));
-      cacheManager.initializeCaches();
-      return cacheManager;
+    SharedReadCache sharedReadCache() {
+      return mock(SharedReadCache.class);
     }
+  }
+
+  private static SharedReadCache passThroughSharedReadCache() {
+    SharedReadCache cache = mock(SharedReadCache.class);
+    doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(3)).get())
+        .when(cache)
+        .getOrLoad(any(), anyString(), any(), any());
+    return cache;
+  }
+
+  private static void configureMapBackedCache(
+      SharedReadCache cache, Map<String, Object> cachedValues) {
+    doAnswer(
+            invocation -> {
+              String key = invocation.getArgument(0) + ":" + invocation.getArgument(1);
+              return cachedValues.computeIfAbsent(
+                  key, ignored -> ((Supplier<?>) invocation.getArgument(3)).get());
+            })
+        .when(cache)
+        .getOrLoad(any(), anyString(), any(), any());
   }
 
   static final class RecordingApiClient extends ApiClient {

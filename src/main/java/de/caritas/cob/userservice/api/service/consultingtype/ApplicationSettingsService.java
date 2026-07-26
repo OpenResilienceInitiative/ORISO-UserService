@@ -2,10 +2,12 @@ package de.caritas.cob.userservice.api.service.consultingtype;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache.CacheName;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.ApiClient;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.ApplicationsettingsControllerApi;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
@@ -13,7 +15,6 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
@@ -27,9 +28,17 @@ public class ApplicationSettingsService {
       applicationSettingsApiControllerFactory;
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
+  private final @NonNull SharedReadCache sharedReadCache;
 
-  @Cacheable(value = CacheManagerConfig.APPLICATION_SETTINGS_CACHE)
   public ApplicationSettingsDTO getApplicationSettings() {
+    return sharedReadCache.getOrLoad(
+        CacheName.APPLICATION_SETTINGS,
+        "tenant:" + String.valueOf(TenantContext.getCurrentTenant()),
+        ApplicationSettingsDTO.class,
+        this::loadApplicationSettings);
+  }
+
+  private ApplicationSettingsDTO loadApplicationSettings() {
     ApplicationsettingsControllerApi controllerApi =
         applicationSettingsApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());

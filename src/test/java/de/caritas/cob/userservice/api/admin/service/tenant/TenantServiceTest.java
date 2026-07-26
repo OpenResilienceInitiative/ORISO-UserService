@@ -2,27 +2,29 @@ package de.caritas.cob.userservice.api.admin.service.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.tenantservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cache.concurrent.ConcurrentMapCache;
-import org.springframework.cache.support.SimpleCacheManager;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
@@ -39,7 +41,9 @@ class TenantServiceTest {
   void setUp() {
     tenantControllerApi = new StubTenantControllerApi();
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(tenantControllerApi));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(tenantControllerApi),
+            passThroughSharedReadCache());
   }
 
   // Tenant resolution must reach the external tenant service on a cache miss.
@@ -90,7 +94,9 @@ class TenantServiceTest {
   @Test
   void getRestrictedTenantData_nullSubdomain_throwsHttpClientErrorException() {
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(new TenantControllerApi()));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(new TenantControllerApi()),
+            passThroughSharedReadCache());
 
     assertThatThrownBy(() -> tenantService.getRestrictedTenantData((String) null))
         .isInstanceOf(HttpClientErrorException.class)
@@ -101,7 +107,9 @@ class TenantServiceTest {
   @Test
   void getRestrictedTenantData_nullTenantId_throwsHttpClientErrorException() {
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(new TenantControllerApi()));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(new TenantControllerApi()),
+            passThroughSharedReadCache());
 
     assertThatThrownBy(() -> tenantService.getRestrictedTenantData((Long) null))
         .isInstanceOf(HttpClientErrorException.class)
@@ -116,11 +124,15 @@ class TenantServiceTest {
 
     @Autowired private StubTenantControllerApi tenantControllerApi;
 
-    @Autowired private CacheManager cacheManager;
+    @Autowired private SharedReadCache sharedReadCache;
+
+    private final Map<String, Object> cachedValues = new ConcurrentHashMap<>();
 
     @BeforeEach
     void clearCache() {
-      cacheManager.getCache(CacheManagerConfig.TENANT_CACHE).clear();
+      reset(sharedReadCache);
+      cachedValues.clear();
+      configureMapBackedCache(sharedReadCache, cachedValues);
       tenantControllerApi.reset();
     }
 
@@ -202,13 +214,11 @@ class TenantServiceTest {
         executor.shutdownNow();
       }
 
-      // Spring @Cacheable does not enable sync=true; under race both threads may miss once.
+      // A cold cache-aside race may miss once per caller; warm reads remain shared.
       assertThat(tenantControllerApi.subdomainCalls.get()).isLessThanOrEqualTo(2);
     }
   }
 
-  @Configuration
-  @EnableCaching
   static class CacheTestConfig {
 
     @Bean
@@ -217,17 +227,51 @@ class TenantServiceTest {
     }
 
     @Bean
-    TenantService tenantService(StubTenantControllerApi stubTenantControllerApi) {
-      return new TenantService(new StubTenantServiceApiControllerFactory(stubTenantControllerApi));
+    TenantService tenantService(
+        StubTenantControllerApi stubTenantControllerApi, SharedReadCache sharedReadCache) {
+      return new TenantService(
+          new StubTenantServiceApiControllerFactory(stubTenantControllerApi), sharedReadCache);
     }
 
     @Bean
-    CacheManager cacheManager() {
-      var cacheManager = new SimpleCacheManager();
-      cacheManager.setCaches(List.of(new ConcurrentMapCache(CacheManagerConfig.TENANT_CACHE)));
-      cacheManager.initializeCaches();
-      return cacheManager;
+    SharedReadCache sharedReadCache() {
+      return mock(SharedReadCache.class);
     }
+  }
+
+  private static SharedReadCache passThroughSharedReadCache() {
+    SharedReadCache cache = mock(SharedReadCache.class);
+    doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(3)).get())
+        .when(cache)
+        .getOrLoad(any(), anyString(), any(), any());
+    return cache;
+  }
+
+  private static void configureMapBackedCache(
+      SharedReadCache cache, Map<String, Object> cachedValues) {
+    doAnswer(
+            invocation -> {
+              String key = invocation.getArgument(0) + ":" + invocation.getArgument(1);
+              Object cached = cachedValues.get(key);
+              if (cached != null) {
+                return cached;
+              }
+              Object loaded = ((Supplier<?>) invocation.getArgument(3)).get();
+              if (loaded != null) {
+                cachedValues.put(key, loaded);
+              }
+              return loaded;
+            })
+        .when(cache)
+        .getOrLoad(any(), anyString(), any(), any());
+    doAnswer(
+            invocation -> {
+              String key = invocation.getArgument(0) + ":" + invocation.getArgument(1);
+              cachedValues.put(key, invocation.getArgument(2));
+              return null;
+            })
+        .when(cache)
+        .put(any(), anyString(), any());
   }
 
   static final class StubTenantControllerApi extends TenantControllerApi {

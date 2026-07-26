@@ -15,10 +15,10 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,821 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 955 | 0 | 0 | 0 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+| Redis replica-safety contracts | 6 | 0 | 0 | 0 | required Redis job |
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a

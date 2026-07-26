@@ -82,6 +82,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("ConsultantActivityRegistryRedisIT", reusable)
         self.assertIn("ActiveViewRegistryRedisIT", reusable)
         self.assertIn("MatrixSyncCoordinationRegistryRedisIT", reusable)
+        self.assertIn("SharedReadCacheRedisIT", reusable)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (
