@@ -29,34 +29,7 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
 
   redis-contract:
-    name: Redis availability contract
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-        - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      ORISO_LOCAL_REDIS_IT: true
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Set up JDK and Maven
-      uses: actions/setup-java@v5
-      with:
-        java-version: '21'
-        distribution: temurin
-        cache: maven
-
-    - name: Verify Redis-backed availability contract
-      run: ./mvnw -B -Dtest=ConsultantActivityRegistryRedisIT test
+    uses: ./.github/workflows/redis-contract.yml
 
   mariadb-contract:
     uses: ./.github/workflows/mariadb-contract.yml

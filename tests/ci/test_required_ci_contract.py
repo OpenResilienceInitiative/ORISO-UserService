@@ -75,12 +75,32 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("needs.required-integration-tests.result", aggregate)
         self.assertIn("needs.mariadb-contract.result", aggregate)
 
+    def test_real_redis_replica_state_contract_is_required_on_every_workflow(self):
+        reusable = (ROOT / ".github/workflows/redis-contract.yml").read_text()
+        self.assertIn("workflow_call:", reusable)
+        self.assertIn("image: redis:7-alpine", reusable)
+        self.assertIn("ConsultantActivityRegistryRedisIT", reusable)
+        self.assertIn("ActiveViewRegistryRedisIT", reusable)
+        self.assertNotIn("continue-on-error:", reusable)
+
+        for relative_path in (
+            ".github/workflows/ci-pull-request.yml",
+            ".github/workflows/ci-feature-branch.yml",
+            ".github/workflows/ci-main.yml",
+        ):
+            workflow = (ROOT / relative_path).read_text()
+            redis = job_block(workflow, "redis-contract")
+            self.assertIn("uses: ./.github/workflows/redis-contract.yml", redis)
+
     def test_publish_waits_for_required_integration_tests(self):
         workflow = (ROOT / ".github/workflows/ci-main.yml").read_text()
         publish = job_block(workflow, "publish")
         integration = job_block(workflow, "required-integration-tests")
 
-        self.assertIn("needs: [required-integration-tests, mariadb-contract]", publish)
+        self.assertIn(
+            "needs: [required-integration-tests, mariadb-contract, redis-contract]",
+            publish,
+        )
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
 

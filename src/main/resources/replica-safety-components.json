@@ -220,20 +220,6 @@
       ]
     },
     {
-      "id": "active-view-notification-state",
-      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/EventNotificationService.java",
-      "kind": "local-state",
-      "owner": "notification",
-      "risk": "correctness",
-      "components": [
-        "activeViewByUserId"
-      ],
-      "decision": "Keep one replica or externalize active-view state before claiming cross-replica notification suppression correctness.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
       "id": "magic-login-token-state",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/auth/MagicLinkLoginService.java",
       "kind": "local-state",

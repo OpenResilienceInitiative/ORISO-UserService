@@ -2,9 +2,10 @@
 
 UserService is currently safe to deploy with one replica. A Kubernetes
 `Deployment` and stateless HTTP security do not make the whole process
-stateless: Matrix listener coordination, authentication tokens, active-view
-notification state, Ehcache reads and scheduled side effects still have
-process-local behavior.
+stateless: Matrix listener coordination, authentication tokens, Ehcache reads
+and scheduled side effects still have process-local behavior. Notification
+active-view state is now externalized as described below, but the remaining
+items still keep the global replica limit at one.
 
 The machine-readable inventory is
 [`src/main/resources/replica-safety-components.json`](../src/main/resources/replica-safety-components.json).
@@ -26,6 +27,8 @@ the inventory fails `tests/ci/test_replica_safety_contract.py`.
 - `userservice.scheduler.executions` counts every completed scheduled execution
   by bounded task name and `success` or `failure`.
 - `userservice.scheduler.duration` measures the corresponding duration.
+- `userservice.notification.active_view.store.operations` records only bounded
+  Redis operation/outcome tags for active-view writes, reads and deletes.
 
 SigNoz already receives `service.instance.id` as a resource attribute. Grouping
 `userservice.scheduler.executions` by task and service instance makes duplicate
@@ -62,6 +65,16 @@ workflow, but the chat is deleted once and its Matrix room is purged exactly
 once. This per-chat coordination keeps the one-minute schedule intact and
 remains part of the Matrix-only target after the separate Rocket.Chat branch is
 physically removed.
+
+Notification active-view suppression is no longer process-local.
+`ActiveViewRegistry` stores one encoded room/thread value per user in Redis with
+a 30-second TTL. The frontend refreshes this state every ten seconds; a lost
+inactive request can therefore suppress notifications only until the TTL
+expires. Redis reads fail open, so a store outage can make notifications noisy
+but cannot make them disappear. `ActiveViewRegistryRedisIT` reconstructs a
+second registry over the same Redis 7 store and proves shared reads, immediate
+clear and expiry. The reusable Redis workflow runs this contract together with
+consultant availability before PR, branch and publish workflows can succeed.
 
 The inactive-account notification proof starts two independent service
 instances against the same audit database. A transaction-isolated unique claim

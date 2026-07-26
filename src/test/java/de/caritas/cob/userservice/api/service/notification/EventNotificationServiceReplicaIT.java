@@ -37,6 +37,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private IdentityTombstoneService identityTombstoneService;
   @Autowired private EventNotificationDeduplicationWriter deduplicationWriter;
+  @Autowired private ActiveViewRegistry activeViewRegistry;
   @MockitoBean private LiveEventNotificationService liveEventNotificationService;
 
   @AfterEach
@@ -86,7 +87,8 @@ class EventNotificationServiceReplicaIT {
         consultantRepository,
         identityTombstoneService,
         deduplicationWriter,
-        liveEventNotificationService);
+        liveEventNotificationService,
+        activeViewRegistry);
   }
 
   private void publishReminder(

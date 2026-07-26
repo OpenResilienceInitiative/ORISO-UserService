@@ -20,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -51,7 +50,7 @@ public class EventNotificationService {
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
-  private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
+  private final @NonNull ActiveViewRegistry activeViewRegistry;
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   @Value("${privacy.notificationPreviewMode:NONE}")
@@ -580,18 +579,7 @@ public class EventNotificationService {
   }
 
   public void updateActiveView(String userId, String roomId, String threadRootId, boolean active) {
-    if (userId == null || userId.isBlank()) {
-      return;
-    }
-    if (!active) {
-      activeViewByUserId.remove(userId);
-      return;
-    }
-    if (roomId == null || roomId.isBlank()) {
-      activeViewByUserId.remove(userId);
-      return;
-    }
-    activeViewByUserId.put(userId, new ActiveViewState(roomId, threadRootId));
+    activeViewRegistry.update(userId, roomId, threadRootId, active);
   }
 
   @Transactional
@@ -914,11 +902,12 @@ public class EventNotificationService {
 
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
-    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+    ActiveViewRegistry.ActiveView activeView =
+        activeViewRegistry.find(recipientUserId).orElse(null);
     if (activeView == null || roomId == null || roomId.isBlank()) {
       return false;
     }
-    if (!roomId.equals(activeView.roomId)) {
+    if (!roomId.equals(activeView.roomId())) {
       return false;
     }
 
@@ -928,7 +917,7 @@ public class EventNotificationService {
     }
 
     // For thread replies, suppress only when recipient is actively inside same thread.
-    return threadRootId.equals(activeView.threadRootId);
+    return threadRootId.equals(activeView.threadRootId());
   }
 
   private String buildSessionActionPath(Session session) {
@@ -1005,16 +994,6 @@ public class EventNotificationService {
     private final Long sourceSessionId;
     private final String createdAt;
     private final String readAt;
-  }
-
-  private static class ActiveViewState {
-    private final String roomId;
-    private final String threadRootId;
-
-    private ActiveViewState(String roomId, String threadRootId) {
-      this.roomId = roomId;
-      this.threadRootId = threadRootId;
-    }
   }
 
   private enum NotificationPreviewMode {

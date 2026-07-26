@@ -1,0 +1,38 @@
+name: UserService Redis Contract
+
+on:
+  workflow_call:
+
+jobs:
+  verify:
+    name: Redis replica-state contracts
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ORISO_LOCAL_REDIS_IT: true
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+
+    - name: Verify Redis-backed replica-state contracts
+      run: >-
+        ./mvnw -B
+        -Dtest=ConsultantActivityRegistryRedisIT,ActiveViewRegistryRedisIT
+        test

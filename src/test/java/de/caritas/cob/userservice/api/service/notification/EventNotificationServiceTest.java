@@ -53,6 +53,7 @@ class EventNotificationServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
+  @Mock private ActiveViewRegistry activeViewRegistry;
 
   @Mock
   private de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService
@@ -466,7 +467,8 @@ class EventNotificationServiceTest {
     when(session.getUser()).thenReturn(user);
     when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
 
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", null, true);
+    when(activeViewRegistry.find("asker-1"))
+        .thenReturn(Optional.of(new ActiveViewRegistry.ActiveView("rc-group-1", null)));
     eventNotificationService.createMessageNotificationFromRoom(
         "rc-group-1", "sender", "hello", false);
 
@@ -475,7 +477,8 @@ class EventNotificationServiceTest {
 
   @Test
   void createMessageNotificationFromRoom_doesNotSuppressWhenUserIsInDifferentRoom() {
-    eventNotificationService.updateActiveView("asker-1", "different-room", null, true);
+    when(activeViewRegistry.find("asker-1"))
+        .thenReturn(Optional.of(new ActiveViewRegistry.ActiveView("different-room", null)));
 
     Session session = sessionMock();
     User user = mock(User.class);
@@ -529,7 +532,8 @@ class EventNotificationServiceTest {
 
   @Test
   void createThreadReplyNotificationFromRoom_suppressesWhenUserActiveInSameThread() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", "thread-root-1", true);
+    when(activeViewRegistry.find("asker-1"))
+        .thenReturn(Optional.of(new ActiveViewRegistry.ActiveView("rc-group-1", "thread-root-1")));
 
     Session session = sessionMock();
     User user = mock(User.class);
@@ -545,7 +549,8 @@ class EventNotificationServiceTest {
 
   @Test
   void createThreadReplyNotificationFromRoom_doesNotSuppressWhenThreadRootIdMismatch() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", "thread-root-1", true);
+    when(activeViewRegistry.find("asker-1"))
+        .thenReturn(Optional.of(new ActiveViewRegistry.ActiveView("rc-group-1", "thread-root-1")));
 
     Session session = sessionMock();
     User user = mock(User.class);
@@ -672,6 +677,7 @@ class EventNotificationServiceTest {
 
     // Notification must still be delivered — blank userId never registered any suppression
     verify(eventNotificationRepository).save(any());
+    verify(activeViewRegistry).update("  ", "room-1", null, true);
   }
 
   @Test
@@ -689,6 +695,7 @@ class EventNotificationServiceTest {
         "rc-group-1", "sender", "msg", false);
 
     verify(eventNotificationRepository).save(any());
+    verify(activeViewRegistry).update("asker-1", "rc-group-1", null, false);
   }
 
   @Test
@@ -706,6 +713,7 @@ class EventNotificationServiceTest {
         "rc-group-1", "sender", "msg", false);
 
     verify(eventNotificationRepository).save(any());
+    verify(activeViewRegistry).update("asker-1", "  ", null, true);
   }
 
   // ---------------------------------------------------------------------------

@@ -16,6 +16,9 @@ jobs:
   mariadb-contract:
     uses: ./.github/workflows/mariadb-contract.yml
 
+  redis-contract:
+    uses: ./.github/workflows/redis-contract.yml
+
   required-integration-tests:
     name: required integration tests
     runs-on: ubuntu-latest
@@ -31,7 +34,7 @@ jobs:
 
   publish:
     name: test, build and publish image
-    needs: [required-integration-tests, mariadb-contract]
+    needs: [required-integration-tests, mariadb-contract, redis-contract]
     runs-on: ubuntu-latest
 
     permissions:

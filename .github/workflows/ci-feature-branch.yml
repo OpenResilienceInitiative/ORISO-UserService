@@ -36,3 +36,6 @@ jobs:
 
   mariadb-contract:
     uses: ./.github/workflows/mariadb-contract.yml
+
+  redis-contract:
+    uses: ./.github/workflows/redis-contract.yml
