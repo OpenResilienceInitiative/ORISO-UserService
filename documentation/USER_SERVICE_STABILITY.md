@@ -147,7 +147,10 @@ motivated the explicit finite latency buckets.
 The audited pod predates this branch. Therefore its live data proves the OTel
 pipeline and supplies a baseline, but it does not prove the new
 `userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
-repair. Those require the branch image to be deployed and queried again.
+repair in the shared environment. The local branch-image proof below validates
+their runtime registration, tags and finite buckets; the exact image still has
+to be deployed and queried through SigNoz before the observability gate is
+closed.
 
 ## Chatty-call reductions
 
@@ -164,6 +167,10 @@ repair. Those require the branch image to be deployed and queried again.
   duplicate upstream calls, and the hard 60-second TTL replaces replica-local
   three-hour and 24-hour stale windows. Redis failures fail open to the
   authoritative upstream service.
+- Username-availability fallback keeps its public fail-open behavior during an
+  identity outage, but logs only the bounded exception class. The outbound
+  metrics retain attempt/outcome/latency evidence without one full stack trace
+  per public request.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -258,3 +265,26 @@ max). This is a bounded smoke baseline, not a production capacity claim. The
 aggregate local health group was `DOWN` because the developer RabbitMQ instance
 did not accept the testing profile's credentials; liveness and readiness were
 both `UP`, and the dedicated Redis contract passed independently.
+
+Local branch-image proof on 2026-07-26 used
+`oriso-userservice:stability-dbb2f3ba`, built from code commit `dbb2f3ba`.
+The `dev` profile applied all 95 Liquibase changesets to a disposable fresh
+MariaDB 10.11 instance and started with aggregate health, MariaDB, RabbitMQ,
+Redis, liveness and readiness all `UP`.
+
+The public topic-availability business path executed 500 requests at
+concurrency 20 across HTTP, MariaDB and Redis: 0 failures, 23,000 response
+bytes, 547.09 requests/second, 36.31 ms mean and 41.58 ms p95. The application
+metric independently recorded exactly 500 successful Redis availability reads.
+The identity-unavailable path executed 50 requests at concurrency 5 against a
+deliberate upstream 404: all 50 client fallbacks completed, while the new
+metrics recorded exactly 50 outbound attempts, 4,650 request bytes and 8,350
+response bytes. Forty-nine attempts were in the 10 ms histogram bucket and all
+50 were within 50 ms; no scheduled retry metric was created. The log contract
+recorded 50 bounded warnings and zero exception stack traces.
+
+This is realistic local branch-image and degradation evidence, not a production
+capacity claim or deployed SigNoz proof. The runtime gauge still reports one
+supported replica and six remaining local-state components. The exact image
+must still be deployed under normal authenticated traffic and queried through
+SigNoz before changing either claim.
