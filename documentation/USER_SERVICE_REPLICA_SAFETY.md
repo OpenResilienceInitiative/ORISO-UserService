@@ -44,6 +44,14 @@ recipient/deduplication key. The JPA model and MariaDB migration now express the
 same unique constraint. Exactly one event row and one live refresh are
 observable after the race.
 
+The appointment cleanup needs no distributed claim because its complete effect
+is one native database delete over a fixed clock cutoff and it has no external
+side effects. `OrganizerMariaDbReplicaIT` releases two cleanup executions
+concurrently against MariaDB 11.0.6 with 120 expired and 30 current
+appointments. Both transactions complete successfully and exactly the 30
+current rows remain. The reusable MariaDB CI contract runs this proof together
+with schema-drift and statistics-repository validation on MariaDB 10.11.
+
 The inactive-account notification proof starts two independent service
 instances against the same audit database. A transaction-isolated unique claim
 is committed before the external mail call, so the losing instance performs no

@@ -10,7 +10,7 @@
       "kind": "scheduler",
       "owner": "appointment",
       "risk": "duplicate-side-effect",
-      "decision": "Keep the deployment at one replica until concurrent cleanup proves database-level idempotency.",
+      "decision": "OrganizerMariaDbReplicaIT proves that two concurrent MariaDB cleanup transactions over 120 expired and 30 current appointments complete successfully and leave exactly the 30 current rows. The single native bulk delete is database-idempotent and has no external side effects.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
