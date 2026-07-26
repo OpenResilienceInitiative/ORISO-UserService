@@ -33,6 +33,9 @@ the inventory fails `tests/ci/test_replica_safety_contract.py`.
 - `userservice.matrix.sync.coordination.operations` records only bounded Redis
   lease/cursor operation and outcome tags; it never contains owner, room,
   token or event identifiers.
+- `userservice.matrix.browser_login.coordination.operations` records only
+  bounded acquire/release operation and outcome tags. Matrix identities,
+  device IDs, lock keys and owner tokens are never metric tags.
 - `userservice.shared_read_cache.operations` records bounded cache, operation
   and outcome tags for tenant, tenant-admin, application-setting, agency,
   consulting-type and topic reads. It never contains tenant IDs, subdomains or
@@ -107,6 +110,22 @@ proves shared reads, bounded expiry/reload, one upstream load for a concurrent
 cold miss, reference-list serialization and tenant isolation. Reference reads
 therefore have one shared freshness bound instead of the previous replica-local
 60-second, three-hour and 24-hour windows.
+
+Matrix browser-device login no longer relies on a process-local lock. Password
+rotation and consumption now run inside `MatrixBrowserLoginCoordinator`, which
+uses a Redis `SET NX` lease keyed by a SHA-256 digest of the Matrix identity.
+The raw identity is not stored in the key. Each attempt has an opaque owner
+token, and a Lua compare-and-delete releases only the current owner's lease.
+Acquisition failures and the ten-second contention limit fail closed; release
+failures leave the 30-second TTL as the recovery bound.
+`MatrixBrowserLoginCoordinatorRedisIT` reconstructs two coordinator instances
+against Redis 7 and proves mutual exclusion plus stale-owner recovery after
+expiry. The protected operation makes two normal Matrix HTTP calls. Their
+configured three-second connection and ten-second read limits keep the
+worst-case sequential network wait below the 30-second lease. Deployment
+overrides must preserve that inequality, and
+`userservice.matrix.browser_login.coordination.operations` must be monitored
+for contention, timeouts and release failures.
 
 Matrix `/sync` leadership and cursor state are no longer process-local.
 `MatrixSyncCoordinationRegistry` gives one logical consumer a short Redis lease,

@@ -29,6 +29,67 @@ def source_has_process_local_state(source: Path) -> bool:
 
 
 class ReplicaSafetyContractTest(unittest.TestCase):
+    def test_matrix_browser_login_uses_shared_fail_closed_coordination(self):
+        matrix_service = (
+            MAIN_JAVA
+            / "de/caritas/cob/userservice/api/adapters/matrix/"
+            "MatrixSynapseService.java"
+        ).read_text()
+        coordinator = (
+            MAIN_JAVA
+            / "de/caritas/cob/userservice/api/adapters/matrix/"
+            "MatrixBrowserLoginCoordinator.java"
+        ).read_text()
+        replica_test = (
+            ROOT
+            / "src/test/java/de/caritas/cob/userservice/api/adapters/matrix/"
+            "MatrixBrowserLoginCoordinatorRedisIT.java"
+        ).read_text()
+        redis_workflow = (
+            ROOT / ".github/workflows/redis-contract.yml"
+        ).read_text()
+        application_properties = (
+            ROOT / "src/main/resources/application.properties"
+        ).read_text()
+        catalog = json.loads(CATALOG.read_text())
+        entry = next(
+            entry
+            for entry in catalog["components"]
+            if entry["id"] == "matrix-client-token-and-presence-caches"
+        )
+
+        self.assertNotIn("browserLoginLocks", matrix_service)
+        self.assertIn(
+            "MatrixBrowserLoginCoordinator browserLoginCoordinator",
+            matrix_service,
+        )
+        self.assertIn("browserLoginCoordinator.coordinate(", matrix_service)
+        self.assertIn("setIfAbsent(lockKey, ownerId, leaseTtl)", coordinator)
+        self.assertIn("RELEASE_SCRIPT", coordinator)
+        self.assertIn("login fails closed", coordinator)
+        self.assertIn(
+            "matrix.browser-login.coordination.leaseTtlSeconds="
+            "${MATRIX_BROWSER_LOGIN_COORDINATION_LEASE_TTL_SECONDS:30}",
+            application_properties,
+        )
+        self.assertIn(
+            "twoReplicaCoordinatorsSerializeOneUsersPasswordRotationAndLogin",
+            replica_test,
+        )
+        self.assertIn(
+            "expiredOwnerDoesNotBlockTheNextReplicaIndefinitely",
+            replica_test,
+        )
+        self.assertIn("MatrixBrowserLoginCoordinatorRedisIT", redis_workflow)
+        self.assertEqual("performance-only", entry["risk"])
+        self.assertNotIn("browserLoginLocks", entry["components"])
+        self.assertIn("shared Redis coordination", entry["decision"])
+        self.assertIn("owner-verified release", entry["decision"])
+        self.assertIn(
+            "userservice.matrix.browser_login.coordination.operations",
+            entry["signals"],
+        )
+
     def test_inactive_session_deletion_has_durable_replica_claim(self):
         scheduler = (
             ROOT

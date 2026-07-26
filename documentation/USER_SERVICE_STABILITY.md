@@ -25,14 +25,23 @@ records the staged reruns used to expose their underlying repair clusters. It
 does not invent a more specific original exception where the first report no
 longer contained one.
 
-After repairing those clusters:
+After repairing those clusters, the last fully completed broad-suite baseline
+was:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,839 | 0 | 0 | 7 | `./mvnw -B test` |
-| Integration + contract + E2E | 959 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,838 | 0 | 0 | 7 | `./mvnw -B test` |
+| Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 7 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis replica-safety contracts | 7 | 0 | 0 | 0 | required Redis job |
+| Redis replica-safety contracts | 9 | 0 | 0 | 0 | required Redis job |
+
+The current candidate adds focused scheduler and Matrix browser-login unit and
+replica tests. Those focused tests pass, including the scheduler proof on fresh
+MariaDB 10.11 and the browser-login proof on Redis 7, but no new aggregate
+broad-suite totals may be claimed until both broad suites complete serially.
+Two attempted broad runs overlapped and were terminated after their Surefire
+JVMs continued beyond the tool output; partial reports from those attempts are
+not completion evidence.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a

@@ -3,7 +3,9 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -21,12 +23,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,12 +64,20 @@ class MatrixSynapseServiceTest {
   @Mock private RestTemplate matrixLongPollRestTemplate;
   @Mock private MatrixRoomClient matrixRoomClient;
   @Mock private MatrixMediaClient matrixMediaClient;
+  @Mock private MatrixBrowserLoginCoordinator browserLoginCoordinator;
 
   @BeforeEach
   void setUpMatrixConfig() {
     matrixConfig = new MatrixConfig();
     matrixConfig.setApiUrl("https://matrix.example.com");
     matrixConfig.setRegistrationSharedSecret(REGISTRATION_SECRET);
+    lenient()
+        .when(browserLoginCoordinator.coordinate(anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              Supplier<?> operation = invocation.getArgument(1);
+              return operation.get();
+            });
   }
 
   @Test
@@ -456,6 +463,7 @@ class MatrixSynapseServiceTest {
         matrixLongPollRestTemplate,
         matrixRoomClient,
         matrixMediaClient,
+        browserLoginCoordinator,
         nowSupplier);
   }
 
@@ -465,7 +473,8 @@ class MatrixSynapseServiceTest {
         restTemplate,
         matrixLongPollRestTemplate,
         matrixRoomClient,
-        matrixMediaClient);
+        matrixMediaClient,
+        browserLoginCoordinator);
   }
 
   // -------------------------------------------------------------------------
@@ -724,60 +733,26 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
-  void loginBrowserDevice_serializesPasswordRotationAndLoginForTheSameUser() throws Exception {
+  void loginBrowserDevice_runsPasswordRotationAndLoginInsideSharedCoordination() {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     var service = matrixSynapseService();
     ReflectionTestUtils.setField(service, "cachedAdminToken", MATRIX_ADMIN_TOKEN);
     ReflectionTestUtils.setField(service, "adminTokenExpiry", Long.MAX_VALUE);
     var updateUri = URI.create(MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40alice%3Aexample.org");
-    var updateCalls = new AtomicInteger();
-    var firstLoginEntered = new CountDownLatch(1);
-    var releaseFirstLogin = new CountDownLatch(1);
-    var secondUpdateEntered = new CountDownLatch(1);
     when(restTemplate.exchange(
             eq(updateUri), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
-        .thenAnswer(
-            invocation -> {
-              if (updateCalls.incrementAndGet() == 2) {
-                secondUpdateEntered.countDown();
-              }
-              return ResponseEntity.ok(Map.of());
-            });
+        .thenReturn(ResponseEntity.ok(Map.of()));
     when(restTemplate.postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
-        .thenAnswer(
-            invocation -> {
-              if (firstLoginEntered.getCount() > 0) {
-                firstLoginEntered.countDown();
-                releaseFirstLogin.await(2, TimeUnit.SECONDS);
-              }
-              return ResponseEntity.ok(
-                  Map.of(
-                      "access_token", "browser-token",
-                      "device_id", "ORISO_WEB_DEVICE"));
-            });
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "access_token", "browser-token",
+                    "device_id", "ORISO_WEB_DEVICE_ONE")));
 
-    var executor = Executors.newFixedThreadPool(2);
-    try {
-      var first =
-          executor.submit(
-              () -> service.loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE"));
-      assertThat(firstLoginEntered.await(2, TimeUnit.SECONDS)).isTrue();
-      var second =
-          executor.submit(
-              () -> service.loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_TWO"));
-
-      assertThat(secondUpdateEntered.await(200, TimeUnit.MILLISECONDS))
-          .as("the second password rotation must wait until the first login completes")
-          .isFalse();
-
-      releaseFirstLogin.countDown();
-      assertThat(first.get(2, TimeUnit.SECONDS)).isNotNull();
-      assertThat(second.get(2, TimeUnit.SECONDS)).isNotNull();
-    } finally {
-      releaseFirstLogin.countDown();
-      executor.shutdownNow();
-    }
+    assertThat(service.loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE"))
+        .containsEntry("access_token", "browser-token");
+    verify(browserLoginCoordinator).coordinate(eq("@alice:example.org"), any());
   }
 
   // -------------------------------------------------------------------------

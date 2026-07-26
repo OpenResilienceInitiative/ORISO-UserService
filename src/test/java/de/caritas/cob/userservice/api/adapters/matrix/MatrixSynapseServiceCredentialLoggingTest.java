@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -14,6 +17,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import java.util.List;
+import java.util.function.Supplier;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +61,13 @@ class MatrixSynapseServiceCredentialLoggingTest {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername(ADMIN_USERNAME);
     matrixConfig.setAdminPassword(ADMIN_PASSWORD);
+    var browserLoginCoordinator = mock(MatrixBrowserLoginCoordinator.class);
+    when(browserLoginCoordinator.coordinate(anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              Supplier<?> operation = invocation.getArgument(1);
+              return operation.get();
+            });
 
     service =
         new MatrixSynapseService(
@@ -64,7 +75,8 @@ class MatrixSynapseServiceCredentialLoggingTest {
             restTemplate,
             restTemplate,
             mock(MatrixRoomClient.class),
-            mock(MatrixMediaClient.class));
+            mock(MatrixMediaClient.class),
+            browserLoginCoordinator);
 
     restTemplateLogger = (Logger) LoggerFactory.getLogger(RestTemplate.class);
     previousLevel = restTemplateLogger.getLevel();

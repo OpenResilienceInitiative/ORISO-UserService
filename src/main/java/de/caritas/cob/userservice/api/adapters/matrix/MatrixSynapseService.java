@@ -61,6 +61,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private final RestTemplate matrixLongPollRestTemplate;
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
+  private final MatrixBrowserLoginCoordinator browserLoginCoordinator;
 
   // Time source for cache-expiry checks. Real deployment uses the wall clock; tests inject a
   // controllable supplier so TTL expiry can be exercised deterministically without sleeping.
@@ -72,10 +73,6 @@ public class MatrixSynapseService implements MatrixUserClient {
   // password reset) is not served indefinitely. Mirrors the impersonationTokenCache mechanism
   // below.
   private final java.util.Map<String, CachedAccessToken> accessTokenCache =
-      new java.util.concurrent.ConcurrentHashMap<>();
-
-  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
-  private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
       new java.util.concurrent.ConcurrentHashMap<>();
 
   private static final long ACCESS_TOKEN_CACHE_TTL_MS = 50 * 60 * 1000L;
@@ -144,13 +141,15 @@ public class MatrixSynapseService implements MatrixUserClient {
       RestTemplate restTemplate,
       @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
-      MatrixMediaClient matrixMediaClient) {
+      MatrixMediaClient matrixMediaClient,
+      MatrixBrowserLoginCoordinator browserLoginCoordinator) {
     this(
         matrixConfig,
         restTemplate,
         matrixLongPollRestTemplate,
         matrixRoomClient,
         matrixMediaClient,
+        browserLoginCoordinator,
         System::currentTimeMillis);
   }
 
@@ -161,12 +160,14 @@ public class MatrixSynapseService implements MatrixUserClient {
       RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
       MatrixMediaClient matrixMediaClient,
+      MatrixBrowserLoginCoordinator browserLoginCoordinator,
       java.util.function.LongSupplier nowSupplier) {
     this.matrixConfig = matrixConfig;
     this.restTemplate = restTemplate;
     this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
     this.matrixRoomClient = matrixRoomClient;
     this.matrixMediaClient = matrixMediaClient;
+    this.browserLoginCoordinator = browserLoginCoordinator;
     this.nowSupplier = nowSupplier;
   }
 
@@ -468,49 +469,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       return null;
     }
 
-    var browserLoginLock =
-        browserLoginLocks.computeIfAbsent(
-            matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
-    browserLoginLock.lock();
     try {
-      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
-      var adminHeaders = getClientHttpHeaders(adminToken);
-      adminHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(transientPassword);
-      updateBody.setLogoutDevices(false);
-      var updateUri =
-          MatrixUrlBuilder.buildUrl(
-              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
-      restTemplate.exchange(
-          updateUri,
-          org.springframework.http.HttpMethod.PUT,
-          new HttpEntity<>(updateBody, adminHeaders),
-          java.util.Map.class);
-
-      var loginHeaders = new HttpHeaders();
-      loginHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var loginBody = new MatrixLoginRequestDTO();
-      loginBody.setType("m.login.password");
-      loginBody.setUser(matrixUserId);
-      loginBody.setPassword(transientPassword);
-      loginBody.setDeviceId(deviceId);
-      loginBody.setInitialDeviceDisplayName("ORISO Web");
-
-      var response =
-          restTemplate.postForEntity(
-              matrixConfig.getApiUrl(ENDPOINT_LOGIN),
-              new HttpEntity<>(loginBody, loginHeaders),
-              java.util.Map.class);
-      if (response.getBody() == null
-          || response.getBody().get("access_token") == null
-          || response.getBody().get("device_id") == null) {
-        return null;
-      }
-
-      @SuppressWarnings("unchecked")
-      var responseBody = (java.util.Map<String, Object>) response.getBody();
-      return responseBody;
+      return browserLoginCoordinator.coordinate(
+          matrixUserId, () -> performBrowserDeviceLogin(matrixUserId, deviceId, adminToken));
     } catch (Exception ex) {
       log.error(
           "Matrix browser device login failed for user {} and device {}: {}",
@@ -518,9 +479,49 @@ public class MatrixSynapseService implements MatrixUserClient {
           deviceId,
           ex.getMessage());
       return null;
-    } finally {
-      browserLoginLock.unlock();
     }
+  }
+
+  private java.util.Map<String, Object> performBrowserDeviceLogin(
+      String matrixUserId, String deviceId, String adminToken) {
+    String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+    var adminHeaders = getClientHttpHeaders(adminToken);
+    adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+    var updateBody = new MatrixPasswordUpdateRequestDTO();
+    updateBody.setPassword(transientPassword);
+    updateBody.setLogoutDevices(false);
+    var updateUri =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+    restTemplate.exchange(
+        updateUri,
+        org.springframework.http.HttpMethod.PUT,
+        new HttpEntity<>(updateBody, adminHeaders),
+        java.util.Map.class);
+
+    var loginHeaders = new HttpHeaders();
+    loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+    var loginBody = new MatrixLoginRequestDTO();
+    loginBody.setType("m.login.password");
+    loginBody.setUser(matrixUserId);
+    loginBody.setPassword(transientPassword);
+    loginBody.setDeviceId(deviceId);
+    loginBody.setInitialDeviceDisplayName("ORISO Web");
+
+    var response =
+        restTemplate.postForEntity(
+            matrixConfig.getApiUrl(ENDPOINT_LOGIN),
+            new HttpEntity<>(loginBody, loginHeaders),
+            java.util.Map.class);
+    if (response.getBody() == null
+        || response.getBody().get("access_token") == null
+        || response.getBody().get("device_id") == null) {
+      return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    var responseBody = (java.util.Map<String, Object>) response.getBody();
+    return responseBody;
   }
 
   /**

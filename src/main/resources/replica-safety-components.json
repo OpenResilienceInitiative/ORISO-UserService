@@ -182,22 +182,22 @@
       ]
     },
     {
-      "id": "matrix-client-caches-and-login-locks",
+      "id": "matrix-client-token-and-presence-caches",
       "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
       "kind": "local-state",
       "owner": "matrix",
-      "risk": "correctness",
+      "risk": "performance-only",
       "components": [
         "accessTokenCache",
-        "browserLoginLocks",
         "syncTokenCache",
         "presenceCache",
         "cachedAdminToken",
         "impersonationTokenCache"
       ],
-      "decision": "Keep one replica until token rotation and login locking use shared coordination; treat presence and sync cursors as bounded performance state.",
+      "decision": "Browser password rotation and device login use shared Redis coordination with a TTL-bound owner token and owner-verified release. Access, admin and impersonation tokens remain independently valid per replica; sync and presence entries are bounded replay or performance state.",
       "signals": [
-        "userservice.replica.local_state"
+        "userservice.replica.local_state",
+        "userservice.matrix.browser_login.coordination.operations"
       ]
     },
     {
