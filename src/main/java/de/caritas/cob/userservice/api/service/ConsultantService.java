@@ -70,6 +70,10 @@ public class ConsultantService {
     return consultantRepository.findByRocketChatIdAndDeleteDateIsNull(rcUserId);
   }
 
+  public Optional<Consultant> getConsultantByMatrixUserId(String matrixUserId) {
+    return consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+  }
+
   /**
    * Returns a {@link Consultant} by the provided email address.
    *

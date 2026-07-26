@@ -25,4 +25,28 @@ class MatrixOnlyEnquiryAssignmentContractTest {
             "SessionAssignmentChatGateway",
             "UnauthorizedMembersProvider");
   }
+
+  @Test
+  void sessionReassignmentMustUseTheMatrixAssignmentAdapter() throws Exception {
+    var facade =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/facade/assignsession/"
+                    + "AssignSessionFacade.java"));
+    var gateway =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/"
+                    + "MatrixSessionAssignmentGateway.java"));
+
+    assertThat(facade)
+        .contains("getMatrixRoomId")
+        .doesNotContain("RocketChat", "getRocketChatId", "getGroupId");
+    assertThat(gateway).doesNotContain("RocketChat");
+    assertThat(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/"
+                    + "RocketChatSessionAssignmentGateway.java"))
+        .doesNotExist();
+  }
 }
