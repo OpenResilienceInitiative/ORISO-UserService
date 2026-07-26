@@ -24,6 +24,7 @@ class Sample:
     latency_ms: float
     error: str | None = None
     operation: str = "request"
+    target: str = ""
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ def request_once(
     timeout_seconds: float,
     headers: dict[str, str],
     operation: str = "request",
+    target: str = "",
 ) -> Sample:
     started = time.perf_counter()
     try:
@@ -58,6 +60,7 @@ def request_once(
                 response_bytes=len(payload),
                 latency_ms=(time.perf_counter() - started) * 1000,
                 operation=operation,
+                target=target,
             )
     except HTTPError as error:
         payload = error.read()
@@ -67,6 +70,7 @@ def request_once(
             latency_ms=(time.perf_counter() - started) * 1000,
             error=f"http-{error.code}",
             operation=operation,
+            target=target,
         )
     except (TimeoutError, URLError, OSError) as error:
         return Sample(
@@ -75,6 +79,7 @@ def request_once(
             latency_ms=(time.perf_counter() - started) * 1000,
             error=type(error).__name__,
             operation=operation,
+            target=target,
         )
 
 
@@ -124,7 +129,7 @@ def run_load(
 
 
 def run_workload(
-    base_url: str,
+    base_url: str | list[str],
     request_specs: list[RequestSpec],
     requests: int,
     concurrency: int,
@@ -135,6 +140,14 @@ def run_workload(
         raise ValueError("request_specs must not be empty")
     if any(spec.weight < 1 for spec in request_specs):
         raise ValueError("request weights must be positive")
+    base_urls = [base_url] if isinstance(base_url, str) else list(base_url)
+    if not base_urls:
+        raise ValueError("base_url must contain at least one target")
+    if requests < len(base_urls):
+        raise ValueError(
+            "requests must reach every target "
+            f"({len(base_urls)} requests)"
+        )
 
     headers = headers or {}
     weighted_specs = [spec for spec in request_specs for _ in range(spec.weight)]
@@ -146,17 +159,25 @@ def run_workload(
     scheduled_specs = [
         weighted_specs[index % len(weighted_specs)] for index in range(requests)
     ]
+    scheduled_requests = [
+        (spec, base_urls[index % len(base_urls)])
+        for index, spec in enumerate(scheduled_specs)
+    ]
     started = time.perf_counter()
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         samples = list(
             executor.map(
-                lambda spec: request_once(
-                    urljoin(base_url.rstrip("/") + "/", spec.path.lstrip("/")),
+                lambda request: request_once(
+                    urljoin(
+                        request[1].rstrip("/") + "/",
+                        request[0].path.lstrip("/"),
+                    ),
                     timeout_seconds,
                     headers,
-                    spec.name,
+                    request[0].name,
+                    request[1],
                 ),
-                scheduled_specs,
+                scheduled_requests,
             )
         )
     elapsed_seconds = time.perf_counter() - started
@@ -170,6 +191,14 @@ def run_workload(
             elapsed_seconds,
         )
         for spec in request_specs
+    }
+    summary["targets"] = {
+        target: summarize_samples(
+            [sample for sample in samples if sample.target == target],
+            concurrency,
+            elapsed_seconds,
+        )
+        for target in base_urls
     }
     return summary, samples
 
@@ -215,6 +244,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("USERSERVICE_BASE_URL"),
         required=os.environ.get("USERSERVICE_BASE_URL") is None,
     )
+    parser.add_argument(
+        "--replica-url",
+        action="append",
+        default=[],
+        help="Additional UserService replica URL; may be repeated",
+    )
     parser.add_argument("--path", default="/actuator/health")
     parser.add_argument(
         "--scenario",
@@ -235,15 +270,16 @@ def main() -> int:
         raise ValueError("requests and concurrency must be positive")
     headers = parse_headers(args.header)
     if args.scenario:
+        targets = [args.base_url, *args.replica_url]
         summary, samples = run_workload(
-            args.base_url,
+            targets,
             load_request_specs(args.scenario),
             args.requests,
             args.concurrency,
             args.timeout_seconds,
             headers,
         )
-        target = args.base_url
+        target = targets[0] if len(targets) == 1 else targets
     else:
         target = urljoin(args.base_url.rstrip("/") + "/", args.path.lstrip("/"))
         summary, samples = run_load(
@@ -265,6 +301,9 @@ def main() -> int:
     operations = summary.get("operations")
     if isinstance(operations, dict):
         summaries_to_check.extend(operations.values())
+    targets = summary.get("targets")
+    if isinstance(targets, dict):
+        summaries_to_check.extend(targets.values())
     return int(
         any(
             result["error_rate"] > args.max_error_rate

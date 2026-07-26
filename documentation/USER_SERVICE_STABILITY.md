@@ -255,6 +255,38 @@ The overall run completed in 1.627 seconds at 860.47 requests/second with
 35.69 ms mean latency and 343.82 ms maximum latency. This is a bounded local
 mixed-read regression proof, not a production capacity claim.
 
+A reproducible two-replica variant is:
+
+```bash
+bash scripts/load/run-seeded-public-read-replicas.sh
+```
+
+It packages the real application jar, starts isolated MariaDB 11.0.6 and Redis
+7 containers, starts two distinct UserService JVMs against that shared state,
+seeds the exact integration-test dataset, and sends requests directly to both
+replicas in deterministic round-robin order. Scheduling and external chat event
+listeners are disabled so the result isolates the seeded public-read paths. The
+CLI reports and enforces thresholds for the aggregate, each operation, and each
+replica; cleanup removes both JVMs, the dependency containers, the AgencyService
+stub, and the temporary run directory.
+
+Local two-replica proof on 2026-07-26:
+
+| Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Replica one | 700 | 0 | 230,700 | 66.04 ms | 117.29 ms | 245.73 ms |
+| Replica two | 700 | 0 | 174,700 | 43.14 ms | 82.99 ms | 160.69 ms |
+| **Overall** | **1,400** | **0** | **405,400** | **54.59 ms** | **103.98 ms** | **245.73 ms** |
+
+The overall run completed in 2.407 seconds at 581.64 requests/second. The
+slowest named operation was `consultant-profile-peer` at 114.52 ms p95; all six
+operations had zero failures. This proves that the bounded mixed-read scenario
+can run across two real JVMs sharing MariaDB and Redis. It does **not** yet
+prove replica safety for concurrent writes, scheduled jobs, authentication and
+authorization flows, Kubernetes service routing, or deployed PreDev behavior.
+The production replica maximum must therefore remain one until those paths and
+their idempotency/locking contracts are exercised.
+
 The same seeded workload was also run with AgencyService deliberately
 unavailable. UserService still returned all 1,400 responses through its local
 topic fallback at concurrency 32 (121.19 ms p95, 843.2 requests/second).
