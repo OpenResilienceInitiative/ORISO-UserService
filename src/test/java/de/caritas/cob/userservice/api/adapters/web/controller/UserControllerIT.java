@@ -16,7 +16,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.*;
@@ -781,7 +780,7 @@ class UserControllerIT {
 
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
     when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(RocketChatCredentials.class), Mockito.any()))
+            any(), any(), Mockito.<List<NewSessionValidationConstraint>>any()))
         .thenReturn(new NewRegistrationResponseDto().sessionId(1L).status(HttpStatus.CREATED));
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
@@ -920,13 +919,7 @@ class UserControllerIT {
   void createEnquiryMessage_Should_ReturnCreated_WhenMessageWasCreated() throws Exception {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
-    var expectedRCCredentials =
-        RocketChatCredentials.builder()
-            .rocketChatToken(RC_TOKEN)
-            .rocketChatUserId(RC_USER_ID)
-            .build();
-    var expectedEnquiryData =
-        new EnquiryData(USER, SESSION_ID, MESSAGE, null, expectedRCCredentials);
+    var expectedEnquiryData = new EnquiryData(USER, SESSION_ID, MESSAGE, null);
     when(createEnquiryMessageFacade.createEnquiryMessage(expectedEnquiryData))
         .thenReturn(
             new CreateEnquiryMessageResponseDTO().rcGroupId(RC_GROUP_ID).sessionId(SESSION_ID));
@@ -2390,8 +2383,7 @@ class UserControllerIT {
     when(createNewSessionFacade.initializeNewSession(
             Mockito.any(UserRegistrationDTO.class),
             Mockito.any(),
-            Mockito.any(RocketChatCredentials.class),
-            Mockito.any()))
+            Mockito.<List<NewSessionValidationConstraint>>any()))
         .thenReturn(new NewRegistrationResponseDto().status(HttpStatus.CREATED));
 
     // when

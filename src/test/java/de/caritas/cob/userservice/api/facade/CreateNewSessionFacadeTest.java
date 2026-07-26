@@ -12,7 +12,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -49,8 +48,6 @@ class CreateNewSessionFacadeTest {
   @Mock private CreateSessionFacade createSessionFacade;
   @Mock private StatisticsService statisticsService;
   @Mock private User user;
-  @Mock private RocketChatCredentials rocketChatCredentials;
-
   @InjectMocks private CreateNewSessionFacade createNewSessionFacade;
 
   private UserDTO userDto(String consultantId) {
@@ -84,9 +81,7 @@ class CreateNewSessionFacadeTest {
             eq(CONSULTANT_ID), any(UserDTO.class), eq(user), eq(extended)))
         .thenReturn(directResponse);
 
-    var result =
-        createNewSessionFacade.initializeNewSession(
-            userDto(CONSULTANT_ID), user, rocketChatCredentials);
+    var result = createNewSessionFacade.initializeNewSession(userDto(CONSULTANT_ID), user);
 
     assertThat(result.getSessionId()).isEqualTo(99L);
     verify(statisticsService).fireEvent(any(AssignSessionStatisticsEvent.class));
@@ -103,13 +98,12 @@ class CreateNewSessionFacadeTest {
             any(UserDTO.class), eq(user), eq(extended), anyList()))
         .thenReturn(77L);
 
-    var result =
-        createNewSessionFacade.initializeNewSession(userDto(null), user, rocketChatCredentials);
+    var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
 
     assertThat(result.getSessionId()).isEqualTo(77L);
     assertThat(result.getStatus()).isEqualTo(HttpStatus.CREATED);
     verify(createUserChatRelationFacade)
-        .initializeUserChatAgencyRelation(any(UserDTO.class), eq(user), eq(rocketChatCredentials));
+        .initializeUserChatAgencyRelation(any(UserDTO.class), eq(user));
     verify(createSessionFacade)
         .createUserSession(any(UserDTO.class), eq(user), eq(extended), anyList());
     verify(statisticsService, never()).fireEvent(any());
@@ -124,8 +118,7 @@ class CreateNewSessionFacadeTest {
             any(UserDTO.class), eq(user), eq(extended), anyList()))
         .thenReturn(42L);
 
-    var result =
-        createNewSessionFacade.initializeNewSession(userDto(null), user, rocketChatCredentials);
+    var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
 
     assertThat(result.getSessionId()).isEqualTo(42L);
     assertThat(result.getStatus()).isEqualTo(HttpStatus.CREATED);
@@ -141,8 +134,7 @@ class CreateNewSessionFacadeTest {
             any(UserDTO.class), eq(user), eq(extended), anyList()))
         .thenReturn(43L);
 
-    var result =
-        createNewSessionFacade.initializeNewSession(userDto(null), user, rocketChatCredentials);
+    var result = createNewSessionFacade.initializeNewSession(userDto(null), user);
 
     assertThat(result.getSessionId()).isEqualTo(43L);
     verifyNoInteractions(createUserChatRelationFacade);
@@ -153,10 +145,7 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString()))
         .thenThrow(new MissingConsultingTypeException("missing"));
 
-    assertThatThrownBy(
-            () ->
-                createNewSessionFacade.initializeNewSession(
-                    userDto(null), user, rocketChatCredentials))
+    assertThatThrownBy(() -> createNewSessionFacade.initializeNewSession(userDto(null), user))
         .isInstanceOf(BadRequestException.class);
 
     verifyNoInteractions(createSessionFacade);
@@ -168,10 +157,7 @@ class CreateNewSessionFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(anyString()))
         .thenThrow(new IllegalArgumentException("not a number"));
 
-    assertThatThrownBy(
-            () ->
-                createNewSessionFacade.initializeNewSession(
-                    userDto(null), user, rocketChatCredentials))
+    assertThatThrownBy(() -> createNewSessionFacade.initializeNewSession(userDto(null), user))
         .isInstanceOf(BadRequestException.class);
 
     verifyNoInteractions(createSessionFacade);
@@ -200,7 +186,7 @@ class CreateNewSessionFacadeTest {
             any(UserDTO.class), eq(user), eq(extended), constraintCaptor.capture()))
         .thenReturn(1L);
 
-    createNewSessionFacade.initializeNewSession(userDto(null), user, rocketChatCredentials);
+    createNewSessionFacade.initializeNewSession(userDto(null), user);
 
     assertThat(constraintCaptor.getValue())
         .containsExactly(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE);
@@ -216,8 +202,7 @@ class CreateNewSessionFacadeTest {
         .thenReturn(2L);
     List<NewSessionValidationConstraint> noConstraints = Lists.newArrayList();
 
-    createNewSessionFacade.initializeNewSession(
-        userDto(null), user, rocketChatCredentials, noConstraints);
+    createNewSessionFacade.initializeNewSession(userDto(null), user, noConstraints);
 
     assertThat(constraintCaptor.getValue()).isEmpty();
   }
@@ -239,7 +224,7 @@ class CreateNewSessionFacadeTest {
     registration.setMainTopicId(3L);
     registration.setAge("27");
 
-    createNewSessionFacade.initializeNewSession(registration, user, rocketChatCredentials);
+    createNewSessionFacade.initializeNewSession(registration, user);
 
     var mapped = userDtoCaptor.getValue();
     assertThat(mapped.getAgencyId()).isEqualTo(AGENCY_ID);

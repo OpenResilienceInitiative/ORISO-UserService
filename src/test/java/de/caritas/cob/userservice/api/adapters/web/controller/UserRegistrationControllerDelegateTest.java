@@ -12,7 +12,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
@@ -59,8 +58,6 @@ class UserRegistrationControllerDelegateTest {
 
   private static final String USER_ID = "user-id";
   private static final String USERNAME = "username";
-  private static final String RC_TOKEN = "rc-token";
-  private static final String RC_USER_ID = "rc-user-id";
   private static final Long SESSION_ID = 1L;
 
   @Mock private UserAccountService userAccountProvider;
@@ -167,18 +164,14 @@ class UserRegistrationControllerDelegateTest {
     var user = newUser();
     var registrationResponse = new NewRegistrationResponseDto().status(HttpStatus.CREATED);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
-    when(createNewSessionFacade.initializeNewSession(any(), any(), any(), anyList()))
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
         .thenReturn(registrationResponse);
 
-    var response = delegate.registerNewConsultingType(registration, RC_TOKEN, RC_USER_ID);
+    var response = delegate.registerNewConsultingType(registration);
 
     var constraintsCaptor = constraintsCaptor();
     verify(createNewSessionFacade)
-        .initializeNewSession(
-            eq(registration),
-            eq(user),
-            any(RocketChatCredentials.class),
-            constraintsCaptor.capture());
+        .initializeNewSession(eq(registration), eq(user), constraintsCaptor.capture());
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(registrationResponse);
     assertThat(constraintsCaptor.getValue()).containsExactly(ONE_SESSION_PER_CONSULTING_TYPE);
@@ -190,18 +183,14 @@ class UserRegistrationControllerDelegateTest {
     var user = newUser();
     var registrationResponse = new NewRegistrationResponseDto().status(HttpStatus.ACCEPTED);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
-    when(createNewSessionFacade.initializeNewSession(any(), any(), any(), anyList()))
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
         .thenReturn(registrationResponse);
 
-    var response = delegate.registerNewSession(registration, RC_TOKEN, RC_USER_ID);
+    var response = delegate.registerNewSession(registration);
 
     var constraintsCaptor = constraintsCaptor();
     verify(createNewSessionFacade)
-        .initializeNewSession(
-            eq(registration),
-            eq(user),
-            any(RocketChatCredentials.class),
-            constraintsCaptor.capture());
+        .initializeNewSession(eq(registration), eq(user), constraintsCaptor.capture());
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
     assertThat(response.getBody()).isSameAs(registrationResponse);
     assertThat(constraintsCaptor.getValue()).isEmpty();
@@ -243,7 +232,7 @@ class UserRegistrationControllerDelegateTest {
     when(consultantDtoMapper.languageOf(LanguageCode.EN)).thenReturn("en");
     when(createEnquiryMessageFacade.createEnquiryMessage(any())).thenReturn(messageResponse);
 
-    var response = delegate.createEnquiryMessage(SESSION_ID, enquiryMessage, RC_TOKEN, RC_USER_ID);
+    var response = delegate.createEnquiryMessage(SESSION_ID, enquiryMessage);
 
     var enquiryDataCaptor = ArgumentCaptor.forClass(EnquiryData.class);
     verify(createEnquiryMessageFacade).createEnquiryMessage(enquiryDataCaptor.capture());
@@ -255,8 +244,6 @@ class UserRegistrationControllerDelegateTest {
     assertThat(enquiryData.getMessage()).isEqualTo("message");
     assertThat(enquiryData.getLanguage()).isEqualTo("en");
     assertThat(enquiryData.getType()).isEqualTo("text");
-    assertThat(enquiryData.getRocketChatCredentials().getRocketChatToken()).isEqualTo(RC_TOKEN);
-    assertThat(enquiryData.getRocketChatCredentials().getRocketChatUserId()).isEqualTo(RC_USER_ID);
   }
 
   @Test

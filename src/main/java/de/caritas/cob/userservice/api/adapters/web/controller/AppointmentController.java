@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.Appointment;
 import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
@@ -179,15 +178,12 @@ public class AppointmentController implements AppointmentsApi {
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
     var enquiryData =
         new EnquiryData(
             user,
             sessionId,
             null,
             null,
-            rocketChatCredentials,
             enquiryAppointmentDTO.getT(),
             enquiryAppointmentDTO.getCounselorEmail());
 

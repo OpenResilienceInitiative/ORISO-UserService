@@ -221,8 +221,7 @@ public class UserController implements UsersApi {
       @RequestBody NewRegistrationDto newRegistrationDto,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.registerNewConsultingType(
-        newRegistrationDto, rcToken, rcUserId);
+    return userRegistrationControllerDelegate.registerNewConsultingType(newRegistrationDto);
   }
 
   /**
@@ -238,8 +237,7 @@ public class UserController implements UsersApi {
       NewRegistrationDto newRegistrationDto,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.registerNewSession(
-        newRegistrationDto, rcToken, rcUserId);
+    return userRegistrationControllerDelegate.registerNewSession(newRegistrationDto);
   }
 
   /**
@@ -268,8 +266,7 @@ public class UserController implements UsersApi {
       @RequestBody EnquiryMessageDTO enquiryMessage,
       @RequestHeader(value = "RCToken", required = false) String rcToken,
       @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.createEnquiryMessage(
-        sessionId, enquiryMessage, rcToken, rcUserId);
+    return userRegistrationControllerDelegate.createEnquiryMessage(sessionId, enquiryMessage);
   }
 
   @Override
