@@ -323,7 +323,7 @@ class MatrixMessageControllerTest {
       String matrixUserId) {
     return de.caritas.cob.userservice.api.model.Consultant.builder()
         .id("consultant-id")
-        .rocketChatId("rocketchat-id")
+        .matrixUserId("rocketchat-id")
         .username("consultant-user")
         .firstName("Con")
         .lastName("Sultant")

@@ -139,7 +139,7 @@ public class ChatService {
           .toArray(String[]::new);
     }
     return consultantService.findConsultantsByAgencyIds(chatAgencies).stream()
-        .map(Consultant::getRocketChatId)
+        .map(Consultant::getMatrixUserId)
         .toArray(String[]::new);
   }
 

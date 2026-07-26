@@ -68,8 +68,8 @@ public class SessionMapper {
         .matrixRoomId(
             session.getMatrixRoomId()) // MATRIX MIGRATION: Add Matrix room ID to API response
         .askerRcId(
-            nonNull(session.getUser()) && nonNull(session.getUser().getRcUserId())
-                ? session.getUser().getRcUserId()
+            nonNull(session.getUser()) && nonNull(session.getUser().getMatrixUserId())
+                ? session.getUser().getMatrixUserId()
                 : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())

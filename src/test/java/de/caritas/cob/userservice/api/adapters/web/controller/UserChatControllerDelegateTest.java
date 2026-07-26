@@ -228,7 +228,7 @@ class UserChatControllerDelegateTest {
   @Test
   void banFromChatShouldBanAdviceSeekerAndReturnNoContent() {
     var adviceSeeker = adviceSeeker();
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker));
     when(messenger.existsChat(1L)).thenReturn(true);
     when(messenger.banUserFromChat("advice-seeker-id", 1L)).thenReturn(true);
@@ -241,7 +241,8 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenAdviceSeekerDoesNotExist() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id")).thenReturn(Optional.empty());
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
+        .thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
@@ -249,7 +250,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenChatDoesNotExist() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
     when(messenger.existsChat(1L)).thenReturn(false);
 
@@ -259,7 +260,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenBanFails() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
     when(messenger.existsChat(1L)).thenReturn(true);
     when(messenger.banUserFromChat(any(), anyLong())).thenReturn(false);
@@ -284,7 +285,7 @@ class UserChatControllerDelegateTest {
   private Consultant consultant() {
     return Consultant.builder()
         .id("consultant-id")
-        .rocketChatId("rocket-chat-id")
+        .matrixUserId("rocket-chat-id")
         .username("consultant")
         .firstName("Con")
         .lastName("Sultant")

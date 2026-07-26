@@ -57,7 +57,7 @@ class SessionDataProviderTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(USERNAME)
+          .matrixUserId(USERNAME)
           .username(ROCKETCHAT_ID)
           .firstName("first name")
           .lastName("last name")

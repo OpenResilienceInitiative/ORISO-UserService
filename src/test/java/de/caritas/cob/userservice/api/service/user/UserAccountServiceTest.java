@@ -220,7 +220,7 @@ public class UserAccountServiceTest {
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
-    user.setRcUserId(null);
+    user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 

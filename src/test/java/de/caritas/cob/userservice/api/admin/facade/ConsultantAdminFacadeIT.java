@@ -243,7 +243,7 @@ class ConsultantAdminFacadeIT {
     newConsultant.setWalkThroughEnabled(false);
     newConsultant.setFirstName("firstName");
     newConsultant.setEmail("email@email.com");
-    newConsultant.setRocketChatId("rocketChatId");
+    newConsultant.setMatrixUserId("@consultant:matrix.example");
     newConsultant.setEncourage2fa(false);
     newConsultant.setUsername("username");
     newConsultant.setId(id);

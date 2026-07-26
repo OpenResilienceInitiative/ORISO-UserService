@@ -27,7 +27,7 @@ class PatchConsultantSagaTest {
 
   private static final String CHANGED_DISPLAY_NAME = "new displayName";
   private static final String CONSULTANT_ID = "consultantId";
-  private static final String ROCKETCHAT_ID = "rocketChatId";
+  private static final String MATRIX_USER_ID = "@consultant:matrix.example";
   @InjectMocks PatchConsultantSaga patchConsultantSaga;
 
   @Mock ConsultantRepository consultantRepository;
@@ -43,7 +43,7 @@ class PatchConsultantSagaTest {
     givenUserServiceMapper();
     Consultant patchedConsultant =
         Consultant.builder()
-            .rocketChatId(ROCKETCHAT_ID)
+            .matrixUserId(MATRIX_USER_ID)
             .id(CONSULTANT_ID)
             .username("username")
             .firstName("firstname")
@@ -70,7 +70,7 @@ class PatchConsultantSagaTest {
         .thenReturn(java.util.Optional.of(CHANGED_DISPLAY_NAME));
     Consultant patchedConsultant =
         Consultant.builder()
-            .rocketChatId(ROCKETCHAT_ID)
+            .matrixUserId(MATRIX_USER_ID)
             .id(CONSULTANT_ID)
             .username("username")
             .firstName("firstname")

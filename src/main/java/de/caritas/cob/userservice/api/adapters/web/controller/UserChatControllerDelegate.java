@@ -137,13 +137,13 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(updateChatResponseDTO, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> banFromChat(String chatUserId, Long chatId) {
+  ResponseEntity<Void> banFromChat(String matrixUserId, Long chatId) {
     var adviceSeeker =
         accountManager
-            .findAdviceSeekerByChatUserId(chatUserId)
+            .findAdviceSeekerByMatrixUserId(matrixUserId)
             .orElseThrow(
                 () -> {
-                  throw new NotFoundException("Chat User (%s) not found", chatUserId);
+                  throw new NotFoundException("Matrix user (%s) not found", matrixUserId);
                 });
     if (!messenger.existsChat(chatId)) {
       throw new NotFoundException("Chat (%s) not found", chatId);

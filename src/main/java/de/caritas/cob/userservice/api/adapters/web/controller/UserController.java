@@ -657,8 +657,8 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> banFromChat(String token, String chatUserId, Long chatId) {
-    return userChatControllerDelegate.banFromChat(chatUserId, chatId);
+  public ResponseEntity<Void> banFromChat(String token, String matrixUserId, Long chatId) {
+    return userChatControllerDelegate.banFromChat(matrixUserId, chatId);
   }
 
   /**

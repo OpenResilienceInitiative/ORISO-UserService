@@ -230,7 +230,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(ROCKETCHAT_ID)
           .username(USERNAME)
           .firstName(FIRST_NAME)
           .lastName(LAST_NAME)
@@ -251,7 +251,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(ROCKETCHAT_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -282,7 +282,7 @@ public class TestConstants {
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .rcUserId(RC_USER_ID)
+          .matrixUserId(RC_USER_ID)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .deleteDate(nowInUtc())
           .languageCode(LanguageCode.de)
@@ -404,7 +404,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(ROCKETCHAT_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -426,7 +426,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(ROCKETCHAT_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -577,7 +577,7 @@ public class TestConstants {
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .rcUserId(RC_USER_ID)
+          .matrixUserId(RC_USER_ID)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .sessions(SESSION_SET)
           .deleteDate(nowInUtc())

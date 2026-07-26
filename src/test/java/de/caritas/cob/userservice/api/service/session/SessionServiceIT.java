@@ -111,9 +111,9 @@ class SessionServiceIT {
     assertEquals(session.isTeamSession(), result.getIsTeamSession());
     assertEquals(session.getAgencyId(), result.getAgencyId());
     assertEquals(session.getConsultant().getId(), result.getConsultantId());
-    assertEquals(session.getConsultant().getRocketChatId(), result.getConsultantRcId());
+    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantRcId());
     assertEquals(session.getUser().getUserId(), result.getAskerId());
-    assertEquals(session.getUser().getRcUserId(), result.getAskerRcId());
+    assertEquals(session.getUser().getMatrixUserId(), result.getAskerRcId());
     assertEquals(session.getUser().getUsername(), result.getAskerUserName());
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());

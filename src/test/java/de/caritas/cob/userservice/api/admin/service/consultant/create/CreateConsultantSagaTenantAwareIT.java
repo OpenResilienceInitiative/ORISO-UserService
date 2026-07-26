@@ -164,7 +164,7 @@ public class CreateConsultantSagaTenantAwareIT {
     consultant.setAppointments(null);
     consultant.setTenantId(tenantId);
     consultant.setId(username);
-    consultant.setRocketChatId(username);
+    consultant.setMatrixUserId(username);
     consultant.setUsername(username);
     consultant.setFirstName(username);
     consultant.setLastName(username);

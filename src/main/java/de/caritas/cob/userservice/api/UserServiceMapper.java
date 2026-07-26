@@ -66,7 +66,7 @@ public class UserServiceMapper {
     map.put("email", user.getEmail());
     map.put("encourage2fa", user.getEncourage2fa());
     map.put("magicLinkLoginEnabled", user.getMagicLinkLoginEnabled());
-    map.put("chatUserId", user.getRcUserId());
+    map.put("matrixUserId", user.getMatrixUserId());
     map.put("preferredLanguage", user.getLanguageCode().toString());
 
     return map;
@@ -85,7 +85,7 @@ public class UserServiceMapper {
         "notifyNewChatMessageFromAdviceSeeker",
         consultant.getNotifyNewChatMessageFromAdviceSeeker());
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
-    map.put("chatUserId", consultant.getRocketChatId());
+    map.put("matrixUserId", consultant.getMatrixUserId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
     map.put("publicSlug", consultant.getPublicSlug());
     map.put("pendingPublicSlug", consultant.getPendingPublicSlug());
@@ -577,9 +577,5 @@ public class UserServiceMapper {
         .map(ConsultantAgencyBase::getAgencyId)
         .distinct()
         .collect(Collectors.toList());
-  }
-
-  public List<String> chatUserIdOf(List<Map<String, String>> groupMembers) {
-    return groupMembers.stream().map(map -> map.get("chatUserId")).collect(Collectors.toList());
   }
 }

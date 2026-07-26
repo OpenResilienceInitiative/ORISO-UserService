@@ -137,7 +137,7 @@ class ConsultantPublicSlugServiceTest {
   private Consultant.ConsultantBuilder consultantBuilder() {
     return Consultant.builder()
         .id(CONSULTANT_ID)
-        .rocketChatId("rocket-chat-id")
+        .matrixUserId("rocket-chat-id")
         .username("max.mustermann")
         .firstName("Max")
         .lastName("Mustermann")

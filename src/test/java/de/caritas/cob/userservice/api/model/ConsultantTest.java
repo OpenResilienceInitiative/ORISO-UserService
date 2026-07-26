@@ -22,7 +22,7 @@ public class ConsultantTest {
   private static final Consultant CONSULTANT =
       Consultant.builder()
           .id("yyy")
-          .rocketChatId("XXX")
+          .matrixUserId("XXX")
           .username("consultant")
           .firstName(FIRSTNAME)
           .lastName(LASTNAME)

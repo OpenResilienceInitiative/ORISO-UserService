@@ -300,7 +300,7 @@ public class SecurityConfig {
                 .hasAuthority(STOP_CHAT)
                 .requestMatchers(
                     "/users/chat/{chatId:[0-9]+}/update",
-                    "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
+                    "/users/{matrixUserId:[^/]+}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)

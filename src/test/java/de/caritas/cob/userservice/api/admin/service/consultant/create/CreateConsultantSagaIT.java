@@ -210,7 +210,7 @@ public class CreateConsultantSagaIT {
 
     assertThat(consultant, notNullValue());
     assertThat(consultant.getId(), notNullValue());
-    assertThat(consultant.getRocketChatId(), is((String) null));
+    assertThat(consultant.getMatrixUserId(), is((String) null));
     assertThat(consultant.getAbsenceMessage(), notNullValue());
     assertThat(consultant.getCreateDate(), notNullValue());
     assertThat(consultant.getUpdateDate(), notNullValue());

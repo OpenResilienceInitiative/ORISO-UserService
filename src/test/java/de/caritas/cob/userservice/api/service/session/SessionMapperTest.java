@@ -103,7 +103,7 @@ class SessionMapperTest {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setRegistrationType(REGISTERED);
     User user = new User();
-    user.setRcUserId(null);
+    user.setMatrixUserId(null);
     session.setUser(user);
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);

@@ -210,7 +210,7 @@ class ChatReCreatorTest {
     var owner =
         Consultant.builder()
             .id("owner-id")
-            .rocketChatId("rc-owner")
+            .matrixUserId("rc-owner")
             .username("owner")
             .firstName("Owner")
             .lastName("Owner")

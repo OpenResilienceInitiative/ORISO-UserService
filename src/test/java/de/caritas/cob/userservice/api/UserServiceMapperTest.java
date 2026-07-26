@@ -112,7 +112,7 @@ class UserServiceMapperTest {
     user.setEmail("user@example.com");
     user.setEncourage2fa(true);
     user.setMagicLinkLoginEnabled(false);
-    user.setRcUserId("rc-u-1");
+    user.setMatrixUserId("@u-1:matrix.example");
     user.setLanguageCode(LanguageCode.de);
 
     Map<String, Object> result = userServiceMapper.mapOf(user);
@@ -121,7 +121,7 @@ class UserServiceMapperTest {
     assertThat(result.get("username")).isEqualTo("testuser");
     assertThat(result.get("email")).isEqualTo("user@example.com");
     assertThat(result.get("encourage2fa")).isEqualTo(true);
-    assertThat(result.get("chatUserId")).isEqualTo("rc-u-1");
+    assertThat(result.get("matrixUserId")).isEqualTo("@u-1:matrix.example");
     assertThat(result.get("preferredLanguage")).isEqualTo("de");
   }
 
@@ -141,7 +141,7 @@ class UserServiceMapperTest {
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(false);
     consultant.setWalkThroughEnabled(true);
-    consultant.setRocketChatId("rc-c-1");
+    consultant.setMatrixUserId("rc-c-1");
     consultant.setLanguageCode(LanguageCode.en);
     consultant.setDisplayName("Default Name");
 
@@ -216,14 +216,6 @@ class UserServiceMapperTest {
     Map<String, Object> result = userServiceMapper.mapOf(Optional.of(session)).orElseThrow();
 
     assertThat(result.containsKey("chatId")).isFalse();
-  }
-
-  @Test
-  void chatUserIdOf_Should_ExtractChatUserIds() {
-    List<Map<String, String>> members =
-        List.of(Map.of("chatUserId", "u1"), Map.of("chatUserId", "u2"));
-
-    assertThat(userServiceMapper.chatUserIdOf(members)).containsExactly("u1", "u2");
   }
 
   // ── encodedDisplayNameOf / displayNameOf ──────────────────────────────────

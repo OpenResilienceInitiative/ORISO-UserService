@@ -156,7 +156,7 @@ class GrantConsultantIdentityServiceTest {
     // no column default and reject NULL (found on the local clean-slate stack).
     assertThat(saved.getCreateDate(), notNullValue());
     assertThat(saved.getUpdateDate(), notNullValue());
-    assertThat(saved.getRocketChatId(), nullValue());
+    assertThat(saved.getMatrixUserId(), is(MATRIX_USER_ID));
 
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());

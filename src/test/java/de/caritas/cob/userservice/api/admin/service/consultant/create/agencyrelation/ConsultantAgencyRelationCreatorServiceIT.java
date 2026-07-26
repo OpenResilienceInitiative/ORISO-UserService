@@ -212,7 +212,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultant.setConsultantTopics(null);
     consultant.setTenantId(null);
     // Required legacy model field; this slice removes its behavior, the schema cleanup follows.
-    consultant.setRocketChatId("legacy-id");
+    consultant.setMatrixUserId("legacy-id");
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);
     consultant.setAppointments(null);

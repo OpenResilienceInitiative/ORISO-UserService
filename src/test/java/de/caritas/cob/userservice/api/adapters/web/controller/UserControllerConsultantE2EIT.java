@@ -1005,7 +1005,7 @@ class UserControllerConsultantE2EIT {
       BeanUtils.copyProperties(dbConsultant, consultant);
       consultant.setId(UUID.randomUUID().toString());
       consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-      consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+      consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
       consultant.setFirstName(aStringWithoutInfix(infix));
       consultant.setLastName(aStringWithInfix(infix));
       consultant.setEmail(aValidEmailWithoutInfix(infix));

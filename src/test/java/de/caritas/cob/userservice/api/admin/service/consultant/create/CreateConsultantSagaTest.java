@@ -260,7 +260,9 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_notPersistRocketChatIdentity() throws Exception {
+  void
+      createNewConsultant_Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable()
+          throws Exception {
     stubHappyPath();
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
@@ -268,7 +270,7 @@ class CreateConsultantSagaTest {
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getRocketChatId(), is((String) null));
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
   }
 
   @Test

@@ -120,7 +120,7 @@ class UserControllerIT {
   private final Consultant TEAM_CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(ROCKETCHAT_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")

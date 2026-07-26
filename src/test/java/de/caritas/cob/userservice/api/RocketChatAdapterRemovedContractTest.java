@@ -78,4 +78,18 @@ class RocketChatAdapterRemovedContractTest {
                     + "RocketChatUnauthorizedException.java"))
         .doesNotExist();
   }
+
+  @Test
+  void currentAccountModelMustNotPersistRocketChatUserIds() throws IOException {
+    for (var model : new String[] {"User.java", "Consultant.java", "Admin.java"}) {
+      assertThat(
+              Files.readString(
+                  Path.of("src/main/java/de/caritas/cob/userservice/api/model").resolve(model)))
+          .as(model)
+          .doesNotContain("rc_user_id", "rcUserId", "rocketChatId");
+    }
+
+    assertThat(Files.readString(Path.of("src/main/resources/db/changelog/userservice-master.xml")))
+        .contains("db/changelog/changeset/0073_remove_rocket_chat_user_ids/0073_changeSet.xml");
+  }
 }

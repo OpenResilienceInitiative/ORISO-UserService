@@ -102,7 +102,7 @@ class InactiveAccountNotificationServiceTest {
     Consultant activeConsultant =
         Consultant.builder()
             .id("consultant-active")
-            .rocketChatId("rc-consultant-active")
+            .matrixUserId("rc-consultant-active")
             .username("consultant")
             .firstName("Con")
             .lastName("Sultant")

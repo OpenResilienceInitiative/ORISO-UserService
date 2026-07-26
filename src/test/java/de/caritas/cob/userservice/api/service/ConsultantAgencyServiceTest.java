@@ -49,7 +49,7 @@ public class ConsultantAgencyServiceTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(CONSULTANT_ROCKETCHAT_ID)
+          .matrixUserId(CONSULTANT_ROCKETCHAT_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")

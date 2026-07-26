@@ -16,8 +16,6 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByEmailAndDeleteDateIsNull(String email);
 
-  Optional<User> findByRcUserIdAndDeleteDateIsNull(String rcUserId);
-
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   List<User> findAllByDeleteDateNotNull();

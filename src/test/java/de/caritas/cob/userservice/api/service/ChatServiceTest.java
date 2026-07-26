@@ -221,7 +221,7 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getTimezone(), resultList.get(0).getChat().getTimezone());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
-    assertEquals(CONSULTANT.getRocketChatId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
   }
 
   @Test
@@ -332,7 +332,7 @@ class ChatServiceTest {
     assertNotNull(resultUserSessionResponseDTO.getChat().getModerators());
     assertEquals(1, resultUserSessionResponseDTO.getChat().getModerators().length);
     assertEquals(
-        CONSULTANT.getRocketChatId(), resultUserSessionResponseDTO.getChat().getModerators()[0]);
+        CONSULTANT.getMatrixUserId(), resultUserSessionResponseDTO.getChat().getModerators()[0]);
     assertEquals(1, resultUserSessionResponseDTO.getChat().getAssignedAgencies().size());
     assertEquals(
         "agency name",
@@ -375,7 +375,7 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getGroupId(), resultList.get(0).getChat().getGroupId());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
-    assertEquals(CONSULTANT.getRocketChatId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
   }
 
   @Test

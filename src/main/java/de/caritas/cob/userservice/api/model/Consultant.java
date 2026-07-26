@@ -85,10 +85,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @NonNull
   private String id;
 
-  @Column(name = "rc_user_id", updatable = false)
-  @Size(max = 17)
-  private String rocketChatId;
-
   @Column(name = "matrix_user_id")
   private String matrixUserId;
 
@@ -390,8 +386,8 @@ public class Consultant implements TenantAware, NotificationsAware {
   public String toString() {
     return "Consultant [id="
         + id
-        + ", rocketChatId="
-        + rocketChatId
+        + ", matrixUserId="
+        + matrixUserId
         + ", username="
         + username
         + "]";

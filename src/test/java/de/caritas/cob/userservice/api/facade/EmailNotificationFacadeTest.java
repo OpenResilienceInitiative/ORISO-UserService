@@ -88,7 +88,7 @@ class EmailNotificationFacadeTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId("XXX")
+          .matrixUserId("XXX")
           .username(USERNAME_CONSULTANT_ENCODED)
           .firstName("consultant")
           .lastName("consultant")
@@ -109,7 +109,7 @@ class EmailNotificationFacadeTest {
   private final Consultant CONSULTANT_WITHOUT_MAIL =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId("XXX")
+          .matrixUserId("XXX")
           .username("consultant")
           .firstName("consultant")
           .lastName("consultant")
@@ -130,7 +130,7 @@ class EmailNotificationFacadeTest {
   private final Consultant CONSULTANT2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .rocketChatId("XXX")
+          .matrixUserId("XXX")
           .username("consultant2")
           .firstName("consultant2")
           .lastName("consultant2")
@@ -151,7 +151,7 @@ class EmailNotificationFacadeTest {
   private final Consultant CONSULTANT_NO_EMAIL =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId("XXX")
+          .matrixUserId("XXX")
           .username("consultant")
           .firstName("consultant")
           .lastName("consultant")

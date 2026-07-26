@@ -228,8 +228,8 @@ public class AccountManager implements AccountManaging {
   }
 
   @Override
-  public Optional<User> findAdviceSeekerByChatUserId(String chatUserId) {
-    return userRepository.findByRcUserIdAndDeleteDateIsNull(chatUserId);
+  public Optional<User> findAdviceSeekerByMatrixUserId(String matrixUserId) {
+    return userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {

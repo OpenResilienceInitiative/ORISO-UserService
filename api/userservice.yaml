@@ -1168,7 +1168,7 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/{chatUserId}/chat/{chatId}/ban:
+  /users/{matrixUserId}/chat/{chatId}/ban:
     post:
       tags:
         - user-controller
@@ -1181,7 +1181,7 @@ paths:
           required: true
           schema:
             type: string
-        - name: chatUserId
+        - name: matrixUserId
           in: path
           required: true
           example: Dd2WYSdFXP4No7bW6
