@@ -136,7 +136,9 @@ class RocketChatAdapterRemovedContractTest {
         .doesNotContain("rcGroupId", "Rocket.Chat")
         .contains("matrixRoomId");
     assertThat(Files.readString(MASTER_CHANGELOG))
-        .contains("db/changelog/changeset/0074_remove_rocket_chat_room_ids/0074_changeSet.xml");
+        .contains(
+            "db/changelog/changeset/0074_remove_rocket_chat_room_ids/0074_changeSet.xml",
+            "db/changelog/changeset/0075_remove_rocket_chat_feedback_room_id/0075_changeSet.xml");
     assertThat(
             Files.readString(
                 Path.of(
@@ -145,6 +147,12 @@ class RocketChatAdapterRemovedContractTest {
         .contains("rc_group_id LIKE '!%:%'")
         .contains("dropColumn tableName=\"session\" columnName=\"rc_group_id\"")
         .contains("dropColumn tableName=\"chat\" columnName=\"rc_group_id\"");
+    assertThat(
+            Files.readString(
+                Path.of(
+                    "src/main/resources/db/changelog/changeset/"
+                        + "0075_remove_rocket_chat_feedback_room_id/0075_changeSet.xml")))
+        .contains("dropColumn tableName=\"session\" columnName=\"rc_feedback_group_id\"");
   }
 
   @Test
