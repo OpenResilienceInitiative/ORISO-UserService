@@ -88,9 +88,11 @@ best-effort for the initiating business flow.
 
 Keycloak's own admin-client transport uses the same finite 3 s connect and 10 s
 read limits through a Keycloak-compatible RESTEasy client, retaining
-Keycloak's JSON provider. It is not covered by the payload interceptor; its
-higher-level retry paths are covered by the explicit retry counter. This is a
-known measurement boundary, not an implied zero.
+Keycloak's JSON provider. A transport wrapper measures every admin-client
+attempt, latency, exact serialized request size, known response size and
+coarse HTTP or transport outcome in the same bounded
+`userservice.outbound.http.*` series. Its higher-level retry paths remain
+covered by the explicit retry counter.
 
 ### Live PreDev baseline before this change
 

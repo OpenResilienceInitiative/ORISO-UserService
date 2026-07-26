@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.config.RestTemplateTimeouts.READ_TI
 import static java.util.Objects.nonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -19,6 +20,8 @@ import java.util.stream.Collectors;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
 import org.jboss.resteasy.client.jaxrs.ResteasyClientBuilder;
+import org.jboss.resteasy.client.jaxrs.engines.ClientHttpEngineBuilder43;
+import org.jboss.resteasy.client.jaxrs.engines.ManualClosingApacheHttpClient43Engine;
 import org.keycloak.admin.client.ClientBuilderWrapper;
 import org.keycloak.admin.client.JacksonProvider;
 import org.keycloak.admin.client.Keycloak;
@@ -124,23 +127,30 @@ public class KeycloakConfig {
   }
 
   @Bean
-  public Keycloak keycloak() {
+  public Keycloak keycloak(OutboundHttpMetrics outboundHttpMetrics) {
     return KeycloakBuilder.builder()
         .serverUrl(authServerUrl)
         .realm(realm)
         .username(config.getAdminUsername())
         .password(config.getAdminPassword())
         .clientId(config.getAdminClientId())
-        .resteasyClient(keycloakAdminHttpClientBuilder().build())
+        .resteasyClient(keycloakAdminHttpClientBuilder(outboundHttpMetrics).build())
         .build();
   }
 
-  ResteasyClientBuilder keycloakAdminHttpClientBuilder() {
+  @SuppressWarnings("removal")
+  ResteasyClientBuilder keycloakAdminHttpClientBuilder(OutboundHttpMetrics outboundHttpMetrics) {
     var builder = (ResteasyClientBuilder) ClientBuilderWrapper.create(null, false);
     builder
         .connectTimeout(CONNECT_TIMEOUT.toMillis(), MILLISECONDS)
         .readTimeout(READ_TIMEOUT.toMillis(), MILLISECONDS)
         .register(JacksonProvider.class, 100);
+    var delegateEngine =
+        (ManualClosingApacheHttpClient43Engine)
+            new ClientHttpEngineBuilder43().resteasyClientBuilder(builder).build();
+    var measuredEngine = new KeycloakAdminHttpMetricsEngine(delegateEngine, outboundHttpMetrics);
+    builder.register(measuredEngine);
+    builder.httpEngine(measuredEngine);
     return builder;
   }
 

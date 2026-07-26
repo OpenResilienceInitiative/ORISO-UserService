@@ -92,6 +92,13 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
     return new OutboundHttpCall(dependency, normalizedMethod, Timer.start(meterRegistry));
   }
 
+  /** Records the serialized request size for a client whose writer runs after the call starts. */
+  public void recordRequestPayload(URI uri, long requestBytes) {
+    if (requestBytes >= 0) {
+      recordPayload(dependency(uri), "request", requestBytes);
+    }
+  }
+
   /** One asynchronously completed outbound HTTP attempt. */
   public final class OutboundHttpCall {
 
