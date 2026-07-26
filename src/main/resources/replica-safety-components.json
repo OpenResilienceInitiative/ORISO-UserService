@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 1,
+  "scope": "UserService process-local state and scheduled work",
+  "runtimeMetric": "userservice.replica.local_state",
+  "schedulerRegistrationMetric": "userservice.scheduler.registered",
+  "components": [
+    {
+      "id": "appointment-cleanup",
+      "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
+      "kind": "scheduler",
+      "owner": "appointment",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep the deployment at one replica until concurrent cleanup proves database-level idempotency.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "rocketchat-credential-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/RocketChatService.java",
+      "kind": "scheduler",
+      "owner": "matrix-only-removal",
+      "risk": "correctness",
+      "decision": "Remove this scheduler and its Rocket.Chat adapter physically; it is not part of the target architecture.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "anonymous-user-deactivation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/deactivate/scheduler/DeactivateAnonymousUserScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent execution proves lifecycle transitions and external effects idempotent.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "group-chat-deactivation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/deactivate/scheduler/DeactivateGroupChatScheduler.java",
+      "kind": "scheduler",
+      "owner": "session-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent execution proves Matrix and notification effects idempotent.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "inactive-session-deletion",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteInactiveSessionsAndUserScheduler.java",
+      "kind": "scheduler",
+      "owner": "session-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent database and external cleanup is covered by an idempotency contract.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "account-deletion",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAccountScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent deletion and provider cleanup is proven single-effect.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "anonymous-user-deletion",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAnonymousScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent deletion and provider cleanup is proven single-effect.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "registered-only-user-deletion",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUsersRegisteredOnlyScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-lifecycle",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent deletion and notification effects are proven idempotent.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "enquiry-notification",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
+      "kind": "scheduler",
+      "owner": "notification",
+      "risk": "duplicate-side-effect",
+      "decision": "Retain database uniqueness as the duplicate guard and add concurrent multi-instance proof before scaling.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "group-chat-reminder",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/groupchatreminder/scheduler/GroupChatReminderScheduler.java",
+      "kind": "scheduler",
+      "owner": "notification",
+      "risk": "duplicate-side-effect",
+      "decision": "Retain the event idempotency key and add concurrent multi-instance proof before scaling.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "inactive-account-notification",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
+      "kind": "scheduler",
+      "owner": "notification",
+      "risk": "duplicate-side-effect",
+      "decision": "Keep one replica until concurrent notification dispatch proves durable single-effect semantics.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ]
+    },
+    {
+      "id": "rocketchat-user-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/RocketChatService.java",
+      "kind": "local-state",
+      "owner": "matrix-only-removal",
+      "risk": "correctness",
+      "components": [
+        "rocketChatUserCache"
+      ],
+      "decision": "Remove the cache with the Rocket.Chat adapter; it is not a retained optimization.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "disabled-rocketchat-warning-deduplication",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/DisabledRocketChatService.java",
+      "kind": "local-state",
+      "owner": "matrix-only-removal",
+      "risk": "performance-only",
+      "components": [
+        "warnedOperations"
+      ],
+      "decision": "Remove this process-local warning set with the disabled Rocket.Chat adapter.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "rocketchat-credential-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/RocketChatCredentialsProvider.java",
+      "kind": "local-state",
+      "owner": "matrix-only-removal",
+      "risk": "correctness",
+      "components": [
+        "techUserA",
+        "techUserB",
+        "systemUserA",
+        "systemUserB"
+      ],
+      "decision": "Remove the credential cache and provider with the Rocket.Chat adapter.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "matrix-client-caches-and-login-locks",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "matrix",
+      "risk": "correctness",
+      "components": [
+        "accessTokenCache",
+        "browserLoginLocks",
+        "syncTokenCache",
+        "presenceCache",
+        "cachedAdminToken",
+        "impersonationTokenCache"
+      ],
+      "decision": "Keep one replica until token rotation and login locking use shared coordination; treat presence and sync cursors as bounded performance state.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "matrix-event-listener-state",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/MatrixEventListenerService.java",
+      "kind": "local-state",
+      "owner": "matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "roomToSessionMap",
+        "roomToUsersMap",
+        "executorService",
+        "adminAccessToken",
+        "syncToken",
+        "running"
+      ],
+      "decision": "Keep one replica until the sync lease, room routing state and notification effects have shared or idempotent multi-instance contracts.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "active-view-notification-state",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/EventNotificationService.java",
+      "kind": "local-state",
+      "owner": "notification",
+      "risk": "correctness",
+      "components": [
+        "activeViewByUserId"
+      ],
+      "decision": "Keep one replica or externalize active-view state before claiming cross-replica notification suppression correctness.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "magic-login-token-state",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/auth/MagicLinkLoginService.java",
+      "kind": "local-state",
+      "owner": "identity",
+      "risk": "correctness",
+      "components": [
+        "magicLoginTokens"
+      ],
+      "decision": "Replace with the Redis single-use token store in issue 739 before enabling multiple replicas.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "password-reset-token-state",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/auth/PasswordResetService.java",
+      "kind": "local-state",
+      "owner": "identity",
+      "risk": "correctness",
+      "components": [
+        "resetTokens"
+      ],
+      "decision": "Replace with the Redis single-use token store in issue 739 before enabling multiple replicas.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "ehcache-manager",
+      "source": "src/main/java/de/caritas/cob/userservice/api/config/CacheManagerConfig.java",
+      "kind": "local-state",
+      "owner": "platform",
+      "risk": "correctness",
+      "components": [
+        "agencyCache",
+        "consultingTypeCache",
+        "applicationSettingsCache",
+        "tenantCache",
+        "tenantAdminCache",
+        "topicsCache",
+        "rocketChatUserCache"
+      ],
+      "decision": "Classify each cache as performance-only or add shared invalidation before enabling multiple replicas; remove the Rocket.Chat cache.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "agency-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyService.java",
+      "kind": "local-state",
+      "owner": "agency-relations",
+      "risk": "performance-only",
+      "components": [
+        "agencyCache"
+      ],
+      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "consulting-type-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/ConsultingTypeService.java",
+      "kind": "local-state",
+      "owner": "consulting-type",
+      "risk": "performance-only",
+      "components": [
+        "consultingTypeCache"
+      ],
+      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "application-settings-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/ApplicationSettingsService.java",
+      "kind": "local-state",
+      "owner": "consulting-type",
+      "risk": "correctness",
+      "components": [
+        "applicationSettingsCache"
+      ],
+      "decision": "Add an explicit freshness and invalidation contract because stale settings can change application behavior across replicas.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "topic-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/TopicService.java",
+      "kind": "local-state",
+      "owner": "consulting-type",
+      "risk": "performance-only",
+      "components": [
+        "topicsCache"
+      ],
+      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "tenant-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantService.java",
+      "kind": "local-state",
+      "owner": "tenant-administration",
+      "risk": "correctness",
+      "components": [
+        "tenantCache"
+      ],
+      "decision": "Add explicit invalidation on tenant changes before enabling multiple replicas.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    },
+    {
+      "id": "tenant-admin-read-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantAdminService.java",
+      "kind": "local-state",
+      "owner": "tenant-administration",
+      "risk": "correctness",
+      "components": [
+        "tenantAdminCache"
+      ],
+      "decision": "Add explicit invalidation on tenant-administrator changes before enabling multiple replicas.",
+      "signals": [
+        "userservice.replica.local_state"
+      ]
+    }
+  ]
+}

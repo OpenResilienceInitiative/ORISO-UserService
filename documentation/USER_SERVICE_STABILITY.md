@@ -160,6 +160,11 @@ also forbids the legacy admin Rocket.Chat operation implementation, so rollback
 policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`.
 
+Replica-local caches, maps and scheduled side effects are tracked separately in
+[`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current
+runtime contract reports a maximum supported replica count of one; modular
+source layout must not be confused with proven multi-instance behavior.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
 token/create-user DTO decoupling, then the admin controller composition
