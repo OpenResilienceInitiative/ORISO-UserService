@@ -34,5 +34,5 @@ jobs:
     - name: Verify Redis-backed replica-state contracts
       run: >-
         ./mvnw -B
-        -Dtest=ConsultantActivityRegistryRedisIT,ActiveViewRegistryRedisIT,MatrixSyncCoordinationRegistryRedisIT,MatrixBrowserLoginCoordinatorRedisIT,SharedReadCacheRedisIT
+        -Dtest=ConsultantActivityRegistryRedisIT,ActiveViewRegistryRedisIT,MatrixSyncCoordinationRegistryRedisIT,MatrixBrowserLoginCoordinatorRedisIT,RedisOneTimeTokenStoreIT,SharedReadCacheRedisIT
         test

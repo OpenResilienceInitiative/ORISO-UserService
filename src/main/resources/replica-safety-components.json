@@ -221,34 +221,6 @@
       ]
     },
     {
-      "id": "magic-login-token-state",
-      "source": "src/main/java/de/caritas/cob/userservice/api/service/auth/MagicLinkLoginService.java",
-      "kind": "local-state",
-      "owner": "identity",
-      "risk": "correctness",
-      "components": [
-        "magicLoginTokens"
-      ],
-      "decision": "Replace with the Redis single-use token store in issue 739 before enabling multiple replicas.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
-      "id": "password-reset-token-state",
-      "source": "src/main/java/de/caritas/cob/userservice/api/service/auth/PasswordResetService.java",
-      "kind": "local-state",
-      "owner": "identity",
-      "risk": "correctness",
-      "components": [
-        "resetTokens"
-      ],
-      "decision": "Replace with the Redis single-use token store in issue 739 before enabling multiple replicas.",
-      "signals": [
-        "userservice.replica.local_state"
-      ]
-    },
-    {
       "id": "ehcache-manager",
       "source": "src/main/java/de/caritas/cob/userservice/api/config/CacheManagerConfig.java",
       "kind": "local-state",

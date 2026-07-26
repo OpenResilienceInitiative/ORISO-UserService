@@ -29,6 +29,44 @@ def source_has_process_local_state(source: Path) -> bool:
 
 
 class ReplicaSafetyContractTest(unittest.TestCase):
+    def test_authentication_tokens_are_shared_single_use_redis_state(self):
+        magic_link_service = (
+            MAIN_JAVA
+            / "de/caritas/cob/userservice/api/service/auth/"
+            "MagicLinkLoginService.java"
+        ).read_text()
+        password_reset_service = (
+            MAIN_JAVA
+            / "de/caritas/cob/userservice/api/service/auth/"
+            "PasswordResetService.java"
+        ).read_text()
+        replica_test = (
+            ROOT
+            / "src/test/java/de/caritas/cob/userservice/api/service/auth/"
+            "RedisOneTimeTokenStoreIT.java"
+        ).read_text()
+        redis_workflow = (
+            ROOT / ".github/workflows/redis-contract.yml"
+        ).read_text()
+        catalog = json.loads(CATALOG.read_text())
+        component_ids = {entry["id"] for entry in catalog["components"]}
+
+        for service in (magic_link_service, password_reset_service):
+            self.assertIn("OneTimeTokenStore", service)
+            self.assertNotIn("ConcurrentHashMap", service)
+
+        self.assertIn(
+            "tokenCreatedByOneInstanceIsConsumedExactlyOnceByAnother",
+            replica_test,
+        )
+        self.assertIn(
+            "newerSinglePerSubjectTokenInvalidatesOlderTokenAcrossInstances",
+            replica_test,
+        )
+        self.assertIn("RedisOneTimeTokenStoreIT", redis_workflow)
+        self.assertNotIn("magic-login-token-state", component_ids)
+        self.assertNotIn("password-reset-token-state", component_ids)
+
     def test_matrix_browser_login_uses_shared_fail_closed_coordination(self):
         matrix_service = (
             MAIN_JAVA

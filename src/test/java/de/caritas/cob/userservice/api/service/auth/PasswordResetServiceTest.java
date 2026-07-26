@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +45,7 @@ class PasswordResetServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private IdentityClient identityClient;
   @Mock private RestTemplate restTemplate;
+  @Mock private OneTimeTokenStore oneTimeTokenStore;
 
   @InjectMocks private PasswordResetService passwordResetService;
 
@@ -272,24 +272,23 @@ class PasswordResetServiceTest {
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ReturnTrue_And_UpdatePassword_When_TokenValid() {
-    ConcurrentHashMap<String, Object> tokens = injectToken("valid-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "valid-token")).thenReturn(Optional.of(claim));
 
     boolean result = passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
 
     assertThat(result).isTrue();
     verify(identityClient).updatePassword("user-keycloak-id", "NewPassw0rd!");
-    // Token must be single-use.
-    assertThat(tokens).doesNotContainKey("valid-token");
+    verify(oneTimeTokenStore).claim("password-reset", "valid-token");
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPasswordPolicy() {
     // Definitive policy rejection: Keycloak did NOT apply the password, so the token must
     // survive for a retry with a different password using the same emailed link.
-    ConcurrentHashMap<String, Object> tokens = injectToken("retry-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "retry-token")).thenReturn(Optional.of(claim));
     doThrow(
             new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
@@ -299,16 +298,17 @@ class PasswordResetServiceTest {
     assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
-    assertThat(tokens).containsKey("retry-token");
+    verify(oneTimeTokenStore).restore("password-reset", "retry-token", claim, true);
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ConsumeToken_When_UpdateFailsIndeterminately() {
     // A generic failure can occur AFTER Keycloak applied the password — the outcome is unknown,
     // so the token must stay consumed; restoring it could allow a second password change with an
     // already-used link.
-    ConcurrentHashMap<String, Object> tokens = injectToken("indeterminate-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "indeterminate-token"))
+        .thenReturn(Optional.of(claim));
     doThrow(new RuntimeException("connection reset"))
         .when(identityClient)
         .updatePassword("user-keycloak-id", "NewPassw0rd!");
@@ -317,13 +317,13 @@ class PasswordResetServiceTest {
             () -> passwordResetService.confirmPasswordReset("indeterminate-token", "NewPassw0rd!"))
         .isInstanceOf(RuntimeException.class);
 
-    assertThat(tokens).doesNotContainKey("indeterminate-token");
+    verify(oneTimeTokenStore, never())
+        .restore("password-reset", "indeterminate-token", claim, true);
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ReturnFalse_When_TokenExpired() {
-    injectToken("expired-token", -60);
+    when(oneTimeTokenStore.claim("password-reset", "expired-token")).thenReturn(Optional.empty());
 
     boolean result = passwordResetService.confirmPasswordReset("expired-token", "NewPassw0rd!");
 
@@ -332,14 +332,12 @@ class PasswordResetServiceTest {
   }
 
   @Test
-  @SuppressWarnings("unchecked")
-  void confirmPasswordReset_Should_CleanupExpiredTokens_Before_Lookup() {
-    ConcurrentHashMap<String, Object> tokens = injectToken("stale-token", -60);
-    assertThat(tokens).containsKey("stale-token");
+  void confirmPasswordReset_Should_FailClosed_When_TokenStoreUnavailable() {
+    when(oneTimeTokenStore.claim("password-reset", "token"))
+        .thenThrow(new IllegalStateException("redis unavailable"));
 
-    passwordResetService.confirmPasswordReset("any-other-token", "NewPassw0rd!");
-
-    assertThat(tokens).doesNotContainKey("stale-token");
+    assertThat(passwordResetService.confirmPasswordReset("token", "NewPassw0rd!")).isFalse();
+    verify(identityClient, never()).updatePassword(anyString(), anyString());
   }
 
   private User validUser() {
@@ -361,24 +359,7 @@ class PasswordResetServiceTest {
         "globalSmtpFrom", "noreply@example.com");
   }
 
-  @SuppressWarnings("unchecked")
-  private ConcurrentHashMap<String, Object> injectToken(String token, long offsetSeconds) {
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(passwordResetService, "resetTokens");
-    for (Class<?> cls : PasswordResetService.class.getDeclaredClasses()) {
-      if (cls.getSimpleName().equals("ResetTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          Object entry =
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-keycloak-id", Instant.now().plusSeconds(offsetSeconds));
-          tokens.put(token, entry);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-    return tokens;
+  private OneTimeTokenStore.TokenClaim validClaim() {
+    return new OneTimeTokenStore.TokenClaim("user-keycloak-id", Instant.now().plusSeconds(900));
   }
 }

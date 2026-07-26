@@ -30,17 +30,17 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,841 | 0 | 0 | 7 | `./mvnw -B test` |
-| Integration + contract + E2E | 961 | 0 | 0 | 14 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,842 | 0 | 0 | 7 | `./mvnw -B test` |
+| Integration + contract + E2E | 966 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
-| Redis replica-safety contracts | 9 | 0 | 0 | 0 | required Redis job |
+| Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
 The candidate includes focused scheduler and Matrix browser-login unit and
 replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
 later serial Maven completions. The fresh integration report directory contains
-96 XML suites whose attributes independently sum to 961/0/0/14.
+97 XML suites whose attributes independently sum to 966/0/0/5.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -51,8 +51,8 @@ is skipped or quarantined.
 suite, starts from a clean build, requires at least 900 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The fourteen environment-gated integration tests are not
-quarantined: all nine Redis tests pass in their required Redis 7
+were removed. The nineteen environment-gated integration tests are not
+quarantined: all fourteen Redis tests pass in their required Redis 7
 service-container job. The five MariaDB tests skipped without an external
 database are covered by the required fresh-MariaDB 10.11 job; its seven selected
 schema and replica contract classes execute nine tests on branch, pull-request
@@ -190,7 +190,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -210,7 +210,7 @@ source layout must not be confused with proven multi-instance behavior.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
-token/create-user DTO decoupling, then the admin controller composition
+transport/create-user DTO decoupling, then the admin controller composition
 boundary, then session-list adapter removal. Each step must add a failing
 boundary contract before moving dependencies.
 

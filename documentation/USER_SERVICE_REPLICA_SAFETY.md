@@ -2,11 +2,12 @@
 
 UserService is currently safe to deploy with one replica. A Kubernetes
 `Deployment` and stateless HTTP security do not make the whole process
-stateless: authentication tokens, the legacy Rocket.Chat Ehcache entry and
-scheduled side effects still have process-local behavior. Reference-data and
-correctness-relevant tenant/application-setting reads, notification active-view
-state and Matrix sync leadership/cursor state are now externalized as described
-below, but the remaining items still keep the global replica limit at one.
+stateless: the legacy Rocket.Chat Ehcache entry and provider-gated scheduled
+side effects still prevent a global multi-replica claim. Authentication tokens,
+reference-data and correctness-relevant tenant/application-setting reads,
+notification active-view state and Matrix sync leadership/cursor state are now
+externalized as described below, but the remaining items still keep the global
+replica limit at one.
 
 The machine-readable inventory is
 [`src/main/resources/replica-safety-components.json`](../src/main/resources/replica-safety-components.json).
@@ -110,6 +111,21 @@ proves shared reads, bounded expiry/reload, one upstream load for a concurrent
 cold miss, reference-list serialization and tenant isolation. Reference reads
 therefore have one shared freshness bound instead of the previous replica-local
 60-second, three-hour and 24-hour windows.
+
+Magic-login and password-reset tokens no longer live in replica-local maps.
+Both flows depend on the `OneTimeTokenStore` port, whose Redis adapter uses
+TTL-bound values and an atomic remove-first claim. A token created by one
+application instance can be consumed exactly once by another. Password reset
+also maintains a hashed subject index, so creating a new token invalidates the
+older token across replicas. Both bearer tokens and account identifiers are
+SHA-256-derived before they enter Redis keys. Redis failures fail closed; there
+is no heap fallback. Failed downstream operations restore a claim only for its
+original remaining TTL and only when a newer subject token does not already own
+the index.
+`RedisOneTimeTokenStoreIT` reconstructs two adapters over the same Redis 7
+instance and proves cross-instance claim, replacement, expiry and stale-claim
+protection. The reusable Redis workflow runs this contract for branch and PR
+validation.
 
 Matrix browser-device login no longer relies on a process-local lock. Password
 rotation and consumption now run inside `MatrixBrowserLoginCoordinator`, which
@@ -222,10 +238,14 @@ scheduler instances. Its 12-hour claim has the same daily duration constraint.
 
 ## Current dependency sequence
 
-1. Merge the Redis-backed single-use token work from issue 739 and remove the
-   two authentication-token entries from the local-state inventory.
+1. Land the Redis-backed single-use token PR #740 in `pre-dev` before
+   publishing this stability stack. The stack already integrates its functional
+   commit locally and removes both obsolete authentication-token entries from
+   the local-state inventory.
 2. Complete the Matrix-only removal workstream, which deletes all three
    Rocket.Chat inventory entries rather than retaining disabled fallbacks.
-3. Add the remaining concurrent scheduler contracts, then raise the Helm
-   replica constraint only when `userservice.replica.max_supported` can
-   truthfully change.
+3. Prove MailService idempotency and runtime replay before enabling
+   inactive-account notification recovery.
+4. Run the complete two-instance integration/E2E suite without sticky sessions,
+   then raise the Helm replica constraint only when
+   `userservice.replica.max_supported` can truthfully change.
