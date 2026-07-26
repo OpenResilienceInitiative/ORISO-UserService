@@ -6,18 +6,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
-import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,18 +25,15 @@ import org.springframework.http.HttpStatus;
 class UserSupportControllerDelegateTest {
 
   private static final String RC_GROUP_ID = "rc-group-id";
-  private static final String USER_ID = "user-id";
   private static final String CONSULTANT_ID = "consultant-id";
   private static final String ASKER_ID = "asker-id";
   private static final UUID CONSULTANT_UUID =
       UUID.fromString("11111111-1111-1111-1111-111111111111");
 
   @Mock private SessionService sessionService;
-  @Mock private AuthenticatedUser authenticatedUser;
   @Mock private ConsultantImportService consultantImportService;
   @Mock private EmailNotificationFacade emailNotificationFacade;
   @Mock private SessionDataService sessionDataService;
-  @Mock private EventNotificationService eventNotificationService;
 
   @InjectMocks private UserSupportControllerDelegate delegate;
 
@@ -51,20 +43,6 @@ class UserSupportControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(consultantImportService).startImport();
-  }
-
-  @Test
-  void sendNewMessageNotificationShouldSendEmailAndCreateEvent() {
-    var roles = Set.of(UserRole.USER.getValue());
-    when(authenticatedUser.getRoles()).thenReturn(roles);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-
-    var response = delegate.sendNewMessageNotification(new NewMessageNotificationDTO(RC_GROUP_ID));
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(emailNotificationFacade).sendNewMessageNotification(RC_GROUP_ID, roles, USER_ID, null);
-    verify(eventNotificationService)
-        .createMessageNotificationFromRoom(RC_GROUP_ID, USER_ID, null, false);
   }
 
   @Test

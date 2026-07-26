@@ -44,7 +44,6 @@ public class PathConstants {
   public static final String
       PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_INVALID_FILTER =
           "/users/sessions/teams?offset=0&count=1&filter=sdfsegsgsdfdsf";
-  public static final String PATH_SEND_NEW_MESSAGE_NOTIFICATION = "/users/mails/messages/new";
   public static final String PATH_USER_DATA = "/users/data";
   public static final String PATH_GET_CONSULTANTS_FOR_AGENCY_WITHOUT_PARAM = "/users/consultants";
   public static final String PATH_GET_CONSULTANTS_FOR_AGENCY = "/users/consultants?agencyId=10";
@@ -61,7 +60,6 @@ public class PathConstants {
   public static final String PATH_POST_REGISTER_USER = "/users/askers/new";
   public static final String PATH_POST_REGISTER_NEW_CONSULTING_TYPE =
       "/users/askers/consultingType/new";
-  public static final String PATH_POST_NEW_MESSAGE_NOTIFICATION = "/users/mails/messages/new";
   public static final String PATH_POST_IMPORT_CONSULTANTS = "/users/consultants/import";
   public static final String PATH_GET_CONSULTANTS = "/users/consultants";
   public static final String PATH_POST_CHAT_NEW = "/users/chat/new";

@@ -177,7 +177,6 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(
                     "/users/email",
-                    "/users/mails/messages/new",
                     "/users/drafts",
                     "/users/drafts/**",
                     "/users/event-notifications",

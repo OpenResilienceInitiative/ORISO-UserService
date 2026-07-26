@@ -23,7 +23,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.OccurrenceOverrideRequest;
@@ -398,20 +397,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> importConsultants() {
     return userSupportControllerDelegate.importConsultants();
-  }
-
-  /**
-   * Sends email notifications to the user(s) if there has been a new answer. Uses the provided
-   * Keycloak authorization token for user verification (user role). This means that the user that
-   * wrote the answer should also call this method.
-   *
-   * @param newMessageNotificationDTO (required)
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> sendNewMessageNotification(
-      @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
-    return userSupportControllerDelegate.sendNewMessageNotification(newMessageNotificationDTO);
   }
 
   /**

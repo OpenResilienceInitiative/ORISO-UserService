@@ -1477,24 +1477,6 @@ class UserControllerIT {
         .andExpect(status().isNoContent());
   }
 
-  /** sendNewMessageNotification() */
-  @Test
-  void
-      sendNewMessageNotification_Should_CallEmailNotificationFacadeAndReturn2xxSuccessful_WhenCalled()
-          throws Exception {
-    var validNewMessageRequestBody = "{\"rcGroupId\": \"" + RC_GROUP_ID + "\"}";
-    mvc.perform(
-            post(PATH_SEND_NEW_MESSAGE_NOTIFICATION)
-                .content(validNewMessageRequestBody)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is2xxSuccessful());
-
-    verify(emailNotificationFacade, atLeastOnce())
-        .sendNewMessageNotification(
-            RC_GROUP_ID, authenticatedUser.getRoles(), authenticatedUser.getUserId(), null);
-  }
-
   /** Method: getConsultants (authority: VIEW_AGENCY_CONSULTANTS) */
   @Test
   void getConsultants_Should_ReturnBadRequest_WhenQueryParamIsMissing() throws Exception {
