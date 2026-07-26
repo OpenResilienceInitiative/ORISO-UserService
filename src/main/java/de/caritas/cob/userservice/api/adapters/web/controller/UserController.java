@@ -277,26 +277,24 @@ public class UserController implements UsersApi {
   /**
    * Returns a list of sessions for the currently authenticated/logged in user.
    *
-   * @param rcToken Rocket.Chat token (optional)
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
-  public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(
-      @RequestHeader(required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionsForAuthenticatedUser(rcToken);
+  public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser() {
+    return userSessionControllerDelegate.getSessionsForAuthenticatedUser();
   }
 
   /**
-   * Returns a list of sessions for the currently authenticated/logged in user and given RocketChat
-   * group IDs.
+   * Returns a list of sessions for the currently authenticated/logged in user and given Matrix room
+   * IDs.
    *
-   * @param rcToken Rocket.Chat token (required)
+   * @param roomIds Matrix room IDs
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
   public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionsForGroupIds(rcGroupIds, rcToken);
+      @RequestParam List<String> roomIds) {
+    return userSessionControllerDelegate.getSessionsForGroupIds(roomIds);
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
@@ -304,15 +302,13 @@ public class UserController implements UsersApi {
   @GetMapping(
       value = {"/users/sessions/room/{sessionId}", "/service/users/sessions/room/{sessionId}"},
       produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
-      @PathVariable Long sessionId,
-      @RequestHeader(value = "RCToken", required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionForId(sessionId, rcToken);
+  public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(@PathVariable Long sessionId) {
+    return userSessionControllerDelegate.getSessionForId(sessionId);
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(Long chatId, String rcToken) {
-    return userSessionControllerDelegate.getChatById(rcToken, chatId);
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(Long chatId) {
+    return userSessionControllerDelegate.getChatById(chatId);
   }
 
   /**
@@ -366,7 +362,6 @@ public class UserController implements UsersApi {
    * Returns a list of sessions for the currently authenticated consultant depending on the
    * submitted sessionStatus.
    *
-   * @param rcToken Rocket.Chat token (required, provided by RocketChatConfig as dummy if missing)
    * @param offset Number of items where to start in the query (0 = first item) (required)
    * @param count Number of items which are being returned (required)
    * @param filter Information on how to filter the list (required)
@@ -375,19 +370,14 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getSessionsForAuthenticatedConsultant(
-      Integer offset,
-      Integer count,
-      @RequestParam String filter,
-      @RequestHeader(required = false) String rcToken,
-      @RequestParam Integer status) {
+      Integer offset, Integer count, @RequestParam String filter, @RequestParam Integer status) {
     return userSessionControllerDelegate.getSessionsForAuthenticatedConsultant(
-        rcToken, offset, count, filter, status);
+        offset, count, filter, status);
   }
 
   /**
    * Returns a list of team consulting sessions for the currently authenticated consultant.
    *
-   * @param rcToken Rocket.Chat token (required)
    * @param offset Number of items where to start in the query (0 = first item) (required)
    * @param count Number of items which are being returned (required)
    * @param filter Information on how to filter the list (required)
@@ -395,12 +385,9 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      Integer offset,
-      Integer count,
-      @RequestParam String filter,
-      @RequestHeader(required = false) String rcToken) {
+      Integer offset, Integer count, @RequestParam String filter) {
     return userSessionControllerDelegate.getTeamSessionsForAuthenticatedConsultant(
-        rcToken, offset, count, filter);
+        offset, count, filter);
   }
 
   /**

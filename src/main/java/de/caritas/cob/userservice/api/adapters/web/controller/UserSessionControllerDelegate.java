@@ -4,7 +4,6 @@ import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
@@ -20,7 +19,6 @@ import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -44,9 +42,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 class UserSessionControllerDelegate {
 
-  private static final String DUMMY_ROCKET_CHAT_TOKEN = "dummy-rc-token";
-  private static final String DUMMY_ROCKET_CHAT_USER_ID = "dummy-rc-user";
-
   private final @NonNull UserAccountService userAccountProvider;
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -61,13 +56,11 @@ class UserSessionControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
 
-  ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(String rcToken) {
+  ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser() {
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
 
     var userSessionsDTO =
-        sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(
-            user.getUserId(), rocketChatCredentials);
+        sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(user.getUserId());
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(userSessionsDTO);
 
@@ -76,20 +69,18 @@ class UserSessionControllerDelegate {
         : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
-  ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      List<String> rcGroupIds, String rcToken) {
+  ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(List<String> roomIds) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
-              consultant, rcGroupIds, authenticatedUser.getRoles());
+              consultant, roomIds, authenticatedUser.getRoles());
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
-      var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
           sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
-              user.getUserId(), rcGroupIds, rocketChatCredentials, authenticatedUser.getRoles());
+              user.getUserId(), roomIds, authenticatedUser.getRoles());
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -99,19 +90,15 @@ class UserSessionControllerDelegate {
         : new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
-  ResponseEntity<GroupSessionListResponseDTO> getSessionForId(Long sessionId, String rcToken) {
-    log.info(
-        "GET /users/sessions/room/{} - sessionId: {}, rcToken: {}",
-        sessionId,
-        sessionId,
-        rcToken != null ? "present" : "null");
+  ResponseEntity<GroupSessionListResponseDTO> getSessionForId(Long sessionId) {
+    log.info("GET /users/sessions/room/{} - sessionId: {}", sessionId, sessionId);
 
     try {
       GroupSessionListResponseDTO groupSessionList;
       if (authenticatedUser.isConsultant()) {
-        groupSessionList = getSessionOrChatForConsultant(sessionId, rcToken);
+        groupSessionList = getSessionOrChatForConsultant(sessionId);
       } else {
-        groupSessionList = getSessionOrChatForUser(sessionId, rcToken);
+        groupSessionList = getSessionOrChatForUser(sessionId);
       }
 
       consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -125,24 +112,16 @@ class UserSessionControllerDelegate {
     }
   }
 
-  ResponseEntity<GroupSessionListResponseDTO> getChatById(String rcToken, Long chatId) {
+  ResponseEntity<GroupSessionListResponseDTO> getChatById(Long chatId) {
     GroupSessionListResponseDTO groupSessionList;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
-      var rocketChatCredentials =
-          RocketChatCredentials.builder()
-              .rocketChatUserId(consultant.getRocketChatId())
-              .rocketChatToken(rcToken)
-              .build();
       groupSessionList =
-          sessionListFacade.retrieveChatsForConsultantByChatIds(
-              consultant, singletonList(chatId), rocketChatCredentials);
+          sessionListFacade.retrieveChatsForConsultantByChatIds(consultant, singletonList(chatId));
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
-      var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
-          sessionListFacade.retrieveChatsForUserByChatIds(
-              user.getUserId(), singletonList(chatId), rocketChatCredentials);
+          sessionListFacade.retrieveChatsForUserByChatIds(user.getUserId(), singletonList(chatId));
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -153,7 +132,7 @@ class UserSessionControllerDelegate {
   }
 
   ResponseEntity<ConsultantSessionListResponseDTO> getSessionsForAuthenticatedConsultant(
-      String rcToken, Integer offset, Integer count, String filter, Integer status) {
+      Integer offset, Integer count, String filter, Integer status) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
 
     ConsultantSessionListResponseDTO consultantSessionListResponseDTO = null;
@@ -179,7 +158,7 @@ class UserSessionControllerDelegate {
   }
 
   ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      String rcToken, Integer offset, Integer count, String filter) {
+      Integer offset, Integer count, String filter) {
     var consultant = this.userAccountProvider.retrieveValidatedTeamConsultant();
 
     ConsultantSessionListResponseDTO teamSessionListDTO = null;
@@ -194,7 +173,7 @@ class UserSessionControllerDelegate {
 
       teamSessionListDTO =
           sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-              consultant, rcToken, sessionListQueryParameter);
+              consultant, sessionListQueryParameter);
     }
 
     return nonNull(teamSessionListDTO) && isNotEmpty(teamSessionListDTO.getSessions())
@@ -276,8 +255,7 @@ class UserSessionControllerDelegate {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
-  private GroupSessionListResponseDTO getSessionOrChatForConsultant(
-      Long sessionId, String rcToken) {
+  private GroupSessionListResponseDTO getSessionOrChatForConsultant(Long sessionId) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     log.info("User is CONSULTANT: {}, id: {}", consultant.getUsername(), consultant.getId());
 
@@ -333,15 +311,9 @@ class UserSessionControllerDelegate {
 
     if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
-      var token = rcToken != null ? rcToken : "dummy-rc-token";
-      var rocketChatCredentials =
-          RocketChatCredentials.builder()
-              .rocketChatUserId(consultant.getRocketChatId())
-              .rocketChatToken(token)
-              .build();
       groupSessionList =
           sessionListFacade.retrieveChatsForConsultantByChatIds(
-              consultant, singletonList(sessionId), rocketChatCredentials);
+              consultant, singletonList(sessionId));
 
       log.info(
           "Step 2 result: {} chats found",
@@ -350,19 +322,14 @@ class UserSessionControllerDelegate {
     return groupSessionList;
   }
 
-  private GroupSessionListResponseDTO getSessionOrChatForUser(Long sessionId, String rcToken) {
+  private GroupSessionListResponseDTO getSessionOrChatForUser(Long sessionId) {
     var user = userAccountProvider.retrieveValidatedUser();
     log.info("User is USER/ASKER: {}, id: {}", user.getUsername(), user.getUserId());
-
-    var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
 
     log.info("Step 1: Trying to find as SESSION with ID: {}", sessionId);
     var groupSessionList =
         sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
-            user.getUserId(),
-            singletonList(sessionId),
-            rocketChatCredentials,
-            authenticatedUser.getRoles());
+            user.getUserId(), singletonList(sessionId), authenticatedUser.getRoles());
 
     log.info(
         "Step 1 result: {} sessions found",
@@ -372,24 +339,12 @@ class UserSessionControllerDelegate {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
-              user.getUserId(), singletonList(sessionId), rocketChatCredentials);
+              user.getUserId(), singletonList(sessionId));
 
       log.info(
           "Step 2 result: {} chats found",
           groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
     }
     return groupSessionList;
-  }
-
-  private RocketChatCredentials buildUserRocketChatCredentials(User user, String rcToken) {
-    var token = rcToken != null ? rcToken : DUMMY_ROCKET_CHAT_TOKEN;
-    var rcUserId =
-        user.getRcUserId() != null
-            ? user.getRcUserId()
-            : user.getMatrixUserId() != null ? user.getMatrixUserId() : DUMMY_ROCKET_CHAT_USER_ID;
-    return RocketChatCredentials.builder()
-        .rocketChatUserId(rcUserId)
-        .rocketChatToken(token)
-        .build();
   }
 }

@@ -967,7 +967,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     var displayName = RandomStringUtils.randomAlphanumeric(16);
@@ -978,7 +978,6 @@ class UserControllerIT {
     response.getSessions().get(0).getConsultant().setDisplayName(displayName);
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
@@ -1000,13 +999,11 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
 
-    verify(sessionListFacade, times(0))
-        .retrieveSortedSessionsForAuthenticatedUser(Mockito.any(), Mockito.any());
+    verify(sessionListFacade, times(0)).retrieveSortedSessionsForAuthenticatedUser(Mockito.any());
   }
 
   @Test
@@ -1019,19 +1016,18 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
   }
 
   @Test
-  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenRcTokenHeaderIsMissing()
+  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenNoSessionsExist()
       throws Exception {
     List<UserSessionResponseDTO> session = new ArrayList<>();
     UserSessionListResponseDTO response = new UserSessionListResponseDTO().sessions(session);
@@ -1039,7 +1035,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     mvc.perform(

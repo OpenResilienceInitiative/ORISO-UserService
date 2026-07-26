@@ -264,12 +264,6 @@ paths:
         user. Note: Either a session or a chat object is provided. [Authorization:
         Role: user, anonymous]'
       operationId: getSessionsForAuthenticatedUser
-      parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
       responses:
         200:
           description: OK - successful operation
@@ -293,16 +287,11 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns sessions for given chat room IDs (legacy Rocket.Chat-era naming).
+      summary: 'Returns sessions for given Matrix room IDs.
       [Authorization: Role: user, consultant]'
       operationId: getSessionsForGroupIds
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: rcGroupIds[]
+        - name: roomIds[]
           in: query
           required: true
           schema:
@@ -338,11 +327,6 @@ paths:
       [Authorization: Role: user, consultant]'
       operationId: getSessionForId
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
         - name: sessionId
           in: path
           description: Session Id
@@ -745,11 +729,6 @@ paths:
         or a chat object is provided. [Authorization: Role: consultant]'
       operationId: getSessionsForAuthenticatedConsultant
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
         - name: status
           in: query
           description: Session status type
@@ -853,11 +832,6 @@ paths:
         [Authorization: Role: consultant]'
       operationId: getTeamSessionsForAuthenticatedConsultant
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
         - name: offset
           in: query
           description: Number of items where to start in the query (0 = first item)
@@ -1659,11 +1633,6 @@ paths:
       [Authorization: Role: user, consultant]'
       operationId: getChatById
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
         - name: chatId
           in: path
           description: Chat Id
