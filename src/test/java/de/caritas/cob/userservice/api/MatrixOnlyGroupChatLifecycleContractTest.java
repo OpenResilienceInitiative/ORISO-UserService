@@ -22,4 +22,22 @@ class MatrixOnlyGroupChatLifecycleContractTest {
             "rocketChatService",
             "Rocket.Chat");
   }
+
+  @Test
+  void joiningAndLeavingAGroupChatMustNotCallRocketChat() throws IOException {
+    var source =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/facade/"
+                    + "JoinAndLeaveChatFacade.java"));
+
+    assertThat(source)
+        .doesNotContain(
+            "RocketChatService",
+            "rocketChatService",
+            "RocketChatAddUserToGroupException",
+            "RocketChatRemoveUserFromGroupException",
+            "retrieveRcUserId",
+            "Rocket.Chat");
+  }
 }
