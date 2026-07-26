@@ -130,7 +130,7 @@
       "kind": "scheduler",
       "owner": "notification",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent notification dispatch proves durable single-effect semantics.",
+      "decision": "A unique pre-dispatch claim and InactiveAccountNotificationServiceReplicaIT prove at most one email under concurrent instances. Mail rejection remains auditable as undispatched; keep one replica until crash recovery has an idempotent delivery contract.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

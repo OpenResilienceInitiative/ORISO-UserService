@@ -4,6 +4,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,7 +16,6 @@ import de.caritas.cob.userservice.api.model.InactiveAccountNotificationAuditLog;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.InactiveAccountNotificationAuditLogRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
@@ -31,10 +31,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 // LENIENT is required: @BeforeEach registers default stubs for recipientResolver and
-// auditLogRepository that are only exercised when inactive accounts are actually found.
+// claimWriter that are only exercised when inactive accounts are actually found.
 // Tests that verify "no notification" paths (e.g. activity below threshold) do not reach
 // those call sites, so Mockito would otherwise report UnnecessaryStubbingException.
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -49,7 +50,7 @@ class InactiveAccountNotificationServiceTest {
   @Mock private ConsultantActivityCalculator consultantActivityCalculator;
   @Mock private AdminActivityCalculator adminActivityCalculator;
   @Mock private InactiveAccountNotificationRecipientResolver recipientResolver;
-  @Mock private InactiveAccountNotificationAuditLogRepository auditLogRepository;
+  @Mock private InactiveAccountNotificationClaimWriter claimWriter;
   @Mock private MailService mailService;
 
   private Admin recipientAdmin;
@@ -74,7 +75,13 @@ class InactiveAccountNotificationServiceTest {
     when(consultantRepository.findByDeleteDateIsNull()).thenReturn(emptyList());
     when(adminRepository.findAll()).thenReturn(emptyList());
     when(recipientResolver.resolveRecipients(any())).thenReturn(singletonList(recipientAdmin));
-    when(auditLogRepository.existsByNotificationFingerprint(any())).thenReturn(false);
+    when(claimWriter.claim(any()))
+        .thenAnswer(
+            invocation -> {
+              InactiveAccountNotificationAuditLog auditLog = invocation.getArgument(0);
+              auditLog.setId(1L);
+              return auditLog;
+            });
   }
 
   @Test
@@ -91,7 +98,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository).save(any());
+    verify(claimWriter).claim(any());
     verify(mailService, never()).sendEmailNotification(any());
   }
 
@@ -121,7 +128,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository).save(any());
+    verify(claimWriter).claim(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -150,7 +157,7 @@ class InactiveAccountNotificationServiceTest {
 
     ArgumentCaptor<InactiveAccountNotificationAuditLog> captor =
         ArgumentCaptor.forClass(InactiveAccountNotificationAuditLog.class);
-    verify(auditLogRepository).save(captor.capture());
+    verify(claimWriter).claim(captor.capture());
     assertThat(captor.getValue().getAccountId()).isEqualTo("admin-target");
   }
 
@@ -163,7 +170,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository, never()).save(any());
+    verify(claimWriter, never()).claim(any());
   }
 
   @Test
@@ -182,7 +189,7 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository, never()).save(any());
+    verify(claimWriter, never()).claim(any());
   }
 
   @Test
@@ -192,11 +199,14 @@ class InactiveAccountNotificationServiceTest {
     LocalDateTime now = LocalDateTime.now();
     when(userRepository.findAllByDeleteDateIsNull()).thenReturn(singletonList(user));
     when(askerActivityCalculator.lastActivity(user)).thenReturn(Optional.of(now.minusDays(400)));
-    when(auditLogRepository.existsByNotificationFingerprint(any())).thenReturn(true);
+    doThrow(new DataIntegrityViolationException("duplicate fingerprint"))
+        .when(claimWriter)
+        .claim(any());
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository, never()).save(any());
+    verify(claimWriter).claim(any());
+    verify(mailService, never()).sendEmailNotification(any());
   }
 
   @Test
@@ -221,12 +231,13 @@ class InactiveAccountNotificationServiceTest {
 
     service.scanAndNotifyInactiveAccounts();
 
-    verify(auditLogRepository, org.mockito.Mockito.times(2)).save(any());
+    verify(claimWriter, org.mockito.Mockito.times(2)).claim(any());
   }
 
   @Test
   void scanAndNotifyInactiveAccounts_Should_dispatchEmail_When_emailDispatchEnabled() {
     setField(service, "emailDispatchEnabled", true);
+    when(mailService.sendEmailNotification(any())).thenReturn(true);
     User user = new User("user-1", null, "user1", "u1@example.com", true);
     user.setTenantId(1L);
     LocalDateTime now = LocalDateTime.now();
@@ -242,8 +253,26 @@ class InactiveAccountNotificationServiceTest {
         .isEqualTo(recipientAdmin.getEmail());
     ArgumentCaptor<InactiveAccountNotificationAuditLog> auditCaptor =
         ArgumentCaptor.forClass(InactiveAccountNotificationAuditLog.class);
-    verify(auditLogRepository).save(auditCaptor.capture());
-    assertThat(auditCaptor.getValue().isEmailDispatched()).isTrue();
+    verify(claimWriter).claim(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().isEmailDispatched()).isFalse();
+    verify(claimWriter).markEmailDispatched(1L);
+  }
+
+  @Test
+  void scanAndNotifyInactiveAccounts_Should_keepAuditUndispatched_When_mailTransportRejects() {
+    setField(service, "emailDispatchEnabled", true);
+    when(mailService.sendEmailNotification(any())).thenReturn(false);
+    User user = new User("user-1", null, "user1", "u1@example.com", true);
+    user.setTenantId(1L);
+    LocalDateTime now = LocalDateTime.now();
+    when(userRepository.findAllByDeleteDateIsNull()).thenReturn(singletonList(user));
+    when(askerActivityCalculator.lastActivity(user)).thenReturn(Optional.of(now.minusDays(400)));
+
+    service.scanAndNotifyInactiveAccounts();
+
+    verify(mailService).sendEmailNotification(any());
+    verify(claimWriter).claim(any());
+    verify(claimWriter, never()).markEmailDispatched(any());
   }
 
   @Test
@@ -259,7 +288,8 @@ class InactiveAccountNotificationServiceTest {
     verify(mailService, never()).sendEmailNotification(any());
     ArgumentCaptor<InactiveAccountNotificationAuditLog> auditCaptor =
         ArgumentCaptor.forClass(InactiveAccountNotificationAuditLog.class);
-    verify(auditLogRepository).save(auditCaptor.capture());
+    verify(claimWriter).claim(auditCaptor.capture());
     assertThat(auditCaptor.getValue().isEmailDispatched()).isFalse();
+    verify(claimWriter, never()).markEmailDispatched(any());
   }
 }

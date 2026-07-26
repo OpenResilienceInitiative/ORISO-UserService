@@ -48,9 +48,10 @@ public class MailServiceTest {
   public void sendEmailNotification_Should_CallMailService() {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
 
-    mailService.sendEmailNotification(new MailsDTO());
+    boolean accepted = mailService.sendEmailNotification(new MailsDTO());
 
     verify(mailsControllerApi, times(1)).sendMails(any());
+    assertThat(accepted).isTrue();
   }
 
   @Test
@@ -60,9 +61,10 @@ public class MailServiceTest {
     doThrow(new RuntimeException()).when(this.mailsControllerApi).sendMails(any());
 
     try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
-      mailService.sendEmailNotification(new MailsDTO());
+      boolean accepted = mailService.sendEmailNotification(new MailsDTO());
 
       assertThat(logCaptor.contains(Level.ERROR, "Error while calling the MailService")).isTrue();
+      assertThat(accepted).isFalse();
     }
   }
 

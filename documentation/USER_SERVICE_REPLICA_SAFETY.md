@@ -44,6 +44,20 @@ recipient/deduplication key. The JPA model and MariaDB migration now express the
 same unique constraint. Exactly one event row and one live refresh are
 observable after the race.
 
+The inactive-account notification proof starts two independent service
+instances against the same audit database. A transaction-isolated unique claim
+is committed before the external mail call, so the losing instance performs no
+mail call and no longer needs a separate existence query. MailService reports
+whether it accepted the request; only accepted requests set
+`emailDispatched=true`, while rejected requests remain auditable as
+undispatched.
+
+This is an at-most-once concurrency guarantee, not a crash-recovery guarantee.
+A process can still stop after MailService accepts the request but before the
+audit update. Automatic replay therefore requires a provider idempotency key or
+an outbox/lease protocol that can reconcile that ambiguous state. The global
+replica limit remains one.
+
 ## Current dependency sequence
 
 1. Merge the Redis-backed single-use token work from issue 739 and remove the

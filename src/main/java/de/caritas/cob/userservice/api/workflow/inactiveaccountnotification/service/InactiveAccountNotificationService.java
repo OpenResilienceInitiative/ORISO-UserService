@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.model.InactiveAccountNotificationAuditLog;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.InactiveAccountNotificationAuditLogRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.inactiveaccountnotification.model.InactiveAccountRole;
@@ -22,6 +21,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +40,7 @@ public class InactiveAccountNotificationService {
   private final @NonNull ConsultantActivityCalculator consultantActivityCalculator;
   private final @NonNull AdminActivityCalculator adminActivityCalculator;
   private final @NonNull InactiveAccountNotificationRecipientResolver recipientResolver;
-  private final @NonNull InactiveAccountNotificationAuditLogRepository auditLogRepository;
+  private final @NonNull InactiveAccountNotificationClaimWriter claimWriter;
   private final @NonNull MailService mailService;
 
   @Value("${inactive.account.notification.threshold.days:365}")
@@ -117,32 +117,36 @@ public class InactiveAccountNotificationService {
       String fingerprint =
           buildFingerprint(
               role, accountId, recipient.getId(), lastActivityAt, inactivityThresholdDays);
-      if (auditLogRepository.existsByNotificationFingerprint(fingerprint)) {
+      InactiveAccountNotificationAuditLog auditLog;
+      try {
+        auditLog =
+            claimWriter.claim(
+                InactiveAccountNotificationAuditLog.builder()
+                    .notificationFingerprint(fingerprint)
+                    .accountRole(role)
+                    .accountId(accountId)
+                    .accountTenantId(accountTenantId)
+                    .lastActivityAt(lastActivityAt)
+                    .thresholdDays((int) inactivityThresholdDays)
+                    .recipientAdminId(recipient.getId())
+                    .recipientEmail(recipient.getEmail())
+                    .emailDispatched(false)
+                    .createDate(now)
+                    .tenantId(accountTenantId)
+                    .build());
+      } catch (DataIntegrityViolationException duplicateClaim) {
+        log.debug("Inactive account notification {} already claimed", fingerprint);
         continue;
       }
-      boolean dispatched = false;
       if (emailDispatchEnabled) {
-        dispatchEmail(recipient, role, accountId, accountTenantId, lastActivityAt);
-        dispatched = true;
+        if (dispatchEmail(recipient, role, accountId, accountTenantId, lastActivityAt)) {
+          claimWriter.markEmailDispatched(auditLog.getId());
+        }
       }
-      auditLogRepository.save(
-          InactiveAccountNotificationAuditLog.builder()
-              .notificationFingerprint(fingerprint)
-              .accountRole(role)
-              .accountId(accountId)
-              .accountTenantId(accountTenantId)
-              .lastActivityAt(lastActivityAt)
-              .thresholdDays((int) inactivityThresholdDays)
-              .recipientAdminId(recipient.getId())
-              .recipientEmail(recipient.getEmail())
-              .emailDispatched(dispatched)
-              .createDate(now)
-              .tenantId(accountTenantId)
-              .build());
     }
   }
 
-  private void dispatchEmail(
+  private boolean dispatchEmail(
       Admin recipient,
       InactiveAccountRole role,
       String accountId,
@@ -167,12 +171,21 @@ public class InactiveAccountNotificationService {
                     new TemplateDataDTO().key("subject").value(subject),
                     new TemplateDataDTO().key("text").value(body),
                     new TemplateDataDTO().key("url").value(appBaseUrl)));
-    mailService.sendEmailNotification(new MailsDTO().mails(List.of(mail)));
-    log.info(
-        "Inactive account notification dispatched to adminId={} role={} accountId={}",
-        recipient.getId(),
-        role,
-        accountId);
+    boolean accepted = mailService.sendEmailNotification(new MailsDTO().mails(List.of(mail)));
+    if (accepted) {
+      log.info(
+          "Inactive account notification dispatched to adminId={} role={} accountId={}",
+          recipient.getId(),
+          role,
+          accountId);
+    } else {
+      log.warn(
+          "Inactive account notification was not accepted by MailService for adminId={} role={} accountId={}",
+          recipient.getId(),
+          role,
+          accountId);
+    }
+    return accepted;
   }
 
   private String buildFingerprint(
