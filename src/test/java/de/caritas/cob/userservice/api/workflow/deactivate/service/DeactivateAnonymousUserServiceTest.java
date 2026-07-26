@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -64,7 +63,6 @@ class DeactivateAnonymousUserServiceTest {
     Stream.of(
             DeactivateSessionActionCommand.class,
             PostConversationFinishedAliasMessageActionCommand.class,
-            SetRocketChatRoomReadOnlyActionCommand.class,
             SendFinishedAnonymousConversationEventActionCommand.class)
         .forEach(
             actionClass -> {
@@ -194,10 +192,6 @@ class DeactivateAnonymousUserServiceTest {
             never())
         .execute(any(Session.class));
     verify(
-            this.commandMockProvider.getActionMock(SetRocketChatRoomReadOnlyActionCommand.class),
-            never())
-        .execute(any(Session.class));
-    verify(
             this.commandMockProvider.getActionMock(
                 SendFinishedAnonymousConversationEventActionCommand.class),
             never())
@@ -242,11 +236,6 @@ class DeactivateAnonymousUserServiceTest {
             session -> {
               verify(
                       this.commandMockProvider.getActionMock(DeactivateSessionActionCommand.class),
-                      times(1))
-                  .execute(session);
-              verify(
-                      this.commandMockProvider.getActionMock(
-                          SetRocketChatRoomReadOnlyActionCommand.class),
                       times(1))
                   .execute(session);
               verify(

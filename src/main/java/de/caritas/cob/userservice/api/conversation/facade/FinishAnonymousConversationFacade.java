@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -56,7 +55,6 @@ public class FinishAnonymousConversationFacade {
     this.actionsRegistry
         .buildContainerForType(Session.class)
         .addActionToExecute(DeactivateSessionActionCommand.class)
-        .addActionToExecute(SetRocketChatRoomReadOnlyActionCommand.class)
         .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
         .executeActions(session);
   }
