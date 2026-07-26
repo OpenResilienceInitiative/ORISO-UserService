@@ -14,7 +14,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -46,10 +45,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.ResponseEntity;
 
-/**
- * Tests for the createSimplifiedGroupChat branch in CreateChatFacade — triggered when
- * ChatDTO.getConsultantIds() is non-empty. The RC flow is covered by CreateChatV1/V2FacadeTest.
- */
+/** Tests for Matrix group-chat creation through both public API versions. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CreateChatSimplifiedGroupChatFacadeTest {
@@ -58,7 +54,6 @@ class CreateChatSimplifiedGroupChatFacadeTest {
 
   @Mock private ChatService chatService;
   @Mock private SessionService sessionService;
-  @Mock private RocketChatService rocketChatService;
   @Mock private AgencyService agencyService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantRepository consultantRepository;
@@ -127,7 +122,6 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV1(chatDto, consultant);
 
     verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
-    verify(rocketChatService, never()).createPrivateGroupWithSystemUser(any());
   }
 
   @Test
@@ -142,7 +136,6 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade.createChatV2(chatDto, consultant);
 
     verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
-    verify(rocketChatService, never()).createPrivateGroupWithSystemUser(any());
   }
 
   // ---------------------------------------------------------------------------

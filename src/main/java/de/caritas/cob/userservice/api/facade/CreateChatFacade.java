@@ -1,25 +1,16 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatCreateGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
-import de.caritas.cob.userservice.api.helper.RocketChatRoomNameGenerator;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -32,11 +23,9 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.function.BiFunction;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Facade to encapsulate the steps for creating a chat. */
@@ -47,7 +36,6 @@ public class CreateChatFacade {
 
   private final @NonNull ChatService chatService;
   private final @NonNull SessionService sessionService;
-  private final @NonNull RocketChatService rocketChatService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ChatConverter chatConverter;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -55,29 +43,15 @@ public class CreateChatFacade {
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull de.caritas.cob.userservice.api.port.out.UserRepository userRepository;
 
-  /** ADR-004: with Rocket.Chat disabled every chat is created as a Matrix group chat. */
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
-
   /**
-   * Creates a chat in MariaDB, it's relation to the agency and Rocket.Chat-room (or Matrix room for
-   * group chats with consultantIds).
+   * Creates a group chat in MariaDB and Matrix.
    *
    * @param chatDTO {@link ChatDTO}
    * @param consultant {@link Consultant}
    * @return the generated chat link URL (String)
    */
   public CreateChatResponseDTO createChatV1(ChatDTO chatDTO, Consultant consultant) {
-    // Check if this is a simplified group chat creation (with consultantIds)
-    if (chatDTO.getConsultantIds() != null && !chatDTO.getConsultantIds().isEmpty()) {
-      return createSimplifiedGroupChat(chatDTO, consultant);
-    }
-    // ADR-004: without Rocket.Chat there is no legacy flow - always create a Matrix group chat
-    if (!rocketChatEnabled) {
-      return createSimplifiedGroupChat(chatDTO, consultant);
-    }
-    // Otherwise, use the old Rocket.Chat flow
-    return createChat(chatDTO, consultant, this::saveChatV1, this::resolveChatAgencyForV1);
+    return createMatrixGroupChat(chatDTO, consultant);
   }
 
   /**
@@ -88,140 +62,11 @@ public class CreateChatFacade {
    * @return the generated chat link URL (String)
    */
   public CreateChatResponseDTO createChatV2(ChatDTO chatDTO, Consultant consultant) {
-    // Check if this is a simplified group chat creation (with consultantIds)
-    if (chatDTO.getConsultantIds() != null && !chatDTO.getConsultantIds().isEmpty()) {
-      return createSimplifiedGroupChat(chatDTO, consultant);
-    }
-    // ADR-004: without Rocket.Chat there is no legacy flow - always create a Matrix group chat
-    if (!rocketChatEnabled) {
-      return createSimplifiedGroupChat(chatDTO, consultant);
-    }
-    // Otherwise, use the old flow
-    return createChat(chatDTO, consultant, this::saveChatV2, this::resolveChatAgencyForV2);
-  }
-
-  private CreateChatResponseDTO createChat(
-      ChatDTO chatDTO,
-      Consultant consultant,
-      BiFunction<Consultant, ChatDTO, Chat> saveChat,
-      BiFunction<Consultant, ChatDTO, Long> resolveAgencyId) {
-    Chat chat = null;
-    String rcGroupId = null;
-
-    try {
-      chat = saveChat.apply(consultant, chatDTO);
-      rcGroupId = createRocketChatGroupWithTechnicalUser(chatDTO, chat);
-      chat.setGroupId(rcGroupId);
-      chatService.saveChat(chat);
-      createChatAgencyRelation(chat, resolveAgencyId.apply(consultant, chatDTO));
-
-      return new CreateChatResponseDTO()
-          .groupId(rcGroupId)
-          .createdAt(chat.getCreateDate().toString());
-    } catch (InternalServerErrorException e) {
-      doRollback(chat, rcGroupId);
-      throw e;
-    }
-  }
-
-  private Chat saveChatV1(Consultant consultant, ChatDTO chatDTO) {
-    if (isEmpty(consultant.getConsultantAgencies())) {
-      throw new InternalServerErrorException(
-          String.format("Consultant with id %s is not assigned to any agency", consultant.getId()));
-    }
-    Long agencyId = consultant.getConsultantAgencies().iterator().next().getAgencyId();
-    AgencyDTO agency = this.agencyService.getAgency(agencyId);
-
-    return chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant, agency));
-  }
-
-  private Chat saveChatV2(Consultant consultant, ChatDTO chatDTO) {
-    assertAgencyIdIsNotNull(chatDTO);
-    findConsultantAgencyForGivenChatAgency(consultant, chatDTO);
-    return chatService.saveChat(chatConverter.convertToEntity(chatDTO, consultant));
-  }
-
-  private Long resolveChatAgencyForV1(Consultant consultant, ChatDTO chatDTO) {
-    if (isEmpty(consultant.getConsultantAgencies())) {
-      throw new InternalServerErrorException(
-          String.format("Consultant with id %s is not assigned to any agency", consultant.getId()));
-    }
-    return consultant.getConsultantAgencies().iterator().next().getAgencyId();
-  }
-
-  private Long resolveChatAgencyForV2(Consultant consultant, ChatDTO chatDTO) {
-    assertAgencyIdIsNotNull(chatDTO);
-    return findConsultantAgencyForGivenChatAgency(consultant, chatDTO).getAgencyId();
-  }
-
-  private void assertAgencyIdIsNotNull(ChatDTO chatDTO) {
-    if (chatDTO.getAgencyId() == null) {
-      throw new BadRequestException("Agency id must not be null");
-    }
-  }
-
-  private ConsultantAgency findConsultantAgencyForGivenChatAgency(
-      Consultant consultant, ChatDTO chatDTO) {
-    return consultant.getConsultantAgencies().stream()
-        .filter(agency -> agency.getAgencyId().equals(chatDTO.getAgencyId()))
-        .findFirst()
-        .orElseThrow(
-            () ->
-                new BadRequestException(
-                    String.format(
-                        "Consultant with id %s is not assigned to agency with id %s",
-                        consultant.getId(), chatDTO.getAgencyId())));
+    return createMatrixGroupChat(chatDTO, consultant);
   }
 
   private void createChatAgencyRelation(Chat chat, Long agencyId) {
     chatService.saveChatAgencyRelation(new ChatAgency(chat, agencyId));
-  }
-
-  private String createRocketChatGroupWithTechnicalUser(ChatDTO chatDTO, Chat chat) {
-    String rcGroupId = createRocketChatGroup(chatDTO, chat);
-    addTechnicalUserToGroup(chat, rcGroupId);
-    return rcGroupId;
-  }
-
-  private void addTechnicalUserToGroup(Chat chat, String rcGroupId) {
-    try {
-      rocketChatService.addTechnicalUserToGroup(rcGroupId);
-    } catch (RocketChatAddUserToGroupException e) {
-      doRollback(chat, rcGroupId);
-      throw new InternalServerErrorException(
-          "Technical user could not be added to group chat " + "room");
-    } catch (RocketChatUserNotInitializedException e) {
-      doRollback(chat, rcGroupId);
-      throw new InternalServerErrorException("Rocket chat user is not initialized");
-    }
-  }
-
-  private String createRocketChatGroup(ChatDTO chatDTO, Chat chat) {
-    try {
-      GroupResponseDTO rcGroupDTO =
-          rocketChatService
-              .createPrivateGroupWithSystemUser(
-                  new RocketChatRoomNameGenerator().generateGroupChatName(chat))
-              .orElseThrow(
-                  () ->
-                      new RocketChatCreateGroupException(
-                          "RocketChat group is not present while creating chat: " + chatDTO));
-      return rcGroupDTO.getGroup().getId();
-    } catch (RocketChatCreateGroupException e) {
-      doRollback(chat, null);
-      throw new InternalServerErrorException(
-          "Error while creating private group in Rocket.Chat for group chat: "
-              + chatDTO.toString());
-    }
-  }
-
-  private void doRollback(Chat chat, String rcGroupId) {
-    if (nonNull(chat)) {
-      chatService.deleteChat(chat);
-    }
-    if (nonNull(rcGroupId)) {
-      rocketChatService.deleteGroupAsSystemUser(rcGroupId);
-    }
   }
 
   /**
@@ -232,10 +77,10 @@ public class CreateChatFacade {
    * @param consultant {@link Consultant} the creator
    * @return {@link CreateChatResponseDTO}
    */
-  private CreateChatResponseDTO createSimplifiedGroupChat(ChatDTO chatDTO, Consultant consultant) {
+  private CreateChatResponseDTO createMatrixGroupChat(ChatDTO chatDTO, Consultant consultant) {
     log.info("Creating group chat with Session + Chat: {}", chatDTO.getTopic());
 
-    // Callers routed here from the legacy V1 flow may not carry an agency id or participant list
+    // V1 callers may not carry an agency id or participant list.
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
@@ -299,13 +144,11 @@ public class CreateChatFacade {
       matrixRoomId = matrixResponse.getBody().getRoomId();
       log.info("Created Matrix room: {} for group chat session: {}", matrixRoomId, sessionId);
 
-      // Update BOTH session and chat with Matrix room ID
+      // Persist the Matrix room ID on both domain records.
       session.setMatrixRoomId(matrixRoomId);
-      session.setGroupId(matrixRoomId);
       sessionService.saveSession(session);
 
-      chat.setGroupId(matrixRoomId); // Set rc_group_id for backwards compatibility
-      chat.setMatrixRoomId(matrixRoomId); // Set matrix_room_id for Matrix
+      chat.setMatrixRoomId(matrixRoomId);
       chatService.saveChat(chat);
       createChatAgencyRelation(chat, agencyId);
 
@@ -396,7 +239,7 @@ public class CreateChatFacade {
 
   /**
    * Resolves the agency for a group chat: prefer the explicitly requested agency (V2 semantics),
-   * fall back to the consultant's first agency (legacy V1 semantics).
+   * fall back to the consultant's first agency (V1 semantics).
    */
   private Long resolveAgencyId(ChatDTO chatDTO, Consultant consultant) {
     if (chatDTO.getAgencyId() != null) {

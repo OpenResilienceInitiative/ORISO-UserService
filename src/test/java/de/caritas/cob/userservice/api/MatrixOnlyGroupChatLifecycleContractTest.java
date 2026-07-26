@@ -40,4 +40,20 @@ class MatrixOnlyGroupChatLifecycleContractTest {
             "retrieveRcUserId",
             "Rocket.Chat");
   }
+
+  @Test
+  void creatingAGroupChatMustNotHaveALegacyTransportBranch() throws IOException {
+    var source =
+        Files.readString(
+            Path.of("src/main/java/de/caritas/cob/userservice/api/facade/CreateChatFacade.java"));
+
+    assertThat(source)
+        .doesNotContain(
+            "RocketChatService",
+            "rocketChatService",
+            "rocketChatEnabled",
+            "createRocketChatGroup",
+            "rcGroupId",
+            "Rocket.Chat");
+  }
 }
