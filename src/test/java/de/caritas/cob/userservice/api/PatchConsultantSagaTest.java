@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.util.Map;
 import org.jetbrains.annotations.NotNull;
@@ -35,19 +34,13 @@ class PatchConsultantSagaTest {
 
   @Mock UserServiceMapper userServiceMapper;
 
-  @Mock MessageClient messageClient;
-
   @Mock AppointmentService appointmentService;
 
-  @Mock PatchConsultantSagaRollbackHandler patchConsultantSagaRollbackHandler;
-
   @Test
-  void
-      executeTransactionalOrRollback_Should_SaveConsultantInMariaDB_And_UpdateRocketChat_And_AppointmentService() {
+  void executeTransactionalOrRollback_Should_SaveConsultantAndUpdateAppointmentService() {
     // given
     Map<String, Object> patchMap = givenPatchMapWithDisplayName();
     givenUserServiceMapper();
-    when(messageClient.updateUser(Mockito.eq(ROCKETCHAT_ID), Mockito.anyString())).thenReturn(true);
     Consultant patchedConsultant =
         Consultant.builder()
             .rocketChatId(ROCKETCHAT_ID)
@@ -65,19 +58,16 @@ class PatchConsultantSagaTest {
 
     // then
     verify(consultantRepository).save(patchedConsultant);
-    verify(messageClient).updateUser(Mockito.eq(ROCKETCHAT_ID), Mockito.anyString());
     verify(appointmentService).patchConsultant(CONSULTANT_ID, CHANGED_DISPLAY_NAME);
   }
 
   @Test
-  void
-      executeTransactionalOrRollback_Should_RollbackUpdateRocketChat_When_AppointmentService_ThrowsException() {
+  void executeTransactionalOrRollback_ShouldReportAppointmentFailure() {
     // given
     Map<String, Object> patchMap = givenPatchMapWithDisplayName();
     givenUserServiceMapper();
     when(userServiceMapper.displayNameOf(patchMap))
         .thenReturn(java.util.Optional.of(CHANGED_DISPLAY_NAME));
-    when(messageClient.updateUser(Mockito.eq(ROCKETCHAT_ID), Mockito.anyString())).thenReturn(true);
     Consultant patchedConsultant =
         Consultant.builder()
             .rocketChatId(ROCKETCHAT_ID)
@@ -100,50 +90,10 @@ class PatchConsultantSagaTest {
     } catch (DistributedTransactionException ex) {
       // then
       verify(consultantRepository).save(patchedConsultant);
-      verify(messageClient).updateUser(Mockito.eq(ROCKETCHAT_ID), Mockito.anyString());
       verify(appointmentService).patchConsultant(CONSULTANT_ID, CHANGED_DISPLAY_NAME);
-      verify(patchConsultantSagaRollbackHandler).rollbackUpdateUserInRocketchat(patchedConsultant);
       assertThat(ex.getMessage())
           .contains(TransactionalStep.PATCH_APPOINTMENT_SERVICE_CONSULTANT.name());
     }
-  }
-
-  @Test
-  void
-      executeTransactionalOrRollback_Should_ContinueWithoutRollback_When_RocketchatService_ThrowsException() {
-    // given
-    // Since the Matrix migration a failing Rocket.Chat update is no longer fatal: the saga logs a
-    // warning and continues instead of rolling back and aborting (see
-    // PatchConsultantSaga#updateUserInRocketChatOrRollback). The MariaDB save and the appointment
-    // service patch therefore still run, no DistributedTransactionException is thrown and the
-    // rollback handler is not invoked.
-    Map<String, Object> patchMap = givenPatchMapWithDisplayName();
-    givenUserServiceMapper();
-
-    Consultant patchedConsultant =
-        Consultant.builder()
-            .rocketChatId(ROCKETCHAT_ID)
-            .id(CONSULTANT_ID)
-            .username("username")
-            .firstName("firstname")
-            .lastName("lastname")
-            .email("email")
-            .languageCode(LanguageCode.de)
-            .build();
-    when(consultantRepository.save(patchedConsultant)).thenReturn(patchedConsultant);
-    doThrow(new RuntimeException())
-        .when(messageClient)
-        .updateUser(Mockito.anyString(), Mockito.anyString());
-
-    // when
-    patchConsultantSaga.executeTransactional(patchedConsultant, patchMap);
-
-    // then
-    verify(consultantRepository).save(patchedConsultant);
-    verify(messageClient).updateUser(Mockito.eq(ROCKETCHAT_ID), Mockito.anyString());
-    verify(appointmentService).patchConsultant(CONSULTANT_ID, CHANGED_DISPLAY_NAME);
-    verify(patchConsultantSagaRollbackHandler, Mockito.never())
-        .rollbackUpdateUserInRocketchat(patchedConsultant);
   }
 
   @NotNull
@@ -155,8 +105,6 @@ class PatchConsultantSagaTest {
 
   private void givenUserServiceMapper() {
     when(userServiceMapper.displayNameOf(Mockito.anyMap()))
-        .thenReturn(java.util.Optional.of(CHANGED_DISPLAY_NAME));
-    when(userServiceMapper.encodedDisplayNameOf(Mockito.anyMap()))
         .thenReturn(java.util.Optional.of(CHANGED_DISPLAY_NAME));
   }
 }
