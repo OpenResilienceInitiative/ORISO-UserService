@@ -102,6 +102,25 @@ class RequiredCiContractTest(unittest.TestCase):
             mariadb = job_block(workflow, "mariadb-contract")
             self.assertIn("uses: ./.github/workflows/mariadb-contract.yml", mariadb)
 
+    def test_required_integration_jobs_provide_redis(self):
+        for relative_path in (
+            ".github/workflows/ci-pull-request.yml",
+            ".github/workflows/ci-feature-branch.yml",
+            ".github/workflows/ci-main.yml",
+        ):
+            workflow = (ROOT / relative_path).read_text()
+            integration = job_block(workflow, "required-integration-tests")
+            self.assertIn(
+                "services:\n      redis:\n        image: redis:7-alpine",
+                integration,
+                f"{relative_path} must provide Redis to the full integration suite",
+            )
+            self.assertIn(
+                '--health-cmd "redis-cli ping"',
+                integration,
+                f"{relative_path} must wait for Redis readiness",
+            )
+
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
         self.assertIn("-Dskip.unit-tests=true clean integration-test", runner)
