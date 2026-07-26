@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.workflow.deactivate.scheduler;
+package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -8,7 +8,7 @@ import static org.mockito.Mockito.verify;
 import de.caritas.cob.userservice.api.model.ScheduledTaskClaim;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
-import de.caritas.cob.userservice.api.workflow.deactivate.service.DeactivateAnonymousUserService;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -28,9 +28,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 @SpringBootTest
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-class DeactivateAnonymousUserSchedulerReplicaIT {
+class DeleteUserAccountSchedulerReplicaIT {
 
-  private static final String TASK_NAME = "anonymous-user-deactivation";
+  private static final String TASK_NAME = "account-deletion";
 
   @Autowired private ScheduledTaskClaimRepository claimRepository;
   @Autowired private ScheduledTaskClaimService taskClaimService;
@@ -48,11 +48,11 @@ class DeactivateAnonymousUserSchedulerReplicaIT {
   }
 
   @Test
-  void twoSchedulerInstancesTriggerOneDeactivationWorkflow() throws Exception {
-    var deactivationService = mock(DeactivateAnonymousUserService.class);
+  void twoSchedulerInstancesTriggerOneAccountDeletionWorkflow() throws Exception {
+    var deletionService = mock(DeleteUserAccountService.class);
     var tenantContextProvider = mock(TenantContextProvider.class);
-    var first = newScheduler(deactivationService, tenantContextProvider);
-    var second = newScheduler(deactivationService, tenantContextProvider);
+    var first = newScheduler(deletionService, tenantContextProvider);
+    var second = newScheduler(deletionService, tenantContextProvider);
     var ready = new CountDownLatch(2);
     var start = new CountDownLatch(1);
     var executor = Executors.newFixedThreadPool(2);
@@ -70,24 +70,22 @@ class DeactivateAnonymousUserSchedulerReplicaIT {
     }
 
     verify(tenantContextProvider, times(1)).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(deactivationService, times(1)).deactivateStaleAnonymousUsers();
+    verify(deletionService, times(1)).deleteUserAccounts();
   }
 
-  private DeactivateAnonymousUserScheduler newScheduler(
-      DeactivateAnonymousUserService deactivationService,
-      TenantContextProvider tenantContextProvider) {
+  private DeleteUserAccountScheduler newScheduler(
+      DeleteUserAccountService deletionService, TenantContextProvider tenantContextProvider) {
     var scheduler =
-        new DeactivateAnonymousUserScheduler(
-            deactivationService, tenantContextProvider, taskClaimService);
-    ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofMinutes(30));
+        new DeleteUserAccountScheduler(deletionService, tenantContextProvider, taskClaimService);
+    ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofHours(12));
     return scheduler;
   }
 
   private void run(
-      DeactivateAnonymousUserScheduler scheduler, CountDownLatch ready, CountDownLatch start) {
+      DeleteUserAccountScheduler scheduler, CountDownLatch ready, CountDownLatch start) {
     ready.countDown();
     await(start);
-    scheduler.performDeactivationWorkflow();
+    scheduler.performDeletionWorkflow();
   }
 
   private void await(CountDownLatch latch) {

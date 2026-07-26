@@ -68,7 +68,10 @@ claim. The losing instance performs no downstream database or service reads.
 Expired claims are renewable; a concurrent first insert loses safely on the
 database primary-key conflict. The contract also passed on MariaDB 11.0.6,
 where the race surfaced as an InnoDB deadlock rather than H2's unique-key
-violation; the losing transaction read back the active winning claim.
+violation; the losing transaction read back the active winning claim. Migration
+0077 now seeds the known scheduler claim rows in an expired state, so normal
+production acquisition serializes on an existing database row and avoids that
+first-insert race.
 
 The hourly anonymous-user deactivation scheduler uses the same durable claim
 before it establishes technical tenant context or enters the lifecycle
@@ -86,6 +89,14 @@ setup and one deletion workflow under two concurrent scheduler instances. The
 losing replica performs no database deletion, provider cleanup or error-mail
 work. All four existing domain integration cases remain green with isolated
 claim state. Its 30-minute bound has the same hourly duration constraint.
+
+The daily account-deletion scheduler acquires a separate durable claim before
+technical tenant context and before any database or external-provider cleanup.
+`DeleteUserAccountSchedulerReplicaIT` releases two scheduler instances
+concurrently and observes exactly one context setup and one deletion workflow;
+the losing replica performs no downstream work. The 12-hour claim remains
+shorter than the configured daily schedule and must stay above the measured
+`userservice.scheduler.duration` for this task.
 
 ## Current dependency sequence
 

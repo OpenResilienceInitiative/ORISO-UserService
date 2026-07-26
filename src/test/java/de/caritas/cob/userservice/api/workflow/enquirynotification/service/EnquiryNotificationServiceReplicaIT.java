@@ -12,6 +12,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ScheduledTaskClaim;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
@@ -22,6 +23,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleServic
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -47,8 +49,14 @@ class EnquiryNotificationServiceReplicaIT {
 
   @BeforeEach
   @AfterEach
-  void deleteReplicaProofClaim() {
-    claimRepository.findById(TASK_NAME).ifPresent(claimRepository::delete);
+  void resetReplicaProofClaim() {
+    var expired = LocalDateTime.of(1970, 1, 1, 0, 0);
+    claimRepository.saveAndFlush(
+        ScheduledTaskClaim.builder()
+            .taskName(TASK_NAME)
+            .claimedAt(expired)
+            .claimedUntil(expired)
+            .build());
   }
 
   @Test

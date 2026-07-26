@@ -70,7 +70,7 @@
       "kind": "scheduler",
       "owner": "account-lifecycle",
       "risk": "duplicate-side-effect",
-      "decision": "Keep one replica until concurrent deletion and provider cleanup is proven single-effect.",
+      "decision": "A durable 12-hour scheduled-task claim and DeleteUserAccountSchedulerReplicaIT prove that concurrent daily executions trigger one tenant-context setup and one account-deletion workflow. The losing replica performs no database or provider cleanup work.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

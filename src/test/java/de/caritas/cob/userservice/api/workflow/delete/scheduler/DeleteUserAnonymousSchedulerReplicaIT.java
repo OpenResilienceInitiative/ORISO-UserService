@@ -5,11 +5,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import de.caritas.cob.userservice.api.model.ScheduledTaskClaim;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAnonymousService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,8 +37,14 @@ class DeleteUserAnonymousSchedulerReplicaIT {
 
   @BeforeEach
   @AfterEach
-  void deleteReplicaProofClaim() {
-    claimRepository.findById(TASK_NAME).ifPresent(claimRepository::delete);
+  void resetReplicaProofClaim() {
+    var expired = LocalDateTime.of(1970, 1, 1, 0, 0);
+    claimRepository.saveAndFlush(
+        ScheduledTaskClaim.builder()
+            .taskName(TASK_NAME)
+            .claimedAt(expired)
+            .claimedUntil(expired)
+            .build());
   }
 
   @Test
