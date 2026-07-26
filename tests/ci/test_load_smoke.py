@@ -1,6 +1,7 @@
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +17,7 @@ SEEDED_PUBLIC_READ_SCENARIO = ROOT / "tests/load/scenarios/seeded-public-read.js
 AGENCY_STUB_SCRIPT = ROOT / "tests/load/seeded_agency_stub.py"
 SEEDED_PUBLIC_READ_RUNNER = ROOT / "scripts/load/run-seeded-public-read.sh"
 SEEDED_REPLICA_RUNNER = ROOT / "scripts/load/run-seeded-public-read-replicas.sh"
+JAVA_21_RUNTIME = ROOT / "scripts/load/ensure-java-21.sh"
 SPEC = importlib.util.spec_from_file_location("user_service_load_smoke", LOAD_SCRIPT)
 LOAD_SMOKE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -57,6 +59,128 @@ class FailingHandler(BaseHTTPRequestHandler):
 
 
 class LoadSmokeContractTest(unittest.TestCase):
+    def test_java_runtime_selects_available_jdk_21(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            current_java = temporary_path / "current-bin" / "java"
+            java_21_home = temporary_path / "jdk-21"
+            java_21 = java_21_home / "bin" / "java"
+            resolver = temporary_path / "resolve-java-home"
+            current_java.parent.mkdir()
+            java_21.parent.mkdir(parents=True)
+            current_java.write_text(
+                "#!/usr/bin/env bash\nprintf 'openjdk version \"25.0.3\"\\n' >&2\n",
+                encoding="utf-8",
+            )
+            java_21.write_text(
+                "#!/usr/bin/env bash\nprintf 'openjdk version \"21.0.11\"\\n' >&2\n",
+                encoding="utf-8",
+            )
+            resolver.write_text(
+                f'#!/usr/bin/env bash\nprintf "%s\\n" "{java_21_home}"\n',
+                encoding="utf-8",
+            )
+            current_java.chmod(0o755)
+            java_21.chmod(0o755)
+            resolver.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = (
+                f"{current_java.parent}{os.pathsep}{environment['PATH']}"
+            )
+            environment["JAVA_21_HOME_RESOLVER"] = str(resolver)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; ensure_java_21; printf "%s\\n" "$JAVA_HOME"; java -version',
+                    "_",
+                    str(JAVA_21_RUNTIME),
+                ],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(str(java_21_home), result.stdout.strip())
+        self.assertIn('openjdk version "21.0.11"', result.stderr)
+
+    def test_java_runtime_rejects_an_unsupported_jdk_before_work_starts(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            current_java = temporary_path / "current-bin" / "java"
+            resolver = temporary_path / "missing-java-home"
+            current_java.parent.mkdir()
+            current_java.write_text(
+                "#!/usr/bin/env bash\nprintf 'openjdk version \"25.0.3\"\\n' >&2\n",
+                encoding="utf-8",
+            )
+            resolver.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            current_java.chmod(0o755)
+            resolver.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = (
+                f"{current_java.parent}{os.pathsep}{environment['PATH']}"
+            )
+            environment["JAVA_21_HOME_RESOLVER"] = str(resolver)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; ensure_java_21',
+                    "_",
+                    str(JAVA_21_RUNTIME),
+                ],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+            )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("UserService requires Java 21", result.stderr)
+        self.assertIn("25.0.3", result.stderr)
+
+    def test_replica_runner_rejects_wrong_java_before_starting_docker(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            fake_bin = temporary_path / "bin"
+            fake_bin.mkdir()
+            docker_calls = temporary_path / "docker-calls"
+            current_java = fake_bin / "java"
+            fake_docker = fake_bin / "docker"
+            resolver = temporary_path / "missing-java-home"
+            current_java.write_text(
+                "#!/usr/bin/env bash\nprintf 'openjdk version \"25.0.3\"\\n' >&2\n",
+                encoding="utf-8",
+            )
+            fake_docker.write_text(
+                f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >>"{docker_calls}"\nexit 1\n',
+                encoding="utf-8",
+            )
+            resolver.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            current_java.chmod(0o755)
+            fake_docker.chmod(0o755)
+            resolver.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+            environment["JAVA_21_HOME_RESOLVER"] = str(resolver)
+
+            result = subprocess.run(
+                ["bash", str(SEEDED_REPLICA_RUNNER)],
+                capture_output=True,
+                check=False,
+                env=environment,
+                text=True,
+            )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("UserService requires Java 21", result.stderr)
+        self.assertFalse(docker_calls.exists())
+
     def test_concurrent_smoke_reports_request_volume_payload_and_latency(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
         thread = Thread(target=server.serve_forever, daemon=True)
@@ -157,9 +281,7 @@ class LoadSmokeContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requests must reach every target"):
             LOAD_SMOKE.run_workload(
                 ["http://127.0.0.1:1", "http://127.0.0.1:2"],
-                request_specs=[
-                    LOAD_SMOKE.RequestSpec(name="liveness", path="/health")
-                ],
+                request_specs=[LOAD_SMOKE.RequestSpec(name="liveness", path="/health")],
                 requests=1,
                 concurrency=1,
                 timeout_seconds=1,

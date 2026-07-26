@@ -261,6 +261,10 @@ A reproducible two-replica variant is:
 bash scripts/load/run-seeded-public-read-replicas.sh
 ```
 
+The runner requires Java 21. It retains an already active Java 21 runtime and
+auto-selects an installed JDK 21 through `java_home` on macOS; unsupported
+runtimes fail before Docker or any dependency state starts.
+
 It packages the real application jar, starts isolated MariaDB 11.0.6 and Redis
 7 containers, starts two distinct UserService JVMs against that shared state,
 seeds the exact integration-test dataset, and sends requests directly to both
@@ -274,18 +278,18 @@ Local two-replica proof on 2026-07-26:
 
 | Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Replica one | 700 | 0 | 230,700 | 66.04 ms | 117.29 ms | 245.73 ms |
-| Replica two | 700 | 0 | 174,700 | 43.14 ms | 82.99 ms | 160.69 ms |
-| **Overall** | **1,400** | **0** | **405,400** | **54.59 ms** | **103.98 ms** | **245.73 ms** |
+| Replica one | 700 | 0 | 230,700 | 48.73 ms | 88.95 ms | 218.58 ms |
+| Replica two | 700 | 0 | 174,700 | 34.35 ms | 62.11 ms | 202.77 ms |
+| **Overall** | **1,400** | **0** | **405,400** | **41.54 ms** | **80.83 ms** | **218.58 ms** |
 
-The overall run completed in 2.407 seconds at 581.64 requests/second. The
-slowest named operation was `consultant-profile-peer` at 114.52 ms p95; all six
-operations had zero failures. This proves that the bounded mixed-read scenario
-can run across two real JVMs sharing MariaDB and Redis. It does **not** yet
-prove replica safety for concurrent writes, scheduled jobs, authentication and
-authorization flows, Kubernetes service routing, or deployed PreDev behavior.
-The production replica maximum must therefore remain one until those paths and
-their idempotency/locking contracts are exercised.
+The current rerun completed in 1.829 seconds at 765.46 requests/second. The
+slowest named operation was `consultant-profile-parenting-team` at 102.75 ms
+p95; all six operations had zero failures. This proves that the bounded
+mixed-read scenario can run across two real JVMs sharing MariaDB and Redis. It
+does **not** yet prove replica safety for concurrent writes, scheduled jobs,
+authentication and authorization flows, Kubernetes service routing, or
+deployed PreDev behavior. The production replica maximum must therefore remain
+one until those paths and their idempotency/locking contracts are exercised.
 
 The same seeded workload was also run with AgencyService deliberately
 unavailable. UserService still returned all 1,400 responses through its local
