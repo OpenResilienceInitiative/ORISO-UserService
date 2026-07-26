@@ -87,7 +87,6 @@ public class Consultant implements TenantAware, NotificationsAware {
 
   @Column(name = "rc_user_id", updatable = false)
   @Size(max = 17)
-  @NonNull
   private String rocketChatId;
 
   @Column(name = "matrix_user_id")
