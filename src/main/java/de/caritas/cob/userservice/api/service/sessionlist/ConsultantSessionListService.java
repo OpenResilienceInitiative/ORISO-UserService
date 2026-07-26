@@ -82,6 +82,18 @@ public class ConsultantSessionListService {
     return sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, uniqueSessionIds);
   }
 
+  /**
+   * Loads a cross-tenant session the consultant is directly assigned to (#774 follow-up). Used as
+   * the open-path fallback after a cross-tenant live chat is accepted, so routing to the accepted
+   * conversation resolves it instead of 204-ing.
+   */
+  public List<ConsultantSessionResponseDTO>
+      retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+          Consultant consultant, List<Long> sessionIds) {
+    var uniqueSessionIds = new HashSet<>(sessionIds);
+    return sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, uniqueSessionIds);
+  }
+
   public List<ConsultantSessionResponseDTO> retrieveChatsForConsultantAndChatIds(
       Consultant consultant, List<Long> chatIds, String rcAuthToken) {
     log.info(
