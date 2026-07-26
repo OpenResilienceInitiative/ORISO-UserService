@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsu
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
+import de.caritas.cob.userservice.api.config.AppConfig;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionData;
@@ -36,6 +37,19 @@ class SessionMapperTest {
     assertThat(
         sessionDTO.getConversationType().get(),
         is(de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.LIVE_CHAT));
+  }
+
+  @Test
+  void convertToSessionDTOShouldSerializeConversationTypeAsApiEnum() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.LIVE_CHAT);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .contains("\"conversationType\":\"LIVE_CHAT\"")
+        .doesNotContain("\"conversationType\":{\"present\":true}");
   }
 
   @Test
@@ -159,6 +173,21 @@ class SessionMapperTest {
 
     assertThat(map, hasEntry("age", "30"));
     assertEquals(1, map.size());
+  }
+
+  @Test
+  void toConsultantSessionDto_Should_ProjectSessionScopedDisplayName() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(ANONYMOUS);
+    SessionData displayName = new SessionData();
+    displayName.setKey("displayName");
+    displayName.setValue("Behutsames Pferd Jules");
+    session.setSessionData(java.util.List.of(displayName));
+
+    ConsultantSessionResponseDTO dto = new SessionMapper().toConsultantSessionDto(session);
+
+    assertEquals("Behutsames Pferd Jules", dto.getUser().getDisplayName());
+    assertThat(dto.getUser().getSessionData(), hasEntry("displayName", "Behutsames Pferd Jules"));
   }
 
   @Test

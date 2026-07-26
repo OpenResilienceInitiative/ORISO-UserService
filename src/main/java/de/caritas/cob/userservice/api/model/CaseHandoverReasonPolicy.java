@@ -5,11 +5,14 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "case_handover_reason_policy")
@@ -41,6 +44,13 @@ public class CaseHandoverReasonPolicy {
 
   @Column(name = "policy_authority", nullable = false, length = 255)
   private String policyAuthority;
+
+  /**
+   * Client-facing notification templates per language (de/en/tr/uk), {{newAdvisor}} placeholder.
+   */
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(name = "client_notification_templates", columnDefinition = "json")
+  private Map<String, String> clientNotificationTemplates;
 
   @Column(name = "updated_at", nullable = false)
   private LocalDateTime updatedAt;

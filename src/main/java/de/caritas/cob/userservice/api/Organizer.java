@@ -14,7 +14,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -73,13 +72,9 @@ public class Organizer implements Organizing {
   }
 
   @Override
+  @Transactional
   public boolean deleteAppointment(String id) {
-    try {
-      appointmentRepository.deleteById(UUID.fromString(id));
-      return true;
-    } catch (EmptyResultDataAccessException e) {
-      return false;
-    }
+    return appointmentRepository.deleteExistingById(UUID.fromString(id)) > 0;
   }
 
   @Profile("!testing")

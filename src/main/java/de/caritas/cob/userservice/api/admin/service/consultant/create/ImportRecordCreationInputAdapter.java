@@ -80,6 +80,11 @@ public class ImportRecordCreationInputAdapter implements ConsultantCreationInput
     return null; // Imports always get auto-generated passwords
   }
 
+  @Override
+  public boolean shouldGeneratePassword() {
+    return true;
+  }
+
   /**
    * Provides the absent flag.
    *

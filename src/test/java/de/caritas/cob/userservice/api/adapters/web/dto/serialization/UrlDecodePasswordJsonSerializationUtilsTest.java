@@ -5,11 +5,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.PASSWORD_U
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -20,6 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 public class UrlDecodePasswordJsonSerializationUtilsTest {
@@ -31,7 +28,7 @@ public class UrlDecodePasswordJsonSerializationUtilsTest {
   public void setup() {
     PlainCredentialsHolder.clear();
     objectMapper = new ObjectMapper();
-    urlDecodePasswordJsonDeserializer = new UrlDecodePasswordJsonDeserializer(new Helper());
+    urlDecodePasswordJsonDeserializer = new UrlDecodePasswordJsonDeserializer();
   }
 
   @AfterEach
@@ -40,15 +37,14 @@ public class UrlDecodePasswordJsonSerializationUtilsTest {
   }
 
   @Test
-  public void deserialize_Schould_EncodePassword() throws JsonParseException, IOException {
+  public void deserialize_Schould_EncodePassword() throws IOException {
     String json = "{\"password:\":\"" + PASSWORD_URL_ENCODED + "\"}";
     String result = deserializePassword(json);
     assertEquals(PASSWORD, result);
   }
 
   @Test
-  public void deserialize_ShouldNot_StorePasswordInPlainCredentialsHolder()
-      throws JsonParseException, IOException {
+  public void deserialize_ShouldNot_StorePasswordInPlainCredentialsHolder() throws IOException {
     PlainCredentialsHolder.set("plain-user", null);
 
     String json = "{\"password:\":\"" + PASSWORD_URL_ENCODED + "\"}";
@@ -59,13 +55,12 @@ public class UrlDecodePasswordJsonSerializationUtilsTest {
     assertNull(PlainCredentialsHolder.get().getPassword());
   }
 
-  private String deserializePassword(String json) throws JsonParseException, IOException {
+  private String deserializePassword(String json) throws IOException {
     InputStream stream = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8));
-    JsonParser jsonParser = objectMapper.getFactory().createParser(stream);
+    JsonParser jsonParser = objectMapper.createParser(stream);
     jsonParser.nextToken();
     jsonParser.nextToken();
     jsonParser.nextToken();
-    DeserializationContext deserializationContext = objectMapper.getDeserializationContext();
-    return urlDecodePasswordJsonDeserializer.deserialize(jsonParser, deserializationContext);
+    return urlDecodePasswordJsonDeserializer.deserialize(jsonParser, null);
   }
 }

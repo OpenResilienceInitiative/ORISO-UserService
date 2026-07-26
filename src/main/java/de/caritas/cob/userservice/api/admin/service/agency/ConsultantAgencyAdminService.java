@@ -74,6 +74,18 @@ public class ConsultantAgencyAdminService {
         .build();
   }
 
+  /**
+   * Returns the ids of all active (not soft-deleted) agencies of the given consultant.
+   *
+   * @param consultantId id of the consultant
+   * @return list of agency ids
+   */
+  public List<Long> findConsultantAgencyIds(String consultantId) {
+    return consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultantId).stream()
+        .map(ConsultantAgency::getAgencyId)
+        .collect(Collectors.toList());
+  }
+
   public void appendAgenciesForConsultants(Set<ConsultantDTO> consultants) {
     var consultantIds = consultants.stream().map(ConsultantDTO::getId).collect(Collectors.toSet());
 

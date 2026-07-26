@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -27,9 +28,12 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -37,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +60,7 @@ public class ChatService {
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
 
   private final @NonNull AgencyService agencyService;
 
@@ -300,8 +306,7 @@ public class ChatService {
               var displayName =
                   consultantService
                       .getConsultant(participant.getConsultantId())
-                      .map(Consultant::getDisplayName)
-                      .filter(name -> name != null && !name.isBlank())
+                      .map(this::resolveParticipantDisplayName)
                       .orElse(participant.getConsultantId());
               return new GroupChatParticipantDTO()
                   .consultantId(participant.getConsultantId())
@@ -309,6 +314,23 @@ public class ChatService {
                   .displayName(displayName);
             })
         .toList();
+  }
+
+  private String resolveParticipantDisplayName(Consultant consultant) {
+    if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
+      return consultant.getDisplayName();
+    }
+    var fullName =
+        Stream.of(consultant.getFirstName(), consultant.getLastName())
+            .filter(name -> name != null && !name.isBlank())
+            .collect(Collectors.joining(" "));
+    if (!fullName.isBlank()) {
+      return fullName;
+    }
+    if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
+      return consultant.getUsername();
+    }
+    return consultant.getId();
   }
 
   private Set<ChatAgency> loadChatAgencies(Long chatId) {
@@ -434,6 +456,7 @@ public class ChatService {
    * @param authenticatedUser {@link AuthenticatedUser}
    * @return {@link UpdateChatResponseDTO}
    */
+  @Transactional
   public UpdateChatResponseDTO updateChat(
       Long chatId, ChatDTO chatDTO, AuthenticatedUser authenticatedUser) {
 
@@ -455,18 +478,46 @@ public class ChatService {
     }
 
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+    // one when the client sends it (validated like the create path), and preserve the existing
+    // zone when the DTO omits it rather than silently resetting to UTC.
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
+      try {
+        ZoneId.of(chatDTO.getTimezone());
+      } catch (DateTimeException invalidTimezone) {
+        throw new BadRequestException(
+            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
+      }
+      chat.setTimezone(chatDTO.getTimezone());
+    }
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
-    chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
-    chat.setChatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null);
+    // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
+    // repetitive series without re-sending repeatCount does not silently drop it to a single
+    // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
+    int repeatCount =
+        chatDTO.getRepeatCount() != null
+            ? chatDTO.getRepeatCount()
+            : (isTrue(chatDTO.getRepetitive()) ? 12 : 1);
+    chat.setRepeatCount(repeatCount);
+    chat.setRepetitive(repeatCount > 1);
+    chat.setChatInterval(
+        repeatCount > 1
+            ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
+            : null);
+    chat.setChatModality(chatDTO.getModality() != null ? chatDTO.getModality() : ChatModality.TEXT);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
+    // The schedule anchor moved, so virtual occurrences must restart from index 0 —
+    // otherwise nextStart() would skip the first occurrences of the edited series.
+    chat.setCurrentOccurrenceIndex(0);
     chat.setHintMessage(chatDTO.getHintMessage());
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
     return new UpdateChatResponseDTO().groupId(chat.getGroupId());
   }

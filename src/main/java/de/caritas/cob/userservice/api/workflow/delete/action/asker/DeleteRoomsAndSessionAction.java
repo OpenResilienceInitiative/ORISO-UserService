@@ -7,8 +7,11 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.List;
@@ -23,6 +26,9 @@ abstract class DeleteRoomsAndSessionAction {
   protected final @NonNull SessionRepository sessionRepository;
   protected final @NonNull SessionDataRepository sessionDataRepository;
   protected final @NonNull RocketChatService rocketChatService;
+  protected final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+  protected final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  protected final @NonNull SessionTopicRepository sessionTopicRepository;
 
   void deleteRocketChatGroup(String rcGroupId, List<DeletionWorkflowError> workflowErrors) {
     if (isNotBlank(rcGroupId)) {
@@ -59,6 +65,54 @@ abstract class DeleteRoomsAndSessionAction {
     }
   }
 
+  void deleteCaseHandoverRequests(Session session, List<DeletionWorkflowError> workflowErrors) {
+    try {
+      this.caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+    } catch (Exception e) {
+      log.error("UserService delete workflow error: ", e);
+      workflowErrors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.DATABASE)
+              .identifier(String.valueOf(session.getId()))
+              .reason("Unable to delete case handover requests for session")
+              .timestamp(nowInUtc())
+              .build());
+    }
+  }
+
+  void deleteSessionSupervisors(Session session, List<DeletionWorkflowError> workflowErrors) {
+    try {
+      this.sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+    } catch (Exception e) {
+      log.error("UserService delete workflow error: ", e);
+      workflowErrors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.DATABASE)
+              .identifier(String.valueOf(session.getId()))
+              .reason("Unable to delete supervisors for session")
+              .timestamp(nowInUtc())
+              .build());
+    }
+  }
+
+  void deleteSessionTopics(Session session, List<DeletionWorkflowError> workflowErrors) {
+    try {
+      this.sessionTopicRepository.deleteAllBySessionId(session.getId());
+    } catch (Exception e) {
+      log.error("UserService delete workflow error: ", e);
+      workflowErrors.add(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(ASKER)
+              .deletionTargetType(DeletionTargetType.DATABASE)
+              .identifier(String.valueOf(session.getId()))
+              .reason("Unable to delete topics for session")
+              .timestamp(nowInUtc())
+              .build());
+    }
+  }
+
   protected void deleteSession(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
       this.sessionRepository.delete(session);
@@ -79,6 +133,9 @@ abstract class DeleteRoomsAndSessionAction {
 
     deleteRocketChatGroup(session.getGroupId(), workflowErrors);
     deleteSessionData(session, workflowErrors);
+    deleteSessionSupervisors(session, workflowErrors);
+    deleteSessionTopics(session, workflowErrors);
+    deleteCaseHandoverRequests(session, workflowErrors);
     deleteSession(session, workflowErrors);
   }
 }

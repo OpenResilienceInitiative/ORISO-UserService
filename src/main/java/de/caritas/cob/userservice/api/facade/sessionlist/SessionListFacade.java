@@ -133,9 +133,10 @@ public class SessionListFacade {
   }
 
   public GroupSessionListResponseDTO retrieveChatsForUserByChatIds(
-      List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
+      String userId, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     var userChatSessions =
-        userSessionListService.retrieveChatsForUserAndChatIds(chatIds, rocketChatCredentials);
+        userSessionListService.retrieveChatsForUserAndChatIds(
+            userId, chatIds, rocketChatCredentials);
     userChatSessions.sort(
         comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 
@@ -184,6 +185,46 @@ public class SessionListFacade {
             consultant, sessionIds, roles);
     consultantSessions.sort(
         comparing(ConsultantSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+
+    SessionMapper sessionMapper = new SessionMapper();
+    var sessions =
+        consultantSessions.stream()
+            .map(sessionMapper::toGroupSessionResponse)
+            .collect(Collectors.toList());
+
+    return new GroupSessionListResponseDTO().sessions(sessions);
+  }
+
+  /**
+   * Resolves anonymous Live Chat queue entries by id (#774), applying the queue's topic-based,
+   * cross-tenant visibility. Used as the open-path fallback so a live chat request the consultant
+   * can see in the queue can also be opened and accepted.
+   */
+  public GroupSessionListResponseDTO retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+      Consultant consultant, List<Long> sessionIds) {
+    List<ConsultantSessionResponseDTO> consultantSessions =
+        consultantSessionListService.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+            consultant, sessionIds);
+
+    SessionMapper sessionMapper = new SessionMapper();
+    var sessions =
+        consultantSessions.stream()
+            .map(sessionMapper::toGroupSessionResponse)
+            .collect(Collectors.toList());
+
+    return new GroupSessionListResponseDTO().sessions(sessions);
+  }
+
+  /**
+   * Resolves a cross-tenant session the consultant is directly assigned to (#774 follow-up). Used
+   * as the open-path fallback after a cross-tenant live chat is accepted, so routing to the
+   * accepted conversation resolves it instead of 204-ing.
+   */
+  public GroupSessionListResponseDTO retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+      Consultant consultant, List<Long> sessionIds) {
+    List<ConsultantSessionResponseDTO> consultantSessions =
+        consultantSessionListService.retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+            consultant, sessionIds);
 
     SessionMapper sessionMapper = new SessionMapper();
     var sessions =

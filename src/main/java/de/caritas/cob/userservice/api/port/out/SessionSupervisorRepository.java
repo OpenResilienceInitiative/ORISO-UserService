@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -58,4 +59,8 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
    * @return count of active supervisors
    */
   long countBySessionIdAndIsActiveTrue(Long sessionId);
+
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query("delete from SessionSupervisor supervisor where supervisor.session.id = :sessionId")
+  int deleteAllBySessionId(@Param("sessionId") Long sessionId);
 }

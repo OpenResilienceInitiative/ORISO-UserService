@@ -5,7 +5,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum SessionDataKeyRegistration {
   AGE("age"),
-  STATE("state");
+  STATE("state"),
+  DISPLAY_NAME("displayName");
 
   private final String key;
 

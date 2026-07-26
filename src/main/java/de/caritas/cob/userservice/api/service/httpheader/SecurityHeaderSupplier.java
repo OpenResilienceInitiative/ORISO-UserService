@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.service.httpheader;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.support.ScopeNotActiveException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -66,10 +68,9 @@ public class SecurityHeaderSupplier {
    * fallback token (e.g. technical user token).
    */
   public HttpHeaders getKeycloakAndCsrfHttpHeadersWithFallback(String fallbackAccessToken) {
-    var currentAccessToken = authenticatedUser.getAccessToken();
-    return StringUtils.isNotBlank(currentAccessToken)
-        ? getKeycloakAndCsrfHttpHeaders(currentAccessToken)
-        : getKeycloakAndCsrfHttpHeaders(fallbackAccessToken);
+    return getCurrentAccessTokenIfAvailable()
+        .map(this::getKeycloakAndCsrfHttpHeaders)
+        .orElseGet(() -> getKeycloakAndCsrfHttpHeaders(fallbackAccessToken));
   }
 
   /**
@@ -77,7 +78,19 @@ public class SecurityHeaderSupplier {
    * already has a user token. This keeps public flows unauthenticated.
    */
   public HttpHeaders getOptionalKeycloakAndCsrfHttpHeaders() {
-    return getKeycloakAndCsrfHttpHeaders();
+    var header = getCsrfHttpHeaders();
+    getCurrentAccessTokenIfAvailable()
+        .ifPresent(accessToken -> this.addKeycloakAuthorizationHeader(header, accessToken));
+    return header;
+  }
+
+  private Optional<String> getCurrentAccessTokenIfAvailable() {
+    try {
+      return Optional.ofNullable(authenticatedUser.getAccessToken())
+          .filter(StringUtils::isNotBlank);
+    } catch (ScopeNotActiveException exception) {
+      return Optional.empty();
+    }
   }
 
   private void addKeycloakAuthorizationHeader(HttpHeaders httpHeaders, String accessToken) {

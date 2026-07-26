@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -232,7 +233,7 @@ class UserSessionControllerDelegateTest {
     when(sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
             eq("user-id"), eq(List.of(1L)), any(), eq(Set.of(UserRole.USER.getValue()))))
         .thenReturn(emptySessionList);
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(chatSessionList);
 
     var response = delegate.getSessionForId(1L, null);
@@ -304,7 +305,7 @@ class UserSessionControllerDelegateTest {
     var responseDto = new GroupSessionListResponseDTO().sessions(List.of());
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithRocketChatId());
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(responseDto);
 
     var response = delegate.getChatById("rc-token", 1L);
@@ -319,7 +320,7 @@ class UserSessionControllerDelegateTest {
         new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(userWithoutRocketChatId());
-    when(sessionListFacade.retrieveChatsForUserByChatIds(eq(List.of(1L)), any()))
+    when(sessionListFacade.retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), any()))
         .thenReturn(responseDto);
 
     var response = delegate.getChatById(null, 1L);
@@ -327,7 +328,7 @@ class UserSessionControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     var credentialsCaptor = ArgumentCaptor.forClass(RocketChatCredentials.class);
     verify(sessionListFacade)
-        .retrieveChatsForUserByChatIds(eq(List.of(1L)), credentialsCaptor.capture());
+        .retrieveChatsForUserByChatIds(eq("user-id"), eq(List.of(1L)), credentialsCaptor.capture());
     assertThat(credentialsCaptor.getValue().getRocketChatUserId()).isEqualTo("dummy-rc-user");
     assertThat(credentialsCaptor.getValue().getRocketChatToken()).isEqualTo("dummy-rc-token");
   }
@@ -484,6 +485,33 @@ class UserSessionControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatSessionList);
     verify(consultantDataFacade).addConsultantDisplayNameToSessionList(chatSessionList);
+  }
+
+  @Test
+  void getSessionForId_anonymousLiveChatFallbackWhenSessionLookupEmpty_returnsEnquiry() {
+    // #774: a live chat request visible to the consultant by topic (but not assigned/agency-owned)
+    // must open through the anonymous queue fallback rather than 204.
+    var emptySessionList = new GroupSessionListResponseDTO().sessions(List.of());
+    var anonymousList =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    var roles = Set.of(UserRole.CONSULTANT.getValue());
+    var consultant = consultant();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+            consultant, List.of(1L), roles))
+        .thenReturn(emptySessionList);
+    when(sessionListFacade.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+            consultant, List.of(1L)))
+        .thenReturn(anonymousList);
+
+    var response = delegate.getSessionForId(1L, "rc-token");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(anonymousList);
+    // The chat fallback must not run once the anonymous enquiry resolves.
+    verify(sessionListFacade, never()).retrieveChatsForConsultantByChatIds(any(), any(), any());
   }
 
   @Test

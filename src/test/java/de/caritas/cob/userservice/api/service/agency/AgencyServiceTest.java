@@ -40,7 +40,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -76,6 +78,30 @@ class AgencyServiceTest {
   void getAgenciesFromAgencyService_Should_returnEmptyList_When_nullPassed(List<Long> emptyIds) {
     List<AgencyDTO> result = this.agencyService.getAgencies(emptyIds);
     assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getAgencyWithoutCaching_Should_returnNull_When_agencyDoesNotExist() {
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
+        .thenReturn(new HttpHeaders());
+    when(this.agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(this.agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L)))
+        .thenReturn(Lists.newArrayList());
+
+    assertThat(this.agencyService.getAgencyWithoutCaching(1L)).isNull();
+  }
+
+  @Test
+  void getAgencyWithoutCaching_Should_returnNull_When_agencyServiceReturns404() {
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
+        .thenReturn(new HttpHeaders());
+    when(this.agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(this.agencyControllerApi.getAgenciesByIds(Lists.newArrayList(1L)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+    assertThat(this.agencyService.getAgencyWithoutCaching(1L)).isNull();
   }
 
   @Test

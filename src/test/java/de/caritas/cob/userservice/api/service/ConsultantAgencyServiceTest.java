@@ -23,6 +23,8 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Arrays;
 import java.util.List;
@@ -34,6 +36,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
@@ -75,6 +79,9 @@ public class ConsultantAgencyServiceTest {
   @Mock
   @SuppressWarnings("unused")
   private AccountManaging accountManager;
+
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
+  @Mock private SessionRepository sessionRepository;
 
   @Mock
   @SuppressWarnings("unused")
@@ -186,14 +193,47 @@ public class ConsultantAgencyServiceTest {
 
   @Test
   public void
-      getOnlineAgenciesOfConsultant_Should_returnEmptyList_When_agencyForConsultantDoesNotExist() {
-    var consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
-    when(consultantAgencyRepository.findByConsultantId(any()))
-        .thenReturn(singletonList(consultantAgency));
+      getOnlineAgenciesOfConsultant_Should_returnLocalTopicAssignments_When_agencyServiceReturnsEmptyList() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID))).thenReturn(emptyList());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new RuntimeException("Not found"));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
+        .thenReturn(List.of());
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
 
     var agencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
 
-    assertThat(agencies, hasSize(0));
+    assertThat(agencies, hasSize(1));
+    assertEquals(AGENCY_ID, agencies.get(0).getId());
+    assertEquals(List.of(1L), agencies.get(0).getTopicIds());
+    assertEquals(Integer.valueOf(1), agencies.get(0).getConsultingType());
+  }
+
+  @Test
+  public void
+      getOnlineAgenciesOfConsultant_Should_enrichRemoteAgenciesWithConsultantTopicIds_When_topicIdsMissing() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    var remoteAgency = new AgencyDTO().id(AGENCY_ID).offline(false).consultingType(2);
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
+        .thenReturn(singletonList(remoteAgency));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+
+    var agencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+    assertThat(agencies, hasSize(1));
+    assertEquals(List.of(1L), agencies.get(0).getTopicIds());
+    assertEquals(Integer.valueOf(2), agencies.get(0).getConsultingType());
   }
 
   @Test
@@ -221,6 +261,55 @@ public class ConsultantAgencyServiceTest {
           assertNotNull(agency.getDescription());
           assertNotNull(agency.getPostcode());
         });
+  }
+
+  @Test
+  public void
+      getOnlineAgenciesOfConsultant_Should_returnLocalTopicAssignments_When_agencyServiceFails() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
+        .thenThrow(new RuntimeException("Unauthorized"));
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new RuntimeException("Unauthorized"));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L, 2L));
+    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
+        .thenReturn(List.of(3));
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", null);
+
+    var resultAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+    assertThat(resultAgencies, hasSize(1));
+    assertEquals(AGENCY_ID, resultAgencies.get(0).getId());
+    assertEquals(List.of(1L, 2L), resultAgencies.get(0).getTopicIds());
+    assertEquals(Integer.valueOf(3), resultAgencies.get(0).getConsultingType());
+  }
+
+  @Test
+  public void
+      getOnlineAgenciesOfConsultant_Should_useConfiguredFallbackConsultingType_When_agencyServiceAndSessionsFail() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
+        .thenThrow(new RuntimeException("Unauthorized"));
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new RuntimeException("Unauthorized"));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
+        .thenReturn(List.of());
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
+
+    var resultAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+    assertEquals(Integer.valueOf(1), resultAgencies.get(0).getConsultingType());
   }
 
   private static List<ConsultantAgency> givenConsultantAgenciesWithDeletionDateNull() {

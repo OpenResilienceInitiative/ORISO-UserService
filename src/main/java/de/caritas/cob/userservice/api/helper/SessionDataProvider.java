@@ -53,6 +53,13 @@ public class SessionDataProvider {
   public List<SessionData> createSessionDataList(Session session, SessionDataDTO sessionData) {
 
     List<SessionData> sessionDataList = new ArrayList<>();
+    if (!isEmpty(sessionData.getDisplayName())) {
+      sessionDataList.add(
+          obtainSessionData(
+              session,
+              SessionDataKeyRegistration.DISPLAY_NAME.getValue(),
+              sessionData.getDisplayName()));
+    }
     if (getSessionDataInitializing(session.getConsultingTypeId()).isAge()) {
       sessionDataList.add(
           obtainSessionData(

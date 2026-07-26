@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -36,6 +38,7 @@ import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -188,6 +191,38 @@ class AccountManagerTest {
         .thenReturn(Map.of("id", "id-1"));
 
     assertThat(accountManager.findConsultant("id-1")).isPresent();
+  }
+
+  @Test
+  void findConsultant_Should_EnrichFromRocketChat_When_IntegrationIsEnabled() {
+    var consultant = new Consultant();
+    consultant.setId("id-1");
+    consultant.setRocketChatId("chat-id-1");
+    var chatUser = Map.<String, Object>of("displayName", "Consultant One");
+    ReflectionTestUtils.setField(accountManager, "rocketChatEnabled", true);
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
+        .thenReturn(Optional.of(consultant));
+    Mockito.when(messageClient.findUser("chat-id-1")).thenReturn(Optional.of(chatUser));
+    Mockito.when(userServiceMapper.mapOf(consultant, chatUser))
+        .thenReturn(Map.of("id", "id-1", "displayName", "Consultant One"));
+
+    assertThat(accountManager.findConsultant("id-1"))
+        .contains(Map.of("id", "id-1", "displayName", "Consultant One"));
+  }
+
+  @Test
+  void findConsultant_Should_ReportPersistenceConflict_When_RocketChatUserIsMissing() {
+    var consultant = new Consultant();
+    consultant.setId("id-1");
+    consultant.setRocketChatId("chat-id-1");
+    ReflectionTestUtils.setField(accountManager, "rocketChatEnabled", true);
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
+        .thenReturn(Optional.of(consultant));
+    Mockito.when(messageClient.findUser("chat-id-1")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> accountManager.findConsultant("id-1"))
+        .hasMessageContaining("id-1")
+        .hasMessageContaining("chat-id-1");
   }
 
   // findConsultantByUsername
@@ -393,8 +428,8 @@ class AccountManagerTest {
     Mockito.when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("c-1")))
         .thenReturn(List.of());
     Mockito.when(userServiceMapper.agencyIdsOf(List.of())).thenReturn(List.of());
-    Mockito.when(adminRepository.findExistingIdsByIdIn(List.of("c-1")))
-        .thenReturn(java.util.Collections.emptySet());
+    Mockito.when(adminRepository.findIdAndTypeByIdIn(List.of("c-1")))
+        .thenReturn(java.util.Collections.emptyList());
     Mockito.when(tenantService.getRestrictedTenantData(5L)).thenReturn(tenantDto);
     Mockito.when(
             userServiceMapper.mapOf(
@@ -410,5 +445,99 @@ class AccountManagerTest {
 
     assertThat(result).containsKey("total");
     Mockito.verify(tenantService).getRestrictedTenantData(5L);
+  }
+
+  @Test
+  void findConsultantsByInfix_Should_PassTypedOtherIdentities_When_ConsultantIsAlsoAdmin() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var consultantBase = Mockito.mock(Consultant.ConsultantBase.class);
+    Mockito.when(consultantBase.getId()).thenReturn("c-1");
+
+    Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
+    Mockito.when(
+            consultantRepository.findAllByInfix(
+                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+        .thenReturn(page);
+    Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
+    Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
+        .thenReturn(List.of(consultant));
+    Mockito.when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("c-1")))
+        .thenReturn(List.of());
+    Mockito.when(userServiceMapper.agencyIdsOf(List.of())).thenReturn(List.of());
+    Mockito.when(adminRepository.findIdAndTypeByIdIn(List.of("c-1")))
+        .thenReturn(List.<Object[]>of(new Object[] {"c-1", Admin.AdminType.TENANT}));
+    Mockito.when(
+            userServiceMapper.mapOf(
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(Map.of("total", 1));
+
+    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+
+    @SuppressWarnings("unchecked")
+    var captor =
+        org.mockito.ArgumentCaptor.forClass(
+            (Class<Map<String, List<String>>>) (Class<?>) Map.class);
+    Mockito.verify(userServiceMapper)
+        .mapOf(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            captor.capture());
+    assertThat(captor.getValue()).containsEntry("c-1", List.of("TENANT_ADMIN"));
+  }
+
+  @Test
+  void findConsultantsByInfix_Should_NotExposeUnsupportedPlatformAdminIdentity() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var consultantBase = Mockito.mock(Consultant.ConsultantBase.class);
+    Mockito.when(consultantBase.getId()).thenReturn("c-1");
+
+    Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
+    Mockito.when(
+            consultantRepository.findAllByInfix(
+                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+        .thenReturn(page);
+    Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
+    Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
+        .thenReturn(List.of(consultant));
+    Mockito.when(consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(List.of("c-1")))
+        .thenReturn(List.of());
+    Mockito.when(userServiceMapper.agencyIdsOf(List.of())).thenReturn(List.of());
+    Mockito.when(adminRepository.findIdAndTypeByIdIn(List.of("c-1")))
+        .thenReturn(List.<Object[]>of(new Object[] {"c-1", Admin.AdminType.SUPER}));
+    Mockito.when(
+            userServiceMapper.mapOf(
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(Map.of("total", 1));
+
+    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+
+    @SuppressWarnings("unchecked")
+    var captor =
+        org.mockito.ArgumentCaptor.forClass(
+            (Class<Map<String, List<String>>>) (Class<?>) Map.class);
+    Mockito.verify(userServiceMapper)
+        .mapOf(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            captor.capture());
+    assertThat(captor.getValue()).doesNotContainKey("c-1");
   }
 }

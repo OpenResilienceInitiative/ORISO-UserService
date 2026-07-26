@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import static com.neovisionaries.i18n.LanguageCode.de;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
@@ -12,8 +13,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import java.time.LocalDateTime;
-import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,11 +22,13 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({ConsultingTypeManagerTestConfig.class})
+@Transactional
 class SessionRepositoryQueueCountIT {
 
   @Autowired private SessionRepository sessionRepository;
@@ -46,12 +47,6 @@ class SessionRepositoryQueueCountIT {
     user.setDataPrivacyConfirmation(LocalDateTime.now());
     user = userRepository.save(user);
     referenceCreateDate = LocalDateTime.now();
-  }
-
-  @AfterEach
-  void cleanup() {
-    sessionRepository.deleteAll();
-    userRepository.deleteAll();
   }
 
   @Test
@@ -101,15 +96,10 @@ class SessionRepositoryQueueCountIT {
   }
 
   private void saveSession(java.util.function.Consumer<Session> customizer) {
-    Session session = new EasyRandom().nextObject(Session.class);
-    session.setId(null);
-    session.setUser(user);
-    session.setConsultant(null);
+    Session session = new Session(user, CONSULTING_TYPE_ID_OFFENDER, "12345", null, NEW, false);
     session.setRegistrationType(ANONYMOUS);
-    session.setStatus(NEW);
-    session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
-    session.setMainTopicId(null);
-    session.setPostcode("12345");
+    session.setIsConsultantDirectlySet(false);
+    session.setLanguageCode(de);
     session.setCreateDate(referenceCreateDate.minusMinutes(1));
     session.setUpdateDate(LocalDateTime.now());
     customizer.accept(session);

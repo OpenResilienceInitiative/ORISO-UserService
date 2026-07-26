@@ -24,7 +24,15 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   List<User> findAllByDeleteDateIsNull();
 
-  Optional<User> findByUsernameInAndDeleteDateIsNull(Collection<String> usernames);
+  /**
+   * Username lookups must tolerate duplicates: user.username carries no unique constraint and
+   * generated anonymous usernames repeat across service restarts (the in-memory id registry
+   * resets), so a single-result finder would throw {@code IncorrectResultSizeDataAccessException}
+   * as soon as two rows share a name — which 500s the anonymous invite-link redeem. Callers pick
+   * the oldest matching row deterministically.
+   */
+  List<User> findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
+      Collection<String> usernames);
 
   /**
    * Find all users whose create date is older than given date and having no new registered session

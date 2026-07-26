@@ -21,7 +21,10 @@ public class SessionUserDTO {
   @ApiModelProperty(example = "Username", position = 1)
   private String username;
 
-  @ApiModelProperty(example = "isDeleted", position = 2)
+  @ApiModelProperty(example = "Display name", position = 2)
+  private String displayName;
+
+  @ApiModelProperty(example = "isDeleted", position = 3)
   private boolean isDeleted;
 
   private Map<String, Object> sessionData;

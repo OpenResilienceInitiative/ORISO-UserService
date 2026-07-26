@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -49,6 +50,7 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
+  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
@@ -202,6 +204,49 @@ public class EventNotificationService {
               } catch (RuntimeException ex) {
                 log.warn(
                     "Could not persist request.new notification for consultant {} (session {})",
+                    consultantId,
+                    session.getId(),
+                    ex);
+              }
+            });
+  }
+
+  /**
+   * WP-06 Slice 3 (Tier 3): persist a {@code waiting_room.client.joined} timeline event for each
+   * eligible consultant when a client enters the anonymous live-chat waiting room (a new anonymous
+   * enquiry). Mirrors the recipients already reached by the {@code NEW_ANONYMOUS_ENQUIRY} live
+   * event — the Activity Timeline is the consultant's inbox — and carries the same structured
+   * params (ADR-AT-01) plus a title/text fallback. Best-effort: a failed notification must never
+   * break anonymous-conversation creation, so per-recipient failures are swallowed and logged.
+   */
+  @Transactional
+  public void createWaitingRoomClientJoinedNotifications(
+      Session session, Collection<String> recipientConsultantIds) {
+    if (session == null || recipientConsultantIds == null) {
+      return;
+    }
+    String actionPath = buildSessionActionPath(session, null, true);
+    String params = buildNewClientRequestParams(session);
+    recipientConsultantIds.stream()
+        .filter(id -> id != null && !id.isBlank())
+        .distinct()
+        .forEach(
+            consultantId -> {
+              try {
+                createEvent(
+                    consultantId,
+                    "waiting_room.client.joined",
+                    CATEGORY_SYSTEM,
+                    "Client joined the waiting room",
+                    "A client is waiting in the live chat.",
+                    params,
+                    actionPath,
+                    session.getId(),
+                    session.getTenantId());
+              } catch (RuntimeException ex) {
+                log.warn(
+                    "Could not persist waiting_room.client.joined notification for consultant {} "
+                        + "(session {})",
                     consultantId,
                     session.getId(),
                     ex);
@@ -602,6 +647,9 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
+    // Real-time backbone: nudge the recipient's client to refresh the Activity Timeline now
+    // instead of on the next 15s poll. Best-effort; carries only the recipient id (no content).
+    liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
@@ -639,6 +687,8 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
+      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
+      liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
@@ -852,6 +902,14 @@ public class EventNotificationService {
       return false;
     }
     return value.startsWith("enc.") || value.matches("^[A-Za-z0-9+/=]{25,}$");
+  }
+
+  /**
+   * Public room-level probe for sibling producers (US#473 team-discussion fan-out): true when the
+   * recipient is actively viewing the room and the notification should be dropped.
+   */
+  public boolean isNotificationSuppressed(String recipientUserId, String roomId) {
+    return shouldSuppressNotification(recipientUserId, roomId, null);
   }
 
   private boolean shouldSuppressNotification(

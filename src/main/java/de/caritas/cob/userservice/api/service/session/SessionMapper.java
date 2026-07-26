@@ -90,7 +90,12 @@ public class SessionMapper {
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
     sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
     if (nonNull(session.getSessionData())) {
-      sessionUserDto.setSessionData(buildSessionDataMapFromSession(session));
+      var sessionData = buildSessionDataMapFromSession(session);
+      sessionUserDto.setSessionData(sessionData);
+      var displayName = sessionData.get(SessionDataKeyRegistration.DISPLAY_NAME.getValue());
+      if (displayName instanceof String value) {
+        sessionUserDto.setDisplayName(value);
+      }
     }
     return sessionUserDto;
   }

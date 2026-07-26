@@ -1,6 +1,7 @@
 name: UserService Build and Publish
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -12,8 +13,25 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
+  mariadb-contract:
+    uses: ./.github/workflows/mariadb-contract.yml
+
+  required-integration-tests:
+    name: required integration tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Run deterministic integration contract
+      uses: ./.github/actions/maven-verify-required
+      with:
+        java_version: '21'
+
   publish:
     name: test, build and publish image
+    needs: [required-integration-tests, mariadb-contract]
     runs-on: ubuntu-latest
 
     permissions:
@@ -35,22 +53,3 @@ jobs:
         push_to_ghcr: true
         image_name: oriso-userservice
         github_token: ${{ secrets.GITHUB_TOKEN }}
-
-  # Non-blocking burn-in (Test Quality Audit 2026-07-04, item 3 + CI Roadmap Part 1).
-  # Runs `mvnw -B verify` on dev/main so integration-test results stay visible after
-  # merge. Deliberately independent of the publish job: a red burn-in must NOT block
-  # image publishing while the ITs are being stabilised. continue-on-error enforces
-  # that. Flip to a required gate once burn-in is consistently green.
-  integration-tests:
-    name: integration-tests (non-blocking, burn-in)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Run integration tests (verify)
-      uses: ./.github/actions/maven-verify-burnin
-      with:
-        java_version: '21'

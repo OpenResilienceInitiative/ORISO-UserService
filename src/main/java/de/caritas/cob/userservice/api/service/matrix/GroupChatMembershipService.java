@@ -69,6 +69,16 @@ public class GroupChatMembershipService {
     var matrixRoomId = resolveMatrixRoomId(chat);
     var ownerMatrixUserId =
         chat == null || chat.getChatOwner() == null ? null : chat.getChatOwner().getMatrixUserId();
+    return addMemberToRoom(matrixRoomId, ownerMatrixUserId, memberMatrixUserId);
+  }
+
+  /**
+   * Invites and joins a member when the target room is not yet persisted on the {@link Chat}.
+   * Repetitive chats use this while constructing their next occurrence, before the old room is
+   * replaced in the database.
+   */
+  public boolean addMemberToRoom(
+      String matrixRoomId, String ownerMatrixUserId, String memberMatrixUserId) {
     if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId) || isBlank(ownerMatrixUserId)) {
       return false;
     }

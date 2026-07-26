@@ -6,11 +6,13 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,11 +21,13 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -32,6 +36,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
@@ -43,6 +48,19 @@ public class SecurityConfig {
 
   private static final String UUID_PATTERN =
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
+
+  /**
+   * A public consultant id is either a UUID or a public slug (lowercase words joined by single
+   * hyphens). The negative lookahead keeps the sibling literal routes under {@code
+   * /users/consultants/*} (search, absences, import, sessions, languages) out of the permitAll
+   * match — they carry their own role rules below and are also seeded as reserved slugs. Only
+   * non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex} constraints.
+   */
+  private static final String PUBLIC_CONSULTANT_ID_PATTERN =
+      "(?:"
+          + UUID_PATTERN
+          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)[a-z]+(?:-[a-z]+)*)";
+
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
@@ -95,7 +113,15 @@ public class SecurityConfig {
     http.authorizeHttpRequests(
         authorize ->
             authorize
-                .requestMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
+                .requestMatchers(
+                    "/users/docs",
+                    "/users/docs/**",
+                    "/v2/api-docs",
+                    "/configuration/ui",
+                    "/swagger-resources/**",
+                    "/configuration/security",
+                    "/swagger-ui.html",
+                    "/webjars/**")
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
@@ -103,12 +129,14 @@ public class SecurityConfig {
                     "/service/conversations/askers/anonymous/new",
                     "/conversations/anonymous/availability",
                     "/service/conversations/anonymous/availability",
-                    "/users/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
                     "/users/consultants/languages",
                     "/error-reports",
                     "/service/error-reports",
                     "/users/magic-link/request",
                     "/users/magic-link/consume",
+                    "/users/password-reset/request",
+                    "/users/password-reset/confirm",
                     "/users/invitelinks/*/redeem")
                 .permitAll()
                 .requestMatchers(
@@ -116,7 +144,11 @@ public class SecurityConfig {
                     "/users/magic-link/request",
                     "/service/users/magic-link/request",
                     "/users/magic-link/consume",
-                    "/service/users/magic-link/consume")
+                    "/service/users/magic-link/consume",
+                    "/users/password-reset/request",
+                    "/service/users/password-reset/request",
+                    "/users/password-reset/confirm",
+                    "/service/users/password-reset/confirm")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
@@ -124,6 +156,8 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
+                // Password-reset request/confirm are already permitted by the exact requestMatchers
+                // above (with and without the /service prefix); no broad regex needed.
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
@@ -141,8 +175,6 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
-                .requestMatchers("/users/sessions/askers")
-                .permitAll()
                 .requestMatchers(
                     "/users/email",
                     "/users/mails/messages/new",
@@ -150,6 +182,7 @@ public class SecurityConfig {
                     "/users/drafts/**",
                     "/users/event-notifications",
                     "/users/event-notifications/**",
+                    "/users/notifications/do-not-disturb",
                     "/users/chat/{chatId:[0-9]+}",
                     "/users/chat/e2e",
                     "/users/chat/{chatId:[0-9]+}/join",
@@ -160,6 +193,13 @@ public class SecurityConfig {
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
+                .hasAnyAuthority(
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/users/system-notification-emails/test")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
@@ -181,6 +221,11 @@ public class SecurityConfig {
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/statistics/consultant",
+                    "/service/users/statistics/consultant")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
@@ -190,15 +235,15 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/data",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}/consent",
-                    "/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/pending-consent")
+                    "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+"))
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/sessions/room/{sessionId:[0-9]+}",
@@ -230,7 +275,9 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}")
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
+                    "/users/sessions/{sessionId:[0-9]+}/team-discussion",
+                    "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/conversations/anonymous/{sessionId:[0-9]+}/finish",
@@ -263,17 +310,31 @@ public class SecurityConfig {
                 .hasAuthority(UPDATE_CHAT)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
-                .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
+                .requestMatchers(
+                    "/useradmin/tenantadmins",
+                    "/useradmin/tenantadmins/**",
+                    "/service/useradmin/tenantadmins",
+                    "/service/useradmin/tenantadmins/**")
                 .hasAuthority(TENANT_ADMIN)
-                .requestMatchers("/useradmin/data/*")
+                .requestMatchers("/useradmin/data", "/service/useradmin/data")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.POST, "/useradmin/consultants/")
+                .requestMatchers(
+                    HttpMethod.POST, "/useradmin/consultants", "/service/useradmin/consultants")
                 .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
                     "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Consultant deletion: restricted agency admins (Beratungsstellen-Admins) may
+                // delete consultants of their own agencies; the agency scoping is enforced in
+                // ConsultantAdminFacade#markConsultantForDeletion. Must stay above the
+                // /useradmin/** catch-all to take effect (first match wins).
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}")
+                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
@@ -306,7 +367,13 @@ public class SecurityConfig {
                     "/service/useradmin/statistics/dashboard")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers("/useradmin", "/useradmin/**")
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/statistics/tutorials",
+                    "/service/useradmin/statistics/tutorials")
+                .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers("/users/consultants/search")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -321,7 +388,7 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .hasAuthority(TECHNICAL_DEFAULT)
+                .access(this::canAccessInactiveAccountAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -341,9 +408,6 @@ public class SecurityConfig {
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers("/userstatistics", "/userstatistics/**")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, "/useradmin/consultants/{consultantId:[0-9]+}/delete")
-                .hasAnyAuthority(USER_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/actuator/health")
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/actuator/health/*")
@@ -408,6 +472,43 @@ public class SecurityConfig {
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
     return authorities;
+  }
+
+  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    boolean isTechnicalAccount =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
+
+    if (isTechnicalAccount) {
+      return new AuthorizationDecision(true);
+    }
+
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+
+    Jwt jwt = jwtAuthentication.getToken();
+    Set<String> roles = extractKeycloakRoles(jwt);
+    boolean hasPlatformAdminRoles =
+        roles.contains(UserRole.AGENCY_ADMIN.getValue())
+            && roles.contains(UserRole.TENANT_ADMIN.getValue());
+
+    return new AuthorizationDecision(hasPlatformAdminRoles && isPlatformTenant(jwt));
+  }
+
+  private boolean isPlatformTenant(Jwt jwt) {
+    Object tenantId = jwt.getClaims().get("tenantId");
+    if (tenantId instanceof Number number) {
+      try {
+        return new BigDecimal(number.toString()).compareTo(BigDecimal.ZERO) == 0;
+      } catch (NumberFormatException ignored) {
+        return false;
+      }
+    }
+    return tenantId != null && "0".equals(tenantId.toString());
   }
 
   @SuppressWarnings("unchecked")

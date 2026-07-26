@@ -45,7 +45,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AdminDashboardStatisticsService {
 
-  public static final int SMALL_CELL_MINIMUM_COUNSELORS = 2;
+  public static final int SMALL_CELL_MINIMUM_COUNSELORS = 5;
 
   private static final int CHART_WEEKS = 5;
   private static final int TOPIC_MONTHS = 4;

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -25,13 +26,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.keycloak.admin.client.resource.RealmResource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -93,6 +97,26 @@ class KeycloakAuthClientTest {
         .thenThrow(exception);
 
     assertTrue(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD));
+  }
+
+  @Test
+  void verifyIgnoringOtp_ShouldDecodeEncodedUsernameBeforeKeycloakLogin() {
+    var loginResponse = mock(KeycloakLoginResponseDTO.class);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(new ResponseEntity<>(loginResponse, HttpStatus.OK));
+    var encodedUsername =
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .encodeUsername("blinky.fish@oriso.org");
+
+    assertTrue(keycloakAuthClient.verifyIgnoringOtp(encodedUsername, PASSWORD));
+
+    @SuppressWarnings("rawtypes")
+    var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate, atLeastOnce())
+        .postForEntity(anyString(), requestCaptor.capture(), eq(KeycloakLoginResponseDTO.class));
+    @SuppressWarnings("unchecked")
+    var body = (MultiValueMap<String, String>) requestCaptor.getValue().getBody();
+    assertThat(body.getFirst("username"), is("blinky.fish@oriso.org"));
   }
 
   @Test

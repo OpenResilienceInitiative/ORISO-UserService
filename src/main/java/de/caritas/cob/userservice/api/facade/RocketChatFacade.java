@@ -90,6 +90,11 @@ public class RocketChatFacade {
     }
   }
 
+  /** Returns transport-neutral member IDs for application-layer group operations. */
+  public List<String> retrieveRocketChatMemberIds(String rcGroupId) {
+    return retrieveRocketChatMembers(rcGroupId).stream().map(GroupMemberDTO::get_id).toList();
+  }
+
   /**
    * Adds the technical user to the given Rocket.Chat group id.
    *

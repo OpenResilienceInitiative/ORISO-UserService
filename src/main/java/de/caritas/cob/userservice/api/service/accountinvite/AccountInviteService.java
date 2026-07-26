@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -16,13 +18,16 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
@@ -31,11 +36,14 @@ public class AccountInviteService {
   private static final int TOKEN_BYTES = 32;
   private static final long DEFAULT_EXPIRY_DAYS = 30L;
   private static final SecureRandom RANDOM = new SecureRandom();
+  private static final List<AccountInviteStatus> ACTIVE_TENANT_INVITE_STATUSES =
+      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull TenantService tenantService;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -47,6 +55,12 @@ public class AccountInviteService {
     }
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
+    }
+    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
+        && command.tenantId() != null
+        && isTenantIdTaken(command.tenantId())) {
+      // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
+      throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
     }
 
     LocalDateTime now = LocalDateTime.now();
@@ -277,6 +291,25 @@ public class AccountInviteService {
             .build();
     delivery = deliveryRepository.save(delivery);
     return new InviteSendResult(invite, delivery, rawToken, acceptUrl);
+  }
+
+  private boolean isTenantIdTaken(Long tenantId) {
+    if (tenantExists(tenantId)) {
+      return true;
+    }
+    return accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
+        tenantId, AccountInviteTargetRole.TENANT_ADMIN, ACTIVE_TENANT_INVITE_STATUSES);
+  }
+
+  private boolean tenantExists(Long tenantId) {
+    try {
+      return tenantService.getRestrictedTenantData(tenantId) != null;
+    } catch (HttpClientErrorException exception) {
+      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
+        return false;
+      }
+      throw exception;
+    }
   }
 
   private AccountInvite findInvite(Long inviteId) {

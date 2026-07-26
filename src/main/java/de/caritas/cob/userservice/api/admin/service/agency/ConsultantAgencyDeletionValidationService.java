@@ -18,10 +18,12 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.function.Predicate;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ConsultantAgencyDeletionValidationService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -35,13 +37,24 @@ public class ConsultantAgencyDeletionValidationService {
    */
   public void validateAndMarkForDeletion(ConsultantAgency consultantAgency) {
     if (isTheLastConsultantInAgency(consultantAgency)) {
-      if (isAgencyStillActive(consultantAgency)) {
-        throw new CustomValidationHttpStatusException(
-            CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE);
-      }
-      if (hasOpenEnquiries(consultantAgency)) {
-        throw new CustomValidationHttpStatusException(
-            CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES);
+      AgencyDTO agency = this.agencyService.getAgencyWithoutCaching(consultantAgency.getAgencyId());
+      if (isNull(agency)) {
+        // Orphaned relation (#86): the agency no longer exists, so it can neither be active nor
+        // accept enquiries. It must not block consultant deletion — soft-delete the relation.
+        log.warn(
+            "Agency {} referenced by consultant {} no longer exists - skipping agency guards and"
+                + " soft-deleting the orphaned relation",
+            consultantAgency.getAgencyId(),
+            consultantAgency.getConsultant().getId());
+      } else {
+        if (isFalse(agency.getOffline())) {
+          throw new CustomValidationHttpStatusException(
+              CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE);
+        }
+        if (hasOpenEnquiries(consultantAgency)) {
+          throw new CustomValidationHttpStatusException(
+              CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES);
+        }
       }
     }
     consultantAgency.setDeleteDate(nowInUtc());
@@ -59,11 +72,6 @@ public class ConsultantAgencyDeletionValidationService {
   private Predicate<ConsultantAgency> sameConsultantAgencyRelation(
       ConsultantAgency consultantAgency) {
     return relation -> relation.equals(consultantAgency);
-  }
-
-  private boolean isAgencyStillActive(ConsultantAgency consultantAgency) {
-    AgencyDTO agency = this.agencyService.getAgencyWithoutCaching(consultantAgency.getAgencyId());
-    return isFalse(agency.getOffline());
   }
 
   private boolean hasOpenEnquiries(ConsultantAgency consultantAgency) {

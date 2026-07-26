@@ -141,6 +141,23 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
+  public void sendLiveDirectMessageEventToUsers_Should_sendToAllUsers_When_noRequestContextIsBound()
+      throws ApiException {
+    // Called from the Matrix sync-loop background thread there is no web request, so the
+    // request-scoped AuthenticatedUser proxy throws. The event must still go out (to
+    // everyone — without an initiator there is nobody to exclude).
+    List<String> userIds = asList("id1", "id2");
+    when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
+    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.authenticatedUser.getUserId())
+        .thenThrow(new IllegalStateException("No thread-bound request found"));
+
+    this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
+
+    verify(this.liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(userIds));
+  }
+
+  @Test
   public void sendLiveDirectMessageEventToUsers_Should_sendNothing_When_noIdsAreProvided() {
     when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
 
@@ -173,6 +190,33 @@ public class LiveEventNotificationServiceTest {
     ArgumentCaptor<LiveEventMessage> captor = ArgumentCaptor.forClass(LiveEventMessage.class);
     verify(liveControllerApi, times(1)).sendLiveEvent(captor.capture());
     assertEquals(EventType.NEW_ANONYMOUS_ENQUIRY, captor.getValue().getEventType());
+  }
+
+  // WP-06 Activity Timeline: single-recipient live refresh nudge fired when an event_notification
+  // is persisted, so the Activity Timeline updates in real time instead of on the slow fallback
+  // poll. Reuses DIRECT_MESSAGE (no new live-service enum), carries only the recipient user id.
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_sendDirectMessageEventForRecipient()
+      throws ApiException {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("recipient-1");
+
+    verify(this.liveControllerApi, times(1))
+        .sendLiveEvent(
+            new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList("recipient-1")));
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsBlank() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("  ");
+
+    verifyNoInteractions(this.liveControllerApi);
+  }
+
+  @Test
+  public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsNull() {
+    this.liveEventNotificationService.sendEventNotificationCreatedEventToUser(null);
+
+    verifyNoInteractions(this.liveControllerApi);
   }
 
   @Test

@@ -56,7 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional(propagation = Propagation.NEVER)
@@ -112,7 +112,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
+    agencyDTO.setTenantId(1L);
     when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -154,8 +156,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
     when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
-    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0);
+    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
     when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
 

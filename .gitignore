@@ -4,6 +4,7 @@
 *.bak
 cookies.txt
 /node_modules
+/.understand-anything/
 
 ### STS ###
 .apt_generated
@@ -39,6 +40,10 @@ consultants-import.txt*
 
 ### Mac files ###
 .DS_Store
+
+### Python test helpers ###
+__pycache__/
+*.py[cod]
 
 #local helper files
 *localdev*

@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.User;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -86,6 +87,11 @@ public class UserServiceMapper {
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
     map.put("chatUserId", consultant.getRocketChatId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
+    map.put("publicSlug", consultant.getPublicSlug());
+    map.put("pendingPublicSlug", consultant.getPendingPublicSlug());
+    map.put(
+        "publicSlugStatus",
+        consultant.getPublicSlugStatus() != null ? consultant.getPublicSlugStatus().name() : null);
 
     var displayName =
         additionalMap.containsKey("displayName")
@@ -104,7 +110,7 @@ public class UserServiceMapper {
       List<AgencyDTO> agencyDTOS,
       List<ConsultantAgencyBase> consultantAgencies,
       Map<Long, String> tenantIdsToNameMap,
-      Set<String> idsWithOtherIdentity) {
+      Map<String, List<String>> otherIdentityTypesById) {
 
     var agencyLookupMap =
         agencyDTOS.stream().collect(Collectors.toMap(AgencyDTO::getId, Function.identity()));
@@ -124,11 +130,20 @@ public class UserServiceMapper {
               nonNull(fullConsultant)
                   ? mapOf(fullConsultant, agencyLookupMap, consultantAgencyLookupMap)
                   : new ArrayList<Map<String, Object>>();
-          var hasOtherIdentity =
-              nonNull(idsWithOtherIdentity)
-                  && idsWithOtherIdentity.contains(consultantBase.getId());
+          var otherIdentityTypes =
+              nonNull(otherIdentityTypesById)
+                  ? otherIdentityTypesById.getOrDefault(
+                      consultantBase.getId(), Collections.<String>emptyList())
+                  : Collections.<String>emptyList();
+          var hasOtherIdentity = !otherIdentityTypes.isEmpty();
           var consultantMap =
-              mapOf(consultantBase, fullConsultant, agencies, tenantIdsToNameMap, hasOtherIdentity);
+              mapOf(
+                  consultantBase,
+                  fullConsultant,
+                  agencies,
+                  tenantIdsToNameMap,
+                  hasOtherIdentity,
+                  otherIdentityTypes);
           consultants.add(consultantMap);
         });
 
@@ -252,7 +267,8 @@ public class UserServiceMapper {
       Consultant fullConsultant,
       List<Map<String, Object>> agencies,
       Map<Long, String> tenantIdsToNameMap,
-      boolean hasOtherIdentity) {
+      boolean hasOtherIdentity,
+      List<String> otherIdentityTypes) {
     var status =
         isNull(fullConsultant) || isNull(fullConsultant.getStatus())
             ? ConsultantStatus.ERROR.toString()
@@ -271,6 +287,15 @@ public class UserServiceMapper {
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
+    map.put("publicSlug", nonNull(fullConsultant) ? fullConsultant.getPublicSlug() : null);
+    map.put(
+        "pendingPublicSlug",
+        nonNull(fullConsultant) ? fullConsultant.getPendingPublicSlug() : null);
+    map.put(
+        "publicSlugStatus",
+        nonNull(fullConsultant) && nonNull(fullConsultant.getPublicSlugStatus())
+            ? fullConsultant.getPublicSlugStatus().name()
+            : null);
     map.put(
         "createdAt",
         nonNull(fullConsultant) && nonNull(fullConsultant.getCreateDate())
@@ -295,6 +320,9 @@ public class UserServiceMapper {
             ? tenantIdsToNameMap.get(tenantId)
             : StringUtils.EMPTY);
     map.put("hasOtherIdentity", hasOtherIdentity);
+    map.put(
+        "otherIdentityTypes",
+        nonNull(otherIdentityTypes) ? otherIdentityTypes : Collections.emptyList());
     return map;
   }
 

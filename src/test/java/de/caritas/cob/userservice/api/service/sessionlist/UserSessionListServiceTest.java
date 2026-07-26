@@ -27,11 +27,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
 import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -155,6 +157,7 @@ class UserSessionListServiceTest {
     var chatResponse = USER_CHAT_RESPONSE_DTO_LIST.getFirst();
     when(chatService.getChatSessionsByGroupIds(Set.of(RC_GROUP_ID_4)))
         .thenReturn(List.of(chatResponse));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chatResponse));
     var roomInformation =
         RocketChatRoomInformation.builder()
             .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
@@ -170,6 +173,79 @@ class UserSessionListServiceTest {
     assertEquals(List.of(chatResponse), result);
     verify(sessionService, Mockito.never())
         .getSessionsByUserAndGroupIds(Mockito.anyString(), Mockito.anySet(), Mockito.anySet());
+  }
+
+  @Test
+  void retrieveSessionsForGroupIds_Should_NotExposeUnassignedInternalChat() {
+    var internalChat = new UserChatDTO();
+    internalChat.setId(1087L);
+    internalChat.setGroupId("!internal:matrix.example");
+    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
+    internalChat.setStartDateWithTime(java.time.LocalDateTime.now());
+    var internalResponse = new UserSessionResponseDTO();
+    internalResponse.setChat(internalChat);
+    when(chatService.getChatSessionsByGroupIds(Set.of("!internal:matrix.example")))
+        .thenReturn(List.of(internalResponse));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
+        .thenReturn(
+            RocketChatRoomInformation.builder()
+                .userRooms(List.of())
+                .readMessages(emptyMap())
+                .lastMessagesRoom(emptyMap())
+                .build());
+
+    var result =
+        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
+            USER_ID, List.of("!internal:matrix.example"), RC_CREDENTIALS, Set.of("user"));
+
+    assertTrue(result.isEmpty());
+  }
+
+  @Test
+  void retrieveChatsForUserAndChatIds_Should_NotExposeUnassignedInternalChat() {
+    var internalChat = new UserChatDTO();
+    internalChat.setId(1087L);
+    internalChat.setGroupId("!internal:matrix.example");
+    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
+    var internalResponse = new UserSessionResponseDTO();
+    internalResponse.setChat(internalChat);
+    when(chatService.getChatSessionsByIds(Set.of(1087L))).thenReturn(List.of(internalResponse));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
+        .thenReturn(RocketChatRoomInformation.builder().build());
+
+    var result =
+        userSessionListService.retrieveChatsForUserAndChatIds(
+            USER_ID, List.of(1087L), RC_CREDENTIALS);
+
+    assertTrue(result.isEmpty());
+  }
+
+  @Test
+  void retrieveChatsForUserAndChatIds_Should_KeepPublicSelfHelpDeepLink() {
+    var selfHelpChat = new UserChatDTO();
+    selfHelpChat.setId(1088L);
+    selfHelpChat.setGroupId("!self-help:matrix.example");
+    selfHelpChat.setConversationType(ConversationType.SELF_HELP);
+    selfHelpChat.setStartDateWithTime(java.time.LocalDateTime.now());
+    var selfHelpResponse = new UserSessionResponseDTO();
+    selfHelpResponse.setChat(selfHelpChat);
+    when(chatService.getChatSessionsByIds(Set.of(1088L))).thenReturn(List.of(selfHelpResponse));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
+    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
+        .thenReturn(
+            RocketChatRoomInformation.builder()
+                .userRooms(List.of())
+                .readMessages(emptyMap())
+                .lastMessagesRoom(emptyMap())
+                .build());
+
+    var result =
+        userSessionListService.retrieveChatsForUserAndChatIds(
+            USER_ID, List.of(1088L), RC_CREDENTIALS);
+
+    assertEquals(List.of(selfHelpResponse), result);
   }
 
   @Test

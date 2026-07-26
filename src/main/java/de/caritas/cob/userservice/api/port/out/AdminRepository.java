@@ -71,6 +71,8 @@ public interface AdminRepository
 
   List<Admin> findAllByIdIn(Set<String> adminIds);
 
-  @Query("SELECT a.id FROM Admin a WHERE a.id IN :ids")
-  Set<String> findExistingIdsByIdIn(@Param("ids") Collection<String> ids);
+  Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);
+
+  @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
+  List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);
 }

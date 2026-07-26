@@ -19,7 +19,7 @@ import org.springframework.test.context.TestPropertySource;
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserChatRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
@@ -73,6 +73,7 @@ class UserChatRepositoryIT {
     chat.setConsultingTypeId(easyRandom.nextInt(128));
     chat.setDuration(easyRandom.nextInt(32768));
     chat.setMaxParticipants(easyRandom.nextInt(128));
+    chat.setSourceLanguage("de");
     chat.setUpdateDate(CustomLocalDateTime.nowInUtc());
     return chatRepository.save(chat);
   }

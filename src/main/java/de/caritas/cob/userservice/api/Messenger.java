@@ -52,6 +52,9 @@ public class Messenger implements Messaging {
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
 
+  @Value("${rocket-chat.enabled:false}")
+  private boolean rocketChatEnabled;
+
   @Override
   public boolean banUserFromChat(String adviceSeekerId, long chatId) {
     var adviceSeeker = userRepository.findByUserIdAndDeleteDateIsNull(adviceSeekerId).orElseThrow();
@@ -119,11 +122,14 @@ public class Messenger implements Messaging {
 
   @Override
   public boolean getAvailability(String consultantId) {
-    // Skip RocketChat integration for now due to configuration issues
-    log.warn(
-        "Skipping RocketChat availability check for consultant {} due to configuration issues",
-        consultantId);
-    return true; // Default to available
+    if (!rocketChatEnabled) {
+      return true;
+    }
+
+    return consultantRepository
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .flatMap(consultant -> messageClient.isAvailable(consultant.getRocketChatId()))
+        .orElse(false);
   }
 
   @Override
@@ -269,7 +275,7 @@ public class Messenger implements Messaging {
             session -> {
               session.setIsConsultantDirectlySet(true);
               var updatedSession = sessionRepository.save(session);
-              return updatedSession.getIsConsultantDirectlySet();
+              return Boolean.TRUE.equals(updatedSession.getIsConsultantDirectlySet());
             })
         .orElse(false);
   }

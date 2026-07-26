@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -26,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
@@ -55,6 +59,7 @@ class CaseHandoverServiceTest {
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   private Consultant requester;
   private Consultant previous;
@@ -104,6 +109,7 @@ class CaseHandoverServiceTest {
         .thenReturn(List.of());
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(matrixSynapseService.leaveRoom(anyString(), anyString())).thenReturn(true);
   }
 
   @Test
@@ -130,12 +136,57 @@ class CaseHandoverServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
         .thenReturn("requester-token");
     when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+    when(matrixSynapseService.leaveRoom("!room:matrix", "previous-token")).thenReturn(true);
 
     caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
 
     verify(matrixSynapseService)
         .inviteUserToRoom("!room:matrix", "@requester:matrix", "previous-token");
     verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
+    verify(matrixSynapseService).leaveRoom("!room:matrix", "previous-token");
+  }
+
+  @Test
+  void requestAccess_doesNotActivateRequester_WhenPreviousConsultantCannotLeaveMatrixRoom()
+      throws Exception {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+    when(matrixSynapseService.leaveRoom("!room:matrix", "previous-token")).thenReturn(false);
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            caseHandoverService.requestAccess(
+                123L, "OTHER_EMERGENCY", "Colleague is unavailable."));
+
+    assertEquals(previous, session.getConsultant());
+    verify(sessionRepository, never()).save(session);
+  }
+
+  @Test
+  void requestAccess_postsCaseHandoverSystemMessage_WhenGranted() throws Exception {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn("token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "token")).thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(
+            org.mockito.ArgumentMatchers.eq(session),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Other emergency"),
+            org.mockito.ArgumentMatchers.eq("Colleague is unavailable."),
+            org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"));
   }
 
   @Test
@@ -261,6 +312,27 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
     verify(sessionRepository).save(session);
+  }
+
+  @Test
+  void resolveClientConsent_describesOwnershipTransferInsteadOfTemporarySupervision() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(
+            org.mockito.ArgumentMatchers.eq(session),
+            org.mockito.ArgumentMatchers.eq("Requesting Counsellor"),
+            org.mockito.ArgumentMatchers.eq("Counsellor asked for advice"),
+            org.mockito.ArgumentMatchers.eq("Need a second opinion."),
+            description.capture());
+    assertTrue(description.getValue().contains("hat deinen Fall übernommen"));
+    assertFalse(description.getValue().contains("zeitweise mitlesen"));
+    assertFalse(description.getValue().contains("bleibt für dich zuständig"));
   }
 
   @Test

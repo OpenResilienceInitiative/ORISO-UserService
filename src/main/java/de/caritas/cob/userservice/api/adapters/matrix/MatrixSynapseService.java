@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -37,7 +38,7 @@ import org.springframework.web.util.UriUtils;
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-public class MatrixSynapseService {
+public class MatrixSynapseService implements MatrixUserClient {
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -248,6 +249,13 @@ public class MatrixSynapseService {
     }
   }
 
+  @Override
+  public String createUserId(String username, String password, String displayName)
+      throws MatrixCreateUserException {
+    var response = createUser(username, password, displayName);
+    return response == null || response.getBody() == null ? null : response.getBody().getUserId();
+  }
+
   /**
    * Creates a new ADMIN user in Matrix Synapse.
    *
@@ -311,6 +319,52 @@ public class MatrixSynapseService {
    */
   public String getAdminToken() {
     return getAdminAccessToken();
+  }
+
+  /**
+   * Checks whether a Matrix user with the given localpart already exists on this homeserver.
+   *
+   * <p>Matrix user IDs are global (not per-tenant), so this is the authoritative occupancy check
+   * for anonymous usernames: a localpart can be orphaned in Matrix (present here but absent from
+   * MariaDB and Keycloak, e.g. left behind by a rolled-back or externally cleaned-up account), and
+   * such an orphan still makes {@code createUser} fail with {@code M_USER_IN_USE}.
+   *
+   * @param localpart the Matrix localpart (the part before {@code :server}); it is lowercased,
+   *     because Synapse stores localparts in lower case
+   * @return {@code true} if the user exists, {@code false} if it does not (HTTP 404) or if
+   *     existence could not be determined (so callers still make forward progress rather than
+   *     looping forever when the admin API is unavailable)
+   */
+  public boolean userExists(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return false;
+    }
+    String matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user existence check of {}", matrixUserId);
+        return false;
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return false;
+    } catch (Exception ex) {
+      log.warn("Could not check Matrix user existence for {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
   }
 
   /**
@@ -530,6 +584,7 @@ public class MatrixSynapseService {
    * @param displayName the new display name
    * @return true if successful, false otherwise
    */
+  @Override
   public boolean updateUserDisplayName(String matrixUserId, String displayName) {
     try {
       // Get admin token
@@ -835,6 +890,56 @@ public class MatrixSynapseService {
    */
   public boolean joinRoom(String roomId, String accessToken) {
     return matrixRoomClient.joinRoom(roomId, accessToken);
+  }
+
+  /**
+   * Ensures the technical Matrix admin is a member of the given room. The event-listener /sync loop
+   * runs with the admin account and only receives events for rooms the admin has joined — without
+   * this membership, message notifications for the room can never fire.
+   *
+   * <p>Invite-only session rooms reject a direct admin join, so an existing member is impersonated
+   * (Synapse admin login-as-user) to invite the admin first.
+   *
+   * @param roomId the Matrix room ID
+   * @param memberMatrixUserId full Matrix ID of a current room member used for the invite fallback
+   * @return true when the admin is (now) a member of the room
+   */
+  public boolean ensureAdminInRoom(String roomId, String memberMatrixUserId) {
+    if (roomId == null || roomId.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      return false;
+    }
+
+    // Direct join succeeds for public rooms or when the admin is already invited/joined.
+    if (joinRoom(roomId, adminToken)) {
+      return true;
+    }
+
+    // Invite-only room: impersonate a current member to invite the admin, then join.
+    if (memberMatrixUserId == null || memberMatrixUserId.isBlank()) {
+      return false;
+    }
+    String memberToken = loginAsUserAccessToken(memberMatrixUserId);
+    if (memberToken == null) {
+      log.warn(
+          "Could not impersonate {} to invite the Matrix admin into {}",
+          memberMatrixUserId,
+          roomId);
+      return false;
+    }
+
+    String adminMatrixId =
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+    try {
+      inviteUserToRoom(roomId, adminMatrixId, memberToken);
+    } catch (Exception e) {
+      log.warn(
+          "Inviting Matrix admin {} into {} failed: {}", adminMatrixId, roomId, e.getMessage());
+    }
+    return joinRoom(roomId, adminToken);
   }
 
   /**
@@ -1365,6 +1470,14 @@ public class MatrixSynapseService {
   public boolean setUserPowerLevel(
       String roomId, String userId, int powerLevel, String accessToken) {
     return matrixRoomClient.setUserPowerLevel(roomId, userId, powerLevel, accessToken);
+  }
+
+  /**
+   * Raises the room-wide {@code events_default} power level so ordinary members can no longer post
+   * (protocol-level read-only, US#473 team-discussion archive).
+   */
+  public boolean setRoomEventsDefaultPowerLevel(String roomId, int powerLevel, String accessToken) {
+    return matrixRoomClient.setRoomEventsDefaultPowerLevel(roomId, powerLevel, accessToken);
   }
 
   /**

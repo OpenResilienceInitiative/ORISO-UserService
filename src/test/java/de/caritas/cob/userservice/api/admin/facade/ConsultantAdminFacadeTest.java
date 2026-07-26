@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
@@ -99,6 +100,18 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
+  void createNewConsultant_Should_RejectUnauthorizedAgenciesBeforeCreatingIdentity() {
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L));
+    CreateConsultantDTO dto = new CreateConsultantDTO().agencyIds(List.of(2L));
+
+    assertThrows(ForbiddenException.class, () -> consultantAdminFacade.createNewConsultant(dto));
+
+    verify(consultantAdminService, never()).createNewConsultant(any());
+  }
+
+  @Test
   void findConsultantAgencies_Should_useConsultantAgencyAdminServiceCorrectly() {
     this.consultantAdminFacade.findConsultantAgencies(null);
 
@@ -147,6 +160,45 @@ class ConsultantAdminFacadeTest {
     this.consultantAdminFacade.markConsultantForDeletion("1", true);
 
     verify(this.consultantAdminService).markConsultantForDeletion("1", true);
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_throwForbidden_When_restrictedAdminSharesNoAgency() {
+    // DEL-GUARD-01: a Beratungsstellen-Admin must not delete consultants of foreign agencies.
+    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
+    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
+        .thenReturn(List.of(3L));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> this.consultantAdminFacade.markConsultantForDeletion("consultant-1", false));
+
+    verify(this.consultantAdminService, never()).markConsultantForDeletion(any(), any());
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_delegate_When_restrictedAdminSharesAnAgency() {
+    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
+    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
+        .thenReturn(List.of(2L, 3L));
+
+    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", true);
+
+    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", true);
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_skipScopeCheck_When_callerIsNotRestricted() {
+    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+
+    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", false);
+
+    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", false);
+    Mockito.verifyNoInteractions(this.adminUserFacade);
   }
 
   @Test

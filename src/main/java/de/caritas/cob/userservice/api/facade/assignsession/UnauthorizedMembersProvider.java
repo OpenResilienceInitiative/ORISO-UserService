@@ -2,12 +2,11 @@ package de.caritas.cob.userservice.api.facade.assignsession;
 
 import static java.util.Objects.nonNull;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
+import de.caritas.cob.userservice.api.exception.MessageClientException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
@@ -28,7 +27,7 @@ public class UnauthorizedMembersProvider {
   private String rocketChatSystemUserId;
 
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  private final @NonNull SessionAssignmentChatGateway sessionAssignmentChatGateway;
 
   /**
    * Obtains a list of {@link Consultant}s which are not authorized to view the given Rocket.Chat
@@ -37,7 +36,7 @@ public class UnauthorizedMembersProvider {
    * @param rcGroupId the Rocket.Chat group ID
    * @param session {@link Session}
    * @param consultant {@link Consultant}
-   * @param memberList list of {@link GroupMemberDTO} containing the current members of the group
+   * @param memberIds current stable chat member identifiers
    * @return list of {@link Consultant}s to be removed
    */
   @Transactional
@@ -45,9 +44,9 @@ public class UnauthorizedMembersProvider {
       String rcGroupId,
       Session session,
       Consultant consultant,
-      List<GroupMemberDTO> memberList,
+      List<String> memberIds,
       Consultant consultantToKeep) {
-    if (memberList.isEmpty()) {
+    if (memberIds.isEmpty()) {
       return List.of();
     }
     var authorizedMembers = obtainAuthorizedMembers(rcGroupId, session, consultant);
@@ -55,8 +54,7 @@ public class UnauthorizedMembersProvider {
       authorizedMembers.add(consultantToKeep.getRocketChatId());
     }
 
-    return memberList.stream()
-        .map(GroupMemberDTO::get_id)
+    return memberIds.stream()
         .filter(memberRcId -> !authorizedMembers.contains(memberRcId))
         .map(consultantService::getConsultantByRcUserId)
         .filter(Optional::isPresent)
@@ -66,9 +64,9 @@ public class UnauthorizedMembersProvider {
 
   @Transactional
   public List<Consultant> obtainConsultantsToRemove(
-      String rcGroupId, Session session, Consultant consultant, List<GroupMemberDTO> memberList) {
+      String rcGroupId, Session session, Consultant consultant, List<String> memberIds) {
 
-    return obtainConsultantsToRemove(rcGroupId, session, consultant, memberList, null);
+    return obtainConsultantsToRemove(rcGroupId, session, consultant, memberIds, null);
   }
 
   private List<String> obtainAuthorizedMembers(
@@ -89,8 +87,8 @@ public class UnauthorizedMembersProvider {
 
   private void addTechnicalUsers(List<String> authorizedMembers) {
     try {
-      authorizedMembers.add(rocketChatCredentialsProvider.getTechnicalUser().getRocketChatUserId());
-    } catch (RocketChatUserNotInitializedException e) {
+      authorizedMembers.add(sessionAssignmentChatGateway.technicalUserId());
+    } catch (MessageClientException e) {
       throw new InternalServerErrorException("Rocket.Chat technical user not initialized.");
     }
     authorizedMembers.add(rocketChatSystemUserId);

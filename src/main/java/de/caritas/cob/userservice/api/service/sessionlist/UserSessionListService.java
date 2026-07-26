@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
 import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
 import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -81,7 +82,7 @@ public class UserSessionListService {
       Set<String> roles) {
 
     var groupIds = new HashSet<>(rcGroupIds);
-    var chats = chatService.getChatSessionsByGroupIds(groupIds);
+    var chats = filterChatsVisibleToUser(userId, chatService.getChatSessionsByGroupIds(groupIds));
     var chatGroupIds =
         chats.stream()
             .map(UserSessionResponseDTO::getChat)
@@ -124,13 +125,35 @@ public class UserSessionListService {
   }
 
   public List<UserSessionResponseDTO> retrieveChatsForUserAndChatIds(
-      List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
+      String userId, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     var uniqueChatIds = new HashSet<>(chatIds);
-    var chats = chatService.getChatSessionsByIds(uniqueChatIds);
+    var chats = filterChatsVisibleToUser(userId, chatService.getChatSessionsByIds(uniqueChatIds));
     var rocketChatRoomInformation =
         rocketChatRoomInformationProvider.retrieveRocketChatInformation(rocketChatCredentials);
     return updateUserChatValues(
         chats, rocketChatRoomInformation, rocketChatCredentials.getRocketChatUserId());
+  }
+
+  private List<UserSessionResponseDTO> filterChatsVisibleToUser(
+      String userId, List<UserSessionResponseDTO> candidates) {
+    var assignedChatIds =
+        chatService.getChatsForUserId(userId).stream()
+            .map(UserSessionResponseDTO::getChat)
+            .filter(java.util.Objects::nonNull)
+            .map(UserChatDTO::getId)
+            .collect(Collectors.toSet());
+
+    return candidates.stream()
+        .filter(UserSessionListService::hasChat)
+        .filter(
+            candidate ->
+                candidate.getChat().getConversationType() == ConversationType.SELF_HELP
+                    || assignedChatIds.contains(candidate.getChat().getId()))
+        .toList();
+  }
+
+  private static boolean hasChat(UserSessionResponseDTO candidate) {
+    return candidate != null && candidate.getChat() != null;
   }
 
   private List<UserSessionResponseDTO> mergeUserSessionsAndChats(

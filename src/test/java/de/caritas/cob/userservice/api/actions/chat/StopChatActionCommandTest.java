@@ -40,6 +40,9 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import java.util.List;
 import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.BeforeEach;
@@ -305,6 +308,7 @@ class StopChatActionCommandTest {
             mock(RocketChatCredentialsProvider.class),
             mock(RocketChatConfig.class),
             mock(RocketChatMapper.class));
+    var membershipService = mock(GroupChatMembershipService.class);
     var command =
         new StopChatActionCommand(
             chatService,
@@ -312,9 +316,15 @@ class StopChatActionCommandTest {
             new ChatReCreator(
                 chatService,
                 matrixSynapseService,
-                new MatrixChatShutdownService(matrixSynapseService)),
+                new MatrixChatShutdownService(matrixSynapseService),
+                membershipService),
             new MatrixChatShutdownService(matrixSynapseService));
     var repetitiveChat = buildRepetitiveChatWithMatrixRoom();
+    when(membershipService.resolveMatrixRoomId(repetitiveChat)).thenReturn(MATRIX_ROOM_ID);
+    when(membershipService.resolveHumanMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner", true)));
 
     var newRoomResponse = new MatrixCreateRoomResponseDTO();
     newRoomResponse.setRoomId(NEW_MATRIX_ROOM_ID);
@@ -343,6 +353,7 @@ class StopChatActionCommandTest {
             mock(RocketChatCredentialsProvider.class),
             mock(RocketChatConfig.class),
             mock(RocketChatMapper.class));
+    var membershipService = mock(GroupChatMembershipService.class);
     var command =
         new StopChatActionCommand(
             chatService,
@@ -350,9 +361,15 @@ class StopChatActionCommandTest {
             new ChatReCreator(
                 chatService,
                 matrixSynapseService,
-                new MatrixChatShutdownService(matrixSynapseService)),
+                new MatrixChatShutdownService(matrixSynapseService),
+                membershipService),
             new MatrixChatShutdownService(matrixSynapseService));
     var repetitiveChat = buildRepetitiveChatWithMatrixRoom();
+    when(membershipService.resolveMatrixRoomId(repetitiveChat)).thenReturn(MATRIX_ROOM_ID);
+    when(membershipService.resolveHumanMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner", true)));
 
     when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
         .thenThrow(new MatrixCreateRoomException("Synapse unavailable"));

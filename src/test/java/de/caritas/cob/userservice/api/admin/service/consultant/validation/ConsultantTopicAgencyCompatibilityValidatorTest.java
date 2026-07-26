@@ -70,6 +70,20 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   }
 
   @Test
+  void validateGrantTopicsAgainstSelectedAgencies_RejectsForeignAgencyWithoutTopics() {
+    when(agencyService.getAgenciesWithoutCaching(List.of(10L)))
+        .thenReturn(List.of(agency(10L, 2L, false, List.of())));
+
+    var exception =
+        assertThrows(
+            BadRequestException.class,
+            () ->
+                validator.validateGrantTopicsAgainstSelectedAgencies(List.of(), List.of(10L), 1L));
+
+    assertTrue(exception.getMessage().contains("tenant 1"));
+  }
+
+  @Test
   void validateCurrentTopicsAgainstSelectedAgencies_UsesPersistedConsultantTopics() {
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant-id"))
         .thenReturn(Optional.of(consultant("consultant-id", 1L)));

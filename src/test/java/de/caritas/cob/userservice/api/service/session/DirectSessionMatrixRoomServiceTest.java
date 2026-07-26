@@ -7,9 +7,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -18,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,7 +24,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -38,7 +35,7 @@ class DirectSessionMatrixRoomServiceTest {
 
   @InjectMocks private DirectSessionMatrixRoomService service;
 
-  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionService sessionService;
   @Mock private UserHelper userHelper;
@@ -65,13 +62,11 @@ class DirectSessionMatrixRoomServiceTest {
     session.setId(1L);
     session.setUser(user);
 
-    var roomResponse = new MatrixCreateRoomResponseDTO();
-    roomResponse.setRoomId(ROOM_ID);
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
-        .thenReturn(ResponseEntity.ok(roomResponse));
-    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn("con-tok");
-    when(matrixSynapseService.loginAsUserAccessToken(USER_MXID)).thenReturn("user-tok");
-    when(matrixSynapseService.joinRoom(any(), any())).thenReturn(true);
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID)))
+        .thenReturn(ROOM_ID);
+    when(sessionRoomGateway.loginAsUser(CONSULTANT_MXID)).thenReturn("con-tok");
+    when(sessionRoomGateway.loginAsUser(USER_MXID)).thenReturn("user-tok");
+    when(sessionRoomGateway.joinRoom(any(), any())).thenReturn(true);
   }
 
   // ---------------------------------------------------------------------------
@@ -82,14 +77,14 @@ class DirectSessionMatrixRoomServiceTest {
   void provisionRoomForDirectSession_Should_doNothing_When_sessionNull() throws Exception {
     service.provisionRoomForDirectSession(null, consultant);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
   }
 
   @Test
   void provisionRoomForDirectSession_Should_doNothing_When_consultantNull() throws Exception {
     service.provisionRoomForDirectSession(session, null);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -98,7 +93,7 @@ class DirectSessionMatrixRoomServiceTest {
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -107,7 +102,7 @@ class DirectSessionMatrixRoomServiceTest {
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -119,7 +114,7 @@ class DirectSessionMatrixRoomServiceTest {
       throws Exception {
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).createUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createUser(any(), any(), any());
   }
 
   @Test
@@ -127,12 +122,10 @@ class DirectSessionMatrixRoomServiceTest {
       throws Exception {
     consultant.setMatrixUserId(null);
     when(userHelper.getRandomPassword()).thenReturn("pw");
-    var userResponse = new MatrixCreateUserResponseDTO();
-    userResponse.setUserId(CONSULTANT_MXID);
-    when(matrixSynapseService.createUser("consultant", "pw", "First Last"))
-        .thenReturn(ResponseEntity.ok(userResponse));
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
-        .thenReturn(ResponseEntity.ok(matrixRoomResponse()));
+    when(sessionRoomGateway.createUser("consultant", "pw", "First Last"))
+        .thenReturn(CONSULTANT_MXID);
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID)))
+        .thenReturn(ROOM_ID);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -145,7 +138,7 @@ class DirectSessionMatrixRoomServiceTest {
       throws Exception {
     consultant.setMatrixUserId(null);
     when(userHelper.getRandomPassword()).thenReturn("pw");
-    when(matrixSynapseService.createUser(any(), any(), any())).thenReturn(ResponseEntity.ok(null));
+    when(sessionRoomGateway.createUser(any(), any(), any())).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -158,7 +151,7 @@ class DirectSessionMatrixRoomServiceTest {
       throws Exception {
     consultant.setMatrixUserId(null);
     when(userHelper.getRandomPassword()).thenReturn("pw");
-    when(matrixSynapseService.createUser(any(), any(), any()))
+    when(sessionRoomGateway.createUser(any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("boom"));
 
     service.provisionRoomForDirectSession(session, consultant);
@@ -176,7 +169,7 @@ class DirectSessionMatrixRoomServiceTest {
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
   }
 
   @Test
@@ -186,7 +179,7 @@ class DirectSessionMatrixRoomServiceTest {
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).createRoomAsMatrixUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -196,8 +189,7 @@ class DirectSessionMatrixRoomServiceTest {
   @Test
   void provisionRoomForDirectSession_Should_logErrorAndReturn_When_createRoomResponseNull()
       throws Exception {
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
-        .thenReturn(null);
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID))).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -207,8 +199,7 @@ class DirectSessionMatrixRoomServiceTest {
   @Test
   void provisionRoomForDirectSession_Should_logErrorAndReturn_When_createRoomBodyNull()
       throws Exception {
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
-        .thenReturn(ResponseEntity.ok(null));
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID))).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -217,8 +208,7 @@ class DirectSessionMatrixRoomServiceTest {
 
   @Test
   void provisionRoomForDirectSession_Should_logErrorAndReturn_When_roomIdNull() throws Exception {
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
-        .thenReturn(ResponseEntity.ok(new MatrixCreateRoomResponseDTO()));
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID))).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -236,45 +226,56 @@ class DirectSessionMatrixRoomServiceTest {
 
     assertThat(session.getMatrixRoomId()).isEqualTo(ROOM_ID);
     verify(sessionService).saveSession(session);
-    verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, USER_MXID, "con-tok");
-    verify(matrixSynapseService).joinRoom(ROOM_ID, "user-tok");
-    verify(matrixSynapseService).joinRoom(ROOM_ID, "con-tok");
+    verify(sessionRoomGateway).inviteUser(ROOM_ID, USER_MXID, "con-tok");
+    verify(sessionRoomGateway).joinRoom(ROOM_ID, "user-tok");
+    verify(sessionRoomGateway).joinRoom(ROOM_ID, "con-tok");
+  }
+
+  @Test
+  void provisionRoomForDirectSession_Should_ensureAdminMembership_When_roomCreated()
+      throws Exception {
+    // The notification listener syncs as the technical admin; without membership in the
+    // freshly created room, message notifications for this session can never fire.
+    service.provisionRoomForDirectSession(session, consultant);
+
+    verify(sessionRoomGateway).ensureAdminInRoom(ROOM_ID, CONSULTANT_MXID);
   }
 
   @Test
   void provisionRoomForDirectSession_Should_logErrorAndReturn_When_consultantTokenNull()
       throws Exception {
-    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MXID)).thenReturn(null);
+    when(sessionRoomGateway.loginAsUser(CONSULTANT_MXID)).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+    verify(sessionRoomGateway, never()).inviteUser(any(), any(), any());
   }
 
   @Test
   void provisionRoomForDirectSession_Should_continue_When_inviteUserThrows() throws Exception {
-    when(matrixSynapseService.inviteUserToRoom(eq(ROOM_ID), eq(USER_MXID), any()))
-        .thenThrow(new MatrixInviteUserException("already in room"));
+    org.mockito.Mockito.doThrow(new MatrixInviteUserException("already in room"))
+        .when(sessionRoomGateway)
+        .inviteUser(eq(ROOM_ID), eq(USER_MXID), any());
 
     service.provisionRoomForDirectSession(session, consultant);
 
     // invite failure is swallowed — join attempts still proceed
-    verify(matrixSynapseService).joinRoom(ROOM_ID, "user-tok");
+    verify(sessionRoomGateway).joinRoom(ROOM_ID, "user-tok");
   }
 
   @Test
   void provisionRoomForDirectSession_Should_skipUserJoin_When_userTokenNull() throws Exception {
-    when(matrixSynapseService.loginAsUserAccessToken(USER_MXID)).thenReturn(null);
+    when(sessionRoomGateway.loginAsUser(USER_MXID)).thenReturn(null);
 
     service.provisionRoomForDirectSession(session, consultant);
 
-    verify(matrixSynapseService, never()).joinRoom(eq(ROOM_ID), eq(null));
-    verify(matrixSynapseService).joinRoom(ROOM_ID, "con-tok");
+    verify(sessionRoomGateway, never()).joinRoom(eq(ROOM_ID), eq(null));
+    verify(sessionRoomGateway).joinRoom(ROOM_ID, "con-tok");
   }
 
   @Test
   void provisionRoomForDirectSession_Should_logWarn_When_userJoinReturnsFalse() throws Exception {
-    when(matrixSynapseService.joinRoom(ROOM_ID, "user-tok")).thenReturn(false);
+    when(sessionRoomGateway.joinRoom(ROOM_ID, "user-tok")).thenReturn(false);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -284,7 +285,7 @@ class DirectSessionMatrixRoomServiceTest {
   @Test
   void provisionRoomForDirectSession_Should_notLog_When_consultantJoinReturnsFalse()
       throws Exception {
-    when(matrixSynapseService.joinRoom(ROOM_ID, "con-tok")).thenReturn(false);
+    when(sessionRoomGateway.joinRoom(ROOM_ID, "con-tok")).thenReturn(false);
 
     service.provisionRoomForDirectSession(session, consultant);
 
@@ -298,7 +299,7 @@ class DirectSessionMatrixRoomServiceTest {
   @Test
   void provisionRoomForDirectSession_Should_swallowUnexpectedException_When_createRoomThrows()
       throws Exception {
-    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), eq(CONSULTANT_MXID)))
+    when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID)))
         .thenThrow(new MatrixCreateRoomException("matrix down"));
 
     // must not propagate — the whole point is registration keeps working
@@ -314,11 +315,5 @@ class DirectSessionMatrixRoomServiceTest {
 
     service.provisionRoomForDirectSession(session, consultant);
     // no assertion beyond "did not throw" — the outer catch is the contract under test
-  }
-
-  private MatrixCreateRoomResponseDTO matrixRoomResponse() {
-    var dto = new MatrixCreateRoomResponseDTO();
-    dto.setRoomId(ROOM_ID);
-    return dto;
   }
 }

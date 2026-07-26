@@ -19,6 +19,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -29,6 +30,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +70,7 @@ class MatrixEventListenerServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
+  @Mock private ConsultantMessageStatService consultantMessageStatService;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -105,7 +108,8 @@ class MatrixEventListenerServiceTest {
         mirror,
         userRepository,
         consultantRepository,
-        sessionRepository);
+        sessionRepository,
+        consultantMessageStatService);
   }
 
   private MatrixEventListenerService newServiceWithSyncExecutor() {
@@ -126,6 +130,17 @@ class MatrixEventListenerServiceTest {
         .when(syncExecutor)
         .submit(any(Runnable.class));
     ReflectionTestUtils.setField(service, "executorService", syncExecutor);
+  }
+
+  @Test
+  void initialize_shouldNotCreateRetryThreadsWhenListenerIsDisabled() {
+    var service = newService();
+    ReflectionTestUtils.setField(service, "eventListenerEnabled", false);
+
+    service.initialize();
+
+    assertThat(ReflectionTestUtils.getField(service, "executorService")).isNull();
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test
@@ -163,13 +178,16 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
           }
         };
     ReflectionTestUtils.setField(service, "running", true);
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    service.setOutboundHttpMetrics(outboundHttpMetrics);
 
     // Two transient failures (null) then a real token: the loop must not give up on the first null.
     when(matrixSynapseService.getAdminToken()).thenReturn(null, null, "admin-token-123");
@@ -181,6 +199,7 @@ class MatrixEventListenerServiceTest {
         .isEqualTo("admin-token-123");
     // Proves it did not stop after the first null: getAdminToken was polled repeatedly.
     verify(matrixSynapseService, atLeast(3)).getAdminToken();
+    verify(outboundHttpMetrics, org.mockito.Mockito.times(2)).recordRetry("matrix", "admin-token");
   }
 
   @Test
@@ -604,7 +623,8 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -635,7 +655,8 @@ class MatrixEventListenerServiceTest {
             Optional.empty(),
             userRepository,
             consultantRepository,
-            sessionRepository) {
+            sessionRepository,
+            consultantMessageStatService) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -893,6 +914,7 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), anyBoolean(), any());
+    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 
   @Test
@@ -926,6 +948,7 @@ class MatrixEventListenerServiceTest {
             any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+    verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 
   @Test
@@ -1161,6 +1184,33 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void handleRoomMessage_shouldStillPersistNotificationAndStatistic_whenLiveOrPushSendFails() {
+    // The live STOMP push is an optimisation; the persisted feed entry is the
+    // source of truth for the Zeitstrahl. A live-send failure (e.g. the
+    // request-scoped AuthenticatedUser being unavailable on the sync-loop
+    // thread) must not prevent the notification row from being written.
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(33L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    org.mockito.Mockito.doThrow(new IllegalStateException("mobile push failed"))
+        .when(liveEventNotificationService)
+        .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+
+    var event = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-live-or-push-down");
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+    verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
+  }
+
+  @Test
   void buildRecipientSet_shouldIgnoreParticipantsWithNullIds() {
     var user = mock(User.class);
     when(user.getUserId()).thenReturn(null);
@@ -1213,6 +1263,52 @@ class MatrixEventListenerServiceTest {
               assertThat(e.getContentClass()).isEqualTo("AUDIO");
               assertThat(e.isHasAttachment()).isTrue();
             });
+  }
+
+  // ── processMatrixEvent (m.room.encrypted — E2EE rooms) ─────────────────────
+
+  @Test
+  void processMatrixEvent_shouldTreatEncryptedEventAsMessage_forE2eeRooms() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(31L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.room.encrypted");
+    event.put("sender", SENDER_MATRIX_ID);
+    event.put("event_id", "$enc-1");
+    // Encrypted events carry no msgtype/body — only the opaque Megolm payload.
+    event.put(
+        "content",
+        Map.of(
+            "algorithm", "m.megolm.v1.aes-sha2",
+            "ciphertext", "opaque-payload",
+            "session_id", "megolm-session",
+            "device_id", "SENDERDEVICE"));
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void processMatrixEvent_shouldIgnoreEncryptedEvent_whenContentIsNull() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(32L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    var event = new HashMap<String, Object>();
+    event.put("type", "m.room.encrypted");
+    event.put("sender", SENDER_MATRIX_ID);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verifyNoInteractions(liveEventNotificationService);
+    verifyNoInteractions(eventNotificationService);
   }
 
   private static Session sessionWithId(long sessionId) {

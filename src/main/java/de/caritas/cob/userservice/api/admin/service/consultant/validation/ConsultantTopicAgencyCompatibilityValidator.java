@@ -67,12 +67,11 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   private void validateTopicsCoveredByAgencies(
       Collection<Long> topicIds, Collection<Long> agencyIds, Long tenantId) {
     var selectedTopicIds = normalizedIds(topicIds);
-    if (selectedTopicIds.isEmpty()) {
-      return;
-    }
-
     var selectedAgencyIds = normalizedIds(agencyIds);
     if (selectedAgencyIds.isEmpty()) {
+      if (selectedTopicIds.isEmpty()) {
+        return;
+      }
       throw new BadRequestException(
           String.format(
               "Consultant topic ids %s are not covered by any selected agency", selectedTopicIds));
@@ -81,6 +80,10 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     var agencies = agenciesFor(selectedAgencyIds);
     assertAllSelectedAgenciesResolved(selectedAgencyIds, agencies);
     assertAgenciesBelongToTenant(agencies, tenantId);
+
+    if (selectedTopicIds.isEmpty()) {
+      return;
+    }
 
     // Offline agencies count towards topic coverage on purpose: a freshly created agency is
     // offline until it has an assigned consultant, so filtering them out here would make it

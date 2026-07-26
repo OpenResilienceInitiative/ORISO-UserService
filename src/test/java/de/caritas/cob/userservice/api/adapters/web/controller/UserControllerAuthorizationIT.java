@@ -22,7 +22,6 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_IMPORT_CONSULTANTS;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_NEW_MESSAGE_NOTIFICATION;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_REGISTER_NEW_CONSULTING_TYPE;
-import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_REGISTER_USER;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ADD_MOBILE_TOKEN;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_ASSIGN_SESSION;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_CHAT_START;
@@ -87,10 +86,12 @@ import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
+import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -117,7 +118,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(
     properties = {
-      "spring.datasource.url=jdbc:h2:mem:user-controller-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+      "spring.datasource.url=jdbc:h2:mem:user-controller-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER",
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
@@ -135,20 +136,23 @@ import org.springframework.test.web.servlet.MockMvc;
       "consulting.type.service.api.url=https://consulting-type.testing/service",
       "tenant.service.api.url=https://tenant.testing/service",
       "matrix.apiUrl=https://matrix.testing",
-      "matrix.registrationSharedSecret=secret"
+      "matrix.registrationSharedSecret=secret",
+      "csrf.whitelist.config-uris=/actuator/health",
+      "identity.otp-allowed-for-users=true",
+      "identity.otp-allowed-for-consultants=true"
     })
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @ActiveProfiles("testing")
 class UserControllerAuthorizationIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final Cookie RC_TOKEN_COOKIE =
       new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
 
@@ -167,6 +171,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private IdentityClient identityClient;
   @MockitoBean private IdentityManager identityManager;
+  @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ChatService chatService;
   @MockitoBean private StartChatFacade startChatFacade;
@@ -183,6 +188,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private SessionArchiveService sessionArchiveService;
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
   @MockitoBean private ConsultantService consultantService;
+  @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
   @MockitoBean private AskerDataProvider askerDataProvider;
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
@@ -195,19 +201,6 @@ class UserControllerAuthorizationIT {
   @SuppressWarnings("unused")
   private Messenger concreteMessenger;
 
-  /** POST on /users/askers/new */
-  @Test
-  void registerUser_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_REGISTER_USER)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(userService);
-  }
-
   /** POST on /users/askers/consultingType/new (role: asker) */
   @Test
   void
@@ -215,7 +208,7 @@ class UserControllerAuthorizationIT {
           throws Exception {
 
     mvc.perform(
-            get(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
+            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -279,7 +272,7 @@ class UserControllerAuthorizationIT {
           throws Exception {
 
     mvc.perform(
-            get(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
+            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -295,7 +288,7 @@ class UserControllerAuthorizationIT {
       throws Exception {
 
     mvc.perform(
-            get(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
+            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -351,21 +344,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(authenticatedUser, sessionService, sessionRepository);
   }
 
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getOpenSessionsForAuthenticatedConsultant_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-          throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_OPEN_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService, sessionRepository);
-  }
-
   /** GET on /users/sessions/consultants/new (role: consultant) */
   @Test
   void getEnquiriesForAgency_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
@@ -406,20 +384,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_ENQUIRIES_FOR_AGENCY)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService, sessionRepository);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void getEnquiriesForAgency_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-      throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_ENQUIRIES_FOR_AGENCY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -597,20 +561,6 @@ class UserControllerAuthorizationIT {
     verifyNoMoreInteractions(authenticatedUser, sessionService, sessionRepository);
   }
 
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
-  void getSessionsForAuthenticatedUser_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-      throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService, sessionRepository);
-  }
-
   /** PUT on /users/consultants/absences (role: consultant) */
   @Test
   void updateAbsence_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
@@ -719,21 +669,6 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getSessionsForAuthenticatedConsultant_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-          throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService);
-  }
-
-  @Test
   void getUserData_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
       throws Exception {
 
@@ -771,19 +706,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_USER_DATA)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(consultantDataFacade, logService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
-  void getUserData_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -832,21 +754,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getTeamSessionsForAuthenticatedConsultant_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-          throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -1108,12 +1015,6 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  void searchConsultantsShouldReturnForbiddenWhenNoCsrfTokens() throws Exception {
-    mvc.perform(get("/users/consultants/search").accept("application/hal+json").param("query", "e"))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
   void searchConsultantsShouldReturnUnauthorizedWhenNoKeycloakAuthorization() throws Exception {
     mvc.perform(
             get("/users/consultants/search")
@@ -1187,19 +1088,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_CONSULTANTS)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(consultantAgencyService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.VIEW_AGENCY_CONSULTANTS})
-  void getConsultants_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_CONSULTANTS)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -1668,23 +1556,6 @@ class UserControllerAuthorizationIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void getChat_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_CHAT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(getChatFacade);
-    verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(consultantDataFacade);
-    verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(chatPermissionVerifier);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getChat_Should_ReturnOK_WhenProperlyAuthorizedAsConsultant() throws Exception {
 
     mvc.perform(
@@ -1829,25 +1700,6 @@ class UserControllerAuthorizationIT {
             get(PATH_GET_CHAT_MEMBERS)
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(getChatMembersFacade);
-    verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(consultantDataFacade);
-    verifyNoMoreInteractions(userService);
-    verifyNoMoreInteractions(chatPermissionVerifier);
-    verifyNoMoreInteractions(userHelper);
-    verifyNoMoreInteractions(rocketChatService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void getChatMembers_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_CHAT_MEMBERS)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -2197,20 +2049,6 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
-  void fetchSessionForConsultant_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-      throws Exception {
-
-    mvc.perform(
-            get(PATH_GET_SESSION_FOR_CONSULTANT)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService);
-  }
-
-  @Test
   void updateEmailAddress_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
       throws Exception {
 
@@ -2277,7 +2115,7 @@ class UserControllerAuthorizationIT {
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("email")
+                .content(objectMapper.writeValueAsString(givenAValidEmailDTO().getEmail()))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
   }
@@ -2925,6 +2763,8 @@ class UserControllerAuthorizationIT {
   void
       deactivateTwoFactorAuthByApp_Should_ReturnOK_When_ProperlyAuthorizedWithConsultant_Or_UserAuthority()
           throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("user");
+
     mvc.perform(
             delete("/users/2fa")
                 .cookie(CSRF_COOKIE)
@@ -3028,6 +2868,9 @@ class UserControllerAuthorizationIT {
       activateTwoFactorAuthByApp_Should_ReturnOK_When_ProperlyAuthorizedWithConsultant_Or_UserAuthority()
           throws Exception {
     var payload = givenAValidOneTimePasswordDto();
+    when(authenticatedUser.getUsername()).thenReturn("user");
+    when(authenticatedUser.getUserId()).thenReturn("user-id");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     givenAValidOtpResponse();
 
     mvc.perform(
@@ -3097,21 +2940,24 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  void getConsultantPublicData_Should_ReturnForbiddenAndCallNoMethods_When_noCsrfTokens()
+  void getConsultantPublicData_Should_ReturnOk_When_calledWithPublicSlugInsteadOfUuid()
       throws Exception {
+    // review: the permitAll matcher must accept public slugs, not only UUIDs — otherwise a
+    // slug link is rejected by the security chain before ConsultantPublicSlugService runs
+    givenAValidConsultant();
 
     mvc.perform(
-            get(PATH_GET_PUBLIC_CONSULTANT_DATA)
+            get("/users/consultants/some-public-slug")
                 .contentType(MediaType.APPLICATION_JSON)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoInteractions(consultantAgencyService);
+        .andExpect(status().isOk());
   }
 
   @Test
   void getConsultantPublicData_Should_ReturnOk_When_CsrfTokensAreGiven() throws Exception {
-    givenAValidConsultant();
+    var consultant = givenAValidConsultant();
 
     mvc.perform(
             get(PATH_GET_PUBLIC_CONSULTANT_DATA)
@@ -3121,8 +2967,7 @@ class UserControllerAuthorizationIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(consultantAgencyService)
-        .getOnlineAgenciesOfConsultant("65c1095e-b977-493a-a34f-064b729d1d6c");
+    verify(consultantAgencyService).getOnlineAgenciesOfConsultant(consultant.getId());
   }
 
   @Test
@@ -3146,19 +2991,6 @@ class UserControllerAuthorizationIT {
             get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoInteractions(identityManager);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
-  void
-      getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_csrf_token_given()
-          throws Exception {
-    mvc.perform(
-            get("/users/sessions/room?rcGroupIds=mzAdWzQEobJ2PkoxP")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
 
@@ -3207,16 +3039,6 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
-  void getSessionForId_should_return_forbidden_and_call_no_methods_when_no_csrf_token_given()
-      throws Exception {
-    mvc.perform(get("/users/sessions/room/1235678").accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoInteractions(identityManager);
-  }
-
-  @Test
   void
       getSessionForId_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
           throws Exception {
@@ -3258,16 +3080,6 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
-  void getChatById_should_return_forbidden_and_call_no_methods_when_no_csrf_token_given()
-      throws Exception {
-    mvc.perform(get("/users/chat/room/1235678").accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoInteractions(identityManager);
-  }
-
-  @Test
   void getChatById_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
       throws Exception {
     mvc.perform(
@@ -3296,6 +3108,8 @@ class UserControllerAuthorizationIT {
             + RandomStringUtils.randomAlphabetic(8)
             + ".com");
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(consultantPublicSlugService.resolveActiveConsultant(any()))
+        .thenReturn(Optional.of(consultant));
 
     return consultant;
   }

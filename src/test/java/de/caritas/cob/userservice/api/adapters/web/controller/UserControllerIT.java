@@ -54,9 +54,15 @@ import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.*;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
+import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
+import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -256,6 +262,12 @@ class UserControllerIT {
   @Autowired private MockMvc mvc;
 
   @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private PasswordResetService passwordResetService;
+  @MockitoBean private AccountInviteService accountInviteService;
+  @MockitoBean private GroupChatFeatureGate groupChatFeatureGate;
+  @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
+  @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
+  @MockitoBean private GroupChatRoleService groupChatRoleService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -342,6 +354,7 @@ class UserControllerIT {
   private UserDtoMapper userDtoMapper;
 
   @MockitoBean private ConsultantService consultantService;
+  @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -422,6 +435,20 @@ class UserControllerIT {
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isConflict());
+  }
+
+  @Test
+  void usernameAvailability_Should_ReturnNoContent_When_KeycloakAvailabilityCheckFails()
+      throws Exception {
+    /* given */
+    var username = "john@doe.com";
+    when(identityClient.isUsernameAvailable(username))
+        .thenThrow(new RuntimeException("Keycloak 401"));
+
+    /* when */
+    mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
+        /* then */
+        .andExpect(status().isNoContent());
   }
 
   /** Method: registerUser */
@@ -773,7 +800,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenNoConsultantInDbFound() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant())
         .thenThrow(new InternalServerErrorException(""));
@@ -789,7 +816,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionNotFoundInDb() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.empty());
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
@@ -805,7 +832,7 @@ class UserControllerIT {
   void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionHasNoRocketChatGroupId()
       throws Exception {
 
-    when(sessionService.getSession(SESSION_ID))
+    when(sessionService.getSessionForUpdate(SESSION_ID))
         .thenReturn(Optional.of(TEAM_SESSION_WITHOUT_GROUP_ID));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
@@ -821,7 +848,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnSuccess_WhenAcceptEnquiryIsSuccessfull() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
@@ -836,7 +863,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnConflict_WhenEnquiryIsAlreadyAssigned() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
     doThrow(new ConflictException(""))
@@ -956,8 +983,6 @@ class UserControllerIT {
     when(accountManager.findConsultantByUsername(anyString())).thenReturn(Optional.of(map));
 
     response.getSessions().get(0).getConsultant().setDisplayName(displayName);
-    var sessionsJson = objectMapper.writeValueAsString(response);
-
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
                 .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
@@ -965,7 +990,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("sessions[0].consultant.displayName", is(displayName)))
-        .andExpect(content().json(sessionsJson));
+        .andExpect(jsonPath("sessions[0].session.id", is(SESSION_ID.intValue())))
+        .andExpect(jsonPath("sessions[0].agency.id", is(AGENCY_ID.intValue())));
 
     verify(userAccountService, atLeastOnce()).retrieveValidatedUser();
   }
@@ -1252,6 +1278,22 @@ class UserControllerIT {
                 .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
+  }
+
+  @Test
+  void getUserData_ForSoftDeletedUser_Should_ReturnForbidden() throws Exception {
+    when(authenticatedUser.getRoles()).thenReturn(ROLES_WITH_USER);
+    when(authenticatedUser.getGrantedAuthorities())
+        .thenReturn(new HashSet<>(Authority.getAuthoritiesByUserRole(UserRole.USER)));
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userAccountService.retrieveValidatedUser()).thenThrow(new ForbiddenException(""));
+
+    mvc.perform(
+            get(PATH_USER_DATA)
+                .contentType(MediaType.APPLICATION_JSON)
+                .cookie(RC_TOKEN_COOKIE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -2039,7 +2081,7 @@ class UserControllerIT {
     mvc.perform(
             put(PATH_PUT_UPDATE_EMAIL)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("email")
+                .content(objectMapper.writeValueAsString("email"))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
@@ -2291,13 +2333,12 @@ class UserControllerIT {
 
   @Test
   void getConsultantPublicData_Should_returnOk_When_consultantIdIsGiven() throws Exception {
-    givenAValidConsultant();
+    var consultant = givenAValidConsultant();
 
     mvc.perform(get(PATH_GET_PUBLIC_CONSULTANT_DATA).contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(consultantAgencyService)
-        .getOnlineAgenciesOfConsultant("65c1095e-b977-493a-a34f-064b729d1d6c");
+    verify(consultantAgencyService).getOnlineAgenciesOfConsultant(consultant.getId());
   }
 
   @Test
@@ -2409,6 +2450,8 @@ class UserControllerIT {
     var consultant = easyRandom.nextObject(Consultant.class);
     consultant.setEmail(givenAValidEmail());
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(consultantPublicSlugService.resolveActiveConsultant(any()))
+        .thenReturn(Optional.of(consultant));
 
     return consultant;
   }

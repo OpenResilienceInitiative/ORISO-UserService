@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.SetRoomReadOn
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserCreateDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserDeleteBodyDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UsersListReponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -235,6 +236,11 @@ public class RocketChatService implements MessageClient {
       log.error("Setting display failed.", exception);
       return false;
     }
+  }
+
+  @Override
+  public void updateUserEmail(String chatUserId, String email) {
+    updateUser(new UserUpdateRequestDTO(chatUserId, new UserUpdateDataDTO(email, true)));
   }
 
   @Override
@@ -482,6 +488,7 @@ public class RocketChatService implements MessageClient {
    * @return the userid
    * @throws RocketChatLoginException on failure
    */
+  @Override
   public String getUserID(String username, String password, boolean firstLogin)
       throws RocketChatLoginException {
 
@@ -589,6 +596,7 @@ public class RocketChatService implements MessageClient {
    * @param rcUserId Rocket.Chat userId
    * @param rcGroupId Rocket.Chat roomId
    */
+  @Override
   public void addUserToGroup(String rcUserId, String rcGroupId)
       throws RocketChatAddUserToGroupException {
 
@@ -1054,6 +1062,13 @@ public class RocketChatService implements MessageClient {
     }
 
     return response.getBody();
+  }
+
+  @Override
+  public List<String> findRoomIds(String chatUserId) {
+    return getUserInfo(chatUserId).getUser().getRooms().stream()
+        .map(de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserRoomDTO::getRoomId)
+        .toList();
   }
 
   private boolean isResponseNotSuccess(ResponseEntity<UserInfoResponseDTO> response) {

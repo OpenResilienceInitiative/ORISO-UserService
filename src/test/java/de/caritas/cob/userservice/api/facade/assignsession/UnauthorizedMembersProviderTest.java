@@ -14,11 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
+import de.caritas.cob.userservice.api.exception.MessageClientException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,7 +39,7 @@ class UnauthorizedMembersProviderTest {
 
   @Mock ConsultantService consultantService;
 
-  @Mock RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
 
   EasyRandom easyRandom = new EasyRandom();
   Consultant newConsultant = easyRandom.nextObject(Consultant.class);
@@ -50,8 +48,7 @@ class UnauthorizedMembersProviderTest {
   Consultant teamConsultant2 = easyRandom.nextObject(Consultant.class);
   Consultant mainConsultant = easyRandom.nextObject(Consultant.class);
   Consultant mainConsultant2 = easyRandom.nextObject(Consultant.class);
-  RocketChatCredentials techUserRcCredentials = easyRandom.nextObject(RocketChatCredentials.class);
-  List<GroupMemberDTO> initialMemberList;
+  List<String> initialMemberList;
 
   @BeforeEach
   void setup() throws SecurityException {
@@ -70,21 +67,20 @@ class UnauthorizedMembersProviderTest {
     mainConsultant.setTeamConsultant(true);
     mainConsultant2.setRocketChatId("mainConsultantRcId2");
     mainConsultant2.setTeamConsultant(true);
-    techUserRcCredentials.setRocketChatUserId("techUserRcId");
     initialMemberList =
         asList(
-            new GroupMemberDTO("userRcId", null, "name", null, null),
-            new GroupMemberDTO("newConsultantRcId", null, "name", null, null),
-            new GroupMemberDTO("normalConsultantRcId", null, "name", null, null),
-            new GroupMemberDTO("otherRcId", null, "name", null, null),
-            new GroupMemberDTO("otherRcId2", null, "name", null, null),
-            new GroupMemberDTO("teamConsultantRcId", null, "name", null, null),
-            new GroupMemberDTO("teamConsultantRcId2", null, "name", null, null),
-            new GroupMemberDTO("mainConsultantRcId", null, "name", null, null),
-            new GroupMemberDTO("mainConsultantRcId2", null, "name", null, null),
-            new GroupMemberDTO("rcTechnicalRcId", null, "name", null, null),
-            new GroupMemberDTO(ROCKET_CHAT_SYSTEM_USER_ID, null, "name", null, null),
-            new GroupMemberDTO("techUserRcId", null, "name", null, null));
+            "userRcId",
+            "newConsultantRcId",
+            "normalConsultantRcId",
+            "otherRcId",
+            "otherRcId2",
+            "teamConsultantRcId",
+            "teamConsultantRcId2",
+            "mainConsultantRcId",
+            "mainConsultantRcId2",
+            "rcTechnicalRcId",
+            ROCKET_CHAT_SYSTEM_USER_ID,
+            "techUserRcId");
     List.of(
             newConsultant,
             normalConsultant,
@@ -100,10 +96,10 @@ class UnauthorizedMembersProviderTest {
 
   @Test
   void obtainConsultantsToRemoveShouldNotIncludeConsultantToAssignIfNotAssignedAlready()
-      throws RocketChatUserNotInitializedException {
+      throws MessageClientException {
 
     var consultant = easyRandom.nextObject(Consultant.class);
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(techUserRcCredentials);
+    when(sessionAssignmentChatGateway.technicalUserId()).thenReturn("techUserRcId");
 
     var consultantsToRemove =
         unauthorizedMembersProvider.obtainConsultantsToRemove(
@@ -129,15 +125,12 @@ class UnauthorizedMembersProviderTest {
 
   @Test
   void obtainConsultantsToRemoveShouldNotIncludeConsultantToAssignIfAlreadyAssigned()
-      throws RocketChatUserNotInitializedException {
+      throws MessageClientException {
 
     var consultant = easyRandom.nextObject(Consultant.class);
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(techUserRcCredentials);
+    when(sessionAssignmentChatGateway.technicalUserId()).thenReturn("techUserRcId");
     var memberList = new ArrayList<>(initialMemberList);
-    var consultantAsGroupMember =
-        new GroupMemberDTO(
-            consultant.getRocketChatId(), null, consultant.getUsername(), null, null);
-    memberList.add(consultantAsGroupMember);
+    memberList.add(consultant.getRocketChatId());
 
     var consultantsToRemove =
         unauthorizedMembersProvider.obtainConsultantsToRemove(
@@ -151,21 +144,14 @@ class UnauthorizedMembersProviderTest {
   }
 
   @Test
-  void obtainConsultantsToRemoveShouldNotIncludeConsultantToKeep()
-      throws RocketChatUserNotInitializedException {
+  void obtainConsultantsToRemoveShouldNotIncludeConsultantToKeep() throws MessageClientException {
 
     var consultant = easyRandom.nextObject(Consultant.class);
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(techUserRcCredentials);
+    when(sessionAssignmentChatGateway.technicalUserId()).thenReturn("techUserRcId");
     var memberList = new ArrayList<>(initialMemberList);
-    var consultantAsGroupMember =
-        new GroupMemberDTO(
-            consultant.getRocketChatId(), null, consultant.getUsername(), null, null);
-    memberList.add(consultantAsGroupMember);
+    memberList.add(consultant.getRocketChatId());
     var consultantToKeep = easyRandom.nextObject(Consultant.class);
-    var consultantToKeepAsGroupMember =
-        new GroupMemberDTO(
-            consultantToKeep.getRocketChatId(), null, consultantToKeep.getUsername(), null, null);
-    memberList.add(consultantToKeepAsGroupMember);
+    memberList.add(consultantToKeep.getRocketChatId());
 
     var consultantsToRemove =
         unauthorizedMembersProvider.obtainConsultantsToRemove(
@@ -185,9 +171,9 @@ class UnauthorizedMembersProviderTest {
   @Test
   void
       obtainConsultantsToRemove_Should_ReturnCorrectUnauthorizedMemberList_When_SessionIsNoTeamSession()
-          throws RocketChatUserNotInitializedException {
+          throws MessageClientException {
     newConsultant.setTeamConsultant(false);
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(techUserRcCredentials);
+    when(sessionAssignmentChatGateway.technicalUserId()).thenReturn("techUserRcId");
 
     List<Consultant> result =
         unauthorizedMembersProvider.obtainConsultantsToRemove(
@@ -203,9 +189,9 @@ class UnauthorizedMembersProviderTest {
   @Test
   void
       obtainConsultantsToRemove_Should_ReturnCorrectUnauthorizedMemberList_When_SessionIsNormalTeamSession()
-          throws RocketChatUserNotInitializedException {
+          throws MessageClientException {
     newConsultant.setTeamConsultant(true);
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(techUserRcCredentials);
+    when(sessionAssignmentChatGateway.technicalUserId()).thenReturn("techUserRcId");
     when(consultantService.findConsultantsByAgencyId(
             TEAM_SESSION_WITH_ASKER_AND_CONSULTANT.getAgencyId()))
         .thenReturn(

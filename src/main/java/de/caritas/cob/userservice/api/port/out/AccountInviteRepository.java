@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -18,6 +19,9 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AccountInvite> findByTokenHash(String tokenHash);
+
+  boolean existsByTenantIdAndTargetRoleAndStatusIn(
+      Long tenantId, AccountInviteTargetRole targetRole, Collection<AccountInviteStatus> statuses);
 
   @Query(
       "SELECT i FROM AccountInvite i"

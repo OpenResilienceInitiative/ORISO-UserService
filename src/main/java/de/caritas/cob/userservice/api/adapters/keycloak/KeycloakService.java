@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
@@ -36,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.NonNull;
@@ -47,6 +50,7 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -82,11 +86,18 @@ public class KeycloakService implements IdentityClient {
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
+  private OutboundHttpMetrics outboundHttpMetrics;
+
   @Value("${api.error.keycloakError}")
   private String keycloakError;
 
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
 
   /**
    * Changes the (Keycloak) password of a user and returns true on success.
@@ -191,9 +202,11 @@ public class KeycloakService implements IdentityClient {
 
   @Override
   public OtpInfoDTO getOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_INFO, userName);
-    var response = keycloakClient.get(bearerToken, requestUrl, OtpInfoDTO.class);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
+    var response =
+        withFreshAdminTokenOnUnauthorized(
+            () ->
+                keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
     return response.getBody();
   }
@@ -201,11 +214,13 @@ public class KeycloakService implements IdentityClient {
   @Override
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_SETUP, userName);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, OtpInfoDTO.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
       return true;
     } catch (HttpClientErrorException exception) {
       if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
@@ -218,19 +233,21 @@ public class KeycloakService implements IdentityClient {
 
   @Override
   public void deleteOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
-    keycloakClient.delete(bearerToken, requestUrl, Void.class);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
+    withFreshAdminTokenOnUnauthorized(
+        () -> keycloakClient.delete(keycloakClient.getBearerToken(), requestUrl, Void.class));
   }
 
   @Override
   public Optional<String> initiateEmailVerification(String username, String email) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, Success.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, Success.class));
       return Optional.empty();
     } catch (RestClientException exception) {
       return Optional.of("Keycloak answered: " + exception.getMessage());
@@ -240,16 +257,42 @@ public class KeycloakService implements IdentityClient {
   @Override
   public Map<String, String> finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
       var response =
-          keycloakClient.postForEntity(
-              bearerToken, requestUrl, otpSetupDTO, SuccessWithEmail.class);
+          withFreshAdminTokenOnUnauthorized(
+              () ->
+                  keycloakClient.postForEntity(
+                      keycloakClient.getBearerToken(),
+                      requestUrl,
+                      otpSetupDTO,
+                      SuccessWithEmail.class));
       return keycloakMapper.mapOf(response);
     } catch (HttpClientErrorException exception) {
       return keycloakMapper.mapOf(exception);
+    }
+  }
+
+  private String getOtpUrl(String endpoint, String username) {
+    var decodedUsername = usernameTranscoder.decodeUsername(username);
+    return identityClientConfig.getOtpUrl(
+        endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
+  }
+
+  private <T> T withFreshAdminTokenOnUnauthorized(Supplier<T> request) {
+    try {
+      return request.get();
+    } catch (HttpClientErrorException exception) {
+      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
+        throw exception;
+      }
+
+      log.warn(
+          "Keycloak admin session was unauthorized for an OTP provider request, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return request.get();
     }
   }
 
@@ -532,6 +575,21 @@ public class KeycloakService implements IdentityClient {
    * @param roleName Keycloak role name
    */
   public void updateRole(final String userId, final String roleName) {
+    try {
+      updateRoleOnce(userId, roleName);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
+              + " token refresh and retrying once",
+          roleName,
+          userId);
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      updateRoleOnce(userId, roleName);
+    }
+  }
+
+  private void updateRoleOnce(final String userId, final String roleName) {
     // Get realm and user resources
     var realmResource = keycloakClient.getRealmResource();
     UsersResource userRessource = realmResource.users();
@@ -550,6 +608,7 @@ public class KeycloakService implements IdentityClient {
     }
 
     for (int attempt = 0; attempt < 3; attempt++) {
+      recordRetry("role-visibility");
       try {
         Thread.sleep(100L);
       } catch (InterruptedException interruptedException) {
@@ -564,6 +623,12 @@ public class KeycloakService implements IdentityClient {
     }
 
     throw new KeycloakException("Could not update user role");
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("keycloak", operation);
+    }
   }
 
   private boolean isRoleAssigned(UserResource user, String roleName) {
@@ -725,6 +790,13 @@ public class KeycloakService implements IdentityClient {
       keycloakClient.getUsersResource().get(userId).remove();
     } catch (NotFoundException e) {
       log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
+              + " and retrying once",
+          userId);
+      keycloakClient.refreshAdminSession();
+      keycloakClient.getUsersResource().get(userId).remove();
     }
   }
 
@@ -807,7 +879,15 @@ public class KeycloakService implements IdentityClient {
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
-    return keycloakClient.getUsersResource().search(username);
+    try {
+      return keycloakClient.getUsersResource().search(username);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while searching for username, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return keycloakClient.getUsersResource().search(username);
+    }
   }
 
   public UserRepresentation getById(String userId) {

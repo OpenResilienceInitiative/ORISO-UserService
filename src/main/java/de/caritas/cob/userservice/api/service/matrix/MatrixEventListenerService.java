@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -9,6 +10,7 @@ import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationSe
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
@@ -16,6 +18,8 @@ import java.util.concurrent.*;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -35,6 +39,9 @@ public class MatrixEventListenerService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+
+  private OutboundHttpMetrics outboundHttpMetrics;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -54,6 +61,14 @@ public class MatrixEventListenerService {
   // Flag to control sync loop
   private volatile boolean running = false;
 
+  @Value("${matrix.event-listener.enabled:true}")
+  private boolean eventListenerEnabled = true;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
+
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
   static final long INITIAL_BACKOFF_MS = 5_000L;
   static final long MAX_BACKOFF_MS = 60_000L;
@@ -67,6 +82,10 @@ public class MatrixEventListenerService {
 
   @PostConstruct
   public void initialize() {
+    if (!eventListenerEnabled) {
+      log.info("Matrix event listener is disabled");
+      return;
+    }
     log.info("🔷 Initializing Matrix Event Listener Service...");
     executorService = Executors.newFixedThreadPool(2);
 
@@ -157,6 +176,7 @@ public class MatrixEventListenerService {
           // performMatrixSync swallows exceptions and returns null; treat as a soft failure so an
           // auth problem eventually forces a token re-bootstrap instead of spinning forever.
           consecutiveSyncFailures++;
+          recordRetry("sync");
           if (consecutiveSyncFailures >= SYNC_FAILURES_BEFORE_REBOOTSTRAP) {
             log.warn(
                 "⚠️ {} consecutive Matrix sync failures - re-acquiring admin token",
@@ -186,6 +206,7 @@ public class MatrixEventListenerService {
         break;
       } catch (Exception e) {
         log.error("❌ Error in Matrix sync loop", e);
+        recordRetry("sync-loop");
         try {
           // Exponential backoff before retrying on error (5s→10s→…→60s cap).
           sleep(errorBackoffMs);
@@ -223,6 +244,7 @@ public class MatrixEventListenerService {
         log.error("❌ Error getting admin token - retrying in {}ms", backoffMs, e);
       }
 
+      recordRetry("admin-token");
       try {
         sleep(backoffMs);
       } catch (InterruptedException ie) {
@@ -232,6 +254,12 @@ public class MatrixEventListenerService {
       backoffMs = nextBackoffMillis(backoffMs);
     }
     return false;
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("matrix", operation);
+    }
   }
 
   /**
@@ -362,6 +390,10 @@ public class MatrixEventListenerService {
     // Handle different event types
     switch (eventType) {
       case "m.room.message":
+        // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
+        // (no msgtype/body), but sender + event id are cleartext, which is all the
+        // metadata-only notification pipeline needs (preview mode NONE).
+      case "m.room.encrypted":
         handleRoomMessage(roomId, event);
         break;
 
@@ -442,8 +474,15 @@ public class MatrixEventListenerService {
         // Trigger notification asynchronously to not block sync loop
         executorService.submit(
             () -> {
+              // The live STOMP push is best-effort; the persisted feed entry is the
+              // source of truth for the notification timeline. Isolate the failure
+              // domains so a live-send problem cannot swallow the notification row.
               try {
                 liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+              } catch (Exception e) {
+                log.error("❌ Failed to send LiveService notification", e);
+              }
+              try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
                       roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
@@ -451,12 +490,21 @@ public class MatrixEventListenerService {
                   eventNotificationService.createMessageNotificationFromRoom(
                       roomId, senderDomainUserId, true, privacyEnvelope);
                 }
+                if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
+                  consultantMessageStatService.recordMessageSent(
+                      senderDomainUserId, mappedSessionId);
+                }
               } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
+                log.error("❌ Failed to create event notification from room", e);
               }
             });
       }
     }
+  }
+
+  private boolean isConsultantMatrixUser(String matrixUserId) {
+    return matrixUserId != null
+        && consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId).isPresent();
   }
 
   private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {
@@ -562,8 +610,10 @@ public class MatrixEventListenerService {
       String msgtype,
       Map<String, Object> content) {
     String contentClass = classifyContent(msgtype);
+    // msgtype is null for m.room.encrypted events (opaque payload); Set.of(...) is
+    // null-hostile, so guard before the membership check.
     boolean hasAttachment =
-        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+        (msgtype != null && Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype))
             || (content != null && (content.containsKey("url") || content.containsKey("file")));
 
     Long timestamp = null;

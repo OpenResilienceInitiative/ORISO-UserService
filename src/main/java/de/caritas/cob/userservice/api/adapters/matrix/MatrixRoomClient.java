@@ -396,6 +396,48 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * Sets the room-wide {@code events_default} power level. With member power level 0 and {@code
+   * events_default} raised above it, no ordinary member can post any more — the protocol-level
+   * read-only switch used when a Team-Besprechung is archived (US#473 / ADR-016).
+   */
+  public boolean setRoomEventsDefaultPowerLevel(String roomId, int powerLevel, String accessToken) {
+    try {
+      var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+
+      HttpHeaders headers = getClientHttpHeaders(accessToken);
+      HttpEntity<Void> getRequest = new HttpEntity<>(headers);
+
+      ResponseEntity<Map> currentResponse =
+          restTemplate.exchange(url, HttpMethod.GET, getRequest, Map.class);
+
+      if (currentResponse.getBody() == null) {
+        log.error("Failed to get current power levels for room {}", roomId);
+        return false;
+      }
+
+      @SuppressWarnings("unchecked")
+      Map<String, Object> powerLevels = new HashMap<>(currentResponse.getBody());
+      powerLevels.put("events_default", powerLevel);
+
+      HttpEntity<Map<String, Object>> updateRequest = new HttpEntity<>(powerLevels, headers);
+      restTemplate.put(url, updateRequest);
+
+      log.info("Set events_default power level {} in room {}", powerLevel, roomId);
+      return true;
+    } catch (HttpClientErrorException ex) {
+      log.error(
+          "Matrix Error: Could not set events_default in room ({}). Status: {}, Response: {}",
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      return false;
+    } catch (Exception e) {
+      log.error("Failed to set events_default in room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
       var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));

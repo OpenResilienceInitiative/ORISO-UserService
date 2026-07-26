@@ -204,6 +204,38 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
+  void setSupervisionOptedOut_delegates_when_callerOwnsSession() {
+    // Business reason: only the session's own ratsuchende may toggle their supervision opt-out.
+    var owner = user("owner-1");
+    var session = sessionOwnedBy(70L, owner);
+    var request = new SessionSupervisorController.SupervisionOptOutDTO();
+    request.setOptedOut(true);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(owner);
+    when(sessionService.getSession(70L)).thenReturn(Optional.of(session));
+
+    var response = controller.setSupervisionOptedOut(70L, request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(sessionSupervisorFacade).setSupervisionOptedOut(70L, true);
+  }
+
+  @Test
+  void setSupervisionOptedOut_returnsForbidden_when_callerIsNotSessionOwner() {
+    var caller = user("intruder-1");
+    var session = sessionOwnedBy(71L, user("owner-1"));
+    var request = new SessionSupervisorController.SupervisionOptOutDTO();
+    request.setOptedOut(true);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(caller);
+    when(sessionService.getSession(71L)).thenReturn(Optional.of(session));
+
+    var response = controller.setSupervisionOptedOut(71L, request);
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+    verify(sessionSupervisorFacade, never())
+        .setSupervisionOptedOut(any(), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
+  @Test
   void controllerMethods_doNotDeclarePreAuthorizeAnnotation() throws Exception {
     // Business reason: test explicitly documents current security annotation state for future
     // hardening.
@@ -248,6 +280,18 @@ class SessionSupervisorControllerTest {
         .isActive(true)
         .matrixRoomId("room-77")
         .notes("note-" + id)
+        .build();
+  }
+
+  private Session sessionOwnedBy(Long id, User owner) {
+    return Session.builder()
+        .id(id)
+        .user(owner)
+        .consultingTypeId(1)
+        .registrationType(Session.RegistrationType.REGISTERED)
+        .postcode("12345")
+        .status(Session.SessionStatus.IN_PROGRESS)
+        .teamSession(false)
         .build();
   }
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="0067-session-supervision-opt-out" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0067_session_supervision_opt_out/migrate.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE session DROP COLUMN IF EXISTS is_supervision_opted_out;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

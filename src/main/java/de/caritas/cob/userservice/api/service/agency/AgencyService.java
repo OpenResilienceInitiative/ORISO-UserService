@@ -19,12 +19,16 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 /** Service class to communicate with the AgencyService. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyService {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
@@ -82,11 +86,21 @@ public class AgencyService {
    */
   private List<AgencyDTO> getAgenciesFromAgencyService(List<Long> agencyIds) {
     if (isNotEmpty(agencyIds)) {
-      AgencyControllerApi agencyControllerApi = this.getAgencyControllerApi();
-      addDefaultHeaders(agencyControllerApi.getApiClient());
-      return agencyControllerApi.getAgenciesByIds(agencyIds).stream()
-          .map(this::fromOriginalAgency)
-          .collect(Collectors.toList());
+      try {
+        AgencyControllerApi agencyControllerApi = this.getAgencyControllerApi();
+        addDefaultHeaders(agencyControllerApi.getApiClient());
+        return agencyControllerApi.getAgenciesByIds(agencyIds).stream()
+            .map(this::fromOriginalAgency)
+            .collect(Collectors.toList());
+      } catch (HttpClientErrorException httpClientErrorException) {
+        if (HttpStatus.NOT_FOUND.equals(httpClientErrorException.getStatusCode())) {
+          log.warn(
+              "AgencyService returned 404 for agency ids {}. Treating as missing agencies for local hybrid registration.",
+              agencyIds);
+          return emptyList();
+        }
+        throw httpClientErrorException;
+      }
     }
     return emptyList();
   }

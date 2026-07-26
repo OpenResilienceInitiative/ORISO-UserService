@@ -131,6 +131,7 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setRoleInOrg(roleInOrgOf((Admin.AdminType) adminUserMap.get("type")));
     adminDTO.setVacated(false);
     adminDTO.setAdminRights(true);
+    adminDTO.setHasOtherIdentity(Boolean.TRUE.equals(adminUserMap.get("hasOtherIdentity")));
 
     enrichResponseWithTenantInformation(adminUserMap, adminDTO);
 

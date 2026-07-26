@@ -142,7 +142,7 @@ class UserSessionControllerDelegate {
       var rocketChatCredentials = buildUserRocketChatCredentials(user, rcToken);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
-              singletonList(chatId), rocketChatCredentials);
+              user.getUserId(), singletonList(chatId), rocketChatCredentials);
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -290,6 +290,47 @@ class UserSessionControllerDelegate {
         "Step 1 result: {} sessions found",
         groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
 
+    // Step 1b (#774): an anonymous Live Chat request is made visible to the consultant by topic
+    // across tenants, but Step 1 only resolves sessions the consultant is assigned to or shares an
+    // agency with (tenant-filtered). Without this fallback a consultant sees a live chat request in
+    // the queue but gets 204 opening it, so it can never be accepted. Same topic-based visibility
+    // as the queue itself.
+    if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+      log.info(
+          "Step 1b: No assigned session found, trying anonymous Live Chat queue for ID: {}",
+          sessionId);
+      var anonymousLiveChat =
+          sessionListFacade.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+              consultant, singletonList(sessionId));
+      if (anonymousLiveChat != null
+          && anonymousLiveChat.getSessions() != null
+          && !anonymousLiveChat.getSessions().isEmpty()) {
+        log.info(
+            "Step 1b result: anonymous Live Chat enquiry {} resolved for consultant", sessionId);
+        return anonymousLiveChat;
+      }
+    }
+
+    // Step 1c (#774 follow-up): once a cross-tenant live chat is accepted it becomes IN_PROGRESS
+    // and
+    // keeps the asker's tenant, so Step 1 (tenant-filtered) and the anonymous-NEW fallback above no
+    // longer match it. Without this, routing to the just-accepted conversation 204s and the chat
+    // never opens. Resolve it across tenants, but only when this consultant is its directly
+    // assigned
+    // advisor — no agency/topic widening, and tenant ownership is unchanged.
+    if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+      log.info("Step 1c: Trying cross-tenant directly-assigned session for ID: {}", sessionId);
+      var assignedCrossTenant =
+          sessionListFacade.retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+              consultant, singletonList(sessionId));
+      if (assignedCrossTenant != null
+          && assignedCrossTenant.getSessions() != null
+          && !assignedCrossTenant.getSessions().isEmpty()) {
+        log.info("Step 1c result: cross-tenant assigned session {} resolved", sessionId);
+        return assignedCrossTenant;
+      }
+    }
+
     if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
       var token = rcToken != null ? rcToken : "dummy-rc-token";
@@ -331,7 +372,7 @@ class UserSessionControllerDelegate {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(
-              singletonList(sessionId), rocketChatCredentials);
+              user.getUserId(), singletonList(sessionId), rocketChatCredentials);
 
       log.info(
           "Step 2 result: {} chats found",

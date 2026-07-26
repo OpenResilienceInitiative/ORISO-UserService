@@ -990,11 +990,10 @@ paths:
       parameters:
         - name: consultantId
           in: path
-          description: Consultant Id
+          description: Consultant UUID or active public slug
           required: true
           schema:
             type: string
-            format: UUID
       responses:
         200:
           description: successful operation
@@ -2125,6 +2124,10 @@ components:
     SessionDataDTO:
       type: object
       properties:
+        displayName:
+          type: string
+          example: Behutsames Pferd Jules
+          description: Session-scoped pseudonym shown to consultants for anonymous live chat
         age:
           type: string
           example: 17
@@ -2615,6 +2618,9 @@ components:
         username:
           type: string
           example: max94
+        displayName:
+          type: string
+          example: Behutsames Pferd Jules
         isDeleted:
           type: boolean
         sessionData:
@@ -2731,6 +2737,17 @@ components:
         displayName:
           type: string
           example: Max M.
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Active public slug used for consultant registration links
+        pendingPublicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Consultant-requested slug waiting for admin approval
+        publicSlugStatus:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
         firstName:
           type: string
           example: Max
@@ -2887,6 +2904,10 @@ components:
           type: string
           format: email
           example: "maxmuster@mann.com"
+        publicSlug:
+          type: string
+          example: nikunj-rohit
+          description: Optional public slug request. Letters and hyphens only.
         languages:
           type: array
           example: de, en
@@ -2998,6 +3019,9 @@ components:
           example: Mustermann
         displayName:
           type: string
+        publicSlug:
+          type: string
+          example: nikunj-rohit
         username:
           type: string
         isSupervisor:

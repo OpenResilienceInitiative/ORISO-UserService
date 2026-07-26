@@ -53,6 +53,11 @@ class EventNotificationServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService
+      liveEventNotificationService;
+
   @Captor private ArgumentCaptor<EventNotification> eventCaptor;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -130,6 +135,61 @@ class EventNotificationServiceTest {
 
     eventNotificationService.createNewClientRequestNotifications(
         session, List.of("consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // createWaitingRoomClientJoinedNotifications (anonymous live-chat waiting room)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_persistsEventPerRecipient() throws Exception {
+    Session session = sessionMock();
+
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        session, List.of("consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(eventCaptor.capture());
+    EventNotification first = eventCaptor.getAllValues().get(0);
+    assertEquals("waiting_room.client.joined", first.getEventType());
+    assertEquals(EventNotificationService.CATEGORY_SYSTEM, first.getCategory());
+    assertEquals("consultant-a", first.getRecipientUserId());
+    assertEquals(Long.valueOf(100L), first.getSourceSessionId());
+    assertEquals("/sessions/consultant/sessionView/rc-group-1/100", first.getActionPath());
+    assertEquals("consultant-b", eventCaptor.getAllValues().get(1).getRecipientUserId());
+
+    JsonNode params = objectMapper.readTree(first.getParams());
+    assertEquals(100L, params.get("sessionId").asLong());
+    assertEquals(42L, params.get("agencyId").asLong());
+    assertEquals(1, params.get("consultingTypeId").asInt());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_skipsBlankAndDeduplicatesRecipients() {
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        sessionMock(), Arrays.asList("consultant-a", null, "  ", "consultant-a", "consultant-b"));
+
+    verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_doesNothingForNullInputs() {
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        null, List.of("consultant-a"));
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(sessionMock(), null);
+
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_swallowsExceptionForOneRecipientAndContinues() {
+    when(eventNotificationRepository.save(any()))
+        .thenThrow(new RuntimeException("DB error"))
+        .thenReturn(mock(EventNotification.class));
+
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        sessionMock(), List.of("consultant-a", "consultant-b"));
 
     verify(eventNotificationRepository, times(2)).save(any());
   }
@@ -665,6 +725,75 @@ class EventNotificationServiceTest {
         "user-1", "message.new", null, "Title", "Text", null, 1L, 1L);
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertEquals(EventNotificationService.CATEGORY_SYSTEM, eventCaptor.getValue().getCategory());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Real-time backbone: every persisted notification nudges its recipient's client
+  // to refresh the Activity Timeline feed (no 15s poll wait). Carries no content.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createEvent_firesLiveRefreshToRecipientAfterPersist() {
+    eventNotificationService.createEvent(
+        "user-1", "message.new", EventNotificationService.CATEGORY_MESSAGE, "T", "B", null, 1L, 1L);
+
+    verify(eventNotificationRepository).save(any());
+    verify(liveEventNotificationService).sendEventNotificationCreatedEventToUser("user-1");
+  }
+
+  @Test
+  void createEvent_doesNotFireLiveRefreshForBlankRecipient() {
+    eventNotificationService.createEvent(
+        "  ", "message.new", EventNotificationService.CATEGORY_MESSAGE, "T", "B", null, 1L, 1L);
+
+    verify(liveEventNotificationService, never()).sendEventNotificationCreatedEventToUser(any());
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_firesLiveRefreshToRecipient() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "rc-group-1", "someone-else", "hi", false);
+
+    verify(liveEventNotificationService).sendEventNotificationCreatedEventToUser("asker-1");
+  }
+
+  @Test
+  void createEventOnce_firesLiveRefreshOnFirstPersistOnly() {
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            "consultant-1", "group-chat:reminder:42:0"))
+        .thenReturn(false, true);
+
+    eventNotificationService.createEventOnce(
+        "group-chat:reminder:42:0",
+        "consultant-1",
+        "group_chat.reminder",
+        EventNotificationService.CATEGORY_SYSTEM,
+        "Reminder",
+        "Soon",
+        "{\"seriesId\":42}",
+        null,
+        42L,
+        null);
+    eventNotificationService.createEventOnce(
+        "group-chat:reminder:42:0",
+        "consultant-1",
+        "group_chat.reminder",
+        EventNotificationService.CATEGORY_SYSTEM,
+        "Reminder",
+        "Soon",
+        "{\"seriesId\":42}",
+        null,
+        42L,
+        null);
+
+    verify(liveEventNotificationService, times(1))
+        .sendEventNotificationCreatedEventToUser("consultant-1");
   }
 
   @Test

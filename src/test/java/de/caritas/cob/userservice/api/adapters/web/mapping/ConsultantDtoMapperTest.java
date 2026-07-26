@@ -67,6 +67,44 @@ class ConsultantDtoMapperTest {
     assertThat(consultant.getRoleInOrg()).isEqualTo("Counsellor Admin");
   }
 
+  @Test
+  void consultantDtoOf_Should_MapOtherIdentityFields_WhenPresentInMap() {
+    // given
+    ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
+    when(identityClient.userHasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT.getValue()))
+        .thenReturn(false);
+    var map = consultantMap();
+    map.put("hasOtherIdentity", true);
+    map.put("otherIdentityTypes", List.of("TENANT_ADMIN"));
+
+    // when
+    var consultant = consultantDtoMapper.consultantDtoOf(map);
+
+    // then
+    assertThat(consultant.getHasOtherIdentity()).isTrue();
+    assertThat(consultant.getOtherIdentityTypes())
+        .containsExactly(
+            de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO.OtherIdentityTypesEnum
+                .TENANT_ADMIN);
+  }
+
+  @Test
+  void consultantDtoOf_Should_DefaultOtherIdentityFields_WhenAbsentFromMap() {
+    // given
+    ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
+    when(identityClient.userHasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT.getValue()))
+        .thenReturn(false);
+
+    // when
+    var consultant = consultantDtoMapper.consultantDtoOf(consultantMap());
+
+    // then
+    assertThat(consultant.getHasOtherIdentity()).isFalse();
+    assertThat(consultant.getOtherIdentityTypes()).isEmpty();
+  }
+
   private Map<String, Object> consultantMap() {
     Map<String, Object> consultantMap = new HashMap<>();
     consultantMap.put("id", "consultant-id");
