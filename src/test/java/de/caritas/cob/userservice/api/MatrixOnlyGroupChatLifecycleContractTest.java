@@ -56,4 +56,21 @@ class MatrixOnlyGroupChatLifecycleContractTest {
             "rcGroupId",
             "Rocket.Chat");
   }
+
+  @Test
+  void stoppingAGroupChatMustNotCallRocketChat() throws IOException {
+    var source =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/actions/chat/"
+                    + "StopChatActionCommand.java"));
+
+    assertThat(source)
+        .doesNotContain(
+            "RocketChatService",
+            "rocketChatService",
+            "deleteMessengerChat",
+            "Rocket.Chat",
+            "getGroupId");
+  }
 }
