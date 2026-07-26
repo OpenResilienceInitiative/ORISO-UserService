@@ -4,10 +4,10 @@ import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.identity.IdentityUserProfile;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
@@ -22,9 +22,9 @@ public class KeycloakUserDataProvider {
 
   public UserDataResponseDTO retrieveAuthenticatedUserData() {
     assertCalledInAuthenticatedUserContext();
-    UserRepresentation user;
+    IdentityUserProfile user;
     try {
-      user = identityClient.getById(authenticatedUser.getUserId());
+      user = identityClient.getUserProfile(authenticatedUser.getUserId());
     } catch (Exception ex) {
       log.warn(
           "Could not retrieve Keycloak user data for authenticated user {}; returning token-based user data",
@@ -46,14 +46,14 @@ public class KeycloakUserDataProvider {
         !authenticatedUser.isAnonymous(), "Cannot retrieve keycloak data for anonymous users");
   }
 
-  private UserDataResponseDTO userDataResponseDtoOf(UserRepresentation keycloakUser) {
+  private UserDataResponseDTO userDataResponseDtoOf(IdentityUserProfile identityProfile) {
 
     return UserDataResponseDTO.builder()
-        .userId(keycloakUser.getId())
-        .userName(keycloakUser.getUsername())
-        .firstName(keycloakUser.getFirstName())
-        .lastName(keycloakUser.getLastName())
-        .email(keycloakUser.getEmail())
+        .userId(identityProfile.getId())
+        .userName(identityProfile.getUsername())
+        .firstName(identityProfile.getFirstName())
+        .lastName(identityProfile.getLastName())
+        .email(identityProfile.getEmail())
         .encourage2fa(false)
         .absenceMessage("")
         .isInTeamAgency(false)
