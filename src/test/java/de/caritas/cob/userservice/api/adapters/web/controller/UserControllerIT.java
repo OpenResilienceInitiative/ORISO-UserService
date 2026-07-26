@@ -1119,15 +1119,16 @@ class UserControllerIT {
   }
 
   @Test
-  void getSessionsForAuthenticatedConsultant_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
+  void getSessionsForAuthenticatedConsultant_Should_Succeed_WhenRcTokenHeaderIsMissing()
       throws Exception {
+    // The RCToken header is a Rocket.Chat leftover: it is threaded through the
+    // session-list code and then dropped, because the room lookup runs against
+    // Matrix. Callers must not be forced to send a dummy value for it.
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService);
+        .andExpect(status().isNoContent());
   }
 
   @Test
@@ -1354,14 +1355,14 @@ class UserControllerIT {
 
   /** Method: getTeamSessionsForAuthenticatedConsultant (role: consultant) */
   @Test
-  void getTeamSessionsForAuthenticatedConsultant_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
+  void getTeamSessionsForAuthenticatedConsultant_Should_Succeed_WhenRcTokenHeaderIsMissing()
       throws Exception {
-
+    // See above: RCToken is optional, a missing one is not a client error.
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNoContent());
   }
 
   @Test
