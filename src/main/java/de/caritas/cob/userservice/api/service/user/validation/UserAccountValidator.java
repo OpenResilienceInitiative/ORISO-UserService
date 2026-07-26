@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.user.validation;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import jakarta.validation.constraints.NotNull;
@@ -22,7 +21,7 @@ public class UserAccountValidator {
    * @param password password
    */
   public void checkPasswordValidity(String username, String password) {
-    KeycloakLoginResponseDTO loginResponse = identityClient.loginUser(username, password);
+    var loginResponse = identityClient.loginUser(username, password);
     identityClient.logoutUser(loginResponse.getRefreshToken());
   }
 }

@@ -3,16 +3,10 @@
   xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
-
-  <changeSet id="0073-support-room" author="frank">
+  <changeSet id="0072-user-do-not-disturb" author="frank">
     <sqlFile
-      path="db/changelog/changeset/0073_support_room/migrate.sql"
-      relativeToChangelogFile="false"
-      splitStatements="true"
-      stripComments="true"
-      endDelimiter=";"/>
-    <rollback>
-      <sql>DROP TABLE IF EXISTS userservice.support_room;</sql>
-    </rollback>
+      path="db/changelog/changeset/0072_user_do_not_disturb/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback><sql>DROP TABLE IF EXISTS user_do_not_disturb;</sql></rollback>
   </changeSet>
 </databaseChangeLog>

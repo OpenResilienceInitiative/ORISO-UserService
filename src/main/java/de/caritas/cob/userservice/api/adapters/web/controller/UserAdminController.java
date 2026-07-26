@@ -52,11 +52,13 @@ import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Controller to handle all session admin requests. */
@@ -225,9 +227,15 @@ public class UserAdminController implements UseradminApi {
    *
    * @param consultantId consultant id (required)
    */
+  @DeleteMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}",
+        "/service/useradmin/consultants/{consultantId}"
+      })
   @Override
   public ResponseEntity<Void> markConsultantForDeletion(
-      String consultantId, Boolean forceDeleteSessions) {
+      @PathVariable String consultantId,
+      @RequestParam(required = false, defaultValue = "false") Boolean forceDeleteSessions) {
     this.consultantAdminFacade.markConsultantForDeletion(consultantId, forceDeleteSessions);
     return new ResponseEntity<>(HttpStatus.OK);
   }

@@ -307,6 +307,11 @@ class EmailNotificationFacadeTest {
 
   @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
   @Mock private MailService mailService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
+      doNotDisturbService;
+
   @Mock SessionService sessionService;
   @Mock ConsultantAgencyService consultantAgencyService;
   @Mock ConsultantService consultantService;

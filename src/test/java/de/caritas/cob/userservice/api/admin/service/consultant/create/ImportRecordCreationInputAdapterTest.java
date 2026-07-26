@@ -34,6 +34,7 @@ class ImportRecordCreationInputAdapterTest {
     assertThat(input.getLastName(), is("Record"));
     assertThat(input.getEmail(), is("import@example.com"));
     assertThat(input.getPassword(), nullValue());
+    assertThat(input.shouldGeneratePassword(), is(true));
     assertThat(input.isAbsent(), is(true));
     assertThat(input.getAbsenceMessage(), is("On leave"));
     assertThat(input.isTeamConsultant(), is(true));

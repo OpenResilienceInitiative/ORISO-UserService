@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import org.springframework.stereotype.Component;
 
@@ -20,13 +21,15 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
       SessionDataRepository sessionDataRepository,
       RocketChatService rocketChatService,
       CaseHandoverRequestRepository caseHandoverRequestRepository,
-      SessionSupervisorRepository sessionSupervisorRepository) {
+      SessionSupervisorRepository sessionSupervisorRepository,
+      SessionTopicRepository sessionTopicRepository) {
     super(
         sessionRepository,
         sessionDataRepository,
         rocketChatService,
         caseHandoverRequestRepository,
-        sessionSupervisorRepository);
+        sessionSupervisorRepository,
+        sessionTopicRepository);
   }
 
   /**

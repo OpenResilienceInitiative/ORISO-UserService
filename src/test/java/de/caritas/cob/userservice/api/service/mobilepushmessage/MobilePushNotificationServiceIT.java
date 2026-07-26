@@ -20,7 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class MobilePushNotificationServiceIT {
 
   private static final String MOBILE_TOKEN = "matrix-background-mobile-token";

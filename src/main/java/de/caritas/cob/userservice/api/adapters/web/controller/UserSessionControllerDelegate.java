@@ -290,6 +290,27 @@ class UserSessionControllerDelegate {
         "Step 1 result: {} sessions found",
         groupSessionList.getSessions() != null ? groupSessionList.getSessions().size() : 0);
 
+    // Step 1b (#774): an anonymous Live Chat request is made visible to the consultant by topic
+    // across tenants, but Step 1 only resolves sessions the consultant is assigned to or shares an
+    // agency with (tenant-filtered). Without this fallback a consultant sees a live chat request in
+    // the queue but gets 204 opening it, so it can never be accepted. Same topic-based visibility
+    // as the queue itself.
+    if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
+      log.info(
+          "Step 1b: No assigned session found, trying anonymous Live Chat queue for ID: {}",
+          sessionId);
+      var anonymousLiveChat =
+          sessionListFacade.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+              consultant, singletonList(sessionId));
+      if (anonymousLiveChat != null
+          && anonymousLiveChat.getSessions() != null
+          && !anonymousLiveChat.getSessions().isEmpty()) {
+        log.info(
+            "Step 1b result: anonymous Live Chat enquiry {} resolved for consultant", sessionId);
+        return anonymousLiveChat;
+      }
+    }
+
     if (groupSessionList.getSessions() == null || groupSessionList.getSessions().isEmpty()) {
       log.info("Step 2: No session found, trying to find as CHAT with ID: {}", sessionId);
       var token = rcToken != null ? rcToken : "dummy-rc-token";

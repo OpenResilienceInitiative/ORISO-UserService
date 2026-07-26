@@ -1246,6 +1246,13 @@ components:
             type: integer
             format: int64
           example: [3, 7, 12]
+        agencyIds:
+          type: array
+          description: ids of agencies assigned atomically with the consultant
+          items:
+            type: integer
+            format: int64
+          example: [5, 9]
         publicSlug:
           type: string
           example: nikunj-rohit

@@ -61,6 +61,8 @@ public class EmailNotificationFacade {
   private String rocketChatSystemUserId;
 
   private final @NonNull MailService mailService;
+  private final @NonNull de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
+      doNotDisturbService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull ConsultantService consultantService;
@@ -168,6 +170,7 @@ public class EmailNotificationFacade {
               .multiTenancyEnabled(multiTenancyEnabled)
               .messageClient(messageClient)
               .releaseToggleService(releaseToggleService)
+              .doNotDisturbService(doNotDisturbService)
               .build();
       sendMailTasksToMailService(newMessageMails);
 

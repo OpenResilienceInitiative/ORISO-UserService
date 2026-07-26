@@ -17,7 +17,7 @@ import org.springframework.test.context.TestPropertySource;
  */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class AdminStatisticsRepositoryIT {
 
   private static final long TENANT_ID = 1L;

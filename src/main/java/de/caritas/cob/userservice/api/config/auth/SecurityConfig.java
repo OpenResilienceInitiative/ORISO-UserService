@@ -6,11 +6,13 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,11 +21,13 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -32,6 +36,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter;
 import org.springframework.security.web.util.matcher.RegexRequestMatcher;
@@ -108,7 +113,15 @@ public class SecurityConfig {
     http.authorizeHttpRequests(
         authorize ->
             authorize
-                .requestMatchers(csrfSecurityProperties.getWhitelist().getConfigUris())
+                .requestMatchers(
+                    "/users/docs",
+                    "/users/docs/**",
+                    "/v2/api-docs",
+                    "/configuration/ui",
+                    "/swagger-resources/**",
+                    "/configuration/security",
+                    "/swagger-ui.html",
+                    "/webjars/**")
                 .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
@@ -162,8 +175,6 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
-                .requestMatchers("/users/sessions/askers")
-                .permitAll()
                 .requestMatchers(
                     "/users/email",
                     "/users/mails/messages/new",
@@ -171,6 +182,7 @@ public class SecurityConfig {
                     "/users/drafts/**",
                     "/users/event-notifications",
                     "/users/event-notifications/**",
+                    "/users/notifications/do-not-disturb",
                     "/users/chat/{chatId:[0-9]+}",
                     "/users/chat/e2e",
                     "/users/chat/{chatId:[0-9]+}/join",
@@ -236,6 +248,8 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+"))
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/sessions/room/{sessionId:[0-9]+}",
@@ -304,11 +318,16 @@ public class SecurityConfig {
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
-                .requestMatchers("/useradmin/tenantadmins/", "/useradmin/tenantadmins/**")
+                .requestMatchers(
+                    "/useradmin/tenantadmins",
+                    "/useradmin/tenantadmins/**",
+                    "/service/useradmin/tenantadmins",
+                    "/service/useradmin/tenantadmins/**")
                 .hasAuthority(TENANT_ADMIN)
-                .requestMatchers("/useradmin/data/*")
+                .requestMatchers("/useradmin/data", "/service/useradmin/data")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.POST, "/useradmin/consultants/")
+                .requestMatchers(
+                    HttpMethod.POST, "/useradmin/consultants", "/service/useradmin/consultants")
                 .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.PUT,
@@ -377,7 +396,7 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .hasAuthority(TECHNICAL_DEFAULT)
+                .access(this::canAccessInactiveAccountAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -461,6 +480,43 @@ public class SecurityConfig {
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
     return authorities;
+  }
+
+  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    boolean isTechnicalAccount =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
+
+    if (isTechnicalAccount) {
+      return new AuthorizationDecision(true);
+    }
+
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+
+    Jwt jwt = jwtAuthentication.getToken();
+    Set<String> roles = extractKeycloakRoles(jwt);
+    boolean hasPlatformAdminRoles =
+        roles.contains(UserRole.AGENCY_ADMIN.getValue())
+            && roles.contains(UserRole.TENANT_ADMIN.getValue());
+
+    return new AuthorizationDecision(hasPlatformAdminRoles && isPlatformTenant(jwt));
+  }
+
+  private boolean isPlatformTenant(Jwt jwt) {
+    Object tenantId = jwt.getClaims().get("tenantId");
+    if (tenantId instanceof Number number) {
+      try {
+        return new BigDecimal(number.toString()).compareTo(BigDecimal.ZERO) == 0;
+      } catch (NumberFormatException ignored) {
+        return false;
+      }
+    }
+    return tenantId != null && "0".equals(tenantId.toString());
   }
 
   @SuppressWarnings("unchecked")

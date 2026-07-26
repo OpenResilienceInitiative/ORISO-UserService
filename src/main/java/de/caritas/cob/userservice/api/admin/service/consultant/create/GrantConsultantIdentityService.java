@@ -8,8 +8,6 @@ import static de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils.
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
@@ -30,6 +28,8 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.Set;
 import lombok.NonNull;
@@ -62,8 +62,8 @@ public class GrantConsultantIdentityService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MessageClient messageClient;
+  private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
@@ -137,13 +137,13 @@ public class GrantConsultantIdentityService {
   private String createMatrixAccount(de.caritas.cob.userservice.api.model.Admin admin) {
     try {
       var matrixPassword = userHelper.getRandomPassword();
-      var matrixResponse =
-          matrixSynapseService.createUser(
+      var matrixUserId =
+          matrixUserClient.createUserId(
               admin.getUsername(),
               matrixPassword,
               admin.getFirstName() + " " + admin.getLastName());
-      if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-        return matrixResponse.getBody().getUserId();
+      if (matrixUserId != null) {
+        return matrixUserId;
       }
       log.warn(
           "Matrix user creation response missing user_id while granting consultant identity to admin {}",
@@ -166,7 +166,7 @@ public class GrantConsultantIdentityService {
       return admin.getRcUserId();
     }
     try {
-      return rocketChatService.getUserID(
+      return messageClient.getUserID(
           usernameTranscoder.encodeUsername(admin.getUsername()),
           userHelper.getRandomPassword(),
           true);

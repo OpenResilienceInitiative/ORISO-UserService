@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
@@ -96,6 +97,18 @@ class ConsultantAdminFacadeTest {
     this.consultantAdminFacade.createNewConsultant(null);
 
     verify(this.consultantAdminService).createNewConsultant(null);
+  }
+
+  @Test
+  void createNewConsultant_Should_RejectUnauthorizedAgenciesBeforeCreatingIdentity() {
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L));
+    CreateConsultantDTO dto = new CreateConsultantDTO().agencyIds(List.of(2L));
+
+    assertThrows(ForbiddenException.class, () -> consultantAdminFacade.createNewConsultant(dto));
+
+    verify(consultantAdminService, never()).createNewConsultant(any());
   }
 
   @Test

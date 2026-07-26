@@ -5,10 +5,6 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static java.util.Objects.isNull;
 
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
@@ -19,6 +15,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -45,8 +43,8 @@ public class ConsultantUpdateService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
-  private final @NonNull RocketChatService rocketChatService;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MessageClient messageClient;
+  private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
@@ -112,8 +110,8 @@ public class ConsultantUpdateService {
     // MATRIX MIGRATION: RocketChat update is optional, don't block on errors
     if (identityDataChanged) {
       try {
-        this.rocketChatService.updateUser(
-            buildUserUpdateRequestDTO(consultant.getRocketChatId(), updateConsultantDTO));
+        this.messageClient.updateUserEmail(
+            consultant.getRocketChatId(), updateConsultantDTO.getEmail());
       } catch (Exception e) {
         // RocketChat is being replaced by Matrix, so failures are non-blocking
         // Silently continue - consultant update will succeed in database
@@ -125,7 +123,7 @@ public class ConsultantUpdateService {
       try {
         String newDisplayName =
             updateConsultantDTO.getFirstname() + " " + updateConsultantDTO.getLastname();
-        matrixSynapseService.updateUserDisplayName(consultant.getMatrixUserId(), newDisplayName);
+        matrixUserClient.updateUserDisplayName(consultant.getMatrixUserId(), newDisplayName);
       } catch (Exception e) {
         // Matrix update failures are non-blocking
       }
@@ -157,13 +155,6 @@ public class ConsultantUpdateService {
 
     this.userAccountInputValidator.validateUserDTO(userDTO);
     return userDTO;
-  }
-
-  private UserUpdateRequestDTO buildUserUpdateRequestDTO(
-      String rcUserId, UpdateAdminConsultantDTO updateConsultantDTO) {
-    UserUpdateDataDTO userUpdateDataDTO =
-        new UserUpdateDataDTO(updateConsultantDTO.getEmail(), true);
-    return new UserUpdateRequestDTO(rcUserId, userUpdateDataDTO);
   }
 
   private Consultant updateDatabaseConsultant(

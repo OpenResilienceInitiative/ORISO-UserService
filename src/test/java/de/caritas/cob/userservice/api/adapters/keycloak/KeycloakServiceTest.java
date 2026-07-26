@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
@@ -320,6 +322,52 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  public void getOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.get(eq("stale-token"), any(), any())).thenThrow(unauthorized);
+    when(keycloakClient.get(eq("fresh-token"), any(), any())).thenReturn(entity);
+
+    assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getBearerToken();
+  }
+
+  @Test
+  public void getOtpCredential_Should_RetryOnlyOnce_When_BothRequestsAreUnauthorized() {
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.get(any(), any(), any())).thenThrow(unauthorized);
+
+    assertThrows(
+        org.springframework.web.client.HttpClientErrorException.class,
+        () -> keycloakService.getOtpCredential(USERNAME));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).get(any(), any(), any());
+  }
+
+  @Test
+  public void getOtpCredential_Should_NotRefreshAdminSession_When_RequestFailsWithNon401() {
+    var badRequest =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.BAD_REQUEST);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(any(), any(), any())).thenThrow(badRequest);
+
+    assertThrows(
+        org.springframework.web.client.HttpClientErrorException.class,
+        () -> keycloakService.getOtpCredential(USERNAME));
+
+    verify(keycloakClient, never()).refreshAdminSession();
+    verify(keycloakClient).get(any(), any(), any());
+  }
+
+  @Test
   public void
       setUpOtpCredential_ShouldNot_ThrowInternalServerErrorException_When_RequestWasSuccessfully() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
@@ -330,11 +378,42 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void setUpOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.putForEntity(eq("stale-token"), any(), any(), any()))
+        .thenThrow(unauthorized);
+    when(keycloakClient.putForEntity(eq("fresh-token"), any(), any(), any()))
+        .thenReturn(new ResponseEntity<>(HttpStatus.OK));
+
+    assertThat(keycloakService.setUpOtpCredential(USERNAME, "123456", "secret"), is(true));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getBearerToken();
+  }
+
+  @Test
   public void
       deleteOtpCredential_Should_Not_ThrowBadRequestException_When_RequestWasSuccessfully() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
 
     assertDoesNotThrow(() -> keycloakService.deleteOtpCredential(USERNAME));
+  }
+
+  @Test
+  public void deleteOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.delete(eq("stale-token"), any(), eq(Void.class))).thenThrow(unauthorized);
+    when(keycloakClient.delete(eq("fresh-token"), any(), eq(Void.class)))
+        .thenReturn(new ResponseEntity<>(HttpStatus.NO_CONTENT));
+
+    assertDoesNotThrow(() -> keycloakService.deleteOtpCredential(USERNAME));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getBearerToken();
   }
 
   @Test
@@ -758,6 +837,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void updateRole_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     String validRole = "role";
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
@@ -784,6 +865,7 @@ public class KeycloakServiceTest {
     keycloakService.updateRole("user", validRole);
 
     verify(keycloakClient).refreshAdminSession();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
     verify(keycloakClient, times(2)).getRealmResource();
     verify(roleScopeResource).add(any());
   }
@@ -1316,7 +1398,8 @@ public class KeycloakServiceTest {
   @Test
   public void finishEmailVerification_Should_ReturnMappedError_When_KeycloakRejects() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
-    var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
+    var exception =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.BAD_REQUEST);
     when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(exception);
     var expected = new HashMap<String, String>();
     expected.put("status", "error");
@@ -1325,6 +1408,7 @@ public class KeycloakServiceTest {
     var result = keycloakService.finishEmailVerification(USERNAME, "123456");
 
     assertThat(result, is(expected));
+    verify(keycloakClient, never()).refreshAdminSession();
   }
 
   @Test

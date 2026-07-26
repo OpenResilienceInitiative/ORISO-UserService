@@ -24,7 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @TestPropertySource(
     properties = {
       "spring.profiles.active=testing",
-      "spring.datasource.url=jdbc:h2:mem:userstatistics-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+      "spring.datasource.url=jdbc:h2:mem:userstatistics-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER",
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
@@ -46,7 +46,7 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @ActiveProfiles("testing")
 class UserStatisticsControllerAuthorizationIT {
 

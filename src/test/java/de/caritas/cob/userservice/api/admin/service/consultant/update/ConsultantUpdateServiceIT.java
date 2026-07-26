@@ -9,7 +9,7 @@ import org.springframework.test.context.TestPropertySource;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
 
   protected String VALID_CONSULTANT_ID = "5674839f-d0a3-47e2-8f9c-bb49fc2ddbbe";

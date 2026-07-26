@@ -26,6 +26,10 @@ interface ConsultantCreationInput {
 
   String getPassword();
 
+  default boolean shouldGeneratePassword() {
+    return false;
+  }
+
   boolean isAbsent();
 
   String getAbsenceMessage();
@@ -45,6 +49,10 @@ interface ConsultantCreationInput {
   Long getTenantId();
 
   default List<Long> getTopicIds() {
+    return null;
+  }
+
+  default List<Long> getAgencyIds() {
     return null;
   }
 }

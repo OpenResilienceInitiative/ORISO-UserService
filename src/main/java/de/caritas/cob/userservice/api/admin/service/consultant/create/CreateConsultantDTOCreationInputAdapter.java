@@ -151,4 +151,14 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   public List<Long> getTopicIds() {
     return this.createConsultantDTO.getTopicIds();
   }
+
+  /**
+   * Provides the agencies assigned as part of consultant creation.
+   *
+   * @return the agency ids
+   */
+  @Override
+  public List<Long> getAgencyIds() {
+    return this.createConsultantDTO.getAgencyIds();
+  }
 }

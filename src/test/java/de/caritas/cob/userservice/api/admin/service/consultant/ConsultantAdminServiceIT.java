@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import java.util.HashSet;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.jeasy.random.EasyRandomParameters;
@@ -36,10 +37,11 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class ConsultantAdminServiceIT {
 
   private static final String EXISTING_CONSULTANT = "0b3b1cc6-be98-4787-aa56-212259d811b9";
@@ -150,6 +152,7 @@ public class ConsultantAdminServiceIT {
   }
 
   @Test
+  @Transactional
   public void markConsultantForDeletion_Should_setDeleteDateForConsultantAndConsultantAgencies() {
     var consultant = givenAPersistedConsultantWithMultipleAgencies();
 
@@ -158,9 +161,8 @@ public class ConsultantAdminServiceIT {
     var deletedConsultant = consultantRepository.findById(consultant.getId());
     assertThat(deletedConsultant.get().getDeleteDate(), notNullValue());
     assertThat(deletedConsultant.get().getStatus(), is(ConsultantStatus.IN_DELETION));
-    deletedConsultant
-        .get()
-        .getConsultantAgencies()
+    consultantAgencyRepository
+        .findByConsultantId(consultant.getId())
         .forEach(
             ca -> {
               assertThat(ca.getDeleteDate(), notNullValue());
@@ -174,22 +176,25 @@ public class ConsultantAdminServiceIT {
             .excludeField(FieldPredicates.named("consultantAgencies"))
             .excludeField(FieldPredicates.named("languages"))
             .excludeField(FieldPredicates.named("consultantMobileTokens"))
+            .excludeField(FieldPredicates.named("consultantTopics"))
             .excludeField(FieldPredicates.named("deleteDate"))
             .excludeField(FieldPredicates.named("appointments"))
             .excludeField(FieldPredicates.named("sessions"));
     var consultant = new EasyRandom(parameters).nextObject(Consultant.class);
-    consultantRepository.save(consultant);
+    var persistedConsultant = consultantRepository.save(consultant);
     var consultantAgencies =
         new EasyRandom()
             .objects(ConsultantAgency.class, 10)
             .peek(
                 agencyRelation -> {
+                  agencyRelation.setId(null);
                   agencyRelation.setAgencyId(1L);
-                  agencyRelation.setConsultant(consultant);
+                  agencyRelation.setConsultant(persistedConsultant);
                   agencyRelation.setDeleteDate(null);
                 })
             .collect(Collectors.toList());
     consultantAgencyRepository.saveAll(consultantAgencies);
-    return consultant;
+    persistedConsultant.setConsultantAgencies(new HashSet<>(consultantAgencies));
+    return persistedConsultant;
   }
 }

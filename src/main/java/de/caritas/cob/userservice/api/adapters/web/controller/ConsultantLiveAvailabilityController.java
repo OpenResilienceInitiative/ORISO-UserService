@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -51,6 +52,16 @@ public class ConsultantLiveAvailabilityController {
     }
 
     return ResponseEntity.noContent().build();
+  }
+
+  /** Refreshes only an existing availability key; it never enables a disabled consultant. */
+  @PostMapping("/conversations/consultants/availability/heartbeat")
+  public ResponseEntity<ConsultantLiveAvailabilityResponseDTO> heartbeatLiveChatAvailability() {
+    boolean available = false;
+    if (authenticatedUser.isConsultant() && authenticatedUser.getUserId() != null) {
+      available = consultantActivityRegistry.refreshIfAvailable(authenticatedUser.getUserId());
+    }
+    return ResponseEntity.ok(new ConsultantLiveAvailabilityResponseDTO(available));
   }
 
   /**

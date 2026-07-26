@@ -107,6 +107,8 @@
   <include
     file="db/changelog/changeset/0066_consultant_message_stat/0066_changeSet.xml" />
   <include
+    file="db/changelog/changeset/0067_consultant_public_slug/0067_changeSet.xml" />
+  <include
     file="db/changelog/changeset/0067_session_supervision_opt_out/0067_changeSet.xml" />
   <include
     file="db/changelog/changeset/0068_consultant_assigned_supervisor/0068_changeSet.xml" />
@@ -117,9 +119,11 @@
   <include
     file="db/changelog/changeset/0071_tutorial_progress/0071_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0072_handshake/0072_changeSet.xml" />
+    file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0073_support_room/0073_changeSet.xml" />
+    file="db/changelog/changeset/0073_handshake/0073_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0074_support_room/0074_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

@@ -1,68 +1,143 @@
 package de.caritas.cob.userservice.api.service.availability;
 
-import java.time.Clock;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * Tracks which consultants are currently available for live chat. Availability is driven by
- * explicit events from the consultant app (Live Chat toggle on/off, logout) and kept alive by a
- * heartbeat while the app stays open, so a crashed/closed browser auto-expires after the configured
- * window.
- *
- * <p>Matrix presence is unreliable for this: a consultant waiting for a new anonymous enquiry has
- * no open chat and therefore generates no Matrix activity.
- */
+/** Redis-backed source of truth for consultants currently available for live chat. */
 @Component
+@Slf4j
 public class ConsultantActivityRegistry {
 
-  private final ConcurrentHashMap<String, Long> availableSince = new ConcurrentHashMap<>();
-  private final Clock clock;
+  static final String STORE_METRIC = "oriso.live_chat.availability.store.operations";
+  private static final String AVAILABLE_VALUE = "1";
 
-  public ConsultantActivityRegistry() {
-    this.clock = Clock.systemUTC();
+  private final StringRedisTemplate redisTemplate;
+  private final MeterRegistry meterRegistry;
+  private final Duration ttl;
+  private final String keyPrefix;
+
+  @Autowired
+  public ConsultantActivityRegistry(
+      StringRedisTemplate redisTemplate,
+      MeterRegistry meterRegistry,
+      @Value("${consultant.availability.redis.ttlSeconds:120}") long ttlSeconds,
+      @Value("${consultant.availability.redis.keyPrefix:livechat:consultant:available:}")
+          String keyPrefix) {
+    this(redisTemplate, meterRegistry, Duration.ofSeconds(ttlSeconds), keyPrefix);
   }
 
-  ConsultantActivityRegistry(Clock clock) {
-    this.clock = clock;
+  ConsultantActivityRegistry(
+      StringRedisTemplate redisTemplate,
+      MeterRegistry meterRegistry,
+      Duration ttl,
+      String keyPrefix) {
+    this.redisTemplate = redisTemplate;
+    this.meterRegistry = meterRegistry;
+    this.ttl = ttl;
+    this.keyPrefix = keyPrefix;
   }
 
-  /** Marks the consultant available now (Live Chat enabled). Adds them if not present. */
+  /** Explicit enable. The request fails when Redis cannot acknowledge the state change. */
   public void markAvailable(String consultantId) {
-    if (consultantId != null && !consultantId.isBlank()) {
-      availableSince.put(consultantId, clock.millis());
+    if (!isValid(consultantId)) {
+      return;
+    }
+    try {
+      redisTemplate.opsForValue().set(key(consultantId), AVAILABLE_VALUE, ttl);
+      record("enable", "success");
+    } catch (RuntimeException ex) {
+      throw storeFailure("enable", ex);
     }
   }
 
-  /** Marks the consultant unavailable immediately (Live Chat disabled or logout). */
+  /** Explicit disable/logout. The Redis key is removed immediately. */
   public void markUnavailable(String consultantId) {
-    if (consultantId != null) {
-      availableSince.remove(consultantId);
+    if (!isValid(consultantId)) {
+      return;
+    }
+    try {
+      redisTemplate.delete(key(consultantId));
+      record("disable", "success");
+    } catch (RuntimeException ex) {
+      throw storeFailure("disable", ex);
+    }
+  }
+
+  /** Heartbeat: EXPIRE refreshes only an existing key and can never enable a consultant. */
+  public boolean refreshIfAvailable(String consultantId) {
+    if (!isValid(consultantId)) {
+      return false;
+    }
+    try {
+      Boolean refreshed = redisTemplate.expire(key(consultantId), ttl);
+      record("refresh", Boolean.TRUE.equals(refreshed) ? "success" : "missing");
+      return Boolean.TRUE.equals(refreshed);
+    } catch (RuntimeException ex) {
+      throw storeFailure("refresh", ex);
     }
   }
 
   /**
-   * Heartbeat keep-alive: refreshes the timestamp only for consultants already marked available.
-   * Never adds a consultant, so generic requests can't keep a disabled consultant counted.
+   * Returns only IDs with a live Redis key. Redis TTL is authoritative; {@code windowMs} remains in
+   * the signature while existing callers migrate from the former process-local timestamp store. Any
+   * Redis read failure fails closed, so no consultant is falsely routed.
    */
-  public void refreshIfAvailable(String consultantId) {
-    if (consultantId != null) {
-      availableSince.computeIfPresent(consultantId, (id, ts) -> clock.millis());
+  public Set<String> filterActive(Collection<String> consultantIds, long windowMs) {
+    if (consultantIds == null || consultantIds.isEmpty()) {
+      return Collections.emptySet();
+    }
+    List<String> distinctIds = consultantIds.stream().filter(this::isValid).distinct().toList();
+    if (distinctIds.isEmpty()) {
+      return Collections.emptySet();
+    }
+    List<String> keys = distinctIds.stream().map(this::key).toList();
+    try {
+      List<String> values = redisTemplate.opsForValue().multiGet(keys);
+      if (values == null) {
+        record("read", "success");
+        return Collections.emptySet();
+      }
+      Set<String> active = new LinkedHashSet<>();
+      int resultSize = Math.min(distinctIds.size(), values.size());
+      for (int index = 0; index < resultSize; index++) {
+        if (AVAILABLE_VALUE.equals(values.get(index))) {
+          active.add(distinctIds.get(index));
+        }
+      }
+      record("read", "success");
+      return active;
+    } catch (RuntimeException ex) {
+      record("read", "failure");
+      log.warn("Live-chat availability Redis read failed; routing fails closed", ex);
+      return Collections.emptySet();
     }
   }
 
-  /** Returns the subset of the given consultant IDs marked available within the window (in ms). */
-  public Set<String> filterActive(Collection<String> consultantIds, long windowMs) {
-    long cutoff = clock.millis() - windowMs;
-    return consultantIds.stream()
-        .filter(
-            consultantId -> {
-              Long lastSeen = availableSince.get(consultantId);
-              return lastSeen != null && lastSeen >= cutoff;
-            })
-        .collect(Collectors.toSet());
+  private AvailabilityStoreException storeFailure(String operation, RuntimeException cause) {
+    record(operation, "failure");
+    log.warn("Live-chat availability Redis {} failed", operation, cause);
+    return new AvailabilityStoreException("Live-chat availability store operation failed", cause);
+  }
+
+  private void record(String operation, String outcome) {
+    meterRegistry.counter(STORE_METRIC, "operation", operation, "outcome", outcome).increment();
+  }
+
+  private boolean isValid(String consultantId) {
+    return consultantId != null && !consultantId.isBlank();
+  }
+
+  private String key(String consultantId) {
+    return keyPrefix + consultantId;
   }
 }

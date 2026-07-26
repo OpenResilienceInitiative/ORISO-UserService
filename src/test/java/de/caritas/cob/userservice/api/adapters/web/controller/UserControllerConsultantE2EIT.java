@@ -95,19 +95,21 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
-@TestPropertySource(properties = "feature.topics.enabled=true")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(properties = {"feature.topics.enabled=true", "rocket-chat.enabled=true"})
+@Transactional
 class UserControllerConsultantE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
 
@@ -1033,7 +1035,6 @@ class UserControllerConsultantE2EIT {
       boolean includingAgenciesMarkedAsDeleted,
       boolean markedAsDeleted,
       List<Long> agenciesIdsToAssign) {
-    List<Consultant> savedConsultants = Lists.newArrayList();
     while (count-- > 0) {
       var dbConsultant = consultantRepository.findAll().iterator().next();
       var consultant = new Consultant();
@@ -1055,7 +1056,7 @@ class UserControllerConsultantE2EIT {
       consultant.setLanguageFormal(easyRandom.nextBoolean());
       consultant.setTeamConsultant(easyRandom.nextBoolean());
 
-      consultantRepository.save(consultant);
+      consultant = consultantRepository.save(consultant);
       consultantIdsToDelete.add(consultant.getId());
 
       ConsultantAgency consultantAgency;
@@ -1078,9 +1079,7 @@ class UserControllerConsultantE2EIT {
       }
       consultantAgencyRepository.save(consultantAgency);
       consultantAgencies.add(consultantAgency);
-      consultant.setConsultantAgencies(Set.of(consultantAgency));
-      var saved = consultantRepository.save(consultant);
-      savedConsultants.add(saved);
+      consultant.setConsultantAgencies(new HashSet<>(Set.of(consultantAgency)));
     }
   }
 

@@ -114,6 +114,7 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
@@ -123,6 +124,9 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -141,21 +145,34 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriTemplateHandler;
 
 @SpringBootTest
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
-@TestPropertySource(properties = "feature.topics.enabled=true")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(
+    properties = {
+      "feature.topics.enabled=true",
+      "rocket-chat.enabled=true",
+      "keycloak.realm=test",
+      "identity.openid-connect-url=http://localhost:8080/auth/realms/test/protocol/openid-connect",
+      "identity.otp-allowed-for-users=true",
+      "identity.otp-allowed-for-consultants=true"
+    })
+@Transactional
 class UserControllerE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final Cookie RC_TOKEN_COOKIE =
       new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
 
@@ -286,6 +303,9 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() {
+    when(consultingTypeControllerApi.getApiClient())
+        .thenReturn(
+            new de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient(restTemplate));
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -1167,7 +1187,7 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
-  void patchUserDataShouldRespondWithNoContentOnEmptyEmailTogglesArray() throws Exception {
+  void patchUserDataShouldRespondWithBadRequestOnEmptyEmailTogglesArray() throws Exception {
     givenAValidConsultant();
 
     var patchDto = new HashMap<String, Object>(1);
@@ -1182,7 +1202,7 @@ class UserControllerE2EIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -1693,6 +1713,7 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   void sendReassignmentNotificationShouldSendEmailAndRespondWithOk() throws Exception {
     var apiClientMock = mock(de.caritas.cob.userservice.mailservice.generated.ApiClient.class);
     when(mailsControllerApi.getApiClient()).thenReturn(apiClientMock);
@@ -1704,17 +1725,22 @@ class UserControllerE2EIT {
             .toConsultantId(UUID.randomUUID())
             .rcGroupId(session.getGroupId());
 
-    mockMvc
-        .perform(
-            post("/users/mails/reassignment")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(assignemtNotification))
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk());
+    try {
+      mockMvc
+          .perform(
+              post("/users/mails/reassignment")
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(assignemtNotification))
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isOk());
 
-    Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+      Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+    } finally {
+      sessionRepository.deleteById(session.getId());
+      userRepository.deleteById(session.getUser().getUserId());
+    }
   }
 
   private Session givenAExistingSession() {
@@ -1825,7 +1851,9 @@ class UserControllerE2EIT {
   }
 
   private void givenKeycloakRespondsOtpByAppHasBeenSetup(String username) {
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     var otpInfo = new OtpInfoDTO();
     otpInfo.setOtpSetup(true);
@@ -1837,7 +1865,9 @@ class UserControllerE2EIT {
   }
 
   private void givenKeycloakRespondsOtpByEmailHasBeenSetup(String username) {
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     var otpInfo = new OtpInfoDTO();
     otpInfo.setOtpSetup(true);
@@ -1856,7 +1886,9 @@ class UserControllerE2EIT {
     otpInfo.setOtpSecret(RandomStringUtils.randomAlphabetic(32));
     otpInfo.setOtpSecretQrCode(RandomStringUtils.randomAlphabetic(64));
 
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     when(keycloakRestTemplate.exchange(
             endsWith(urlSuffix), eq(HttpMethod.GET), any(HttpEntity.class), eq(OtpInfoDTO.class)))

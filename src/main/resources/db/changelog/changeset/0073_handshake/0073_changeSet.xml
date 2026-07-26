@@ -4,9 +4,9 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
 
-  <changeSet id="0072-handshake" author="frank">
+  <changeSet id="0073-handshake" author="frank">
     <sqlFile
-      path="db/changelog/changeset/0072_handshake/migrate.sql"
+      path="db/changelog/changeset/0073_handshake/migrate.sql"
       relativeToChangelogFile="false"
       splitStatements="true"
       stripComments="true"

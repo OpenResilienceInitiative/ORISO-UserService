@@ -41,7 +41,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class CreateAdminServiceIT {
 
   private static final String VALID_USERNAME = "validUsername";

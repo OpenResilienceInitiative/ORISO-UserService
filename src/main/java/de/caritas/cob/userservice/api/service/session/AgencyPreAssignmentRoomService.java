@@ -2,13 +2,12 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.util.Optional;
@@ -16,7 +15,6 @@ import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -25,7 +23,7 @@ import org.springframework.stereotype.Service;
 public class AgencyPreAssignmentRoomService {
 
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
 
   public void ensureHoldingRoom(Session session, User user) {
@@ -78,7 +76,7 @@ public class AgencyPreAssignmentRoomService {
 
     String agencyMatrixUsername = extractLocalPart(credentials.getMatrixUserId());
     String agencyToken =
-        matrixSynapseService.loginUser(agencyMatrixUsername, credentials.getMatrixPassword());
+        sessionRoomGateway.loginUser(agencyMatrixUsername, credentials.getMatrixPassword());
 
     if (isBlank(agencyToken)) {
       log.error(
@@ -93,15 +91,11 @@ public class AgencyPreAssignmentRoomService {
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      ResponseEntity<MatrixCreateRoomResponseDTO> response =
-          matrixSynapseService.createRoom(roomName, roomAlias, agencyToken);
-
-      if (response.getBody() == null || isBlank(response.getBody().getRoomId())) {
+      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
         return;
       }
-
-      String roomId = response.getBody().getRoomId();
 
       inviteUser(roomId, user, agencyToken);
 
@@ -124,11 +118,11 @@ public class AgencyPreAssignmentRoomService {
 
   private void inviteUser(String roomId, User user, String agencyToken) {
     try {
-      matrixSynapseService.inviteUserToRoom(roomId, user.getMatrixUserId(), agencyToken);
+      sessionRoomGateway.inviteUser(roomId, user.getMatrixUserId(), agencyToken);
 
-      String userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
+      String userToken = sessionRoomGateway.loginAsUser(user.getMatrixUserId());
       if (!isBlank(userToken)) {
-        matrixSynapseService.joinRoom(roomId, userToken);
+        sessionRoomGateway.joinRoom(roomId, userToken);
       }
     } catch (MatrixInviteUserException ex) {
       log.error(

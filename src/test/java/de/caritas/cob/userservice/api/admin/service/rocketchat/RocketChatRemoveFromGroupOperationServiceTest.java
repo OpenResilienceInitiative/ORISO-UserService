@@ -12,7 +12,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -64,10 +63,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
   void removeFromGroupsOrRollbackOnFailure_Should_executeRemove_When_rcUserIdIsGiven() {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(any()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(any()))
+        .thenReturn(singletonList("rcId"));
 
     this.removeService.removeFromGroupsOrRollbackOnFailure();
 
@@ -79,10 +76,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.session.getStatus()).thenReturn(SessionStatus.NEW);
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(singletonList("rcId"));
     doThrow(new RuntimeException(""))
         .when(this.rocketChatFacade)
         .removeUserFromGroup(anyString(), anyString());
@@ -104,10 +99,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.session.getStatus()).thenReturn(SessionStatus.NEW);
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(any()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(any()))
+        .thenReturn(singletonList("rcId"));
     doThrow(new RuntimeException("")).when(this.rocketChatFacade).removeUserFromGroup(any(), any());
 
     try {
@@ -122,10 +115,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
   void removeFromGroupOrRollbackOnFailure_Should_executeRemoveForRocketChatGroup() {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(any()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(any()))
+        .thenReturn(singletonList("rcId"));
 
     this.removeService.removeFromGroupOrRollbackOnFailure();
 
@@ -137,10 +128,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.session.getStatus()).thenReturn(SessionStatus.NEW);
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(anyString()))
+        .thenReturn(singletonList("rcId"));
     doThrow(new RuntimeException(""))
         .when(this.rocketChatFacade)
         .removeUserFromGroupIgnoreGroupNotFound(anyString(), anyString());
@@ -162,10 +151,8 @@ class RocketChatRemoveFromGroupOperationServiceTest {
     when(this.session.getGroupId()).thenReturn("group");
     when(this.session.getStatus()).thenReturn(SessionStatus.NEW);
     when(this.consultant.getRocketChatId()).thenReturn("rcId");
-    GroupMemberDTO groupMemberDTO = new GroupMemberDTO();
-    groupMemberDTO.set_id(this.consultant.getRocketChatId());
-    when(this.rocketChatFacade.retrieveRocketChatMembers(any()))
-        .thenReturn(singletonList(groupMemberDTO));
+    when(this.rocketChatFacade.retrieveRocketChatMemberIds(any()))
+        .thenReturn(singletonList("rcId"));
     doThrow(new RuntimeException(""))
         .when(this.rocketChatFacade)
         .removeUserFromGroupIgnoreGroupNotFound(any(), any());

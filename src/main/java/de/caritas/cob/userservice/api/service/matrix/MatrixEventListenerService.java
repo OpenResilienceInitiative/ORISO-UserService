@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -17,6 +18,8 @@ import java.util.concurrent.*;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,6 +41,8 @@ public class MatrixEventListenerService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
 
+  private OutboundHttpMetrics outboundHttpMetrics;
+
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
 
@@ -56,6 +61,14 @@ public class MatrixEventListenerService {
   // Flag to control sync loop
   private volatile boolean running = false;
 
+  @Value("${matrix.event-listener.enabled:true}")
+  private boolean eventListenerEnabled = true;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
+
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
   static final long INITIAL_BACKOFF_MS = 5_000L;
   static final long MAX_BACKOFF_MS = 60_000L;
@@ -69,6 +82,10 @@ public class MatrixEventListenerService {
 
   @PostConstruct
   public void initialize() {
+    if (!eventListenerEnabled) {
+      log.info("Matrix event listener is disabled");
+      return;
+    }
     log.info("🔷 Initializing Matrix Event Listener Service...");
     executorService = Executors.newFixedThreadPool(2);
 
@@ -159,6 +176,7 @@ public class MatrixEventListenerService {
           // performMatrixSync swallows exceptions and returns null; treat as a soft failure so an
           // auth problem eventually forces a token re-bootstrap instead of spinning forever.
           consecutiveSyncFailures++;
+          recordRetry("sync");
           if (consecutiveSyncFailures >= SYNC_FAILURES_BEFORE_REBOOTSTRAP) {
             log.warn(
                 "⚠️ {} consecutive Matrix sync failures - re-acquiring admin token",
@@ -188,6 +206,7 @@ public class MatrixEventListenerService {
         break;
       } catch (Exception e) {
         log.error("❌ Error in Matrix sync loop", e);
+        recordRetry("sync-loop");
         try {
           // Exponential backoff before retrying on error (5s→10s→…→60s cap).
           sleep(errorBackoffMs);
@@ -225,6 +244,7 @@ public class MatrixEventListenerService {
         log.error("❌ Error getting admin token - retrying in {}ms", backoffMs, e);
       }
 
+      recordRetry("admin-token");
       try {
         sleep(backoffMs);
       } catch (InterruptedException ie) {
@@ -234,6 +254,12 @@ public class MatrixEventListenerService {
       backoffMs = nextBackoffMillis(backoffMs);
     }
     return false;
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("matrix", operation);
+    }
   }
 
   /**

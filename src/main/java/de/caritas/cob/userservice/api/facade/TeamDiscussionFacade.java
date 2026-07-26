@@ -62,8 +62,8 @@ public class TeamDiscussionFacade {
    * OPEN discussions can be created; an ARCHIVED one is returned read-only.
    */
   public TeamDiscussionView getOrCreateDiscussion(Long sessionId, String consultantId) {
-    featureGate.requireEnabled();
     Session session = loadSession(sessionId);
+    featureGate.requireEnabled(session.getTenantId());
     Consultant consultant = requireEligibleConsultant(session, consultantId);
 
     Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
@@ -97,8 +97,8 @@ public class TeamDiscussionFacade {
 
   /** Returns the discussion if one exists — also ARCHIVED ones (read-only archive access). */
   public Optional<TeamDiscussionView> getDiscussion(Long sessionId, String consultantId) {
-    featureGate.requireEnabled();
     Session session = loadSession(sessionId);
+    featureGate.requireEnabled(session.getTenantId());
     requireEligibleConsultant(session, consultantId);
     return teamDiscussionRepository
         .findBySessionId(sessionId)

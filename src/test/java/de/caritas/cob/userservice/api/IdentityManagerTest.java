@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -24,6 +25,31 @@ class IdentityManagerTest {
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
+
+  @Test
+  void validateOneTimePasswordShouldUseRawUsernameForKeycloakEmailUpdate() {
+    var encodedUsername = usernameTranscoder.encodeUsername(RAW_USERNAME);
+    var validationResult = Map.of("created", "true", "email", EMAIL);
+    when(identityClient.finishEmailVerification(encodedUsername, "123456"))
+        .thenReturn(validationResult);
+
+    assertThat(identityManager.validateOneTimePassword(encodedUsername, "123456"))
+        .isEqualTo(validationResult);
+
+    verify(identityClient).finishEmailVerification(encodedUsername, "123456");
+    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+  }
+
+  @Test
+  void validateOneTimePasswordShouldKeepAlreadyRawUsernameForKeycloakEmailUpdate() {
+    var validationResult = Map.of("created", "true", "email", EMAIL);
+    when(identityClient.finishEmailVerification(RAW_USERNAME, "123456"))
+        .thenReturn(validationResult);
+
+    identityManager.validateOneTimePassword(RAW_USERNAME, "123456");
+
+    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+  }
 
   @Test
   void isEmailAvailableOrOwnShouldAcceptRawKeycloakUsernameForEncodedConsultant() {

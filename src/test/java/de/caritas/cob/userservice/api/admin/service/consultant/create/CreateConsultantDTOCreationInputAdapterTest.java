@@ -28,6 +28,7 @@ class CreateConsultantDTOCreationInputAdapterTest {
     dto.setFormalLanguage(true);
     dto.setTenantId(3L);
     dto.setTopicIds(List.of(10L, 20L));
+    dto.setAgencyIds(List.of(30L, 40L));
 
     ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
 
@@ -38,12 +39,14 @@ class CreateConsultantDTOCreationInputAdapterTest {
     assertThat(input.getLastName(), is("Last"));
     assertThat(input.getEmail(), is("consultant@example.com"));
     assertThat(input.getPassword(), is(PASSWORD));
+    assertThat(input.shouldGeneratePassword(), is(false));
     assertThat(input.isAbsent(), is(true));
     assertThat(input.getAbsenceMessage(), is("Away"));
     assertThat(input.isTeamConsultant(), is(false));
     assertThat(input.isLanguageFormal(), is(true));
     assertThat(input.getTenantId(), is(3L));
     assertThat(input.getTopicIds(), is(List.of(10L, 20L)));
+    assertThat(input.getAgencyIds(), is(List.of(30L, 40L)));
     assertThat(input.getCreateDate(), notNullValue());
     assertThat(input.getUpdateDate(), notNullValue());
   }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -484,6 +485,33 @@ class UserSessionControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatSessionList);
     verify(consultantDataFacade).addConsultantDisplayNameToSessionList(chatSessionList);
+  }
+
+  @Test
+  void getSessionForId_anonymousLiveChatFallbackWhenSessionLookupEmpty_returnsEnquiry() {
+    // #774: a live chat request visible to the consultant by topic (but not assigned/agency-owned)
+    // must open through the anonymous queue fallback rather than 204.
+    var emptySessionList = new GroupSessionListResponseDTO().sessions(List.of());
+    var anonymousList =
+        new GroupSessionListResponseDTO().sessions(List.of(new GroupSessionResponseDTO()));
+    var roles = Set.of(UserRole.CONSULTANT.getValue());
+    var consultant = consultant();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(sessionListFacade.retrieveSessionsForAuthenticatedConsultantBySessionIds(
+            consultant, List.of(1L), roles))
+        .thenReturn(emptySessionList);
+    when(sessionListFacade.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+            consultant, List.of(1L)))
+        .thenReturn(anonymousList);
+
+    var response = delegate.getSessionForId(1L, "rc-token");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(anonymousList);
+    // The chat fallback must not run once the anonymous enquiry resolves.
+    verify(sessionListFacade, never()).retrieveChatsForConsultantByChatIds(any(), any(), any());
   }
 
   @Test

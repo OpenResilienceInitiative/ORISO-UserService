@@ -195,6 +195,26 @@ public class SessionListFacade {
     return new GroupSessionListResponseDTO().sessions(sessions);
   }
 
+  /**
+   * Resolves anonymous Live Chat queue entries by id (#774), applying the queue's topic-based,
+   * cross-tenant visibility. Used as the open-path fallback so a live chat request the consultant
+   * can see in the queue can also be opened and accepted.
+   */
+  public GroupSessionListResponseDTO retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+      Consultant consultant, List<Long> sessionIds) {
+    List<ConsultantSessionResponseDTO> consultantSessions =
+        consultantSessionListService.retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
+            consultant, sessionIds);
+
+    SessionMapper sessionMapper = new SessionMapper();
+    var sessions =
+        consultantSessions.stream()
+            .map(sessionMapper::toGroupSessionResponse)
+            .collect(Collectors.toList());
+
+    return new GroupSessionListResponseDTO().sessions(sessions);
+  }
+
   public GroupSessionListResponseDTO retrieveChatsForConsultantByChatIds(
       Consultant consultant, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
     List<ConsultantSessionResponseDTO> consultantChatSessions =

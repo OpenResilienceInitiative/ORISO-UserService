@@ -24,7 +24,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class OrganizerIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();

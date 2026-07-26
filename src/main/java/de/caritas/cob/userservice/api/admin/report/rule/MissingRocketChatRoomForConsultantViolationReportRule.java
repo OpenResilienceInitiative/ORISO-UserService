@@ -2,9 +2,6 @@ package de.caritas.cob.userservice.api.admin.report.rule;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserRoomDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.admin.report.builder.ViolationByConsultantBuilder;
 import de.caritas.cob.userservice.api.admin.report.model.ViolationReportRule;
@@ -12,6 +9,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.util.Collection;
 import java.util.List;
@@ -33,7 +31,7 @@ public class MissingRocketChatRoomForConsultantViolationReportRule implements Vi
 
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MessageClient messageClient;
 
   /**
    * Generates all violations for {@link Consultant} without required rocket chat room assignment.
@@ -55,19 +53,15 @@ public class MissingRocketChatRoomForConsultantViolationReportRule implements Vi
   }
 
   private ViolationDTO fromMissingSession(Session session) {
-    UserInfoResponseDTO userInfoWithRooms;
+    List<String> rocketChatRoomsOfUser;
     try {
-      userInfoWithRooms =
-          this.rocketChatService.getUserInfo(session.getConsultant().getRocketChatId());
+      rocketChatRoomsOfUser =
+          this.messageClient.findRoomIds(session.getConsultant().getRocketChatId());
     } catch (Exception e) {
       return ViolationByConsultantBuilder.getInstance(session.getConsultant())
           .withReason(e.getCause().getMessage())
           .build();
     }
-    List<UserRoomDTO> rooms = userInfoWithRooms.getUser().getRooms();
-    List<String> rocketChatRoomsOfUser =
-        rooms.stream().map(UserRoomDTO::getRoomId).collect(Collectors.toList());
-
     String violationMessage = buildPossibleViolationMessage(session, rocketChatRoomsOfUser);
     if (isNotBlank(violationMessage)) {
       return ViolationByConsultantBuilder.getInstance(session.getConsultant())
