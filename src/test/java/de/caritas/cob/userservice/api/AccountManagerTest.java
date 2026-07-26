@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.google.common.collect.Lists;
@@ -14,7 +13,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -38,7 +36,6 @@ import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -168,7 +165,6 @@ class AccountManagerTest {
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AuthenticatedUser authenticatedUser;
   @Mock AppointmentService appointmentService;
-  @Mock MessageClient messageClient;
   @Mock PatchConsultantSaga patchConsultantSaga;
 
   // findConsultant
@@ -182,47 +178,16 @@ class AccountManagerTest {
   }
 
   @Test
-  void findConsultant_Should_ReturnMappedConsultant_When_Found() {
+  void findConsultant_Should_ReturnMappedConsultantFromOwnedData_When_Found() {
     var consultant = new Consultant();
     consultant.setId("id-1");
+    consultant.setRocketChatId("stale-legacy-id");
     Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
         .thenReturn(Optional.of(consultant));
-    Mockito.when(userServiceMapper.mapOf(Mockito.any(Consultant.class), Mockito.anyMap()))
-        .thenReturn(Map.of("id", "id-1"));
+    Mockito.when(userServiceMapper.mapOf(consultant, Map.of())).thenReturn(Map.of("id", "id-1"));
 
-    assertThat(accountManager.findConsultant("id-1")).isPresent();
-  }
-
-  @Test
-  void findConsultant_Should_EnrichFromRocketChat_When_IntegrationIsEnabled() {
-    var consultant = new Consultant();
-    consultant.setId("id-1");
-    consultant.setRocketChatId("chat-id-1");
-    var chatUser = Map.<String, Object>of("displayName", "Consultant One");
-    ReflectionTestUtils.setField(accountManager, "rocketChatEnabled", true);
-    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
-        .thenReturn(Optional.of(consultant));
-    Mockito.when(messageClient.findUser("chat-id-1")).thenReturn(Optional.of(chatUser));
-    Mockito.when(userServiceMapper.mapOf(consultant, chatUser))
-        .thenReturn(Map.of("id", "id-1", "displayName", "Consultant One"));
-
-    assertThat(accountManager.findConsultant("id-1"))
-        .contains(Map.of("id", "id-1", "displayName", "Consultant One"));
-  }
-
-  @Test
-  void findConsultant_Should_ReportPersistenceConflict_When_RocketChatUserIsMissing() {
-    var consultant = new Consultant();
-    consultant.setId("id-1");
-    consultant.setRocketChatId("chat-id-1");
-    ReflectionTestUtils.setField(accountManager, "rocketChatEnabled", true);
-    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
-        .thenReturn(Optional.of(consultant));
-    Mockito.when(messageClient.findUser("chat-id-1")).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> accountManager.findConsultant("id-1"))
-        .hasMessageContaining("id-1")
-        .hasMessageContaining("chat-id-1");
+    assertThat(accountManager.findConsultant("id-1")).contains(Map.of("id", "id-1"));
+    Mockito.verify(userServiceMapper).mapOf(consultant, Map.of());
   }
 
   // findConsultantByUsername
