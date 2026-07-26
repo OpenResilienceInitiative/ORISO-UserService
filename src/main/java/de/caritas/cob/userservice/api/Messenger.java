@@ -60,8 +60,8 @@ public class Messenger implements Messaging {
       return banUserFromMatrixRoom(adviceSeeker, chat, matrixRoomId);
     }
 
-    // Legacy Rocket.Chat room (no Matrix room id). With Rocket.Chat disabled this is a no-op.
-    return messageClient.muteUserInChat(adviceSeeker.getUsername(), chat.getGroupId());
+    log.warn("Cannot ban user from chat {}: no Matrix room id", chatId);
+    return false;
   }
 
   /**
@@ -92,18 +92,6 @@ public class Messenger implements Messaging {
     }
     return matrixSynapseService.banUserFromRoomAsModerator(
         matrixRoomId, adviceSeeker.getMatrixUserId(), chatOwner.getMatrixUserId());
-  }
-
-  @Override
-  public void unbanUsersInChat(Long chatId, String consultantId) {
-    findChatMetaInfo(chatId, consultantId)
-        .ifPresent(
-            chatMetaInfoMap -> {
-              var chat = chatRepository.findById(chatId).orElseThrow();
-              mapper
-                  .bannedUsernamesOfMap(chatMetaInfoMap)
-                  .forEach(username -> messageClient.unmuteUserInChat(username, chat.getGroupId()));
-            });
   }
 
   @Override
@@ -220,29 +208,12 @@ public class Messenger implements Messaging {
     }
     var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(session);
     if (isNull(matrixRoomId) || isNull(consultant.getMatrixUserId())) {
-      return isInChatLegacy(session.getGroupId(), consultant.getRocketChatId());
+      return false;
     }
 
     return groupChatMembershipService.resolveHumanMembers(matrixRoomId).stream()
         .map(ResolvedRoomMember::matrixUserId)
         .anyMatch(id -> id.equals(consultant.getMatrixUserId()));
-  }
-
-  /**
-   * Legacy Rocket.Chat membership check retained for chats that never gained a Matrix room. With
-   * Rocket.Chat disabled {@code findMembers} is empty; we treat that as "not a member" (fail-safe)
-   * instead of throwing.
-   */
-  private boolean isInChatLegacy(String groupId, String rcUserId) {
-    if (isNull(groupId)) {
-      return false;
-    }
-    var groupMembers = messageClient.findMembers(groupId);
-    if (groupMembers.isEmpty()) {
-      return false;
-    }
-    var chatUserIds = mapper.chatUserIdOf(groupMembers.get());
-    return chatUserIds.contains(rcUserId);
   }
 
   @Override
@@ -273,23 +244,5 @@ public class Messenger implements Messaging {
   @Override
   public Optional<Chat> findChat(long chatId) {
     return chatRepository.findById(chatId);
-  }
-
-  @Override
-  public Optional<Map<String, Object>> findChatMetaInfo(long chatId, String userId) {
-    var chat = findChat(chatId).orElseThrow();
-    String groupId = chat.getGroupId();
-
-    // MATRIX MIGRATION: Check if this is a Matrix room (starts with ! or contains :)
-    boolean isMatrixRoom = groupId != null && (groupId.startsWith("!") || groupId.contains(":"));
-
-    if (isMatrixRoom) {
-      log.info("MATRIX: Skipping RocketChat metadata for Matrix room: {}", groupId);
-      // For Matrix rooms, return empty - banned users will be handled by Matrix API
-      return Optional.empty();
-    }
-
-    // Legacy RocketChat rooms
-    return messageClient.getChatInfo(groupId);
   }
 }

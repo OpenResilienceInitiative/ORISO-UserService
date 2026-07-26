@@ -249,13 +249,11 @@ class MessengerTest {
   }
 
   @Test
-  void isInChat_Should_FailSafeToFalse_When_LegacyRoomAndRcMembersEmpty() {
+  void isInChat_Should_ReturnFalse_When_SessionHasNoMatrixRoom() {
     var session = new Session();
     session.setGroupId("group-1");
     var consultant = new Consultant();
-    consultant.setRocketChatId("rc-1");
     when(groupChatMembershipService.resolveMatrixRoomId(session)).thenReturn(null);
-    when(messageClient.findMembers("group-1")).thenReturn(Optional.empty());
 
     assertThat(messenger.isInChat(session, consultant)).isFalse();
   }
@@ -284,7 +282,6 @@ class MessengerTest {
     verify(matrixSynapseService)
         .banUserFromRoomAsModerator(
             "!room:matrix.oriso.org", "@seeker:matrix.oriso.org", "@owner:matrix.oriso.org");
-    verify(messageClient, never()).muteUserInChat(any(), any());
   }
 
   @Test
@@ -306,7 +303,7 @@ class MessengerTest {
   }
 
   @Test
-  void banUserFromChat_Should_FallBackToRcMute_When_LegacyRoom() {
+  void banUserFromChat_Should_ReturnFalse_When_ChatHasNoMatrixRoom() {
     var user = new User("u-1", null, "seeker-username", "email@test.com", false);
     var chat = new Chat();
     chat.setId(10L);
@@ -314,40 +311,7 @@ class MessengerTest {
     when(userRepository.findByUserIdAndDeleteDateIsNull("u-1")).thenReturn(Optional.of(user));
     when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
     when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(null);
-    when(messageClient.muteUserInChat("seeker-username", "group-10")).thenReturn(true);
-
-    assertThat(messenger.banUserFromChat("u-1", 10L)).isTrue();
-    verify(messageClient).muteUserInChat("seeker-username", "group-10");
-  }
-
-  // ── unbanUsersInChat ───────────────────────────────────────────────────────
-
-  @Test
-  void unbanUsersInChat_Should_UnmuteUsers_When_MetaInfoPresent() {
-    var chat = new Chat();
-    chat.setGroupId("group-10");
-    Map<String, Object> metaInfo = Map.of("channels", List.of());
-    when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
-    when(messageClient.getChatInfo("group-10")).thenReturn(Optional.of(metaInfo));
-    when(mapper.bannedUsernamesOfMap(metaInfo)).thenReturn(List.of("banned-user1"));
-
-    messenger.unbanUsersInChat(10L, "consultant-1");
-
-    verify(messageClient).unmuteUserInChat("banned-user1", "group-10");
-  }
-
-  @Test
-  void unbanUsersInChat_Should_DoNothing_When_MetaInfoAbsent() {
-    var chat = new Chat();
-    chat.setGroupId("group-10");
-    when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
-    // Matrix room — findChatMetaInfo returns empty
-    chat.setGroupId("!matrix:room");
-    when(chatRepository.findById(10L)).thenReturn(Optional.of(chat));
-
-    messenger.unbanUsersInChat(10L, "consultant-1");
-
-    verify(messageClient, never()).unmuteUserInChat(anyString(), anyString());
+    assertThat(messenger.banUserFromChat("u-1", 10L)).isFalse();
   }
 
   // ── setAvailability ────────────────────────────────────────────────────────
@@ -452,28 +416,5 @@ class MessengerTest {
 
     assertThat(messenger.removeUserFromSession("rc-1", "group-1")).isTrue();
     verify(messageClient).removeUserFromSession("rc-1", "group-1");
-  }
-
-  // ── findChatMetaInfo ───────────────────────────────────────────────────────
-
-  @Test
-  void findChatMetaInfo_Should_ReturnEmpty_When_GroupIsMatrixRoom() {
-    var chat = new Chat();
-    chat.setGroupId("!matrix:server.org");
-    when(chatRepository.findById(5L)).thenReturn(Optional.of(chat));
-
-    assertThat(messenger.findChatMetaInfo(5L, "user-1")).isEmpty();
-    verify(messageClient, never()).getChatInfo(anyString());
-  }
-
-  @Test
-  void findChatMetaInfo_Should_DelegateToClient_When_GroupIsLegacyRcRoom() {
-    var chat = new Chat();
-    chat.setGroupId("GENERAL");
-    Map<String, Object> metaInfo = Map.of("_id", "GENERAL");
-    when(chatRepository.findById(5L)).thenReturn(Optional.of(chat));
-    when(messageClient.getChatInfo("GENERAL")).thenReturn(Optional.of(metaInfo));
-
-    assertThat(messenger.findChatMetaInfo(5L, "user-1")).contains(metaInfo);
   }
 }

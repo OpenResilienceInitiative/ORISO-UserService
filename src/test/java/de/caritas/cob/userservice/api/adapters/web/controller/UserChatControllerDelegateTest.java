@@ -33,8 +33,6 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -115,35 +113,14 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
-  void getChatShouldReturnOkAndEnrichBannedUsersWhenMetadataExists() {
+  void getChatShouldReturnFacadeResponse() {
     var chatInfoResponseDTO = new ChatInfoResponseDTO();
-    var metadata = Map.<String, Object>of("banned", List.of("user-id"));
     when(getChatFacade.getChat(1L)).thenReturn(chatInfoResponseDTO);
-    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
-    when(messenger.findChatMetaInfo(1L, "consultant-id")).thenReturn(Optional.of(metadata));
-    when(userDtoMapper.bannedChatUserIdsOf(metadata)).thenReturn(List.of("banned-user"));
 
     var response = delegate.getChat(1L);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);
-    assertThat(chatInfoResponseDTO.getBannedUsers()).containsExactly("banned-user");
-  }
-
-  @Test
-  void getChat_noChatMetadata_responseUnchangedNoBannedUsersSet() {
-    // Missing chat metadata leaves the facade response untouched.
-    var chatInfoResponseDTO = new ChatInfoResponseDTO();
-    when(getChatFacade.getChat(1L)).thenReturn(chatInfoResponseDTO);
-    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
-    when(messenger.findChatMetaInfo(1L, "consultant-id")).thenReturn(Optional.empty());
-
-    var response = delegate.getChat(1L);
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);
-    assertThat(chatInfoResponseDTO.getBannedUsers()).isEmpty();
-    verify(userDtoMapper, never()).bannedChatUserIdsOf(org.mockito.ArgumentMatchers.anyMap());
   }
 
   @Test
@@ -196,7 +173,7 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
-  void stopChatShouldUnbanStopAndReturnOk() {
+  void stopChatShouldStopAndReturnOk() {
     var chat = chat();
     var consultant = consultant();
     when(chatService.getChat(1L)).thenReturn(Optional.of(chat));
@@ -205,7 +182,6 @@ class UserChatControllerDelegateTest {
     var response = delegate.stopChat(1L);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(messenger).unbanUsersInChat(1L, "consultant-id");
     verify(stopChatFacade).stopChat(chat, consultant);
   }
 

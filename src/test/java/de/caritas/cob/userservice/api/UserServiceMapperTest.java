@@ -259,15 +259,6 @@ class UserServiceMapperTest {
     assertThat(userServiceMapper.statusOf(false)).isEqualTo("busy");
   }
 
-  // ── bannedUsernamesOfMap / chatUserIdOf ───────────────────────────────────
-
-  @Test
-  void bannedUsernamesOfMap_Should_ReturnMutedUsers() {
-    Map<String, Object> map = Map.of("mutedUsers", List.of("user1", "user2"));
-
-    assertThat(userServiceMapper.bannedUsernamesOfMap(map)).containsExactly("user1", "user2");
-  }
-
   @Test
   void chatUserIdOf_Should_ExtractChatUserIds() {
     List<Map<String, String>> members =

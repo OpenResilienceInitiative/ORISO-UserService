@@ -77,14 +77,6 @@ class UserChatControllerDelegate {
 
   ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
     var response = getChatFacade.getChat(chatId);
-    messenger
-        .findChatMetaInfo(chatId, authenticatedUser.getUserId())
-        .ifPresent(
-            chatMetaInfoMap -> {
-              var bannedChatUserIds = userDtoMapper.bannedChatUserIdsOf(chatMetaInfoMap);
-              response.setBannedUsers(bannedChatUserIds);
-            });
-
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
@@ -123,7 +115,6 @@ class UserChatControllerDelegate {
                             "Chat with id %s not found while trying to stop the chat.", chatId)));
 
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    messenger.unbanUsersInChat(chatId, callingConsultant.getId());
     stopChatFacade.stopChat(chat, callingConsultant);
 
     return new ResponseEntity<>(HttpStatus.OK);
