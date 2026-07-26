@@ -401,26 +401,6 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Imports a file list of askers. Technical user authorization required.
-   *
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> importAskers() {
-    return userSupportControllerDelegate.importAskers();
-  }
-
-  /**
-   * Imports a file list of askers without a session. Technical user authorization required.
-   *
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> importAskersWithoutSession() {
-    return userSupportControllerDelegate.importAskersWithoutSession();
-  }
-
-  /**
    * Sends email notifications to the user(s) if there has been a new answer. Uses the provided
    * Keycloak authorization token for user verification (user role). This means that the user that
    * wrote the answer should also call this method.

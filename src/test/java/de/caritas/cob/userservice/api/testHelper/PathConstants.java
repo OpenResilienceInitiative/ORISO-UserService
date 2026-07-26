@@ -63,7 +63,6 @@ public class PathConstants {
       "/users/askers/consultingType/new";
   public static final String PATH_POST_NEW_MESSAGE_NOTIFICATION = "/users/mails/messages/new";
   public static final String PATH_POST_IMPORT_CONSULTANTS = "/users/consultants/import";
-  public static final String PATH_POST_IMPORT_ASKERS = "/users/askers/import";
   public static final String PATH_GET_CONSULTANTS = "/users/consultants";
   public static final String PATH_POST_CHAT_NEW = "/users/chat/new";
   public static final String PATH_POST_CHAT_NEW_V2 = "/users/chat/v2/new";
@@ -86,8 +85,6 @@ public class PathConstants {
   public static final String PATH_PUT_UPDATE_CHAT = "/users/chat/" + CHAT_ID + "/update";
   public static final String PATH_PUT_UPDATE_CHAT_INVALID_PATH_PARAMS =
       "/users/chat/" + INVALID_CHAT_ID + "/update";
-  public static final String PATH_POST_IMPORT_ASKERS_WITHOUT_SESSION =
-      "/users/askersWithoutSession/import";
   public static final String PATH_GET_SESSION_FOR_CONSULTANT = "/users/consultants/sessions/1";
   public static final String PATH_PUT_UPDATE_EMAIL = "/users/email";
   public static final String PATH_DELETE_FLAG_USER_DELETED = "/users/account";

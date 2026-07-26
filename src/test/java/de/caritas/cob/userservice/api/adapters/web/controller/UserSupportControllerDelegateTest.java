@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -41,7 +40,6 @@ class UserSupportControllerDelegateTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private ConsultantImportService consultantImportService;
   @Mock private EmailNotificationFacade emailNotificationFacade;
-  @Mock private AskerImportService askerImportService;
   @Mock private SessionDataService sessionDataService;
   @Mock private EventNotificationService eventNotificationService;
 
@@ -53,22 +51,6 @@ class UserSupportControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(consultantImportService).startImport();
-  }
-
-  @Test
-  void importAskersShouldStartImportAndReturnOk() {
-    var response = delegate.importAskers();
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(askerImportService).startImport();
-  }
-
-  @Test
-  void importAskersWithoutSessionShouldStartImportAndReturnOk() {
-    var response = delegate.importAskersWithoutSession();
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(askerImportService).startImportForAskersWithoutSession();
   }
 
   @Test

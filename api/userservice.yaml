@@ -788,41 +788,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/askers/import:
-    post:
-      tags:
-        - user-controller
-      summary: 'Imports a list of askers from a file [Authorization: Role: technical]'
-      operationId: importAskers
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token (tech user)
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/askersWithoutSession/import:
-    post:
-      tags:
-        - user-controller
-      summary: 'Imports a list of askers without a session from a file [Authorization:
-        Role: technical]'
-      operationId: importAskersWithoutSession
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token (tech user)
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /users/sessions/teams:
     get:
       tags:

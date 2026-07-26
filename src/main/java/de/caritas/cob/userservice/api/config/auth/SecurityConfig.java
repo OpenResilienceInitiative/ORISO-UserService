@@ -288,11 +288,7 @@ public class SecurityConfig {
                 .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
                 .requestMatchers("/users/consultants")
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
-                .requestMatchers(
-                    "/users/consultants/import",
-                    "/users/askers/import",
-                    "/users/askersWithoutSession/import",
-                    "/users/sessions/rocketChatGroupId")
+                .requestMatchers("/users/consultants/import", "/users/sessions/rocketChatGroupId")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers("/liveproxy/send")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)

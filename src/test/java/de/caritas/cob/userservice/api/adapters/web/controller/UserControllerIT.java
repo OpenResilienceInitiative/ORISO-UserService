@@ -277,10 +277,6 @@ class UserControllerIT {
 
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
 
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private AskerImportService askerImportService;
-
   @MockitoBean private SessionListFacade sessionListFacade;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;

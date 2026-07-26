@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -28,22 +27,11 @@ class UserSupportControllerDelegate {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull ConsultantImportService consultantImportService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
-  private final @NonNull AskerImportService askerImportService;
   private final @NonNull SessionDataService sessionDataService;
   private final @NonNull EventNotificationService eventNotificationService;
 
   ResponseEntity<Void> importConsultants() {
     consultantImportService.startImport();
-    return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  ResponseEntity<Void> importAskers() {
-    askerImportService.startImport();
-    return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  ResponseEntity<Void> importAskersWithoutSession() {
-    askerImportService.startImportForAskersWithoutSession();
     return new ResponseEntity<>(HttpStatus.OK);
   }
 

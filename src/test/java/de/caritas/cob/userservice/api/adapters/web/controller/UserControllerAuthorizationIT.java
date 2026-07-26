@@ -17,8 +17,6 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_S
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_GET_USER_DATA;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_CHAT_NEW;
-import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_IMPORT_ASKERS;
-import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_IMPORT_ASKERS_WITHOUT_SESSION;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_IMPORT_CONSULTANTS;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_NEW_MESSAGE_NOTIFICATION;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_POST_REGISTER_NEW_CONSULTING_TYPE;
@@ -82,7 +80,6 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.AskerImportService;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
@@ -167,7 +164,6 @@ class UserControllerAuthorizationIT {
   @MockitoBean private ConsultantDataFacade consultantDataFacade;
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
   @MockitoBean private ConsultantImportService consultantImportService;
-  @MockitoBean private AskerImportService askerImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private IdentityClient identityClient;
   @MockitoBean private IdentityManager identityManager;
@@ -880,127 +876,6 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantImportService);
-  }
-
-  /** POST on /users/askers/import (role: technical) */
-  @Test
-  void importAskers_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
-      throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS)
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isUnauthorized());
-
-    verifyNoMoreInteractions(askerImportService);
-  }
-
-  @Test
-  @WithMockUser(
-      authorities = {
-        AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.CONSULTANT_DEFAULT,
-        AuthorityValue.USER_DEFAULT,
-        AuthorityValue.START_CHAT,
-        AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.STOP_CHAT,
-        AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USER_ADMIN
-      })
-  void importAskers_Should_ReturnForbiddenAndCallNoMethods_WhenNoTechnicalDefaultAuthority()
-      throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS)
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(askerImportService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
-  void importAskers_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(askerImportService);
-  }
-
-  /** POST on /users/askersWithoutSession/import (role: technical) */
-  @Test
-  void
-      importAskersWithoutSession_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
-          throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS)
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isUnauthorized());
-
-    verifyNoMoreInteractions(askerImportService);
-  }
-
-  @Test
-  @WithMockUser(
-      authorities = {
-        AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-        AuthorityValue.CONSULTANT_DEFAULT,
-        AuthorityValue.CONSULTANT_DEFAULT,
-        AuthorityValue.START_CHAT,
-        AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.STOP_CHAT,
-        AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.USER_ADMIN
-      })
-  void
-      importAskersWithoutSession_Should_ReturnForbiddenAndCallNoMethods_WhenNoTechnicalDefaultAuthority()
-          throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS_WITHOUT_SESSION)
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(askerImportService);
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
-  void importAskersWithoutSession_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens()
-      throws Exception {
-
-    mvc.perform(
-            post(PATH_POST_IMPORT_ASKERS_WITHOUT_SESSION)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-
-    verifyNoMoreInteractions(askerImportService);
   }
 
   @Test
