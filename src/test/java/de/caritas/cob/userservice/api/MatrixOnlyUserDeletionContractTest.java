@@ -36,4 +36,20 @@ class MatrixOnlyUserDeletionContractTest {
       assertThat(Path.of(sourcePath)).doesNotExist();
     }
   }
+
+  @Test
+  void sessionDeletionMustNotCallRocketChat() throws IOException {
+    for (var sourcePath :
+        new String[] {
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/"
+              + "DeleteRoomsAndSessionAction.java",
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/"
+              + "DeleteAskerRoomsAndSessionsAction.java",
+          "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/"
+              + "DeleteSingleRoomAndSessionAction.java"
+        }) {
+      assertThat(Files.readString(Path.of(sourcePath)))
+          .doesNotContain("RocketChat", "rocketChat", "ROCKET_CHAT");
+    }
+  }
 }
