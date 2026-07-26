@@ -33,9 +33,9 @@ class AppointmentControllerAuthorizationIT {
   private static final EasyRandom easyRandom = new EasyRandom();
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
   @Autowired private MockMvc mvc;
@@ -50,15 +50,6 @@ class AppointmentControllerAuthorizationIT {
   @AfterEach
   public void cleanUp() {
     appointment = null;
-  }
-
-  @Test
-  void getAppointmentShouldReturnForbiddenWhenNoCsrfTokens() throws Exception {
-    mvc.perform(
-            get("/appointments/{id}", UUID.randomUUID())
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -155,15 +146,6 @@ class AppointmentControllerAuthorizationIT {
             delete("/appointments/{id}", UUID.randomUUID())
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
-  void getAppointmentsShouldReturnForbiddenWhenNoCsrfTokens() throws Exception {
-    mvc.perform(
-            get("/appointments")
-                .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
   }

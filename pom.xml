@@ -35,7 +35,7 @@
 		     server is Keycloak 26.x; the 17.0.0 admin client 401s against it (create-user). -->
 		<keycloak-admin-client.version>26.0.4</keycloak-admin-client.version>
 		<springfox.version>2.9.2</springfox.version>
-		<spring-plugin-core.version>2.0.0.RELEASE</spring-plugin-core.version>
+		<spring-plugin-core.version>4.0.0</spring-plugin-core.version>
 		<openapi.generator.maven.version>7.17.0</openapi.generator.maven.version>
 		<adapters.web.generated.path>
 			${project.groupId}.${project.artifactId}.generated.api.adapters.web
@@ -411,15 +411,9 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-test</artifactId>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-security-test</artifactId>
 			<scope>test</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>org.springframework.security</groupId>
-					<artifactId>spring-security-core</artifactId>
-				</exclusion>
-			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.mockito</groupId>

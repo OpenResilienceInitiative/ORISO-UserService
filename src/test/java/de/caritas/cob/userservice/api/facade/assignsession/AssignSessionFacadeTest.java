@@ -13,23 +13,20 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.getField;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
@@ -51,8 +48,7 @@ class AssignSessionFacadeTest {
   private static final EasyRandom easyRandom = new EasyRandom();
 
   @InjectMocks AssignSessionFacade assignSessionFacade;
-  @Mock RocketChatFacade rocketChatFacade;
-  @Mock ConsultingTypeManager consultingTypeManager;
+  @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
 
   @Mock SessionService sessionService;
 
@@ -81,12 +77,8 @@ class AssignSessionFacadeTest {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("consultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(
-            asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("consultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null)));
+    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
+        .thenReturn(asList("userRcId", "consultantRcId", "otherRcId"));
     Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
     consultantToRemove.setRocketChatId("otherRcId");
     when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
@@ -102,16 +94,8 @@ class AssignSessionFacadeTest {
                 consultantSessionDTO ->
                     consultantSessionDTO.getConsultant().equals(consultant)
                         && consultantSessionDTO.getSession().equals(session)));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
+    verify(sessionAssignmentChatGateway, atLeastOnce())
+        .removeConsultantsOrRollback(session, List.of(consultantToRemove));
     verify(this.emailNotificationFacade, times(1))
         .sendAssignEnquiryEmailNotification(any(), any(), any(), any());
   }
@@ -130,14 +114,14 @@ class AssignSessionFacadeTest {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     consultant.setConsultantAgencies(asSet(consultantAgency));
     consultant.setRocketChatId("newConsultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
+    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
         .thenReturn(
             asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("newConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId2", null, "name", null, null)));
+                "userRcId",
+                "newConsultantRcId",
+                "otherRcId",
+                "teamConsultantRcId",
+                "teamConsultantRcId2"));
     Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
     consultantToRemove.setRocketChatId("otherRcId");
     when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
@@ -153,21 +137,8 @@ class AssignSessionFacadeTest {
                 consultantSessionDTO ->
                     consultantSessionDTO.getConsultant().equals(consultant)
                         && consultantSessionDTO.getSession().equals(session)));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, never())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    "teamConsultantRcId", session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, never())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    "teamConsultantRcId2", session.getGroupId()));
+    verify(sessionAssignmentChatGateway, atLeastOnce())
+        .removeConsultantsOrRollback(session, List.of(consultantToRemove));
     verifyAsync(
         a ->
             verify(this.emailNotificationFacade, times(1))

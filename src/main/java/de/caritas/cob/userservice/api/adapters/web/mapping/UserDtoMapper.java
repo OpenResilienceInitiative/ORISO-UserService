@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.mapping;
 
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
+import static org.springframework.util.CollectionUtils.isEmpty;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailToggle;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailType;
@@ -96,7 +97,7 @@ public class UserDtoMapper {
         && isNull(patchUserDTO.getDisplayName())
         && isNull(patchUserDTO.getMagicLinkLoginEnabled())
         && isNull(patchUserDTO.getWalkThroughEnabled())
-        && isNull(patchUserDTO.getEmailToggles())
+        && isEmpty(patchUserDTO.getEmailToggles())
         && isNull(patchUserDTO.getPreferredLanguage())
         && isNull(patchUserDTO.getDataPrivacyConfirmation())
         && isNull(patchUserDTO.getTermsAndConditionsConfirmation())
@@ -123,7 +124,7 @@ public class UserDtoMapper {
       map.put("preferredLanguage", patchUserDTO.getPreferredLanguage().toString());
     }
     var emailToggles = patchUserDTO.getEmailToggles();
-    if (nonNull(emailToggles)) {
+    if (!isEmpty(emailToggles)) {
       var emailToggleMap =
           emailToggles.stream()
               .collect(Collectors.toMap(this::mapEmailType, EmailToggle::getState));

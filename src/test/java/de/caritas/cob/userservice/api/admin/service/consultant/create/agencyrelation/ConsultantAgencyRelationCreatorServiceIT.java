@@ -53,9 +53,9 @@ import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-@SpringBootTest(classes = UserServiceApplication.class)
+@SpringBootTest(classes = UserServiceApplication.class, properties = "rocket-chat.enabled=true")
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 class ConsultantAgencyRelationCreatorServiceIT {
 
@@ -98,6 +98,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -140,6 +141,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(true);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(extendedConsultingTypeResponseDTO);
 
@@ -179,6 +181,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(consultingType);
     when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     var consultant = createConsultantWithoutAgencyAndSession();
     when(keycloakService.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
@@ -223,6 +226,8 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultant.setConsultantAgencies(null);
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
+    consultant.setConsultantTopics(null);
+    consultant.setTenantId(null);
     consultant.setRocketChatId("RocketChatId");
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);

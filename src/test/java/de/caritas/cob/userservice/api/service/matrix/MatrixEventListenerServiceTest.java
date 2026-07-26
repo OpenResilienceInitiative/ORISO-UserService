@@ -19,6 +19,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -132,6 +133,17 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void initialize_shouldNotCreateRetryThreadsWhenListenerIsDisabled() {
+    var service = newService();
+    ReflectionTestUtils.setField(service, "eventListenerEnabled", false);
+
+    service.initialize();
+
+    assertThat(ReflectionTestUtils.getField(service, "executorService")).isNull();
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
   void nextBackoffMillis_shouldFollowExponentialScheduleCappedAt60s() {
     assertThat(MatrixEventListenerService.nextBackoffMillis(5_000L)).isEqualTo(10_000L);
     assertThat(MatrixEventListenerService.nextBackoffMillis(10_000L)).isEqualTo(20_000L);
@@ -174,6 +186,8 @@ class MatrixEventListenerServiceTest {
           }
         };
     ReflectionTestUtils.setField(service, "running", true);
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    service.setOutboundHttpMetrics(outboundHttpMetrics);
 
     // Two transient failures (null) then a real token: the loop must not give up on the first null.
     when(matrixSynapseService.getAdminToken()).thenReturn(null, null, "admin-token-123");
@@ -185,6 +199,7 @@ class MatrixEventListenerServiceTest {
         .isEqualTo("admin-token-123");
     // Proves it did not stop after the first null: getAdminToken was polled repeatedly.
     verify(matrixSynapseService, atLeast(3)).getAdminToken();
+    verify(outboundHttpMetrics, org.mockito.Mockito.times(2)).recordRetry("matrix", "admin-token");
   }
 
   @Test

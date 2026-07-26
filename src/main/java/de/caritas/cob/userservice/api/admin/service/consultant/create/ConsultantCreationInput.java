@@ -26,6 +26,10 @@ interface ConsultantCreationInput {
 
   String getPassword();
 
+  default boolean shouldGeneratePassword() {
+    return false;
+  }
+
   boolean isAbsent();
 
   String getAbsenceMessage();

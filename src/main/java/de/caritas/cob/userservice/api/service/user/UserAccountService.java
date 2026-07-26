@@ -1,8 +1,5 @@
 package de.caritas.cob.userservice.api.service.user;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -13,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
@@ -40,7 +38,7 @@ public class UserAccountService {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MessageClient messageClient;
   private final @NonNull UserHelper userHelper;
 
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -174,11 +172,8 @@ public class UserAccountService {
   }
 
   private void updateConsultantEmail(Consultant consultant, String email) {
-    UserUpdateDataDTO userUpdateDataDTO = new UserUpdateDataDTO(email, true);
-    UserUpdateRequestDTO requestDTO =
-        new UserUpdateRequestDTO(consultant.getRocketChatId(), userUpdateDataDTO);
     try {
-      this.rocketChatService.updateUser(requestDTO);
+      this.messageClient.updateUserEmail(consultant.getRocketChatId(), email);
     } catch (Exception ex) {
       log.warn(
           "Skipping Rocket.Chat consultant email update for consultant {} due to error: {}",
@@ -191,12 +186,9 @@ public class UserAccountService {
   }
 
   void updateUserEmail(User user, String email) {
-    UserUpdateDataDTO userUpdateDataDTO = new UserUpdateDataDTO(email, true);
-    UserUpdateRequestDTO requestDTO =
-        new UserUpdateRequestDTO(user.getRcUserId(), userUpdateDataDTO);
     if (user.getRcUserId() != null) {
       try {
-        this.rocketChatService.updateUser(requestDTO);
+        this.messageClient.updateUserEmail(user.getRcUserId(), email);
       } catch (Exception ex) {
         log.warn(
             "Skipping Rocket.Chat user email update for user {} due to error: {}",

@@ -11,8 +11,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserRoomDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -51,14 +49,10 @@ class MissingRocketChatRoomForConsultantViolationReportRuleTest {
     Consultant violatedConsultant = new EasyRandom().nextObject(Consultant.class);
     violatedConsultant.setSessions(null);
     Session violatedSession = new EasyRandom().nextObject(Session.class);
-    UserInfoResponseDTO userInfoResponseDTO =
-        new EasyRandom().nextObject(UserInfoResponseDTO.class);
-    userInfoResponseDTO.getUser().setRooms(emptyList());
-
     when(this.consultantRepository.findAll()).thenReturn(singletonList(violatedConsultant));
     when(this.sessionRepository.findByConsultantAndStatus(any(), any()))
         .thenReturn(singletonList(violatedSession));
-    when(this.rocketChatService.getUserInfo(any())).thenReturn(userInfoResponseDTO);
+    when(this.rocketChatService.findRoomIds(any())).thenReturn(emptyList());
 
     List<ViolationDTO> violations = this.reportRule.generateViolations();
 
@@ -77,14 +71,10 @@ class MissingRocketChatRoomForConsultantViolationReportRuleTest {
     Consultant violatedConsultant = new EasyRandom().nextObject(Consultant.class);
     Session violatedSession = new EasyRandom().nextObject(Session.class);
     violatedConsultant.setSessions(singleton(violatedSession));
-    UserInfoResponseDTO userInfoResponseDTO =
-        new EasyRandom().nextObject(UserInfoResponseDTO.class);
-    userInfoResponseDTO.getUser().setRooms(singletonList(new UserRoomDTO("A")));
-
     when(this.consultantRepository.findAll()).thenReturn(singletonList(violatedConsultant));
     when(this.sessionRepository.findByConsultantAndStatus(any(), any()))
         .thenReturn(singletonList(violatedSession));
-    when(this.rocketChatService.getUserInfo(any())).thenReturn(userInfoResponseDTO);
+    when(this.rocketChatService.findRoomIds(any())).thenReturn(singletonList("A"));
 
     List<ViolationDTO> violations = this.reportRule.generateViolations();
 
@@ -102,14 +92,11 @@ class MissingRocketChatRoomForConsultantViolationReportRuleTest {
     Consultant violatedConsultant = new EasyRandom().nextObject(Consultant.class);
     Session violatedSession = new EasyRandom().nextObject(Session.class);
     violatedConsultant.setSessions(singleton(violatedSession));
-    UserInfoResponseDTO userInfoResponseDTO =
-        new EasyRandom().nextObject(UserInfoResponseDTO.class);
-    userInfoResponseDTO.getUser().setRooms(List.of(new UserRoomDTO(violatedSession.getGroupId())));
-
     when(this.consultantRepository.findAll()).thenReturn(singletonList(violatedConsultant));
     when(this.sessionRepository.findByConsultantAndStatus(any(), any()))
         .thenReturn(singletonList(violatedSession));
-    when(this.rocketChatService.getUserInfo(any())).thenReturn(userInfoResponseDTO);
+    when(this.rocketChatService.findRoomIds(any()))
+        .thenReturn(List.of(violatedSession.getGroupId()));
 
     List<ViolationDTO> violations = this.reportRule.generateViolations();
 
@@ -121,14 +108,10 @@ class MissingRocketChatRoomForConsultantViolationReportRuleTest {
     Consultant violatedConsultant = new EasyRandom().nextObject(Consultant.class);
     Session violatedSession = new EasyRandom().nextObject(Session.class);
     violatedConsultant.setSessions(singleton(violatedSession));
-    UserInfoResponseDTO userInfoResponseDTO =
-        new EasyRandom().nextObject(UserInfoResponseDTO.class);
-    userInfoResponseDTO.getUser().setRooms(List.of(new UserRoomDTO(violatedSession.getGroupId())));
-
     when(this.consultantRepository.findAll()).thenReturn(singletonList(violatedConsultant));
     when(this.sessionRepository.findByConsultantAndStatus(any(), any()))
         .thenReturn(singletonList(violatedSession));
-    when(this.rocketChatService.getUserInfo(any()))
+    when(this.rocketChatService.findRoomIds(any()))
         .thenThrow(
             new InternalServerErrorException(
                 "message",
