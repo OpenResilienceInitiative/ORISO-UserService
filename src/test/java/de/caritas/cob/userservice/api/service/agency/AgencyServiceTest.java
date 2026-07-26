@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
@@ -21,11 +22,13 @@ import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyRespon
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +61,8 @@ class AgencyServiceTest {
 
   @Mock SecurityHeaderSupplier securityHeaderSupplier;
 
+  @Mock SharedReadCache sharedReadCache;
+
   @Mock ApiClient apiClient;
 
   @BeforeEach
@@ -66,6 +71,12 @@ class AgencyServiceTest {
         .when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(agencyControllerApi);
     lenient().when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    lenient()
+        .when(sharedReadCache.getOrLoad(any(), any(), any(Class.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
+    lenient()
+        .when(sharedReadCache.getOrLoadTyped(any(), any(), any(TypeReference.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
   }
 
   @AfterEach
@@ -129,6 +140,34 @@ class AgencyServiceTest {
     assertThat(result).isNotNull();
     assertThat(result.getId()).isEqualTo(AGENCY_ID);
     assertThat(result.getName()).isEqualTo(AGENCY_DTO_SUCHT.getName());
+  }
+
+  @Test
+  void getAgency_ShouldUseTenantScopedSharedCacheKey() {
+    TenantContext.setCurrentTenant(7L);
+    stubAgencyLookup(List.of(toAgencyResponseDTO(AGENCY_DTO_SUCHT)));
+
+    agencyService.getAgency(42L);
+
+    verify(sharedReadCache)
+        .getOrLoad(
+            eq(SharedReadCache.CacheName.AGENCY), eq("tenant:7:id:42"), eq(AgencyDTO.class), any());
+  }
+
+  @Test
+  void getAgencies_ShouldUseTenantScopedSharedCacheKey() {
+    TenantContext.setCurrentTenant(7L);
+    List<Long> agencyIds = List.of(42L, 43L);
+    stubAgencyLookup(List.of(toAgencyResponseDTO(AGENCY_DTO_SUCHT)));
+
+    agencyService.getAgencies(agencyIds);
+
+    verify(sharedReadCache)
+        .getOrLoadTyped(
+            eq(SharedReadCache.CacheName.AGENCY),
+            eq("tenant:7:ids:[42, 43]"),
+            any(TypeReference.class),
+            any());
   }
 
   @Test

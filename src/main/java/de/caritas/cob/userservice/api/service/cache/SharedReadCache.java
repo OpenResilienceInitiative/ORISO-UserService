@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
@@ -79,8 +80,23 @@ public class SharedReadCache {
 
   public <T> T getOrLoad(
       CacheName cacheName, String logicalKey, Class<T> valueType, Supplier<T> loader) {
+    return getOrLoad(
+        cacheName, logicalKey, serialized -> objectMapper.readValue(serialized, valueType), loader);
+  }
+
+  public <T> T getOrLoadTyped(
+      CacheName cacheName, String logicalKey, TypeReference<T> valueType, Supplier<T> loader) {
+    return getOrLoad(
+        cacheName, logicalKey, serialized -> objectMapper.readValue(serialized, valueType), loader);
+  }
+
+  private <T> T getOrLoad(
+      CacheName cacheName,
+      String logicalKey,
+      SerializedValueReader<T> valueReader,
+      Supplier<T> loader) {
     String redisKey = redisKey(cacheName, logicalKey);
-    Optional<T> cached = read(cacheName, redisKey, valueType, true);
+    Optional<T> cached = read(cacheName, redisKey, valueReader, true);
     if (cached.isPresent()) {
       return cached.get();
     }
@@ -89,14 +105,14 @@ public class SharedReadCache {
     LockAttempt lockAttempt = tryAcquireLoadLock(cacheName, redisKey, lockOwner);
     if (lockAttempt == LockAttempt.ACQUIRED) {
       try {
-        Optional<T> filledBeforeLoad = read(cacheName, redisKey, valueType, false);
+        Optional<T> filledBeforeLoad = read(cacheName, redisKey, valueReader, false);
         return filledBeforeLoad.orElseGet(() -> loadAndPut(cacheName, redisKey, loader));
       } finally {
         releaseLoadLock(cacheName, redisKey, lockOwner);
       }
     }
     if (lockAttempt == LockAttempt.CONTENDED) {
-      Optional<T> shared = waitForLoad(cacheName, redisKey, valueType);
+      Optional<T> shared = waitForLoad(cacheName, redisKey, valueReader);
       if (shared.isPresent()) {
         return shared.get();
       }
@@ -131,7 +147,10 @@ public class SharedReadCache {
   }
 
   private <T> Optional<T> read(
-      CacheName cacheName, String redisKey, Class<T> valueType, boolean recordOutcome) {
+      CacheName cacheName,
+      String redisKey,
+      SerializedValueReader<T> valueReader,
+      boolean recordOutcome) {
     try {
       String serialized = redisTemplate.opsForValue().get(redisKey);
       if (serialized == null) {
@@ -140,7 +159,7 @@ public class SharedReadCache {
         }
         return Optional.empty();
       }
-      T value = objectMapper.readValue(serialized, valueType);
+      T value = valueReader.read(serialized);
       if (recordOutcome) {
         record(cacheName, "read", "hit");
       }
@@ -171,7 +190,8 @@ public class SharedReadCache {
     }
   }
 
-  private <T> Optional<T> waitForLoad(CacheName cacheName, String redisKey, Class<T> valueType) {
+  private <T> Optional<T> waitForLoad(
+      CacheName cacheName, String redisKey, SerializedValueReader<T> valueReader) {
     long deadline = System.nanoTime() + LOAD_WAIT_LIMIT.toNanos();
     while (System.nanoTime() < deadline) {
       LockSupport.parkNanos(LOAD_POLL_NANOS);
@@ -179,7 +199,7 @@ public class SharedReadCache {
         record(cacheName, "load-wait", "interrupted");
         return Optional.empty();
       }
-      Optional<T> shared = read(cacheName, redisKey, valueType, false);
+      Optional<T> shared = read(cacheName, redisKey, valueReader, false);
       if (shared.isPresent()) {
         record(cacheName, "load-wait", "shared");
         return shared;
@@ -227,9 +247,12 @@ public class SharedReadCache {
   }
 
   public enum CacheName {
+    AGENCY("agency"),
     APPLICATION_SETTINGS("application-settings"),
+    CONSULTING_TYPE("consulting-type"),
     TENANT("tenant"),
-    TENANT_ADMIN("tenant-admin");
+    TENANT_ADMIN("tenant-admin"),
+    TOPIC("topic");
 
     private final String keySegment;
 
@@ -244,6 +267,12 @@ public class SharedReadCache {
     String metricTag() {
       return keySegment;
     }
+  }
+
+  @FunctionalInterface
+  private interface SerializedValueReader<T> {
+
+    T read(String serialized) throws JsonProcessingException;
   }
 
   private enum LockAttempt {

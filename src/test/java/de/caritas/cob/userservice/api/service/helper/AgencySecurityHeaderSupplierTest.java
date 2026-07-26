@@ -5,20 +5,25 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID_LIST;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.mock;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,6 +60,8 @@ class AgencySecurityHeaderSupplierTest {
 
   @Mock private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
+  @Mock private SharedReadCache sharedReadCache;
+
   @BeforeEach
   void setup() throws NoSuchFieldException, SecurityException {
     when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
@@ -62,6 +69,12 @@ class AgencySecurityHeaderSupplierTest {
         AGENCY_DTO_LIST.stream().map(this::toAgencyResponseDTO).collect(Collectors.toList());
     when(this.securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
         .thenReturn(new HttpHeaders());
+    lenient()
+        .when(sharedReadCache.getOrLoad(any(), anyString(), any(Class.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
+    lenient()
+        .when(sharedReadCache.getOrLoadTyped(any(), anyString(), any(TypeReference.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
   }
 
   private void resetRequestAttributes() {
@@ -86,20 +99,15 @@ class AgencySecurityHeaderSupplierTest {
 
   @SuppressWarnings({"unchecked", "rawtypes"})
   @Test
-  void test_Should_Fail_When_MethodgetAgenciesFromAgencyServiceDoesNotHaveCacheableAnnotation()
+  void getAgencies_DoesNotUseReplicaLocalCacheableAnnotation()
       throws NoSuchMethodException, SecurityException {
 
-    AgencyService agencyService =
-        new AgencyService(
-            mock(SecurityHeaderSupplier.class),
-            mock(TenantHeaderSupplier.class),
-            mock(AgencyServiceApiControllerFactory.class));
-    Class classToTest = agencyService.getClass();
+    Class<AgencyService> classToTest = AgencyService.class;
     Method methodToTest =
         classToTest.getMethod(GET_AGENCIES_METHOD_NAME, GET_AGENCIES_METHOD_PARAMS);
     Cacheable annotation = methodToTest.getAnnotation(Cacheable.class);
 
-    assertNotNull(annotation);
+    assertNull(annotation);
   }
 
   @Test
@@ -114,19 +122,14 @@ class AgencySecurityHeaderSupplierTest {
 
   @SuppressWarnings({"unchecked", "rawtypes"})
   @Test
-  void test_Should_Fail_When_MethodgetAgencyFromAgencyServiceDoesNotHaveCacheableAnnotation()
+  void getAgency_DoesNotUseReplicaLocalCacheableAnnotation()
       throws NoSuchMethodException, SecurityException {
 
-    AgencyService agencyService =
-        new AgencyService(
-            mock(SecurityHeaderSupplier.class),
-            mock(TenantHeaderSupplier.class),
-            mock(AgencyServiceApiControllerFactory.class));
-    Class classToTest = agencyService.getClass();
+    Class<AgencyService> classToTest = AgencyService.class;
     Method methodToTest = classToTest.getMethod(GET_AGENCY_METHOD_NAME, GET_AGENCY_METHOD_PARAMS);
     Cacheable annotation = methodToTest.getAnnotation(Cacheable.class);
 
-    assertNotNull(annotation);
+    assertNull(annotation);
     resetRequestAttributes();
   }
 

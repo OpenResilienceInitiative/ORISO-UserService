@@ -1,21 +1,31 @@
 package de.caritas.cob.userservice.api.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
+import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Random;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +53,8 @@ class ConsultingTypeServiceTest {
 
   @Mock private TenantHeaderSupplier tenantHeaderSupplier;
 
+  @Mock private SharedReadCache sharedReadCache;
+
   @Mock private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
   @BeforeEach
@@ -50,6 +62,19 @@ class ConsultingTypeServiceTest {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(consultingTypeControllerApi.getApiClient()).thenReturn(new ApiClient());
+    lenient().when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    lenient()
+        .when(sharedReadCache.getOrLoad(any(), anyString(), any(Class.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
+    lenient()
+        .when(sharedReadCache.getOrLoadTyped(any(), anyString(), any(TypeReference.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
+  }
+
+  @AfterEach
+  void tearDown() {
+    TenantContext.clear();
+    resetRequestAttributes();
   }
 
   @Test
@@ -72,7 +97,6 @@ class ConsultingTypeServiceTest {
             .map(BasicConsultingTypeResponseDTO::getId)
             .collect(Collectors.toList()),
         consultingTypeIds);
-    resetRequestAttributes();
   }
 
   private BasicConsultingTypeResponseDTO generateExtendedConsultingTypeResponseDTO(int id) {
@@ -95,7 +119,35 @@ class ConsultingTypeServiceTest {
     this.consultingTypeService.getExtendedConsultingTypeResponseDTO(1);
 
     verify(this.consultingTypeControllerApi, times(1)).getExtendedConsultingTypeById(1);
-    resetRequestAttributes();
+  }
+
+  @Test
+  void getExtendedConsultingTypeResponseDTO_ShouldUseTenantScopedSharedCacheKey() {
+    TenantContext.setCurrentTenant(7L);
+
+    consultingTypeService.getExtendedConsultingTypeResponseDTO(42);
+
+    verify(sharedReadCache)
+        .getOrLoad(
+            eq(SharedReadCache.CacheName.CONSULTING_TYPE),
+            eq("tenant:7:id:42"),
+            eq(ExtendedConsultingTypeResponseDTO.class),
+            any());
+  }
+
+  @Test
+  void getAllConsultingTypeIds_ShouldPreferExplicitTenantForSharedCacheKey() {
+    when(consultingTypeControllerApi.getBasicConsultingTypeList()).thenReturn(List.of());
+    TenantContext.setCurrentTenant(7L);
+
+    consultingTypeService.getAllConsultingTypeIds(8L);
+
+    verify(sharedReadCache)
+        .getOrLoadTyped(
+            eq(SharedReadCache.CacheName.CONSULTING_TYPE),
+            eq("tenant:8:all-ids"),
+            any(TypeReference.class),
+            any());
   }
 
   private void resetRequestAttributes() {

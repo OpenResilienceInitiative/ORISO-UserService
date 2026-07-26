@@ -1,11 +1,14 @@
 package de.caritas.cob.userservice.api.service.consultingtype;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache.CacheName;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -18,7 +21,6 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 
@@ -27,12 +29,19 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class TopicService {
 
+  private static final TypeReference<List<TopicDTO>> TOPIC_LIST_TYPE = new TypeReference<>() {};
+
   private final @NonNull TopicServiceApiControllerFactory topicServiceApiControllerFactory;
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
+  private final @NonNull SharedReadCache sharedReadCache;
 
-  @Cacheable(cacheNames = CacheManagerConfig.TOPICS_CACHE)
   public List<TopicDTO> getAllTopics() {
+    return sharedReadCache.getOrLoadTyped(
+        CacheName.TOPIC, tenantKey("all"), TOPIC_LIST_TYPE, this::loadAllTopics);
+  }
+
+  private List<TopicDTO> loadAllTopics() {
     log.info("Calling topic service to get all topics");
     TopicControllerApi controllerApi = topicServiceApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());
@@ -40,6 +49,11 @@ public class TopicService {
   }
 
   public List<TopicDTO> getAllActiveTopics() {
+    return sharedReadCache.getOrLoadTyped(
+        CacheName.TOPIC, tenantKey("active"), TOPIC_LIST_TYPE, this::loadAllActiveTopics);
+  }
+
+  private List<TopicDTO> loadAllActiveTopics() {
     // Public endpoints needs to be called without Authentication header as not to cause a 401 error
     TopicControllerApi controllerApi = topicServiceApiControllerFactory.createControllerApi();
     addTenantHeaders(controllerApi.getApiClient());
@@ -74,7 +88,6 @@ public class TopicService {
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 
-  @Cacheable(cacheNames = CacheManagerConfig.TOPICS_CACHE)
   public Map<Long, TopicDTO> getAllTopicsMap() {
     var allTopics = this.getAllTopics();
     return allTopics == null || allTopics.isEmpty()
@@ -113,5 +126,9 @@ public class TopicService {
       log.warn("No topic found for a given topicId in all topics map {}", topicId);
       return Optional.empty();
     }
+  }
+
+  private String tenantKey(String key) {
+    return "tenant:" + String.valueOf(TenantContext.getCurrentTenant()) + ":" + key;
   }
 }

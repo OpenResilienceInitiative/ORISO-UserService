@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scope": "UserService process-local state and scheduled work",
+  "scope": "UserService replica safety and scheduled work",
   "runtimeMetric": "userservice.replica.local_state",
   "schedulerRegistrationMetric": "userservice.scheduler.registered",
   "components": [
@@ -255,12 +255,9 @@
       "owner": "platform",
       "risk": "correctness",
       "components": [
-        "agencyCache",
-        "consultingTypeCache",
-        "topicsCache",
         "rocketChatUserCache"
       ],
-      "decision": "Agency, consulting-type and topic entries are bounded performance-only read optimizations. Correctness-relevant tenant and application-setting reads use SharedReadCache in Redis with a hard 60-second freshness limit. Remove the Rocket.Chat cache.",
+      "decision": "No reference-data or correctness-relevant read uses this replica-local manager. Only the legacy Rocket.Chat user cache remains; remove it physically in the Matrix-only cutover workstream.",
       "signals": [
         "userservice.replica.local_state"
       ]
@@ -268,43 +265,43 @@
     {
       "id": "agency-read-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyService.java",
-      "kind": "local-state",
+      "kind": "shared-read-cache",
       "owner": "agency-relations",
       "risk": "performance-only",
       "components": [
-        "agencyCache"
+        "SharedReadCache.CacheName.AGENCY"
       ],
-      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "decision": "Agency reads use tenant-scoped shared Redis entries with a hard 60-second freshness limit and a cross-replica cold-load lock. Redis failures fail open to the authoritative AgencyService; SharedReadCacheRedisIT proves two-instance list serialization and tenant isolation.",
       "signals": [
-        "userservice.replica.local_state"
+        "userservice.shared_read_cache.operations"
       ]
     },
     {
       "id": "consulting-type-read-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/ConsultingTypeService.java",
-      "kind": "local-state",
+      "kind": "shared-read-cache",
       "owner": "consulting-type",
       "risk": "performance-only",
       "components": [
-        "consultingTypeCache"
+        "SharedReadCache.CacheName.CONSULTING_TYPE"
       ],
-      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "decision": "Consulting-type reads use tenant-scoped shared Redis entries with a hard 60-second freshness limit and a cross-replica cold-load lock. Redis failures fail open to the authoritative ConsultingTypeService; SharedReadCacheRedisIT proves two-instance list serialization and tenant isolation.",
       "signals": [
-        "userservice.replica.local_state"
+        "userservice.shared_read_cache.operations"
       ]
     },
     {
       "id": "topic-read-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/TopicService.java",
-      "kind": "local-state",
+      "kind": "shared-read-cache",
       "owner": "consulting-type",
       "risk": "performance-only",
       "components": [
-        "topicsCache"
+        "SharedReadCache.CacheName.TOPIC"
       ],
-      "decision": "Retain only as a bounded read optimization and define invalidation freshness before multi-replica scale-out.",
+      "decision": "Topic reads use tenant-scoped shared Redis entries with a hard 60-second freshness limit and a cross-replica cold-load lock. Redis failures fail open to the authoritative TopicService; SharedReadCacheRedisIT proves two-instance list serialization and tenant isolation.",
       "signals": [
-        "userservice.replica.local_state"
+        "userservice.shared_read_cache.operations"
       ]
     }
   ]

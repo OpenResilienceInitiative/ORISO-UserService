@@ -3,12 +3,17 @@ package de.caritas.cob.userservice.api.service.cache;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
+import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -155,6 +160,73 @@ class SharedReadCacheRedisIT {
     assertThat(sharedSettings.getReleaseToggles()).containsEntry("groupChat", true);
     assertThat(sharedTenantAdmin.getId()).isEqualTo(42L);
     assertThat(sharedTenantAdmin.getSubdomain()).isEqualTo("berlin");
+  }
+
+  @Test
+  void referenceDataListsRoundTripAcrossReplicasAndStayTenantIsolated() {
+    var objectMapper = new ObjectMapper().findAndRegisterModules();
+    var first =
+        new SharedReadCache(
+            redisTemplate,
+            objectMapper,
+            new SimpleMeterRegistry(),
+            Duration.ofSeconds(60),
+            keyPrefix);
+    var second =
+        new SharedReadCache(
+            redisTemplate,
+            objectMapper,
+            new SimpleMeterRegistry(),
+            Duration.ofSeconds(60),
+            keyPrefix);
+    var agenciesType = new TypeReference<List<AgencyDTO>>() {};
+    var consultingTypesType = new TypeReference<List<ExtendedConsultingTypeResponseDTO>>() {};
+    var topicsType = new TypeReference<List<TopicDTO>>() {};
+
+    first.put(
+        SharedReadCache.CacheName.AGENCY,
+        "tenant:7:ids:42",
+        List.of(new AgencyDTO().id(42L).name("Berlin")));
+    first.put(
+        SharedReadCache.CacheName.CONSULTING_TYPE,
+        "tenant:7:all",
+        List.of(new ExtendedConsultingTypeResponseDTO().id(1).slug("general")));
+    first.put(
+        SharedReadCache.CacheName.TOPIC,
+        "tenant:7:active",
+        List.of(new TopicDTO().id(9L).name("Housing")));
+
+    List<AgencyDTO> sharedAgencies =
+        second.getOrLoadTyped(
+            SharedReadCache.CacheName.AGENCY,
+            "tenant:7:ids:42",
+            agenciesType,
+            SharedReadCacheRedisIT::unexpectedLoad);
+    List<ExtendedConsultingTypeResponseDTO> sharedConsultingTypes =
+        second.getOrLoadTyped(
+            SharedReadCache.CacheName.CONSULTING_TYPE,
+            "tenant:7:all",
+            consultingTypesType,
+            SharedReadCacheRedisIT::unexpectedLoad);
+    List<TopicDTO> sharedTopics =
+        second.getOrLoadTyped(
+            SharedReadCache.CacheName.TOPIC,
+            "tenant:7:active",
+            topicsType,
+            SharedReadCacheRedisIT::unexpectedLoad);
+    List<TopicDTO> otherTenantTopics =
+        second.getOrLoadTyped(
+            SharedReadCache.CacheName.TOPIC,
+            "tenant:8:active",
+            topicsType,
+            () -> List.of(new TopicDTO().id(10L).name("Debt")));
+
+    assertThat(sharedAgencies).extracting(AgencyDTO::getName).containsExactly("Berlin");
+    assertThat(sharedConsultingTypes)
+        .extracting(ExtendedConsultingTypeResponseDTO::getSlug)
+        .containsExactly("general");
+    assertThat(sharedTopics).extracting(TopicDTO::getName).containsExactly("Housing");
+    assertThat(otherTenantTopics).extracting(TopicDTO::getName).containsExactly("Debt");
   }
 
   @Test

@@ -4,23 +4,25 @@ import static java.util.Collections.emptyList;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache.CacheName;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -31,9 +33,12 @@ import org.springframework.web.client.HttpClientErrorException;
 @Slf4j
 public class AgencyService {
 
+  private static final TypeReference<List<AgencyDTO>> AGENCY_LIST_TYPE = new TypeReference<>() {};
+
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  private final @NonNull SharedReadCache sharedReadCache;
 
   /**
    * Returns the {@link AgencyDTO} for the provided agencyId. Agency will be cached for further
@@ -42,11 +47,15 @@ public class AgencyService {
    * @param agencyId {@link AgencyDTO#getId()}
    * @return AgencyDTO {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId", unless = "#result == null")
   public AgencyDTO getAgency(Long agencyId) {
-    return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
-        .findFirst()
-        .orElse(null);
+    return sharedReadCache.getOrLoad(
+        CacheName.AGENCY,
+        tenantKey("id:" + agencyId),
+        AgencyDTO.class,
+        () ->
+            getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
+                .findFirst()
+                .orElse(null));
   }
 
   /**
@@ -69,9 +78,15 @@ public class AgencyService {
    * @param agencyIds List of {@link AgencyDTO#getId()}
    * @return List<AgencyDTO> List of {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyIds")
   public List<AgencyDTO> getAgencies(List<Long> agencyIds) {
-    return getAgenciesFromAgencyService(agencyIds);
+    if (!isNotEmpty(agencyIds)) {
+      return emptyList();
+    }
+    return sharedReadCache.getOrLoadTyped(
+        CacheName.AGENCY,
+        tenantKey("ids:" + agencyIds),
+        AGENCY_LIST_TYPE,
+        () -> getAgenciesFromAgencyService(agencyIds));
   }
 
   public List<AgencyDTO> getAgenciesNotCached(List<Long> agencyIds) {
@@ -151,5 +166,9 @@ public class AgencyService {
    */
   public List<AgencyDTO> getAgenciesWithoutCaching(List<Long> agencyIds) {
     return getAgenciesFromAgencyService(agencyIds);
+  }
+
+  private String tenantKey(String key) {
+    return "tenant:" + String.valueOf(TenantContext.getCurrentTenant()) + ":" + key;
   }
 }

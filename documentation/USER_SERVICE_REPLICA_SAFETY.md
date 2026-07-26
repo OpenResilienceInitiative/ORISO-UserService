@@ -2,11 +2,11 @@
 
 UserService is currently safe to deploy with one replica. A Kubernetes
 `Deployment` and stateless HTTP security do not make the whole process
-stateless: authentication tokens, Ehcache reads and scheduled side effects still
-have process-local behavior. Correctness-relevant tenant/application-setting
-reads, notification active-view state and Matrix sync leadership/cursor state
-are now externalized as described below, but the remaining items still keep the
-global replica limit at one.
+stateless: authentication tokens, the legacy Rocket.Chat Ehcache entry and
+scheduled side effects still have process-local behavior. Reference-data and
+correctness-relevant tenant/application-setting reads, notification active-view
+state and Matrix sync leadership/cursor state are now externalized as described
+below, but the remaining items still keep the global replica limit at one.
 
 The machine-readable inventory is
 [`src/main/resources/replica-safety-components.json`](../src/main/resources/replica-safety-components.json).
@@ -34,8 +34,9 @@ the inventory fails `tests/ci/test_replica_safety_contract.py`.
   lease/cursor operation and outcome tags; it never contains owner, room,
   token or event identifiers.
 - `userservice.shared_read_cache.operations` records bounded cache, operation
-  and outcome tags for tenant, tenant-admin and application-setting reads. It
-  never contains tenant IDs, subdomains or cache keys.
+  and outcome tags for tenant, tenant-admin, application-setting, agency,
+  consulting-type and topic reads. It never contains tenant IDs, subdomains or
+  cache keys.
 
 SigNoz already receives `service.instance.id` as a resource attribute. Grouping
 `userservice.scheduler.executions` by task and service instance makes duplicate
@@ -83,20 +84,21 @@ second registry over the same Redis 7 store and proves shared reads, immediate
 clear and expiry. The reusable Redis workflow runs this contract together with
 consultant availability before PR, branch and publish workflows can succeed.
 
-Tenant, tenant-admin and application-setting reads are no longer stored in
-replica-local Ehcache entries. `SharedReadCache` stores them in Redis under
-tenant-aware or lookup-specific keys. The TTL must be between one and 60
-seconds; a larger or unbounded deployment override fails at startup. A
-15-second owner token coordinates a cold load across replicas, with
-owner-verified release. Contenders wait at most 14 seconds, just above the
+Tenant, tenant-admin, application-setting, agency, consulting-type and topic
+reads are no longer stored in replica-local Ehcache entries. `SharedReadCache`
+stores them in Redis under tenant-aware or lookup-specific keys. The TTL must
+be between one and 60 seconds; a larger or unbounded deployment override fails
+at startup. A 15-second owner token coordinates a cold load across replicas,
+with owner-verified release. Contenders wait at most 14 seconds, just above the
 normal three-second connect plus ten-second read timeout, and then load
 directly so a lost lock cannot block a request indefinitely. Redis read, lock
 or write failures fail open to the authoritative upstream service. Tenant
 fresh reads also replace both ID and subdomain entries immediately.
 `SharedReadCacheRedisIT` reconstructs two cache instances against Redis 7 and
-proves shared reads, bounded expiry/reload and one upstream load for a
-concurrent cold miss. Application-setting keys include the current tenant, so
-one tenant can no longer receive another tenant's cached settings.
+proves shared reads, bounded expiry/reload, one upstream load for a concurrent
+cold miss, reference-list serialization and tenant isolation. Reference reads
+therefore have one shared freshness bound instead of the previous replica-local
+60-second, three-hour and 24-hour windows.
 
 Matrix `/sync` leadership and cursor state are no longer process-local.
 `MatrixSyncCoordinationRegistry` gives one logical consumer a short Redis lease,

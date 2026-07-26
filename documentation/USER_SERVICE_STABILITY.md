@@ -15,10 +15,10 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,821 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 955 | 0 | 0 | 0 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,829 | 0 | 0 | 7 | `./mvnw -B test` |
+| Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis replica-safety contracts | 6 | 0 | 0 | 0 | required Redis job |
+| Redis replica-safety contracts | 7 | 0 | 0 | 0 | required Redis job |
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -121,6 +121,11 @@ repair. Those require the branch image to be deployed and queried again.
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
+- Agency, consulting-type and topic reference reads share tenant-scoped Redis
+  entries across replicas. Their cross-replica cold-load lock suppresses
+  duplicate upstream calls, and the hard 60-second TTL replaces replica-local
+  three-hour and 24-hour stale windows. Redis failures fail open to the
+  authoritative upstream service.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95

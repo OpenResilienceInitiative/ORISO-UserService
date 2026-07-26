@@ -2,21 +2,29 @@ package de.caritas.cob.userservice.api.service.consultingtype;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.topicservice.generated.ApiClient;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +42,7 @@ class TopicServiceTest {
   @Mock private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
   @Mock private TenantHeaderSupplier tenantHeaderSupplier;
+  @Mock private SharedReadCache sharedReadCache;
 
   @InjectMocks private TopicService service;
 
@@ -48,6 +57,14 @@ class TopicServiceTest {
     when(controllerApi.getApiClient()).thenReturn(apiClient);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
     doNothing().when(tenantHeaderSupplier).addTenantHeader(any(HttpHeaders.class));
+    lenient()
+        .when(sharedReadCache.getOrLoadTyped(any(), anyString(), any(TypeReference.class), any()))
+        .thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(3).get());
+  }
+
+  @AfterEach
+  void tearDown() {
+    TenantContext.clear();
   }
 
   // ─── getAllTopics ──────────────────────────────────────────────────────────
@@ -72,6 +89,21 @@ class TopicServiceTest {
     assertThat(result).isEmpty();
   }
 
+  @Test
+  void getAllTopics_ShouldUseTenantScopedSharedCacheKey() {
+    TenantContext.setCurrentTenant(7L);
+    when(controllerApi.getAllTopics()).thenReturn(List.of());
+
+    service.getAllTopics();
+
+    verify(sharedReadCache)
+        .getOrLoadTyped(
+            eq(SharedReadCache.CacheName.TOPIC),
+            eq("tenant:7:all"),
+            any(TypeReference.class),
+            any());
+  }
+
   // ─── getAllActiveTopics ────────────────────────────────────────────────────
 
   @Test
@@ -93,6 +125,21 @@ class TopicServiceTest {
     List<TopicDTO> result = service.getAllActiveTopics();
 
     assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getAllActiveTopics_ShouldUseTenantScopedSharedCacheKey() {
+    TenantContext.setCurrentTenant(7L);
+    when(controllerApi.getAllActiveTopics()).thenReturn(List.of());
+
+    service.getAllActiveTopics();
+
+    verify(sharedReadCache)
+        .getOrLoadTyped(
+            eq(SharedReadCache.CacheName.TOPIC),
+            eq("tenant:7:active"),
+            any(TypeReference.class),
+            any());
   }
 
   // ─── getTopicById ─────────────────────────────────────────────────────────

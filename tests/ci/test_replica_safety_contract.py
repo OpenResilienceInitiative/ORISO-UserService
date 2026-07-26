@@ -29,6 +29,65 @@ def source_has_process_local_state(source: Path) -> bool:
 
 
 class ReplicaSafetyContractTest(unittest.TestCase):
+    def test_reference_reads_use_tenant_scoped_bounded_shared_cache(self):
+        catalog = json.loads(CATALOG.read_text())
+        shared_cache = (
+            MAIN_JAVA
+            / "de/caritas/cob/userservice/api/service/cache/SharedReadCache.java"
+        ).read_text()
+        replica_test = (
+            ROOT
+            / "src/test/java/de/caritas/cob/userservice/api/service/cache/"
+            "SharedReadCacheRedisIT.java"
+        ).read_text()
+        expected_sources = {
+            "agency-read-cache": (
+                "src/main/java/de/caritas/cob/userservice/api/service/agency/"
+                "AgencyService.java",
+                "CacheName.AGENCY",
+            ),
+            "consulting-type-read-cache": (
+                "src/main/java/de/caritas/cob/userservice/api/service/"
+                "ConsultingTypeService.java",
+                "CacheName.CONSULTING_TYPE",
+            ),
+            "topic-read-cache": (
+                "src/main/java/de/caritas/cob/userservice/api/service/"
+                "consultingtype/TopicService.java",
+                "CacheName.TOPIC",
+            ),
+        }
+
+        self.assertIn(
+            "private static final Duration MAXIMUM_TTL = Duration.ofSeconds(60)",
+            shared_cache,
+        )
+        self.assertIn("tryAcquireLoadLock", shared_cache)
+        self.assertIn("falling back to upstream", shared_cache)
+        self.assertIn(
+            "referenceDataListsRoundTripAcrossReplicasAndStayTenantIsolated",
+            replica_test,
+        )
+
+        entries = {entry["id"]: entry for entry in catalog["components"]}
+        for component_id, (source_path, cache_name) in expected_sources.items():
+            source = (ROOT / source_path).read_text()
+            entry = entries[component_id]
+            self.assertNotIn("@Cacheable", source)
+            self.assertIn("SharedReadCache", source)
+            self.assertIn(cache_name, source)
+            self.assertIn('"tenant:"', source)
+            self.assertEqual("shared-read-cache", entry["kind"])
+            self.assertEqual(source_path, entry["source"])
+            self.assertIn("tenant-scoped shared Redis", entry["decision"])
+            self.assertIn("60-second", entry["decision"])
+            self.assertIn("cold-load lock", entry["decision"])
+            self.assertIn("fail open", entry["decision"])
+            self.assertEqual(
+                ["userservice.shared_read_cache.operations"],
+                entry["signals"],
+            )
+
     def test_inactive_account_recovery_remains_provider_gated_and_migrated(self):
         application_properties = (
             ROOT / "src/main/resources/application.properties"
