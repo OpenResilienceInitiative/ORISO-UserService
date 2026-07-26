@@ -27,7 +27,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Controller for conversation API requests. */
@@ -54,11 +53,10 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getAnonymousEnquiries(
-      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
+      Integer offset, Integer count) {
 
     ConsultantSessionListResponseDTO anonymousEnquirySessions =
-        this.conversationListResolver.resolveConversations(
-            offset, count, ANONYMOUS_ENQUIRY, rcToken);
+        this.conversationListResolver.resolveConversations(offset, count, ANONYMOUS_ENQUIRY);
 
     return ResponseEntity.ok(anonymousEnquirySessions);
   }
@@ -72,11 +70,10 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getRegisteredEnquiries(
-      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
+      Integer offset, Integer count) {
 
     ConsultantSessionListResponseDTO registeredEnquirySessions =
-        this.conversationListResolver.resolveConversations(
-            offset, count, REGISTERED_ENQUIRY, rcToken);
+        this.conversationListResolver.resolveConversations(offset, count, REGISTERED_ENQUIRY);
 
     return ResponseEntity.ok(registeredEnquirySessions);
   }
@@ -90,11 +87,10 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getArchivedSessions(
-      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
+      Integer offset, Integer count) {
 
     ConsultantSessionListResponseDTO archivedSessions =
-        this.conversationListResolver.resolveConversations(
-            offset, count, ARCHIVED_SESSION, rcToken);
+        this.conversationListResolver.resolveConversations(offset, count, ARCHIVED_SESSION);
 
     return ResponseEntity.ok(archivedSessions);
   }
@@ -108,11 +104,10 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getArchivedTeamSessions(
-      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
+      Integer offset, Integer count) {
 
     ConsultantSessionListResponseDTO archivedTeamSessions =
-        this.conversationListResolver.resolveConversations(
-            offset, count, ARCHIVED_TEAM_SESSION, rcToken);
+        this.conversationListResolver.resolveConversations(offset, count, ARCHIVED_TEAM_SESSION);
 
     return ResponseEntity.ok(archivedTeamSessions);
   }
@@ -160,7 +155,7 @@ public class ConversationController implements ConversationsApi {
 
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
     var mainTopicId = mapper.mainTopicIdOf(sessionMap);
-    int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId, consultingTypeId);
+    int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId);
     var peopleAhead =
         messenger.countPendingEnquiriesAheadOf(
             mapper.agencyIdOf(sessionMap),
@@ -185,19 +180,13 @@ public class ConversationController implements ConversationsApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
-  /**
-   * Topic-scoped sessions use the same Matrix-aware routing as enquiry creation and the public
-   * availability endpoint. Legacy sessions without a topic fall back to RocketChat presence.
-   */
-  private int resolveNumAvailableConsultants(Long mainTopicId, Integer consultingTypeId) {
+  /** Topic-scoped sessions use the live-chat activity registry as their availability source. */
+  private int resolveNumAvailableConsultants(Long mainTopicId) {
     try {
       if (mainTopicId != null) {
         return topicConsultantRoutingService.findAvailableConsultantIds(mainTopicId).size();
       }
-      if (consultingTypeId == null) {
-        return 0;
-      }
-      return messenger.findAvailableConsultants(consultingTypeId).size();
+      return 0;
     } catch (Exception ex) {
       // Availability is best-effort for this poll — never fail the whole response.
       return 0;

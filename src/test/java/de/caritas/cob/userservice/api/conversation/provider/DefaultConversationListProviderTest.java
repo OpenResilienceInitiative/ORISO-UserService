@@ -96,8 +96,7 @@ class DefaultConversationListProviderTest {
   @Test
   void buildConversations_Should_ReturnResponseWithSessions_When_SessionsProvided() {
     List<ConsultantSessionResponseDTO> sessions = List.of(new ConsultantSessionResponseDTO());
-    PageableListRequest request =
-        PageableListRequest.builder().offset(0).count(10).rcToken("token").build();
+    PageableListRequest request = PageableListRequest.builder().offset(0).count(10).build();
     Consultant consultant = new Consultant();
 
     ConsultantSessionListResponseDTO result =
@@ -110,8 +109,7 @@ class DefaultConversationListProviderTest {
 
   @Test
   void buildConversations_Should_ReturnEmptyList_When_NoSessionsProvided() {
-    PageableListRequest request =
-        PageableListRequest.builder().offset(0).count(10).rcToken("token").build();
+    PageableListRequest request = PageableListRequest.builder().offset(0).count(10).build();
     Consultant consultant = new Consultant();
 
     ConsultantSessionListResponseDTO result =
@@ -126,8 +124,7 @@ class DefaultConversationListProviderTest {
   void buildConversations_Should_CallEnricher_With_Sessions() {
     List<ConsultantSessionResponseDTO> sessions = new ArrayList<>();
     sessions.add(new ConsultantSessionResponseDTO());
-    PageableListRequest request =
-        PageableListRequest.builder().offset(0).count(10).rcToken("rc-token-123").build();
+    PageableListRequest request = PageableListRequest.builder().offset(0).count(10).build();
     Consultant consultant = new Consultant();
     provider.buildConversations(request, consultant, sessions);
 
@@ -140,8 +137,7 @@ class DefaultConversationListProviderTest {
     for (int i = 0; i < 25; i++) {
       sessions.add(new ConsultantSessionResponseDTO());
     }
-    PageableListRequest request =
-        PageableListRequest.builder().offset(10).count(10).rcToken("token").build();
+    PageableListRequest request = PageableListRequest.builder().offset(10).count(10).build();
     Consultant consultant = new Consultant();
 
     ConsultantSessionListResponseDTO result =
@@ -154,8 +150,7 @@ class DefaultConversationListProviderTest {
 
   @Test
   void buildConversations_Should_ReturnOffsetInResponse_When_OffsetIsSet() {
-    PageableListRequest request =
-        PageableListRequest.builder().offset(5).count(5).rcToken("token").build();
+    PageableListRequest request = PageableListRequest.builder().offset(5).count(5).build();
     Consultant consultant = new Consultant();
 
     ConsultantSessionListResponseDTO result =
