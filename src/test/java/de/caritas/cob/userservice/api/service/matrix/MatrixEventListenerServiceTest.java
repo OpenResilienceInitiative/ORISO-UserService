@@ -10,6 +10,7 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -717,6 +718,8 @@ class MatrixEventListenerServiceTest {
 
     assertThat(invokeResolveDomainUserId(newService(), CONSULTANT_MATRIX_ID))
         .isEqualTo(CONSULTANT_DOMAIN_ID);
+    verify(consultantRepository, times(1))
+        .findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID);
   }
 
   @Test
@@ -915,6 +918,8 @@ class MatrixEventListenerServiceTest {
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), anyBoolean(), any());
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+    verify(consultantRepository, times(1))
+        .findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID);
   }
 
   @Test

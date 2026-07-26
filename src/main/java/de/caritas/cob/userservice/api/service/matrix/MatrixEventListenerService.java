@@ -431,7 +431,9 @@ public class MatrixEventListenerService {
     }
 
     String msgtype = (String) content.get("msgtype");
-    String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
+    Optional<ResolvedMatrixSender> resolvedSender = resolveMatrixSender(senderId);
+    String senderDomainUserId = resolvedSender.map(ResolvedMatrixSender::domainUserId).orElse(null);
+    boolean senderIsConsultant = resolvedSender.map(ResolvedMatrixSender::consultant).orElse(false);
     String threadRootId = extractThreadRootId(content);
     String messageBody = extractMessageBody(content);
     PrivacyEnvelope privacyEnvelope =
@@ -448,7 +450,7 @@ public class MatrixEventListenerService {
                 sessionId,
                 roomId,
                 senderId,
-                senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
+                senderIsConsultant,
                 messageBody,
                 event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
 
@@ -490,7 +492,7 @@ public class MatrixEventListenerService {
                   eventNotificationService.createMessageNotificationFromRoom(
                       roomId, senderDomainUserId, true, privacyEnvelope);
                 }
-                if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
+                if (senderDomainUserId != null && senderIsConsultant) {
                   consultantMessageStatService.recordMessageSent(
                       senderDomainUserId, mappedSessionId);
                 }
@@ -502,25 +504,25 @@ public class MatrixEventListenerService {
     }
   }
 
-  private boolean isConsultantMatrixUser(String matrixUserId) {
-    return matrixUserId != null
-        && consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId).isPresent();
+  private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {
+    return resolveMatrixSender(matrixUserId).map(ResolvedMatrixSender::domainUserId).orElse(null);
   }
 
-  private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {
+  private Optional<ResolvedMatrixSender> resolveMatrixSender(String matrixUserId) {
     if (matrixUserId == null || matrixUserId.isBlank()) {
-      return null;
+      return Optional.empty();
     }
     return userRepository
         .findByMatrixUserIdAndDeleteDateIsNull(matrixUserId)
-        .map(user -> user.getUserId())
+        .map(user -> new ResolvedMatrixSender(user.getUserId(), false))
         .or(
             () ->
                 consultantRepository
                     .findByMatrixUserIdAndDeleteDateIsNull(matrixUserId)
-                    .map(consultant -> consultant.getId()))
-        .orElse(null);
+                    .map(consultant -> new ResolvedMatrixSender(consultant.getId(), true)));
   }
+
+  private record ResolvedMatrixSender(String domainUserId, boolean consultant) {}
 
   private Optional<Long> resolveSessionIdForRoom(String roomId) {
     Long cached = roomToSessionMap.get(roomId);
