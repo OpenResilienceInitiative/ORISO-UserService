@@ -15,7 +15,7 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,829 | 0 | 0 | 7 | `./mvnw -B test` |
+| Unit | 3,833 | 0 | 0 | 7 | `./mvnw -B test` |
 | Integration + contract + E2E | 958 | 0 | 0 | 0 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis replica-safety contracts | 7 | 0 | 0 | 0 | required Redis job |
@@ -76,10 +76,16 @@ Spring Boot's standard `http.client.requests` remains available as an
 independent cross-check, but now uses a bounded observation convention:
 untemplated URLs are grouped as `uri=untemplated`, and URI templates retain
 only their query-free path template.
-The Java `HttpClient` used by LiveService and Keycloak's own admin-client
-transport are not covered by the payload interceptor; their higher-level retry
-paths are covered by the explicit retry counter. This is a known measurement
-boundary, not an implied zero.
+The asynchronous Java `HttpClient` used by LiveService is wrapped at its
+generated-client boundary without editing generated sources. Its attempts,
+latency, exact serialized request size, known response size and coarse HTTP or
+transport outcome therefore use the same `userservice.outbound.http.*` series.
+Exceptional futures are observed and logged while live-event delivery remains
+best-effort for the initiating business flow.
+
+Keycloak's own admin-client transport is not covered by the payload
+interceptor; its higher-level retry paths are covered by the explicit retry
+counter. This is a known measurement boundary, not an implied zero.
 
 ### Live PreDev baseline before this change
 

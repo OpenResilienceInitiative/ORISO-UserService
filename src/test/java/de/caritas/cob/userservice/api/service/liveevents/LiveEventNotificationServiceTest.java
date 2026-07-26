@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource;
 import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,8 +61,10 @@ public class LiveEventNotificationServiceTest {
   @Mock private LiveServiceApiControllerFactory liveServiceApiControllerFactory;
 
   @BeforeEach
-  public void setup() {
+  public void setup() throws ApiException {
     when(liveServiceApiControllerFactory.createControllerApi()).thenReturn(liveControllerApi);
+    when(liveControllerApi.sendLiveEvent(any()))
+        .thenReturn(CompletableFuture.completedFuture(null));
   }
 
   @Test
@@ -120,6 +123,20 @@ public class LiveEventNotificationServiceTest {
 
     try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
       this.liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
+          asList("consultant-1"), 4711L);
+
+      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
+    }
+  }
+
+  @Test
+  void sendLiveNewAnonymousEnquiryEventToUsers_Should_logAsynchronousHttpFailure()
+      throws ApiException {
+    when(liveControllerApi.sendLiveEvent(any()))
+        .thenReturn(CompletableFuture.failedFuture(new ApiException(503, "unavailable")));
+
+    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
+      liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
           asList("consultant-1"), 4711L);
 
       assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();

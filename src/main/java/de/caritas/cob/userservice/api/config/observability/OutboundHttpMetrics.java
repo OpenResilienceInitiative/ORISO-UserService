@@ -5,8 +5,10 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
+import java.net.URI;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.restclient.RestTemplateCustomizer;
 import org.springframework.http.HttpRequest;
@@ -69,6 +71,109 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         .increment();
   }
 
+  /**
+   * Starts a measurement for an outbound client that does not use {@link RestTemplate}.
+   *
+   * <p>The returned attempt is safe to complete from an asynchronous callback. Only the first
+   * completion is recorded. URI paths and query parameters never become metric tags.
+   *
+   * @param uri target URI used only to derive the dependency host
+   * @param method HTTP method
+   * @param requestBytes serialized request size, or a negative value when unknown
+   * @return the in-flight measurement
+   */
+  public OutboundHttpCall startHttpCall(URI uri, String method, long requestBytes) {
+    var dependency = dependency(uri);
+    var normalizedMethod =
+        method == null || method.isBlank() ? "unknown" : method.toLowerCase(Locale.ROOT);
+    if (requestBytes >= 0) {
+      recordPayload(dependency, "request", requestBytes);
+    }
+    return new OutboundHttpCall(dependency, normalizedMethod, Timer.start(meterRegistry));
+  }
+
+  /** One asynchronously completed outbound HTTP attempt. */
+  public final class OutboundHttpCall {
+
+    private final String dependency;
+    private final String method;
+    private final Timer.Sample sample;
+    private final AtomicBoolean completed = new AtomicBoolean();
+
+    private OutboundHttpCall(String dependency, String method, Timer.Sample sample) {
+      this.dependency = dependency;
+      this.method = method;
+      this.sample = sample;
+    }
+
+    /**
+     * Completes the attempt with an HTTP response.
+     *
+     * @param statusCode HTTP response status
+     * @param responseBytes serialized response size, or a negative value when unknown
+     */
+    public void completeWithStatus(int statusCode, long responseBytes) {
+      complete(statusCode > 0 ? statusCode / 100 + "xx" : "unknown", responseBytes);
+    }
+
+    /** Completes the attempt after a transport failure without an HTTP response. */
+    public void completeWithTransportError() {
+      complete("io_error", -1);
+    }
+
+    private void complete(String outcome, long responseBytes) {
+      if (!completed.compareAndSet(false, true)) {
+        return;
+      }
+      recordCall(sample, dependency, method, outcome);
+      if (responseBytes >= 0) {
+        recordPayload(dependency, "response", responseBytes);
+      }
+    }
+  }
+
+  private String dependency(URI uri) {
+    var host = uri == null ? null : uri.getHost();
+    return host == null || host.isBlank() ? "relative-uri" : host.toLowerCase(Locale.ROOT);
+  }
+
+  private void recordCall(Timer.Sample sample, String dependency, String method, String outcome) {
+    recordCall(meterRegistry, sample, dependency, method, outcome);
+  }
+
+  private static void recordCall(
+      MeterRegistry meterRegistry,
+      Timer.Sample sample,
+      String dependency,
+      String method,
+      String outcome) {
+    Counter.builder(CALLS)
+        .description("Outbound HTTP attempts, including attempts that fail")
+        .tags("dependency", dependency, "method", method, "outcome", outcome)
+        .register(meterRegistry)
+        .increment();
+    sample.stop(
+        Timer.builder(LATENCY)
+            .description("Outbound HTTP latency")
+            .serviceLevelObjectives(LATENCY_SLOS)
+            .tags("dependency", dependency, "method", method, "outcome", outcome)
+            .register(meterRegistry));
+  }
+
+  private void recordPayload(String dependency, String direction, long bytes) {
+    recordPayload(meterRegistry, dependency, direction, bytes);
+  }
+
+  private static void recordPayload(
+      MeterRegistry meterRegistry, String dependency, String direction, long bytes) {
+    DistributionSummary.builder(PAYLOAD)
+        .description("Outbound HTTP payload bytes when their size is known")
+        .baseUnit("bytes")
+        .tags("dependency", dependency, "direction", direction)
+        .register(meterRegistry)
+        .record(bytes);
+  }
+
   private record MetricsInterceptor(MeterRegistry meterRegistry)
       implements ClientHttpRequestInterceptor {
 
@@ -86,10 +191,11 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         outcome = response.getStatusCode().value() / 100 + "xx";
         return response;
       } finally {
-        recordCall(sample, dependency, method, outcome);
-        recordPayload(dependency, "request", body.length);
+        OutboundHttpMetrics.recordCall(meterRegistry, sample, dependency, method, outcome);
+        OutboundHttpMetrics.recordPayload(meterRegistry, dependency, "request", body.length);
         if (response != null && response.getHeaders().getContentLength() >= 0) {
-          recordPayload(dependency, "response", response.getHeaders().getContentLength());
+          OutboundHttpMetrics.recordPayload(
+              meterRegistry, dependency, "response", response.getHeaders().getContentLength());
         }
       }
     }
@@ -97,29 +203,6 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
     private String dependency(HttpRequest request) {
       var host = request.getURI().getHost();
       return host == null || host.isBlank() ? "relative-uri" : host.toLowerCase(Locale.ROOT);
-    }
-
-    private void recordCall(Timer.Sample sample, String dependency, String method, String outcome) {
-      Counter.builder(CALLS)
-          .description("Outbound HTTP attempts, including attempts that fail")
-          .tags("dependency", dependency, "method", method, "outcome", outcome)
-          .register(meterRegistry)
-          .increment();
-      sample.stop(
-          Timer.builder(LATENCY)
-              .description("Outbound HTTP latency")
-              .serviceLevelObjectives(LATENCY_SLOS)
-              .tags("dependency", dependency, "method", method, "outcome", outcome)
-              .register(meterRegistry));
-    }
-
-    private void recordPayload(String dependency, String direction, long bytes) {
-      DistributionSummary.builder(PAYLOAD)
-          .description("Outbound HTTP payload bytes when their size is known")
-          .baseUnit("bytes")
-          .tags("dependency", dependency, "direction", direction)
-          .register(meterRegistry)
-          .record(bytes);
     }
   }
 }

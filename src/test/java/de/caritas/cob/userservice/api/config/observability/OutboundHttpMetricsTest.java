@@ -91,6 +91,67 @@ class OutboundHttpMetricsTest {
   }
 
   @Test
+  void shouldMeasureAsyncHttpAttemptsWithBoundedTagsAndKnownPayloadSizes() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+
+    var successfulCall =
+        metrics.startHttpCall(
+            URI.create("https://live.example/liveevent/send?secret=value"), "POST", 17);
+    successfulCall.completeWithStatus(202, 0);
+    var failedCall =
+        metrics.startHttpCall(URI.create("https://live.example/liveevent/send"), "POST", 19);
+    failedCall.completeWithStatus(503, 23);
+    var transportFailure =
+        metrics.startHttpCall(URI.create("https://live.example/liveevent/send"), "POST", -1);
+    transportFailure.completeWithTransportError();
+
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live.example", "method", "post", "outcome", "2xx")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live.example", "method", "post", "outcome", "5xx")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live.example", "method", "post", "outcome", "io_error")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.PAYLOAD)
+                .tags("dependency", "live.example", "direction", "request")
+                .summary()
+                .totalAmount())
+        .isEqualTo(36);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.PAYLOAD)
+                .tags("dependency", "live.example", "direction", "response")
+                .summary()
+                .totalAmount())
+        .isEqualTo(23);
+    assertThat(registry.get(OutboundHttpMetrics.LATENCY).timers())
+        .hasSize(3)
+        .allSatisfy(timer -> assertThat(timer.count()).isEqualTo(1));
+    assertThat(registry.getMeters())
+        .allSatisfy(
+            meter ->
+                assertThat(meter.getId().getTags().toString())
+                    .doesNotContain("liveevent", "secret", "value"));
+  }
+
+  @Test
   void shouldBoundStandardClientMetricUrisWithoutLosingTemplates() {
     var request = org.mockito.Mockito.mock(ClientHttpRequest.class);
     org.mockito.Mockito.when(request.getMethod()).thenReturn(HttpMethod.GET);
