@@ -396,12 +396,6 @@ public class UserServiceMapper {
     return !(isNull(consultant.getDeleteDate()) && nonNull(consultantAgency.getDeleteDate()));
   }
 
-  public Optional<String> e2eKeyOf(Map<String, String> chatMap) {
-    return chatMap.containsKey("e2eKey") && chatMap.get("e2eKey").matches("tmp\\..{12,}")
-        ? Optional.of(chatMap.get("e2eKey"))
-        : Optional.empty();
-  }
-
   public String roomIdOf(Map<String, String> chatMap) {
     return chatMap.get("roomId");
   }

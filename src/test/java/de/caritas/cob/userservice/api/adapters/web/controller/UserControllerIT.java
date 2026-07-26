@@ -2310,41 +2310,6 @@ class UserControllerIT {
   }
 
   @Test
-  void updateE2eInChats_Should_returnAccepted_When_adviceSeekerWithoutInitializedSessionIsGiven()
-      throws Exception {
-    givenAdviceSeekerWithoutInitializedSession(false);
-
-    mvc.perform(
-            put("/users/chat/e2e")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new E2eKeyDTO()
-                                .publicKey(
-                                    "zYnD6llaxxtN2Hnc2njpd3iMW4vwrCxUXXJfi1knTsYIlIbHCsDkUMRnuw38ydaKufuzHXsCjdfYWYSJObduz5rOrRiwZTmxWujcUkrJlTg9ON50gnWbtRro3yrGX9IgoIrGfNmPTSeTasCchJ-S5z6V7OPdRthxQSoqtBtVt4XJD2lbl-fU_c4nzWZ47Gk8kes6kHMdpXtmbVROGbKAH5MVEc6XqW1-FJDVcVVE9ZoQZiPe3slnuJLMgGstnzvDlwwcRetc_9dbQf_QRFZ-_3e_QA3tOnguBnu6naLciffAHET70b-YE1n6IN_zMPL5eC1ses_tFd8CTG3p7Dvo5w"))))
-        .andExpect(status().isAccepted());
-  }
-
-  @Test
-  void
-      updateE2eInChats_Should_returnServerError_When_adviceSeekerWithoutInitializedSessionShouldHaveBeenInitialized()
-          throws Exception {
-    givenAdviceSeekerWithoutInitializedSession(true);
-
-    mvc.perform(
-            put("/users/chat/e2e")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new E2eKeyDTO()
-                                .publicKey(
-                                    "zYnD6llaxxtN2Hnc2njpd3iMW4vwrCxUXXJfi1knTsYIlIbHCsDkUMRnuw38ydaKufuzHXsCjdfYWYSJObduz5rOrRiwZTmxWujcUkrJlTg9ON50gnWbtRro3yrGX9IgoIrGfNmPTSeTasCchJ-S5z6V7OPdRthxQSoqtBtVt4XJD2lbl-fU_c4nzWZ47Gk8kes6kHMdpXtmbVROGbKAH5MVEc6XqW1-FJDVcVVE9ZoQZiPe3slnuJLMgGstnzvDlwwcRetc_9dbQf_QRFZ-_3e_QA3tOnguBnu6naLciffAHET70b-YE1n6IN_zMPL5eC1ses_tFd8CTG3p7Dvo5w"))))
-        .andExpect(status().isInternalServerError());
-  }
-
-  @Test
   void
       registerNewSession_Should_ReturnResponseStatusFromConsultingTypeFasade_When_ProvidedWithValidRequestBody()
           throws Exception {
@@ -2373,16 +2338,6 @@ class UserControllerIT {
 
     // then
     assertEquals(HttpStatus.CREATED.value(), result.getResponse().getStatus());
-  }
-
-  private void givenAdviceSeekerWithoutInitializedSession(boolean wasUpdated) {
-    var user = new User();
-    user.setCreateDate(nowInUtc());
-    var updateDate = wasUpdated ? nowInUtc().plusDays(1) : user.getCreateDate();
-    user.setUpdateDate(updateDate);
-    when(userAccountService.retrieveValidatedUser()).thenReturn(user);
-    when(accountManager.findAdviceSeeker(any())).thenReturn(Optional.of(new HashMap<>()));
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {

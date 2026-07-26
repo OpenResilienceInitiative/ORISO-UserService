@@ -12,10 +12,8 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.StringConverter;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
@@ -23,7 +21,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -35,13 +32,11 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class Messenger implements Messaging {
 
-  private final MessageClient messageClient;
   private final UserRepository userRepository;
   private final ConsultantRepository consultantRepository;
   private final ChatRepository chatRepository;
   private final SessionRepository sessionRepository;
   private final UserServiceMapper mapper;
-  private final StringConverter stringConverter;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantActivityRegistry consultantActivityRegistry;
@@ -127,45 +122,6 @@ public class Messenger implements Messaging {
         agencyId,
         minUpdateDate,
         RegistrationType.ANONYMOUS);
-  }
-
-  @Override
-  public Boolean updateE2eKeys(String chatUserId, String publicKey) {
-    var allUpdated = new AtomicReference<>(true);
-
-    messageClient
-        .findAllChats(chatUserId)
-        .ifPresent(
-            chats -> {
-              var masterKey = stringConverter.hashOf(chatUserId);
-              for (var chat : chats) {
-                var userId = mapper.userIdOf(chat);
-                var roomId = mapper.roomIdOf(chat);
-                if (mapper.e2eKeyOf(chat).isPresent()) {
-                  var roomKeyId = mapper.e2eKeyOf(chat).orElseThrow();
-                  var updatedE2eKey = createE2eKey(publicKey, masterKey, roomKeyId);
-                  if (!messageClient.updateChatE2eKey(userId, roomId, updatedE2eKey)) {
-                    allUpdated.set(false);
-                    break;
-                  }
-                } else {
-                  log.info("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
-                }
-              }
-            });
-
-    return allUpdated.get();
-  }
-
-  private String createE2eKey(String publicKey, String masterKey, String roomKeyId) {
-    var keyId = roomKeyId.substring(4, 16);
-    var encryptedRoomKey = roomKeyId.substring(16);
-    var roomKey = stringConverter.aesDecrypt(encryptedRoomKey, masterKey);
-    var rsaEncrypted = stringConverter.rsaEncrypt(roomKey, publicKey);
-    var intArray = stringConverter.int8Array(rsaEncrypted);
-    var jsonStringified = stringConverter.jsonStringify(intArray);
-
-    return keyId + stringConverter.base64AsciiEncode(jsonStringified);
   }
 
   @Override

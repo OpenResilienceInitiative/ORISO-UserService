@@ -1,12 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
@@ -283,39 +280,6 @@ class UserAccountControllerDelegate {
     }
 
     return new ResponseEntity<>(HttpStatus.CONFLICT);
-  }
-
-  ResponseEntity<Void> updateE2eInChats(E2eKeyDTO e2eKeyDTO) {
-    var userId = authenticatedUser.getUserId();
-    var user =
-        authenticatedUser.isConsultant()
-            ? accountManager.findConsultant(userId).orElseThrow()
-            : accountManager.findAdviceSeeker(userId).orElseThrow();
-
-    var chatUserId = userDtoMapper.chatUserIdOf(user);
-    var username = authenticatedUser.getUsername();
-    if (isNull(chatUserId)) {
-      if (isAdviceSeekerWithoutEnquiryMessageWritten()) {
-        return ResponseEntity.accepted().build();
-      }
-      var message = String.format("Chat-user ID of user %s unknown", username);
-      throw new InternalServerErrorException(message);
-    }
-
-    if (isFalse(messenger.updateE2eKeys(chatUserId, e2eKeyDTO.getPublicKey()))) {
-      var message = String.format("Setting E2E keys in user %s's chats failed", username);
-      throw new InternalServerErrorException(message);
-    }
-
-    return ResponseEntity.noContent().build();
-  }
-
-  private boolean isAdviceSeekerWithoutEnquiryMessageWritten() {
-    if (authenticatedUser.isAdviceSeeker()) {
-      var adviceSeeker = userAccountProvider.retrieveValidatedUser();
-      return adviceSeeker.getCreateDate().isEqual(adviceSeeker.getUpdateDate());
-    }
-    return false;
   }
 
   ResponseEntity<Void> updateEmailAddress(String emailAddress) {

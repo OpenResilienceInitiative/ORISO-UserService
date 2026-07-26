@@ -1700,48 +1700,6 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
   }
 
-  @Test
-  void updateE2eInChats_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
-      throws Exception {
-    mvc.perform(
-            put("/users/chat/e2e")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isUnauthorized());
-  }
-
-  @Test
-  @WithMockUser(
-      authorities = {
-        AuthorityValue.ANONYMOUS_DEFAULT,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY,
-        AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION,
-        AuthorityValue.CREATE_NEW_CHAT,
-        AuthorityValue.START_CHAT,
-        AuthorityValue.STOP_CHAT,
-        AuthorityValue.TECHNICAL_DEFAULT,
-        AuthorityValue.UPDATE_CHAT,
-        AuthorityValue.USER_ADMIN,
-        AuthorityValue.VIEW_AGENCY_CONSULTANTS,
-      })
-  void updateE2eInChats_Should_ReturnForbiddenAndCallNoMethods_WhenNoUserOrConsultantAuthority()
-      throws Exception {
-    mvc.perform(
-            put("/users/chat/e2e")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
-  @Test
-  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
-  void updateE2eInChats_Should_ReturnForbiddenAndCallNoMethods_WhenNoCsrfTokens() throws Exception {
-    mvc.perform(put("/users/chat/e2e").contentType(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden());
-  }
-
   /** PUT on /users/chat/{chatId}/update */
   @Test
   void updateChat_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()

@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -79,34 +78,6 @@ class UserServiceMapperTest {
     assertThat(consultant.getNotificationsSettings())
         .isEqualTo(
             "{\"initialEnquiryNotificationEnabled\":false,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true}");
-  }
-
-  @Test
-  void e2eKeyOfShouldMapIfKeyExists() {
-    var map = Map.of("e2eKey", "tmp." + RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isPresent();
-    assertThat(map).containsEntry("e2eKey", e2eKey.get());
-  }
-
-  @Test
-  void e2eKeyOfShouldNotMapIfKeyFormatIsWrong() {
-    var map = Map.of("e2eKey", RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isNotPresent();
-  }
-
-  @Test
-  void e2eKeyOfShouldNotMapIfKeyDoesNotExist() {
-    var map = Map.of("notE2eKey", RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isNotPresent();
   }
 
   // ── mapOf(Appointment) ────────────────────────────────────────────────────

@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,10 +13,8 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.StringConverter;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,13 +34,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class MessengerTest {
 
-  @Mock private MessageClient messageClient;
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private ChatRepository chatRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private UserServiceMapper mapper;
-  @Mock private StringConverter stringConverter;
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
 
   @Mock
@@ -192,7 +187,6 @@ class MessengerTest {
   void isInChat_Should_ReturnFalse_When_SessionOrConsultantNull() {
     assertThat(messenger.isInChat(null, new Consultant())).isFalse();
     assertThat(messenger.isInChat(new Session(), null)).isFalse();
-    verify(messageClient, never()).findMembers(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -329,51 +323,6 @@ class MessengerTest {
     messenger.setAvailability("c-1", false);
 
     verify(consultantActivityRegistry).markUnavailable("c-1");
-  }
-
-  // ── updateE2eKeys ──────────────────────────────────────────────────────────
-
-  @Test
-  void updateE2eKeys_Should_ReturnTrue_When_NoChatsFound() {
-    when(messageClient.findAllChats("rc-u1")).thenReturn(Optional.empty());
-
-    assertThat(messenger.updateE2eKeys("rc-u1", "pub-key")).isTrue();
-  }
-
-  @Test
-  void updateE2eKeys_Should_ReturnTrue_When_AllChatsUpdated() {
-    Map<String, String> chat1 = Map.of("rid", "room-1", "userId", "u-1");
-    when(messageClient.findAllChats("rc-u1")).thenReturn(Optional.of(List.of(chat1)));
-    when(stringConverter.hashOf("rc-u1")).thenReturn("master-key");
-    when(mapper.userIdOf(chat1)).thenReturn("u-1");
-    when(mapper.roomIdOf(chat1)).thenReturn("room-1");
-    when(mapper.e2eKeyOf(chat1)).thenReturn(Optional.of("e2eKey:0123456789abcdefENCRYPTED"));
-    when(stringConverter.aesDecrypt(any(), any())).thenReturn("decrypted-room-key");
-    when(stringConverter.rsaEncrypt(any(), any())).thenReturn(new byte[] {1, 2, 3});
-    when(stringConverter.int8Array(any())).thenReturn(new int[] {1, 2, 3});
-    when(stringConverter.jsonStringify(any())).thenReturn("json-string");
-    when(stringConverter.base64AsciiEncode(any())).thenReturn("base64");
-    when(messageClient.updateChatE2eKey(eq("u-1"), eq("room-1"), any())).thenReturn(true);
-
-    assertThat(messenger.updateE2eKeys("rc-u1", "pub-key")).isTrue();
-  }
-
-  @Test
-  void updateE2eKeys_Should_ReturnFalse_When_OneUpdateFails() {
-    Map<String, String> chat1 = Map.of("rid", "room-1");
-    when(messageClient.findAllChats("rc-u1")).thenReturn(Optional.of(List.of(chat1)));
-    when(stringConverter.hashOf("rc-u1")).thenReturn("master-key");
-    when(mapper.userIdOf(chat1)).thenReturn("u-1");
-    when(mapper.roomIdOf(chat1)).thenReturn("room-1");
-    when(mapper.e2eKeyOf(chat1)).thenReturn(Optional.of("e2eKey:0123456789abcdefENCRYPTED"));
-    when(stringConverter.aesDecrypt(any(), any())).thenReturn("decrypted");
-    when(stringConverter.rsaEncrypt(any(), any())).thenReturn(new byte[] {4, 5, 6});
-    when(stringConverter.int8Array(any())).thenReturn(new int[] {4, 5, 6});
-    when(stringConverter.jsonStringify(any())).thenReturn("json");
-    when(stringConverter.base64AsciiEncode(any())).thenReturn("b64");
-    when(messageClient.updateChatE2eKey(any(), any(), any())).thenReturn(false);
-
-    assertThat(messenger.updateE2eKeys("rc-u1", "pub-key")).isFalse();
   }
 
   // ── removeConsultantFromSession ────────────────────────────────────────────

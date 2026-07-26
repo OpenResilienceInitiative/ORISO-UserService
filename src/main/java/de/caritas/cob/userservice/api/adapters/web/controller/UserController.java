@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
@@ -468,11 +467,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateKey(@RequestBody MasterKeyDTO masterKey) {
     return userAccountControllerDelegate.updateKey(masterKey);
-  }
-
-  @Override
-  public ResponseEntity<Void> updateE2eInChats(E2eKeyDTO e2eKeyDTO) {
-    return userAccountControllerDelegate.updateE2eInChats(e2eKeyDTO);
   }
 
   /**

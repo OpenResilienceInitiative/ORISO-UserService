@@ -13,8 +13,6 @@ public interface Messaging {
 
   Optional<Chat> findChat(long id);
 
-  Boolean updateE2eKeys(String chatUserId, String publicKey);
-
   boolean removeConsultantFromSession(Long sessionId, String consultantId);
 
   Optional<Map<String, Object>> findSession(Long sessionId);
