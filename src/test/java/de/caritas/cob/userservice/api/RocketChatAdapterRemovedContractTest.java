@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 class RocketChatAdapterRemovedContractTest {
 
   private static final Path MAIN_JAVA = Path.of("src/main/java");
+  private static final Path USER_SERVICE_API = Path.of("api/userservice.yaml");
 
   @Test
   void productionSourceMustNotContainRocketChatAdapterOrMessageClient() throws IOException {
@@ -57,5 +58,24 @@ class RocketChatAdapterRemovedContractTest {
                 "import de.caritas.cob.userservice.api.exception.rocketchat");
       }
     }
+  }
+
+  @Test
+  void publicApiMustNotExposeRocketChatEndpointsHeadersOrDtos() throws IOException {
+    assertThat(Files.readString(USER_SERVICE_API))
+        .doesNotContain(
+            "/users/sessions/rocketChatGroupId",
+            "getRocketChatGroupId",
+            "RocketChatGroupIdDTO",
+            "name: RCToken",
+            "name: RCUserId");
+    assertThat(Files.readString(Path.of("api/appointmentservice.yaml")))
+        .doesNotContain("name: RCToken", "name: RCUserId");
+
+    assertThat(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/exception/httpresponses/"
+                    + "RocketChatUnauthorizedException.java"))
+        .doesNotExist();
   }
 }

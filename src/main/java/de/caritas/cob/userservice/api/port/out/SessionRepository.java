@@ -403,8 +403,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param user the user
    * @return an {@link List} of the result
    */
-  List<Session> findByConsultantAndUser(Consultant consultant, User user);
-
   List<Session> findByUserAndMainTopicId(User user, Long topicId);
 
   /**

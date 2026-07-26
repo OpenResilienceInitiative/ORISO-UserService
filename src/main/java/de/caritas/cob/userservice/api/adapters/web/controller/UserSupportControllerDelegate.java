@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.service.ConsultantImportService;
@@ -46,10 +45,5 @@ class UserSupportControllerDelegate {
   ResponseEntity<Void> updateSessionData(Long sessionId, SessionDataDTO sessionDataDTO) {
     sessionDataService.saveSessionData(sessionId, sessionDataDTO);
     return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  ResponseEntity<RocketChatGroupIdDTO> getRocketChatGroupId(String consultantId, String askerId) {
-    String groupId = sessionService.findGroupIdByConsultantAndUser(consultantId, askerId);
-    return new ResponseEntity<>(new RocketChatGroupIdDTO().groupId(groupId), HttpStatus.OK);
   }
 }

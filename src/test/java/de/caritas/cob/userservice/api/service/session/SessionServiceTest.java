@@ -1368,52 +1368,6 @@ class SessionServiceTest {
     verifyNoInteractions(sessionRepository);
   }
 
-  // ---------------------------------------------------------------------------
-  // findGroupIdByConsultantAndUser — all branches
-  // ---------------------------------------------------------------------------
-
-  @Test
-  void findGroupIdByConsultantAndUser_Should_ThrowBadRequest_When_ConsultantNotFound() {
-    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.empty());
-
-    assertThrows(
-        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
-        () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
-  }
-
-  @Test
-  void findGroupIdByConsultantAndUser_Should_ThrowBadRequest_When_UserNotFound() {
-    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(CONSULTANT));
-    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
-
-    assertThrows(
-        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
-        () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
-  }
-
-  @Test
-  void findGroupIdByConsultantAndUser_Should_ThrowBadRequest_When_MultipleSessionsFound() {
-    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(CONSULTANT));
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
-    when(sessionRepository.findByConsultantAndUser(any(), any()))
-        .thenReturn(List.of(SESSION, SESSION_2));
-
-    assertThrows(
-        de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class,
-        () -> sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID));
-  }
-
-  @Test
-  void findGroupIdByConsultantAndUser_Should_ReturnGroupId_When_ExactlyOneSessionFound() {
-    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(CONSULTANT));
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
-    when(sessionRepository.findByConsultantAndUser(any(), any())).thenReturn(List.of(SESSION));
-
-    String result = sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, USER_ID);
-
-    assertThat(result).isEqualTo(SESSION.getGroupId());
-  }
-
   @Test
   void saveSessionShouldDefaultRegisteredCounsellingToAgencyCounselling() {
     var session =

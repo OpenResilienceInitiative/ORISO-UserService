@@ -35,7 +35,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
@@ -172,10 +171,7 @@ public class AppointmentController implements AppointmentsApi {
 
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryAppointment(
-      @PathVariable Long sessionId,
-      @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO,
-      @RequestHeader(value = "RCToken", required = false) String rcToken,
-      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
+      @PathVariable Long sessionId, @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
     var enquiryData =

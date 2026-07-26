@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
@@ -94,17 +93,5 @@ class UserSupportControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(sessionDataService).saveSessionData(1L, sessionData);
-  }
-
-  @Test
-  void getRocketChatGroupIdShouldReturnGroupId() {
-    when(sessionService.findGroupIdByConsultantAndUser(CONSULTANT_ID, ASKER_ID))
-        .thenReturn(RC_GROUP_ID);
-
-    var response = delegate.getRocketChatGroupId(CONSULTANT_ID, ASKER_ID);
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isNotNull();
-    assertThat(response.getBody().getGroupId()).isEqualTo(RC_GROUP_ID);
   }
 }

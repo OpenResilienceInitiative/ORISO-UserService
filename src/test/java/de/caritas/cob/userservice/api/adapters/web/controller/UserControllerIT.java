@@ -8,7 +8,6 @@ import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.*;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.*;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -69,7 +68,6 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.servlet.http.Cookie;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.hibernate.service.spi.ServiceException;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
@@ -1075,30 +1073,6 @@ class UserControllerIT {
         .andExpect(status().isBadRequest());
 
     verifyNoMoreInteractions(authenticatedUser, sessionService);
-  }
-
-  @Test
-  void
-      getSessionsForAuthenticatedConsultant_Should_ReturnUnauthorized_WhenUnauthorizedExceptionIsRaised()
-          throws Exception {
-    var runtimeException = new RuntimeException("Rocket.Chat unavailable");
-    var unauthorizedException = new RocketChatUnauthorizedException("userId", runtimeException);
-    when(userAccountService.retrieveValidatedConsultant()).thenThrow(unauthorizedException);
-
-    mvc.perform(
-            get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isUnauthorized());
-
-    var stackTrace = ExceptionUtils.getStackTrace(unauthorizedException);
-    assertTrue(
-        stackTrace.contains(
-            "Could not get Rocket.Chat subscriptions for user ID userId: Token is not active (401 Unauthorized)"));
-    assertTrue(
-        stackTrace.startsWith(
-            "de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException:"));
   }
 
   @Test
