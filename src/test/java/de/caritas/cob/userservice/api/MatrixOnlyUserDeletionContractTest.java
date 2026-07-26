@@ -63,4 +63,15 @@ class MatrixOnlyUserDeletionContractTest {
 
     assertThat(source).doesNotContain("RocketChat", "rocketChat", "ROCKET_CHAT");
   }
+
+  @Test
+  void registeredOnlyUserDeletionMustNotResolveLegacyUserIds() throws IOException {
+    var source =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/workflow/delete/service/"
+                    + "DeleteUsersRegisteredOnlyService.java"));
+
+    assertThat(source).doesNotContain("RocketChat", "rocketChat", "RcUserId");
+  }
 }
