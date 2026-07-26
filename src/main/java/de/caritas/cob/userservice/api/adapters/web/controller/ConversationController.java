@@ -90,7 +90,7 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getArchivedSessions(
-      Integer offset, Integer count, @RequestHeader String rcToken) {
+      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
 
     ConsultantSessionListResponseDTO archivedSessions =
         this.conversationListResolver.resolveConversations(
@@ -108,7 +108,7 @@ public class ConversationController implements ConversationsApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getArchivedTeamSessions(
-      Integer offset, Integer count, @RequestHeader String rcToken) {
+      Integer offset, Integer count, @RequestHeader(required = false) String rcToken) {
 
     ConsultantSessionListResponseDTO archivedTeamSessions =
         this.conversationListResolver.resolveConversations(
