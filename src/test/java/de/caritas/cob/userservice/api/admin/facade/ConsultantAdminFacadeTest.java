@@ -428,10 +428,8 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void setConsultantAgencies_Should_createMissingAndDeleteRemovedAndSkipExisting() {
-    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
-    persisted.setEmbedded(
-        Lists.newArrayList(agencyAdminFullResponse(1L), agencyAdminFullResponse(2L)));
-    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L, 2L));
     // desired set: keep 1, drop 2, add 3
     List<CreateConsultantAgencyDTO> desired =
         Lists.newArrayList(
@@ -446,13 +444,13 @@ class ConsultantAdminFacadeTest {
         .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(3L));
     verify(relationCreatorService, never())
         .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(1L));
+    verify(consultantAgencyAdminService, never()).findConsultantAgencies(any());
   }
 
   @Test
   void setConsultantAgencies_Should_notDelete_When_NothingRemoved() {
-    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
-    persisted.setEmbedded(Lists.newArrayList(agencyAdminFullResponse(1L)));
-    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L));
 
     consultantAdminFacade.setConsultantAgencies(
         "consultantId",
@@ -464,13 +462,13 @@ class ConsultantAdminFacadeTest {
         .markConsultantAgenciesForDeletion(any(), anyList());
     verify(relationCreatorService)
         .createNewConsultantAgency(eq("consultantId"), argThatAgencyId(2L));
+    verify(consultantAgencyAdminService, never()).findConsultantAgencies(any());
   }
 
   @Test
   void setConsultantAgencies_Should_propagateValidationError() {
-    ConsultantAgencyResponseDTO persisted = new ConsultantAgencyResponseDTO();
-    persisted.setEmbedded(Lists.newArrayList());
-    when(consultantAgencyAdminService.findConsultantAgencies("consultantId")).thenReturn(persisted);
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList());
     doThrow(new BadRequestException("topic not covered"))
         .when(relationCreatorService)
         .createNewConsultantAgency(eq("consultantId"), any());
