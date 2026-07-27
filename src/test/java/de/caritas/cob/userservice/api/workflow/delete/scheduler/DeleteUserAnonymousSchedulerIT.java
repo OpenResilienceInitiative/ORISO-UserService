@@ -4,9 +4,11 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -37,8 +39,10 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectRetrievalFailureException;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
 // RC teardown phase 2: this scheduler IT never exercises Rocket.Chat (it only imports
@@ -72,6 +76,8 @@ class DeleteUserAnonymousSchedulerIT {
   @MockitoBean MatrixSynapseService matrixSynapseService;
 
   @MockitoBean WorkflowErrorMailService workflowErrorMailService;
+
+  @MockitoSpyBean UserRepository spiedUserRepository;
 
   private Session currentSession;
 
@@ -180,5 +186,42 @@ class DeleteUserAnonymousSchedulerIT {
 
     assertSessionAndUserDoNotExistInDatabase(
         currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
+  /**
+   * Regression guard for the PreDev failure mode behind #745: the workflow error originates in the
+   * <em>database</em> delete, not in an external call.
+   *
+   * <p>On PreDev, {@code DeleteDatabaseAskerAction} fails with {@code
+   * ObjectRetrievalFailureException} while merging the detached user, which makes the workflow
+   * error list non-empty and drives the error-notification path. Before the notification became
+   * best-effort, that path rolled back the session deletion that had already succeeded, while the
+   * irreversible Matrix and Keycloak deletions had already happened — so the next hourly run
+   * repeated them.
+   *
+   * <p>The session deletion must therefore stay committed even when the user delete fails and the
+   * notification fails on top of it.
+   */
+  @Test
+  void performDeletionWorkflow_Should_commitSessionDeletion_When_userDeleteFailsInDatabase() {
+    prepareCurrentSessionForDeletion();
+    var sessionId = currentSession.getId();
+    var userId = currentSession.getUser().getUserId();
+    doThrow(new ObjectRetrievalFailureException("user merge failed during deletion", userId))
+        .when(spiedUserRepository)
+        .delete(any());
+    doThrow(new IllegalStateException("error notification failed"))
+        .when(workflowErrorMailService)
+        .buildAndSendErrorMail(anyList());
+
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
+
+    assertFalse(
+        sessionRepository.findById(sessionId).isPresent(),
+        "completed session deletion must stay committed when the user delete fails");
+    assertTrue(
+        userService.getUser(userId).isPresent(),
+        "a failed user delete must leave the row intact rather than lose it silently");
+    verify(workflowErrorMailService).buildAndSendErrorMail(anyList());
   }
 }
