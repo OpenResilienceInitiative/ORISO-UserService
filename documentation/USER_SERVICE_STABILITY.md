@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Last verified: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -15,8 +15,8 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,373 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
@@ -26,12 +26,16 @@ CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 900 executed tests and
+suite, starts from a clean build, requires at least 830 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The three environment-gated cases are not quarantined: Redis has
-its own required service-container job, and both MariaDB cases run in a required
-fresh-MariaDB job on branch, pull-request and publish workflows.
+were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
+`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
+deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
+that legacy path. A required CI guard rejects newly disabled or ignored tests.
+The two environment-gated cases are not quarantined: Redis has its own required
+service-container job, and the MariaDB cases run in a required fresh-MariaDB job
+on branch, pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -55,7 +59,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; Rocket.Chat only when explicitly enabled | HTTP long-poll + HTTP; optional MongoDB |
+| Chat | Matrix; remaining Rocket.Chat compatibility code is removal debt, not a supported target mode | HTTP long-poll + HTTP; temporary legacy MongoDB boundary |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -113,9 +117,10 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- With the default `rocket-chat.enabled=false`, account and availability reads
-  no longer call Rocket.Chat. Matrix-only deployments also do not create the
-  Rocket.Chat MongoDB client or credential job.
+- Matrix-only deployments do not call Rocket.Chat for account or availability
+  reads and do not create its MongoDB client or credential job. Any remaining
+  Rocket.Chat compatibility code is temporary removal debt; the target
+  architecture has no Rocket.Chat or Jitsi runtime, fallback or deployment.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
