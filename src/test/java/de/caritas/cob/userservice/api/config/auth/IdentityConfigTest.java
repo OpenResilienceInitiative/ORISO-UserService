@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.config.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import jakarta.validation.ConstraintViolation;
@@ -82,6 +83,34 @@ class IdentityConfigTest {
     violations = validator.validate(identityConfig);
 
     assertValidationError("technicalUser", "must not be null");
+  }
+
+  @Test
+  void identityPolicyShouldUseConfiguredOtpRolePermission() {
+    givenAValidIdentityConfig();
+    identityConfig.setOtpAllowedForUsers(true);
+
+    assertTrue(identityConfig.isTwoFactorAuthenticationAllowed(Set.of(UserRole.USER.getValue())));
+  }
+
+  @Test
+  void identityPolicyShouldUseConfiguredConsultantDisplayNamePermission() {
+    givenAValidIdentityConfig();
+    identityConfig.setDisplayNameAllowedForConsultants(true);
+
+    assertTrue(identityConfig.isConsultantDisplayNameAllowed());
+  }
+
+  @Test
+  void identityPolicyShouldAcceptOnlyNonDummyProfileEmailsForMagicLink() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.invalid");
+
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink("person@example.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink(null));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink(""));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("   "));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("person@dummy.invalid"));
   }
 
   private void givenAValidIdentityConfig() {

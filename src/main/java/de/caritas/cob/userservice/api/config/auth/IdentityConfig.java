@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.config.auth;
 
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,7 +20,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Validated
 @Configuration
 @ConfigurationProperties(prefix = "identity")
-public class IdentityConfig implements IdentityClientConfig {
+public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
 
   private static final char PATH_SEPARATOR = '/';
 
@@ -87,5 +88,22 @@ public class IdentityConfig implements IdentityClientConfig {
             && otpAllowedForSingleTenantAdmins
         || roles.contains(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())
             && otpAllowedForRestrictedAgencyAdmins;
+  }
+
+  @Override
+  public boolean isTwoFactorAuthenticationAllowed(Set<String> roles) {
+    return isOtpAllowed(roles);
+  }
+
+  @Override
+  public boolean isConsultantDisplayNameAllowed() {
+    return Boolean.TRUE.equals(displayNameAllowedForConsultants);
+  }
+
+  @Override
+  public boolean isProfileEmailUsableForMagicLink(String email) {
+    return StringUtils.hasText(email)
+        && emailDummySuffix != null
+        && !email.endsWith(emailDummySuffix);
   }
 }

@@ -50,10 +50,10 @@ import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentitySession;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -324,7 +324,7 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
-  private IdentityClientConfig identityClientConfig;
+  private IdentityPolicy identityPolicy;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -565,7 +565,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfSingleTenantAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -580,7 +580,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfTenantSuperAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -595,7 +595,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_Activate() throws Exception {
     when(authenticatedUser.getUsername()).thenReturn("username");
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
     when(identityManager.setUpOneTimePassword(anyString(), anyString(), anyString()))
         .thenReturn(true);
 

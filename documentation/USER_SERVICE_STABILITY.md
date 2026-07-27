@@ -210,7 +210,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login return the provider-neutral `IdentityLogin` value. Profile lookup returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs, OTP values and provider configuration. |
+| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login return the provider-neutral `IdentityLogin` value. Profile lookup returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs and OTP values; outbound consumers still use `IdentityClientConfig`. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -228,7 +228,8 @@ identity port contract also rejects imports from the concrete Keycloak adapter
 and Keycloak SDK types, so its login and profile results cannot regress from
 `IdentityLogin` and `IdentityProfile` to provider transports. A dedicated
 Magic-Link boundary contract applies the same rule to the service and both web
-entry points.
+entry points. The user-web identity-policy contract rejects direct imports of
+outbound identity configuration from the controller and its user delegates.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current
@@ -236,8 +237,8 @@ runtime contract reports a maximum supported replica count of one; modular
 source layout must not be confused with proven multi-instance behavior.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next safe sequence is broad identity
-command/configuration decoupling, then the admin controller composition
+domains are already isolated. The next safe sequence is broad identity command
+decoupling, then the admin controller composition
 boundary, then session-list adapter removal. Each step must add a failing
 boundary contract before moving dependencies.
 

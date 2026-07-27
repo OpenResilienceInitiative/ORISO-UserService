@@ -184,6 +184,28 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_user_web_boundaries_do_not_import_outbound_identity_configuration(self):
+        sources = [
+            CONTROLLERS / "UserController.java",
+            *CONTROLLERS.glob("User*ControllerDelegate.java"),
+        ]
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User web adapters must ask an application-owned identity policy "
+            "instead of reading outbound identity configuration:\n"
+            + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (
