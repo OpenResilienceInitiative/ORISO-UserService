@@ -19,6 +19,13 @@ import org.springframework.data.repository.query.Param;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
+  interface AgencyConsultingTypeProjection {
+
+    Long getAgencyId();
+
+    Integer getConsultingTypeId();
+  }
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
@@ -429,4 +436,10 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       "SELECT DISTINCT s.consultingTypeId FROM Session s WHERE s.agencyId = :agencyId ORDER BY s.consultingTypeId")
   List<Integer> findDistinctConsultingTypeIdsByAgencyId(
       @Param("agencyId") Long agencyId, Pageable pageable);
+
+  @Query(
+      "SELECT s.agencyId AS agencyId, MIN(s.consultingTypeId) AS consultingTypeId "
+          + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
+  List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
+      @Param("agencyIds") Set<Long> agencyIds);
 }
