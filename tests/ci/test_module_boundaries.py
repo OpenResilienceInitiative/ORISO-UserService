@@ -7,6 +7,10 @@ CONTROLLERS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller"
 )
+WEB_MAPPINGS = (
+    ROOT
+    / "src/main/java/de/caritas/cob/userservice/api/adapters/web/mapping"
+)
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
@@ -204,6 +208,23 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "User web adapters must ask an application-owned identity policy "
             "instead of reading outbound identity configuration:\n"
             + "\n".join(offenders),
+        )
+
+    def test_user_web_mappers_do_not_import_outbound_identity_client(self):
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in WEB_MAPPINGS.glob("*.java")
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User web mappers must ask the identity input port instead of calling "
+            "the outbound identity client:\n" + "\n".join(offenders),
         )
 
     def test_admin_module_depends_on_ports_not_chat_adapters(self):

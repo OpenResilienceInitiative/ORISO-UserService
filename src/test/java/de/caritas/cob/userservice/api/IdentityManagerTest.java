@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import java.util.Map;
@@ -108,5 +109,14 @@ class IdentityManagerTest {
     assertThat(identityManager.isUsernameAvailable(RAW_USERNAME)).isTrue();
 
     verify(identityClient).isUsernameAvailable(RAW_USERNAME);
+  }
+
+  @Test
+  void hasRoleShouldDelegateTheApplicationRoleValueToIdentityClient() {
+    when(identityClient.userHasRole("consultant-id", "group-chat-consultant")).thenReturn(true);
+
+    assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
+
+    verify(identityClient).userHasRole("consultant-id", "group-chat-consultant");
   }
 }
