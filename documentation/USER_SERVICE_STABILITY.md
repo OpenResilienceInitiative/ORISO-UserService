@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Date: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -137,17 +137,22 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, Rocket.Chat, repositories and generated clients]
+  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
+
+Rocket.Chat references below describe legacy code that still has to be removed;
+they are not part of the target architecture. The target chat transport is
+Matrix only, with the ORISO frontend and the controlled MatrixRTC/Element Call
+fork using LiveKit.
 
 The current state is deliberately tracked per domain instead of describing the
 whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter preserves the seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -160,9 +165,12 @@ also forbids the legacy admin Rocket.Chat operation implementation, so rollback
 policy cannot leak back into orchestration. The appointment deletion repair
 stays behind `Organizing` and `AppointmentRepository`.
 
+A dedicated magic-link boundary contract prevents the application service and
+both web entry points from importing Keycloak transport types.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity
-token/create-user DTO decoupling, then the admin controller composition
+create-user DTO decoupling, then the admin controller composition
 boundary, then session-list adapter removal. Each step must add a failing
 boundary contract before moving dependencies.
 

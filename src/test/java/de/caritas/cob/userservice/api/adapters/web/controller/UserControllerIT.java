@@ -50,6 +50,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentitySession;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -407,6 +408,36 @@ class UserControllerIT {
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void consumeMagicLinkShouldPreservePublicSnakeCaseSessionContract() throws Exception {
+    when(magicLinkLoginService.consumeMagicLink("one-time-token"))
+        .thenReturn(
+            Optional.of(
+                new IdentitySession(
+                    "access-token",
+                    300,
+                    600,
+                    "refresh-token",
+                    "Bearer",
+                    "session-state",
+                    "openid profile")));
+
+    mvc.perform(
+            post("/users/magic-link/consume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"one-time-token\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.access_token").value("access-token"))
+        .andExpect(jsonPath("$.expires_in").value(300))
+        .andExpect(jsonPath("$.refresh_expires_in").value(600))
+        .andExpect(jsonPath("$.refresh_token").value("refresh-token"))
+        .andExpect(jsonPath("$.token_type").value("Bearer"))
+        .andExpect(jsonPath("$.session_state").value("session-state"))
+        .andExpect(jsonPath("$.scope").value("openid profile"))
+        .andExpect(jsonPath("$.accessToken").doesNotExist())
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
   }
 
   @Test
