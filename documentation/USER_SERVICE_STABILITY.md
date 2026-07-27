@@ -30,7 +30,7 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,867 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
+| Unit | 3,868 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
 | Integration + contract + E2E | 969 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
@@ -203,6 +203,15 @@ closed.
   Application code no longer interprets Keycloak adapter map keys. This is a
   module-boundary improvement, not a call-count reduction: an ownership check
   still performs exactly one external identity lookup.
+- Account email writes now consume the focused
+  `IdentityEmailAddressUpdater` port. A changed current-account email performs
+  one user-representation read, one availability search and one update; an
+  unchanged value stops after the single representation read. Deleting the
+  current email uses the same path with the adapter-owned dummy address.
+  Post-verification updates perform one exact username search and at most one
+  update. The broad command client no longer exposes email-address mutations,
+  and the adapter no longer reads the same representation twice before a
+  write.
 - Login, refresh-token logout and password verification now consume the focused,
   provider-neutral `IdentityAuthentication` port. The broad `IdentityClient`
   no longer exposes authentication operations. This is also a boundary
@@ -251,6 +260,11 @@ whole codebase as modular:
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
+The identity/profile seam also includes the focused
+`IdentityEmailAddressUpdater` for current-account and post-verification writes.
+The remaining broad client debt is password/language mutation, provisioning,
+role writes, deactivation and the unused session-command surface.
+
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
 `service.session` application package from importing Matrix or Rocket.Chat
@@ -275,6 +289,9 @@ per-candidate role checks from returning to consultant-agency validation and
 rejects role-membership or authority reads on the broad command client. The
 email-owner contract likewise keeps the read off the broad command port and
 rejects application-level dependence on Keycloak adapter map keys. The
+email-mutation contract requires both active consumers and the Keycloak adapter
+to use `IdentityEmailAddressUpdater`, and rejects current-account,
+post-verification or adapter-internal email writes on the broad client. The
 authentication contract keeps login, logout and password verification off the
 broad command client and requires every production consumer to depend on the
 focused provider-neutral port. The

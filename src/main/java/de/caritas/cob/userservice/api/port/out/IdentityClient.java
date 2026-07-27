@@ -9,12 +9,6 @@ public interface IdentityClient {
 
   void changeLanguage(final String userId, final String language);
 
-  void changeEmailAddress(final String emailAddress);
-
-  void changeEmailAddress(final String username, final String emailAddress);
-
-  void deleteEmailAddress();
-
   String createKeycloakUser(final UserDTO user);
 
   String createKeycloakUser(final UserDTO user, final String firstName, final String lastName);
@@ -36,8 +30,6 @@ public interface IdentityClient {
   void updateDummyEmail(String userId);
 
   void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
-
-  void updateEmail(String userId, String emailAddress);
 
   void rollBackUser(String userId);
 

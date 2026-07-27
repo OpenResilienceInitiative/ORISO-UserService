@@ -15,7 +15,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -25,7 +24,9 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
@@ -52,7 +53,8 @@ public class UserAccountServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private RocketChatService rocketChatService;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
@@ -191,7 +193,7 @@ public class UserAccountServiceTest {
 
     this.accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
 
-    verify(keycloakService).changeEmailAddress("newMail");
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail("newMail");
     verify(this.rocketChatService, times(1))
         .updateUserEmail(consultant.getRocketChatId(), "newMail");
     consultant.setEmail("newMail");
@@ -212,7 +214,7 @@ public class UserAccountServiceTest {
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(keycloakService).changeEmailAddress(newMail);
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
     verify(this.rocketChatService, times(1)).updateUserEmail(user.getRcUserId(), newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
@@ -234,7 +236,7 @@ public class UserAccountServiceTest {
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(keycloakService).changeEmailAddress(newMail);
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
     verify(this.rocketChatService, never()).updateUserEmail(user.getRcUserId(), newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
@@ -257,8 +259,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(keycloakService).deleteEmailAddress();
-    verify(keycloakService, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     verify(rocketChatService).updateUserEmail(consultant.getRocketChatId(), dummyEmail);
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
@@ -281,8 +283,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(keycloakService).deleteEmailAddress();
-    verify(keycloakService, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     verify(rocketChatService).updateUserEmail(user.getRcUserId(), dummyEmail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
@@ -407,7 +409,7 @@ public class UserAccountServiceTest {
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(keycloakService, times(1)).deactivateUser(USER.getUserId());
+    verify(identityClient, times(1)).deactivateUser(USER.getUserId());
     verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
     verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));

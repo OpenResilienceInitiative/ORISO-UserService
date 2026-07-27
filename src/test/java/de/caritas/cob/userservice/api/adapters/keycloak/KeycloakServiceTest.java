@@ -239,7 +239,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     var email = RandomStringUtils.randomAlphabetic(8);
 
-    this.keycloakService.changeEmailAddress(email);
+    this.keycloakService.updateCurrentUserEmail(email);
 
     verify(this.userAccountInputValidator, times(1)).validateEmailAddress(email);
     verify(this.authenticatedUser, times(1)).getUserId();
@@ -260,7 +260,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     var email = RandomStringUtils.randomAlphabetic(8);
 
-    this.keycloakService.changeEmailAddress(email);
+    this.keycloakService.updateCurrentUserEmail(email);
 
     verify(this.userAccountInputValidator, times(1)).validateEmailAddress(email);
     verify(this.authenticatedUser, times(1)).getUserId();
@@ -298,10 +298,11 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.deleteEmailAddress();
+    keycloakService.deleteCurrentUserEmail();
 
     verify(authenticatedUser).getUserId();
     verify(userHelper).getDummyEmail(userId);
+    verify(userResource).toRepresentation();
     verify(userRepresentation).setEmail("dummy");
     verify(userResource).update(userRepresentation);
   }
@@ -1178,21 +1179,36 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void changeEmailAddress_Should_callServicesCorrectly_When_emailIsChangedAndAvailable() {
-    // KeycloakService#updateEmail now restores the real Keycloak update: it resolves the user,
-    // verifies email availability, sets the new email on the representation and persists it via
-    // UserResource#update. Verify the new email is set and the representation is written back.
+  public void updateCurrentUserEmail_ShouldReadAndPersistTheRepresentationExactlyOnce() {
     UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(authenticatedUser.getUserId()).thenReturn("userId");
 
-    this.keycloakService.updateEmail("userId", "anotherEmail");
+    this.keycloakService.updateCurrentUserEmail("Another@Example.com");
 
-    verify(userRepresentation).setEmail("anotherEmail");
+    verify(userResource).toRepresentation();
+    verify(usersResource).search("another@example.com", 0, Integer.MAX_VALUE);
+    verify(userRepresentation).setEmail("another@example.com");
     ArgumentCaptor<UserRepresentation> captor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(userResource).update(captor.capture());
     assertThat(captor.getValue(), is(userRepresentation));
+  }
+
+  @Test
+  public void updateCurrentUserEmail_ShouldNotSearchOrWriteWhenEmailIsUnchanged() {
+    UserRepresentation userRepresentation = givenUserRepresentation("same@example.com");
+    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(authenticatedUser.getUserId()).thenReturn("userId");
+
+    this.keycloakService.updateCurrentUserEmail("Same@Example.com");
+
+    verify(userResource).toRepresentation();
+    verify(usersResource, never()).search(anyString(), eq(0), eq(Integer.MAX_VALUE));
+    verify(userResource, never()).update(any());
   }
 
   @Test
@@ -1878,9 +1894,11 @@ public class KeycloakServiceTest {
     when(usersResource.get(USER_ID)).thenReturn(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.changeEmailAddress(USERNAME, "New@Example.com");
+    keycloakService.updateEmailByUsername(USERNAME, "New@Example.com");
 
+    verify(usersResource).search(USERNAME);
     verify(userRepresentation).setEmail("new@example.com");
+    verify(usersResource).get(USER_ID);
     verify(userResource).update(userRepresentation);
   }
 
@@ -1892,8 +1910,9 @@ public class KeycloakServiceTest {
     when(usersResource.search(USERNAME)).thenReturn(List.of(userRepresentation));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.changeEmailAddress(USERNAME, "same@example.com");
+    keycloakService.updateEmailByUsername(USERNAME, "same@example.com");
 
+    verify(usersResource).search(USERNAME);
     verify(userRepresentation, org.mockito.Mockito.never()).setEmail(anyString());
     verify(usersResource, org.mockito.Mockito.never()).get(anyString());
   }

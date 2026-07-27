@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -23,6 +24,7 @@ public class IdentityManager implements IdentityManaging {
 
   private final IdentityAuthentication identityAuthentication;
   private final IdentityClient identityClient;
+  private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentityRoleLookup identityRoleLookup;
   private final IdentitySecondFactor identitySecondFactor;
@@ -44,7 +46,8 @@ public class IdentityManager implements IdentityManaging {
     var validationResult = identitySecondFactor.finishEmailVerification(username, code);
     if (validationResult.created()) {
       var email = validationResult.email();
-      identityClient.changeEmailAddress(usernameTranscoder.decodeUsername(username), email);
+      identityEmailAddressUpdater.updateEmailByUsername(
+          usernameTranscoder.decodeUsername(username), email);
     }
 
     return validationResult;
