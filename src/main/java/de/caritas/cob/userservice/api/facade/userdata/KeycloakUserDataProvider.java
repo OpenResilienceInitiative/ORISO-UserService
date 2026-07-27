@@ -3,8 +3,8 @@ package de.caritas.cob.userservice.api.facade.userdata;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -19,14 +19,14 @@ import org.springframework.util.Assert;
 public class KeycloakUserDataProvider {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityProfileLookup identityProfileLookup;
 
   public UserDataResponseDTO retrieveAuthenticatedUserData() {
     assertCalledInAuthenticatedUserContext();
     var userId = authenticatedUser.getUserId();
     var profile = Optional.<IdentityProfile>empty();
     try {
-      profile = identityClient.findProfileById(userId);
+      profile = identityProfileLookup.findById(userId);
     } catch (Exception ex) {
       log.warn(
           "Could not retrieve Keycloak user data for authenticated user {}; returning token-based user data; errorType={}",

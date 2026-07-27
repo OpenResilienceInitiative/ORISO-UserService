@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Optional;
 import java.util.Set;
@@ -23,7 +23,7 @@ class KeycloakUserDataProviderTest {
 
   @Mock AuthenticatedUser authenticatedUser;
 
-  @Mock IdentityClient identityClient;
+  @Mock IdentityProfileLookup identityProfileLookup;
 
   @InjectMocks KeycloakUserDataProvider keycloakUserDataProvider;
 
@@ -44,7 +44,7 @@ class KeycloakUserDataProviderTest {
     Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
     IdentityProfile identityProfile =
         new IdentityProfile("userId", "username", "firstName", "lastName", "email");
-    Mockito.when(identityClient.findProfileById("userId")).thenReturn(Optional.of(identityProfile));
+    Mockito.when(identityProfileLookup.findById("userId")).thenReturn(Optional.of(identityProfile));
     // when
     UserDataResponseDTO userDataResponseDTO =
         keycloakUserDataProvider.retrieveAuthenticatedUserData();
@@ -62,7 +62,7 @@ class KeycloakUserDataProviderTest {
     Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
     Mockito.when(authenticatedUser.getRoles()).thenReturn(Set.of("tenant-admin"));
     Mockito.when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("tenant-admin"));
-    Mockito.when(identityClient.findProfileById("userId"))
+    Mockito.when(identityProfileLookup.findById("userId"))
         .thenThrow(new RuntimeException("not found"));
 
     UserDataResponseDTO userDataResponseDTO;
@@ -91,7 +91,7 @@ class KeycloakUserDataProviderTest {
     Mockito.when(authenticatedUser.isAnonymous()).thenReturn(false);
     Mockito.when(authenticatedUser.getUserId()).thenReturn("userId");
     Mockito.when(authenticatedUser.getUsername()).thenReturn("username");
-    Mockito.when(identityClient.findProfileById("userId")).thenReturn(Optional.empty());
+    Mockito.when(identityProfileLookup.findById("userId")).thenReturn(Optional.empty());
 
     // when
     UserDataResponseDTO userDataResponseDTO =

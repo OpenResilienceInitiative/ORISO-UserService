@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,7 +29,8 @@ public class ConsultantUpdateServiceBase {
 
   @Autowired protected ConsultantUpdateService consultantUpdateService;
 
-  @MockitoBean protected IdentityClient identityClient;
+  @MockitoBean(extraInterfaces = IdentityProfileLookup.class)
+  protected IdentityClient identityClient;
 
   @MockitoBean protected RocketChatService rocketChatService;
 

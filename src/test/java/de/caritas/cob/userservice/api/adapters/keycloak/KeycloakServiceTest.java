@@ -1289,7 +1289,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void findProfileById_Should_MapUserRepresentation() {
+  public void findById_Should_MapUserRepresentation() {
 
     // given
     UserRepresentation userRepresentation = new UserRepresentation();
@@ -1305,7 +1305,7 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(userResource);
 
     // when
-    Optional<IdentityProfile> profile = this.keycloakService.findProfileById("userId");
+    Optional<IdentityProfile> profile = this.keycloakService.findById("userId");
 
     // then
     verify(keycloakClient, times(1)).getUsersResource();
@@ -1317,7 +1317,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void findProfileById_Should_ReturnEmptyIfKeycloakReportsUserNotFound() {
+  public void findById_Should_ReturnEmptyIfKeycloakReportsUserNotFound() {
 
     // given
     UserResource userResource = mock(UserResource.class);
@@ -1327,7 +1327,7 @@ public class KeycloakServiceTest {
     when(userResource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException());
 
     // when
-    Optional<IdentityProfile> profile = this.keycloakService.findProfileById("userId");
+    Optional<IdentityProfile> profile = this.keycloakService.findById("userId");
 
     // then
     assertThat(profile, equalTo(Optional.empty()));

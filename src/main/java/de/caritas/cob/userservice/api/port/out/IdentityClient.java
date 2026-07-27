@@ -76,6 +76,4 @@ public interface IdentityClient {
   void deactivateUser(String userId);
 
   boolean verifyIgnoringOtp(String username, String password);
-
-  Optional<IdentityProfile> findProfileById(String userId);
 }

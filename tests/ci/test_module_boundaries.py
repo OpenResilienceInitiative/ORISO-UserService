@@ -11,6 +11,10 @@ WEB_MAPPINGS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/mapping"
 )
+USERDATA_FACADES = (
+    ROOT
+    / "src/main/java/de/caritas/cob/userservice/api/facade/userdata"
+)
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
@@ -225,6 +229,32 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             offenders,
             "User web mappers must ask the identity input port instead of calling "
             "the outbound identity client:\n" + "\n".join(offenders),
+        )
+
+    def test_user_data_facades_use_a_focused_identity_profile_port(self):
+        broad_client_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in USERDATA_FACADES.glob("*.java")
+            if broad_client_import in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User-data facades must depend on a focused profile-read port:\n"
+            + "\n".join(offenders),
+        )
+        self.assertNotIn(
+            "findProfileById(",
+            identity_client,
+            "The broad identity command client must not own profile reads",
         )
 
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
