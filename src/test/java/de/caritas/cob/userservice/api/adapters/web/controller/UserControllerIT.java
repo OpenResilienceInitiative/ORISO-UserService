@@ -1472,6 +1472,7 @@ class UserControllerIT {
   void assignSession_Should_ReturnInternalServerErrorAndLogError_WhenConsultantIsNotFoundInDb()
       throws Exception {
 
+    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
     when(userAccountService.retrieveValidatedConsultantById(anyString()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -1483,8 +1484,7 @@ class UserControllerIT {
   }
 
   @Test
-  void assignSession_Should_ReturnInternalServerErrorAndLogError_WhenSessionIsNotFoundInDb()
-      throws Exception {
+  void assignSession_Should_ReturnNotFound_WhenSessionIsNotFoundInDb() throws Exception {
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
     when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.empty());
@@ -1493,7 +1493,7 @@ class UserControllerIT {
             put(PATH_PUT_ASSIGN_SESSION)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
+        .andExpect(status().is(HttpStatus.NOT_FOUND.value()));
   }
 
   @Test
