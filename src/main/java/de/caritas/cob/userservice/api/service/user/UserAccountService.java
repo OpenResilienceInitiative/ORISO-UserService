@@ -8,8 +8,8 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -38,7 +38,7 @@ public class UserAccountService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final @NonNull MessageClient messageClient;
   private final @NonNull UserHelper userHelper;
@@ -239,7 +239,7 @@ public class UserAccountService {
    */
   public void deactivateAndFlagUserAccountForDeletion() {
     User user = retrieveValidatedUser();
-    this.identityClient.deactivateUser(user.getUserId());
+    this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);
     fireAccountDeletionStatisticsEvent(user);

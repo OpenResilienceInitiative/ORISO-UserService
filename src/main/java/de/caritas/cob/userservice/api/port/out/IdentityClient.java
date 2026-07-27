@@ -15,6 +15,4 @@ public interface IdentityClient {
   void rollBackUser(String userId);
 
   void deleteUser(String userId);
-
-  void deactivateUser(String userId);
 }

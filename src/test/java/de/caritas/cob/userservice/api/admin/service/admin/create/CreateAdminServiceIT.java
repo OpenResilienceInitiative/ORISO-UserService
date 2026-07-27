@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
@@ -64,6 +65,7 @@ class CreateAdminServiceIT {
       extraInterfaces = {
         IdentityAccountSettingsUpdater.class,
         IdentityAuthentication.class,
+        IdentityDeactivator.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,

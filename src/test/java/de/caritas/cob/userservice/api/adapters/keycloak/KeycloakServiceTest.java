@@ -1249,6 +1249,9 @@ public class KeycloakServiceTest {
 
     this.keycloakService.deactivateUser("userId");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
+    verify(userResource, times(1)).toRepresentation();
     verify(userRepresentation, times(1)).setEnabled(false);
     verify(userResource, times(1)).update(userRepresentation);
   }
