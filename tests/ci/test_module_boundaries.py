@@ -257,6 +257,55 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The broad identity command client must not own profile reads",
         )
 
+    def test_role_read_consumers_use_a_focused_identity_role_port(self):
+        broad_client_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        focused_lookup_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/identity"
+            / "UserIdentitiesService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_lookup_import not in source.read_text()
+        ]
+        user_identities_service = consumers[1].read_text()
+        agency_relation_service = consumers[0].read_text()
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Realm-role readers must depend on a focused role-read port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            broad_client_import,
+            user_identities_service,
+            "UserIdentitiesService must not depend on the broad command client",
+        )
+        self.assertNotIn(
+            "identityClient.userHasRole(",
+            agency_relation_service,
+            "Agency role-set validation must use one focused realm-role read",
+        )
+        self.assertNotIn(
+            "getRealmRoles(",
+            identity_client,
+            "The broad identity command client must not own realm-role reads",
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

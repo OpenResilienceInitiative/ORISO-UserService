@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.port.out;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -68,8 +67,6 @@ public interface IdentityClient {
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);
-
-  List<String> getRealmRoles(String userId);
 
   void closeSession(String sessionId);
 
