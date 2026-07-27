@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
@@ -40,6 +41,7 @@ public class CreateAdminService {
   private boolean multitenancyWithSingleDomain;
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull UserHelper userHelper;
@@ -97,7 +99,7 @@ public class CreateAdminService {
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
     try {
-      identityClient.updatePassword(keycloakUserId, password);
+      identityPasswordUpdater.updatePassword(keycloakUserId, password);
       identityRoleUpdater.assignRoles(
           keycloakUserId, getDefaultRoles(adminType).stream().map(UserRole::getValue).toList());
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));

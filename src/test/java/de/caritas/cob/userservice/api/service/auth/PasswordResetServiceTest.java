@@ -17,7 +17,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -43,7 +43,7 @@ class PasswordResetServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private AdminRepository adminRepository;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private RestTemplate restTemplate;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
 
@@ -257,7 +257,7 @@ class PasswordResetServiceTest {
   @Test
   void confirmPasswordReset_Should_ReturnFalse_When_TokenIsBlank() {
     assertThat(passwordResetService.confirmPasswordReset("  ", "NewPassw0rd!")).isFalse();
-    verify(identityClient, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
   }
 
   @Test
@@ -279,7 +279,7 @@ class PasswordResetServiceTest {
     boolean result = passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
 
     assertThat(result).isTrue();
-    verify(identityClient).updatePassword("user-keycloak-id", "NewPassw0rd!");
+    verify(identityPasswordUpdater).updatePassword("user-keycloak-id", "NewPassw0rd!");
     verify(oneTimeTokenStore).claim("password-reset", "valid-token");
   }
 
@@ -292,7 +292,7 @@ class PasswordResetServiceTest {
     doThrow(
             new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword("user-keycloak-id", "weak");
 
     assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
@@ -310,7 +310,7 @@ class PasswordResetServiceTest {
     when(oneTimeTokenStore.claim("password-reset", "indeterminate-token"))
         .thenReturn(Optional.of(claim));
     doThrow(new RuntimeException("connection reset"))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword("user-keycloak-id", "NewPassw0rd!");
 
     assertThatThrownBy(
@@ -328,7 +328,7 @@ class PasswordResetServiceTest {
     boolean result = passwordResetService.confirmPasswordReset("expired-token", "NewPassw0rd!");
 
     assertThat(result).isFalse();
-    verify(identityClient, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
   }
 
   @Test
@@ -337,7 +337,7 @@ class PasswordResetServiceTest {
         .thenThrow(new IllegalStateException("redis unavailable"));
 
     assertThat(passwordResetService.confirmPasswordReset("token", "NewPassw0rd!")).isFalse();
-    verify(identityClient, never()).updatePassword(anyString(), anyString());
+    verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
   }
 
   private User validUser() {

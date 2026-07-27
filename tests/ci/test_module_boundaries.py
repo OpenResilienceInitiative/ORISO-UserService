@@ -733,6 +733,94 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+    def test_password_write_consumers_use_a_focused_identity_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityPasswordUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Identity password writes need a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        port_text = port.read_text()
+        self.assertNotIn(
+            ".adapters.web.",
+            port_text,
+            "The focused password port must not expose web DTOs",
+        )
+        self.assertNotIn(
+            "org.keycloak.",
+            port_text,
+            "The focused password port must not expose Keycloak types",
+        )
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/"
+            "create/CreateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/"
+            "create/CreateConsultantSaga.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/AskerImportService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
+            "PasswordResetService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused password port",
+            )
+            self.assertIn(
+                "identityPasswordUpdater.updatePassword(",
+                source_text,
+                f"{source.relative_to(ROOT)} must call the focused password port",
+            )
+            self.assertNotIn(
+                "identityClient.updatePassword(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client password mutation",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updatePassword(",
+            identity_client,
+            "The broad identity command client must not own password mutation",
+        )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "extraInterfaces = {" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityPasswordUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused password port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_legacy_chat_and_supervision_paths_have_no_dead_identity_wiring(self):
         sources = (
             ROOT

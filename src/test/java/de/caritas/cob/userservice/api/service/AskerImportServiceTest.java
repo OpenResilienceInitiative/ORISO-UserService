@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -65,6 +66,7 @@ class AskerImportServiceTest {
   @InjectMocks private AskerImportService askerImportService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Mock private UserService userService;

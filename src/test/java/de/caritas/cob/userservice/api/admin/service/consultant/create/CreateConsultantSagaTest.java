@@ -38,6 +38,7 @@ import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -75,6 +76,7 @@ class CreateConsultantSagaTest {
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private RocketChatService rocketChatService;
@@ -234,7 +236,7 @@ class CreateConsultantSagaTest {
   void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails() {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword(anyString(), anyString());
 
     assertThrows(
@@ -318,7 +320,7 @@ class CreateConsultantSagaTest {
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
     assertThat(consultant, notNullValue());
-    verify(identityClient).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+    verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 
   @Test
@@ -429,7 +431,7 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("keycloak down"))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword(anyString(), anyString());
 
     var ex =

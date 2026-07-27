@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
@@ -67,6 +68,7 @@ public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull MessageClient messageClient;
   private final @NonNull ConsultantService consultantService;
@@ -332,7 +334,7 @@ public class CreateConsultantSaga {
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      identityClient.updatePassword(keycloakUserId, password);
+      identityPasswordUpdater.updatePassword(keycloakUserId, password);
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
           buildConsultantDataWithUnknownRocketChatId(consultantCreationInput, keycloakUserId));

@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
@@ -41,6 +42,7 @@ class CreateAdminServiceTest {
   @InjectMocks private CreateAdminService createAdminService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;

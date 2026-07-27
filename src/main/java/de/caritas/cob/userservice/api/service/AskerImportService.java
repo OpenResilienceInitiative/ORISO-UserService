@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -85,6 +86,7 @@ public class AskerImportService {
   private final String IMPORT_LOG_CHARSET = "UTF-8";
   private final String DUMMY_POSTCODE = "00000";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull UserService userService;
@@ -169,7 +171,7 @@ public class AskerImportService {
         }
 
         // Set Keycloak password
-        identityClient.updatePassword(keycloakUserId, record.getPassword());
+        identityPasswordUpdater.updatePassword(keycloakUserId, record.getPassword());
 
         // Set asker/user role
         identityRoleUpdater.assignRoles(keycloakUserId, List.of(USER.getValue()));
@@ -359,7 +361,7 @@ public class AskerImportService {
         }
 
         // Set Keycloak password
-        identityClient.updatePassword(keycloakUserId, record.getPassword());
+        identityPasswordUpdater.updatePassword(keycloakUserId, record.getPassword());
 
         // Set asker/user role
         identityRoleUpdater.assignRoles(keycloakUserId, List.of(USER.getValue()));
