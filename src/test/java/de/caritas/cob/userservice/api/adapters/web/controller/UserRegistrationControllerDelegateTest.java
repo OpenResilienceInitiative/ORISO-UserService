@@ -36,8 +36,8 @@ import de.caritas.cob.userservice.api.model.EnquiryData;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentitySession;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
@@ -73,7 +73,7 @@ class UserRegistrationControllerDelegateTest {
   @Mock private Messaging messenger;
   @Mock private ConsultantDtoMapper consultantDtoMapper;
   @Mock private UserHelper userHelper;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityManaging identityManager;
   @Mock private MagicLinkLoginService magicLinkLoginService;
   @Mock private PasswordResetService passwordResetService;
   @Mock private SessionDeleteService sessionDeleteService;
@@ -82,7 +82,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void userExistsShouldReturnOkWhenUsernameExists() {
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(false);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(false);
 
     var response = delegate.userExists(USERNAME);
 
@@ -91,7 +91,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void usernameAvailabilityShouldReturnConflictWhenUsernameIsTaken() {
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(false);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(false);
 
     var response = delegate.usernameAvailability(USERNAME);
 
@@ -273,7 +273,7 @@ class UserRegistrationControllerDelegateTest {
   @Test
   void userExists_usernameAvailable_returnsNotFound() {
     // Available usernames indicate the account does not exist yet.
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(true);
 
     var response = delegate.userExists(USERNAME);
 
@@ -283,7 +283,7 @@ class UserRegistrationControllerDelegateTest {
   @Test
   void usernameAvailability_available_returnsNoContent() {
     // Available usernames confirm the handle can be registered.
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(true);
 
     var response = delegate.usernameAvailability(USERNAME);
 
