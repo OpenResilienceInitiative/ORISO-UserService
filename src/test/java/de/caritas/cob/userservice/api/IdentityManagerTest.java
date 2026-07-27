@@ -9,8 +9,8 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -33,7 +33,7 @@ class IdentityManagerTest {
   private static final String ENCODED_USERNAME = "enc.MNXW443VNR2GC3TUGJTGC...";
   private static final String EMAIL = "consultant@example.org";
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountSettingsUpdater identityAccountSettingsUpdater;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
@@ -43,6 +43,22 @@ class IdentityManagerTest {
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
+
+  @Test
+  void changePasswordShouldUseFocusedAccountSettingsPort() {
+    when(identityAccountSettingsUpdater.changePassword("userId", "new-password")).thenReturn(true);
+
+    assertThat(identityManager.changePassword("userId", "new-password")).isTrue();
+
+    verify(identityAccountSettingsUpdater).changePassword("userId", "new-password");
+  }
+
+  @Test
+  void changeLanguageShouldUseFocusedAccountSettingsPort() {
+    identityManager.changeLanguage("userId", "de");
+
+    verify(identityAccountSettingsUpdater).changePreferredLanguage("userId", "de");
+  }
 
   @Test
   void validatePasswordIgnoring2faShouldPreserveEncodedUsernameForIdentityAuthentication() {

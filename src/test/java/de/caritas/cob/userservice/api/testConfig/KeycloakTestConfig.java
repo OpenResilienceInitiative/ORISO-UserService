@@ -53,7 +53,7 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void changeLanguage(String userId, String locale) {
+      public void changePreferredLanguage(String userId, String locale) {
         UserResource userResource = keycloakClient.getUsersResource().get(userId);
         UserRepresentation user = getUserRepresentationAndCreateNewUserIfNotExist(userResource);
         super.changeLanguageForTheUser(locale, userResource, user);

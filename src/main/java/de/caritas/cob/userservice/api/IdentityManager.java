@@ -6,8 +6,8 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -22,8 +22,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class IdentityManager implements IdentityManaging {
 
+  private final IdentityAccountSettingsUpdater identityAccountSettingsUpdater;
   private final IdentityAuthentication identityAuthentication;
-  private final IdentityClient identityClient;
   private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentityRoleLookup identityRoleLookup;
@@ -60,12 +60,12 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean changePassword(String userId, String password) {
-    return identityClient.changePassword(userId, password);
+    return identityAccountSettingsUpdater.changePassword(userId, password);
   }
 
   @Override
   public void changeLanguage(String userId, String language) {
-    identityClient.changeLanguage(userId, language);
+    identityAccountSettingsUpdater.changePreferredLanguage(userId, language);
   }
 
   @Override

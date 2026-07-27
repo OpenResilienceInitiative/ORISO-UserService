@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
@@ -299,6 +300,7 @@ class UserControllerIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountSettingsUpdater.class,
         IdentityAuthentication.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -1750,7 +1752,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.BAD_REQUEST.value()));
 
-    verify(identityClient, times(0)).changePassword(anyString(), anyString());
+    verify((IdentityAccountSettingsUpdater) identityClient, times(0))
+        .changePassword(anyString(), anyString());
   }
 
   @Test

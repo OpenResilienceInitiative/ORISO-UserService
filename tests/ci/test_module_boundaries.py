@@ -655,6 +655,60 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_current_account_settings_use_a_focused_identity_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityAccountSettingsUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Current-account password and language changes need a focused output port",
+        )
+        if not port.exists():
+            return
+
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        ).read_text()
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        keycloak_adapter = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        focused_type = "IdentityAccountSettingsUpdater"
+
+        self.assertIn(focused_type, identity_manager)
+        self.assertIn(focused_type, keycloak_adapter)
+        self.assertNotIn("IdentityClient", identity_manager)
+        for method in ("changePassword(", "changeLanguage("):
+            self.assertNotIn(
+                method,
+                identity_client,
+                "The broad identity command client must not own current-account settings",
+            )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "extraInterfaces = {" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityAccountSettingsUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused account-settings port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

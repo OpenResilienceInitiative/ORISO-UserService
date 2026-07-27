@@ -5,10 +5,6 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 
 public interface IdentityClient {
 
-  boolean changePassword(final String userId, final String password);
-
-  void changeLanguage(final String userId, final String language);
-
   String createKeycloakUser(final UserDTO user);
 
   String createKeycloakUser(final UserDTO user, final String firstName, final String lastName);
