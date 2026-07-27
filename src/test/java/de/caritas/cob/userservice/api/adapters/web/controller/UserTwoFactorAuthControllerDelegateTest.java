@@ -15,12 +15,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -54,7 +55,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
         .thenReturn(true);
     when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, "person@example.org"))
-        .thenReturn(Optional.empty());
+        .thenReturn(IdentityEmailVerificationStart.success());
 
     var response = delegate.startTwoFactorAuthByEmailSetup(new EmailDTO("PERSON@EXAMPLE.ORG"));
 
@@ -70,7 +71,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, "person@example.org"))
         .thenReturn(true);
     when(identityManager.setUpOneTimePassword(ENCODED_USERNAME, "person@example.org"))
-        .thenReturn(Optional.of("OTP setup failed"));
+        .thenReturn(IdentityEmailVerificationStart.failure("OTP setup failed"));
 
     assertThatThrownBy(
             () -> delegate.startTwoFactorAuthByEmailSetup(new EmailDTO("PERSON@EXAMPLE.ORG")))
@@ -99,7 +100,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
-        .thenReturn(Map.of("created", "true", "email", "person@example.org"));
+        .thenReturn(new IdentityEmailVerification(true, false, false, "person@example.org"));
     when(userDtoMapper.mapOf("person@example.org", authenticatedUser)).thenReturn(patchMap);
 
     var response = delegate.finishTwoFactorAuthByEmailSetup(OTP);
@@ -115,7 +116,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
-        .thenReturn(Map.of("created", "false", "attemptsLeft", "true"));
+        .thenReturn(new IdentityEmailVerification(false, false, true, null));
 
     var response = delegate.finishTwoFactorAuthByEmailSetup(OTP);
 
@@ -129,7 +130,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
-        .thenReturn(Map.of("created", "false", "attemptsLeft", "false", "createdBefore", "true"));
+        .thenReturn(new IdentityEmailVerification(false, true, false, null));
 
     var response = delegate.finishTwoFactorAuthByEmailSetup(OTP);
 
@@ -143,7 +144,7 @@ class UserTwoFactorAuthControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(ENCODED_USERNAME);
     when(identityManager.validateOneTimePassword(ENCODED_USERNAME, OTP))
-        .thenReturn(Map.of("created", "false", "attemptsLeft", "false", "createdBefore", "false"));
+        .thenReturn(new IdentityEmailVerification(false, false, false, null));
 
     var response = delegate.finishTwoFactorAuthByEmailSetup(OTP);
 

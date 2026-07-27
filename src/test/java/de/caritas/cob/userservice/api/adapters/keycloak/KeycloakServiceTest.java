@@ -38,6 +38,9 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -309,12 +312,15 @@ public class KeycloakServiceTest {
   public void getOtpCredential_Should_Return_Response_When_RequestWasSuccessful() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var credential = new IdentityOtpCredential(true, "secret", "QrCode", IdentityOtpType.APP);
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
     when(this.keycloakClient.get(anyString(), any(), any())).thenReturn(entity);
+    when(keycloakMapper.identityOtpCredentialOf(OTP_INFO_DTO)).thenReturn(credential);
 
-    assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
 
+    verify(keycloakClient).get(anyString(), any(), eq(OtpInfoDTO.class));
     verifyNoInteractions(outboundHttpMetrics);
   }
 
@@ -332,22 +338,35 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void getOtpCredential_Should_ReturnEmptyCredential_When_ResponseBodyIsMissing() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+        .thenReturn(ResponseEntity.<OtpInfoDTO>ok().build());
+
+    assertEquals(IdentityOtpCredential.empty(), keycloakService.getOtpCredential(USERNAME));
+
+    verifyNoInteractions(keycloakMapper);
+  }
+
+  @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
   public void getOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var credential = new IdentityOtpCredential(true, "secret", "QrCode", IdentityOtpType.APP);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
     when(keycloakClient.get(eq("stale-token"), any(), any())).thenThrow(unauthorized);
     when(keycloakClient.get(eq("fresh-token"), any(), any())).thenReturn(entity);
+    when(keycloakMapper.identityOtpCredentialOf(OTP_INFO_DTO)).thenReturn(credential);
 
-    assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
-    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-fetch");
   }
 
   @Test
@@ -365,7 +384,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).get(any(), any(), any());
-    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-fetch");
   }
 
   @Test
@@ -394,10 +413,13 @@ public class KeycloakServiceTest {
     assertDoesNotThrow(
         () ->
             keycloakService.setUpOtpCredential(USERNAME, randomAlphabetic(8), randomAlphabetic(8)));
+    verify(keycloakClient).putForEntity(any(), any(), any(), eq(OtpInfoDTO.class));
   }
 
   @Test
   public void setUpOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
@@ -410,6 +432,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-setup");
   }
 
   @Test
@@ -418,10 +441,13 @@ public class KeycloakServiceTest {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
 
     assertDoesNotThrow(() -> keycloakService.deleteOtpCredential(USERNAME));
+    verify(keycloakClient).delete(any(), any(), eq(Void.class));
   }
 
   @Test
   public void deleteOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
@@ -433,6 +459,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-delete");
   }
 
   @Test
@@ -1429,26 +1456,49 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void initiateEmailVerification_Should_ReturnEmptyOptional_When_RequestSucceeds() {
+  public void initiateEmailVerification_Should_ReturnTypedSuccess_When_RequestSucceeds() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     when(keycloakClient.putForEntity(any(), any(), any(), any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.OK));
 
     var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
 
-    assertThat(result.isPresent(), is(false));
+    assertThat(result.started(), is(true));
+    assertNull(result.failureMessage());
+    verify(keycloakClient).putForEntity(any(), any(), any(), any());
   }
 
   @Test
-  public void initiateEmailVerification_Should_ReturnMessage_When_KeycloakRejects() {
+  public void initiateEmailVerification_Should_ReturnTypedFailure_When_ProviderRejects() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     when(keycloakClient.putForEntity(any(), any(), any(), any()))
         .thenThrow(new RestClientException("Keycloak said no"));
 
     var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
 
-    assertThat(result.isPresent(), is(true));
-    assertThat(result.get().contains("Keycloak said no"), is(true));
+    assertThat(result.started(), is(false));
+    assertThat(result.failureMessage().contains("Keycloak said no"), is(true));
+  }
+
+  @Test
+  public void
+      initiateEmailVerification_Should_RecordOperationSpecificRetry_OnInitialUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.putForEntity(eq("stale-token"), any(), any(), any()))
+        .thenThrow(unauthorized);
+    when(keycloakClient.putForEntity(eq("fresh-token"), any(), any(), any()))
+        .thenReturn(new ResponseEntity<>(HttpStatus.OK));
+
+    var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
+
+    assertThat(result.started(), is(true));
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).putForEntity(any(), any(), any(), any());
+    verify(outboundHttpMetrics).recordRetry("keycloak", "email-verification-start");
   }
 
   @Test
@@ -1460,13 +1510,13 @@ public class KeycloakServiceTest {
     when(keycloakClient.postForEntity(
             any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
         .thenReturn(responseEntity);
-    var expected = new HashMap<String, String>();
-    expected.put("status", "ok");
-    when(keycloakMapper.mapOf(responseEntity)).thenReturn(expected);
+    var expected = new IdentityEmailVerification(false, true, false, "mail@example.com");
+    when(keycloakMapper.identityEmailVerificationOf(responseEntity)).thenReturn(expected);
 
     var result = keycloakService.finishEmailVerification(USERNAME, "123456");
 
     assertThat(result, is(expected));
+    verify(keycloakClient).postForEntity(any(), any(), any(), any());
   }
 
   @Test
@@ -1475,14 +1525,42 @@ public class KeycloakServiceTest {
     var exception =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.BAD_REQUEST);
     when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(exception);
-    var expected = new HashMap<String, String>();
-    expected.put("status", "error");
-    when(keycloakMapper.mapOf(exception)).thenReturn(expected);
+    var expected = new IdentityEmailVerification(false, false, true, null);
+    when(keycloakMapper.identityEmailVerificationOf(exception)).thenReturn(expected);
 
     var result = keycloakService.finishEmailVerification(USERNAME, "123456");
 
     assertThat(result, is(expected));
     verify(keycloakClient, never()).refreshAdminSession();
+  }
+
+  @Test
+  public void finishEmailVerification_Should_RecordOperationSpecificRetry_OnInitialUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    var responseEntity =
+        new ResponseEntity<>(
+            new de.caritas.cob.userservice.api.model.SuccessWithEmail(), HttpStatus.CREATED);
+    var expected = new IdentityEmailVerification(true, false, false, "mail@example.com");
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.postForEntity(eq("stale-token"), any(), any(), any()))
+        .thenThrow(unauthorized);
+    when(keycloakClient.postForEntity(
+            eq("fresh-token"),
+            any(),
+            any(),
+            eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
+        .thenReturn(responseEntity);
+    when(keycloakMapper.identityEmailVerificationOf(responseEntity)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "123456");
+
+    assertThat(result, is(expected));
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
+    verify(outboundHttpMetrics).recordRetry("keycloak", "email-verification-finish");
   }
 
   @Test

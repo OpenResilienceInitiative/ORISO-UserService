@@ -278,6 +278,106 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "UserVerifier must not retain an unused broad identity dependency",
         )
 
+    def test_second_factor_verification_uses_typed_application_boundaries(self):
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        second_factor_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentitySecondFactor.java"
+        )
+        identity_input = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/in/"
+            "IdentityManaging.java"
+        ).read_text()
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        ).read_text()
+        two_factor_delegate = (
+            CONTROLLERS / "UserTwoFactorAuthControllerDelegate.java"
+        ).read_text()
+        typed_values = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityOtpCredential.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityOtpType.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityEmailVerification.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityEmailVerificationStart.java",
+        )
+
+        self.assertTrue(
+            second_factor_port.exists(),
+            "A focused IdentitySecondFactor port must own OTP and email verification",
+        )
+        self.assertTrue(
+            all(value.exists() for value in typed_values),
+            "Second-factor boundaries must use typed provider-neutral application values",
+        )
+        for method in (
+            "getOtpCredential(",
+            "setUpOtpCredential(",
+            "deleteOtpCredential(",
+            "initiateEmailVerification(",
+            "finishEmailVerification(",
+        ):
+            self.assertNotIn(
+                method,
+                identity_client,
+                "The broad identity command port must not expose second-factor verification",
+            )
+        self.assertNotIn(
+            "OtpInfoDTO",
+            identity_client,
+            "The broad identity command port must not import a generated web DTO",
+        )
+        self.assertIn(
+            "IdentitySecondFactor",
+            identity_manager,
+            "IdentityManager must use the focused second-factor output port",
+        )
+        for source in (identity_input, identity_manager):
+            self.assertNotIn(
+                "OtpInfoDTO",
+                source,
+                "The application identity boundary must not expose the generated OTP DTO",
+            )
+            self.assertNotIn(
+                "Map<String, String>",
+                source,
+                "The application identity boundary must not expose stringly verification maps",
+            )
+        self.assertNotIn(
+            'validationResult.get("',
+            two_factor_delegate,
+            "The web delegate must consume a typed email-verification result",
+        )
+        keycloak_adapter = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        for operation in (
+            "otp-fetch",
+            "otp-setup",
+            "otp-delete",
+            "email-verification-start",
+            "email-verification-finish",
+        ):
+            self.assertIn(
+                f'"{operation}"',
+                keycloak_adapter,
+                "Keycloak second-factor retries must retain stable per-operation tags",
+            )
+
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
             ROOT

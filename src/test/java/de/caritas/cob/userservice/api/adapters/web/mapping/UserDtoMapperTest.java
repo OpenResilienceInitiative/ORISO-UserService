@@ -11,7 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,11 +61,7 @@ class UserDtoMapperTest {
   void userDataOf_Should_markIsActive_When_otpIsSetupWithAppType() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.USER.getValue()));
-    var otp = new OtpInfoDTO();
-    otp.setOtpSetup(true);
-    otp.setOtpType(de.caritas.cob.userservice.api.model.OtpType.APP);
-    otp.setOtpSecret("secret");
-    otp.setOtpSecretQrCode("qr");
+    var otp = new IdentityOtpCredential(true, "secret", "qr", IdentityOtpType.APP);
 
     var result = mapper.userDataOf(userData, otp, false, false);
 
@@ -81,9 +78,7 @@ class UserDtoMapperTest {
   void userDataOf_Should_setEmailType_When_otpTypeIsNotApp() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
-    var otp = new OtpInfoDTO();
-    otp.setOtpSetup(true);
-    otp.setOtpType(de.caritas.cob.userservice.api.model.OtpType.EMAIL);
+    var otp = new IdentityOtpCredential(true, null, null, IdentityOtpType.EMAIL);
 
     var result = mapper.userDataOf(userData, otp, true, true);
 
@@ -94,8 +89,7 @@ class UserDtoMapperTest {
   void userDataOf_Should_notMarkActive_When_otpSetupIsFalse() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.USER.getValue()));
-    var otp = new OtpInfoDTO();
-    otp.setOtpSetup(false);
+    var otp = new IdentityOtpCredential(false, null, null, null);
 
     var result = mapper.userDataOf(userData, otp, false, true);
 
@@ -108,9 +102,7 @@ class UserDtoMapperTest {
   void userDataOf_Should_notSetOtpType_When_setupIsTrueButTypeIsNull() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
-    var otp = new OtpInfoDTO();
-    otp.setOtpSetup(true);
-    otp.setOtpType(null);
+    var otp = new IdentityOtpCredential(true, null, null, null);
 
     var result = mapper.userDataOf(userData, otp, false, false);
 

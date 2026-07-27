@@ -19,6 +19,9 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
@@ -31,6 +34,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
@@ -75,6 +79,7 @@ public class KeycloakService
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
         IdentityRoleLookup,
+        IdentitySecondFactor,
         IdentityUsernameAvailability {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
@@ -219,14 +224,18 @@ public class KeycloakService
   }
 
   @Override
-  public OtpInfoDTO getOtpCredential(String userName) {
+  public IdentityOtpCredential getOtpCredential(String userName) {
     var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
     var response =
         withFreshAdminTokenOnUnauthorized(
+            "otp-fetch",
             () ->
                 keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
-    return response.getBody();
+    var body = response.getBody();
+    return body == null
+        ? IdentityOtpCredential.empty()
+        : keycloakMapper.identityOtpCredentialOf(body);
   }
 
   @Override
@@ -236,6 +245,7 @@ public class KeycloakService
 
     try {
       withFreshAdminTokenOnUnauthorized(
+          "otp-setup",
           () ->
               keycloakClient.putForEntity(
                   keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
@@ -253,42 +263,46 @@ public class KeycloakService
   public void deleteOtpCredential(String userName) {
     var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
     withFreshAdminTokenOnUnauthorized(
+        "otp-delete",
         () -> keycloakClient.delete(keycloakClient.getBearerToken(), requestUrl, Void.class));
   }
 
   @Override
-  public Optional<String> initiateEmailVerification(String username, String email) {
+  public IdentityEmailVerificationStart initiateEmailVerification(String username, String email) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
       withFreshAdminTokenOnUnauthorized(
+          "email-verification-start",
           () ->
               keycloakClient.putForEntity(
                   keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, Success.class));
-      return Optional.empty();
+      return IdentityEmailVerificationStart.success();
     } catch (RestClientException exception) {
-      return Optional.of("Keycloak answered: " + exception.getMessage());
+      return IdentityEmailVerificationStart.failure(
+          "Identity provider answered: " + exception.getMessage());
     }
   }
 
   @Override
-  public Map<String, String> finishEmailVerification(String username, String initialCode) {
+  public IdentityEmailVerification finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
       var response =
           withFreshAdminTokenOnUnauthorized(
+              "email-verification-finish",
               () ->
                   keycloakClient.postForEntity(
                       keycloakClient.getBearerToken(),
                       requestUrl,
                       otpSetupDTO,
                       SuccessWithEmail.class));
-      return keycloakMapper.mapOf(response);
+      return keycloakMapper.identityEmailVerificationOf(response);
     } catch (HttpClientErrorException exception) {
-      return keycloakMapper.mapOf(exception);
+      return keycloakMapper.identityEmailVerificationOf(exception);
     }
   }
 
@@ -298,7 +312,7 @@ public class KeycloakService
         endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
   }
 
-  private <T> T withFreshAdminTokenOnUnauthorized(Supplier<T> request) {
+  private <T> T withFreshAdminTokenOnUnauthorized(String operation, Supplier<T> request) {
     try {
       return request.get();
     } catch (HttpClientErrorException exception) {
@@ -307,9 +321,10 @@ public class KeycloakService
       }
 
       log.warn(
-          "Keycloak admin session was unauthorized for an OTP provider request, forcing token"
-              + " refresh and retrying once");
-      recordRetry("admin-session-refresh");
+          "Keycloak admin session was unauthorized for {} request, forcing token refresh and"
+              + " retrying once",
+          operation);
+      recordRetry(operation);
       keycloakClient.refreshAdminSession();
       return request.get();
     }

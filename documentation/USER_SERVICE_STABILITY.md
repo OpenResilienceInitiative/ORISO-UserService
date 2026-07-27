@@ -30,8 +30,8 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,827 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
-| Integration + contract + E2E | 969 | 0 | 0 | 14 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,870 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
+| Integration + contract + E2E | 969 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
@@ -39,8 +39,9 @@ The candidate includes focused scheduler and Matrix browser-login unit and
 replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
-later serial Maven completions. The latest clean integration completion
-independently reports 969/0/0/14.
+later serial Maven completions. The latest clean integration completion with
+the local Redis 7 contract container independently reports 969/0/0/5; the five
+skips are the separately required MariaDB 10.11 container contracts.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -125,7 +126,10 @@ Keycloak's JSON provider. A transport wrapper measures every admin-client
 attempt, latency, exact serialized request size, known response size and
 coarse HTTP or transport outcome in the same bounded
 `userservice.outbound.http.*` series. Its higher-level retry paths remain
-covered by the explicit retry counter.
+covered by the explicit retry counter. Second-factor operations use the fixed,
+low-cardinality operation tags `otp-fetch`, `otp-setup`, `otp-delete`,
+`email-verification-start` and `email-verification-finish`; no username, email
+address, token or OTP material is emitted as a metric tag.
 
 ### Live PreDev baseline before this change
 
@@ -199,6 +203,13 @@ closed.
   no longer exposes authentication operations. This is also a boundary
   improvement rather than a call-count reduction: each authentication operation
   still performs exactly one external identity call.
+- OTP retrieval, setup and deletion plus email-verification start and finish now
+  consume the focused, provider-neutral `IdentitySecondFactor` port and typed
+  application values. Each operation performs exactly one provider request in
+  the normal path. Only an initial unauthorized response may refresh the admin
+  token and retry exactly once, so the maximum is two provider attempts. The
+  fixed retry tags make those retries measurable per operation without leaking
+  user data.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -231,7 +242,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Username availability uses the focused `IdentityUsernameAvailability` port; four active consumers no longer depend on the broad command client for this read, and `UserVerifier` no longer retains an unused identity dependency. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads use the focused `IdentityRoleLookup` port; the broad command client no longer exposes full role lists. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. | The broad `IdentityClient` still exposes web-layer user command DTOs and OTP values; outbound consumers still use `IdentityClientConfig`. |
+| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Username availability uses the focused `IdentityUsernameAvailability` port; four active consumers no longer depend on the broad command client for this read, and `UserVerifier` no longer retains an unused identity dependency. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads use the focused `IdentityRoleLookup` port; the broad command client no longer exposes full role lists. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. OTP and email-verification operations use the focused `IdentitySecondFactor` port and typed application values; generated Keycloak DTOs and string-key maps stay adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs plus mixed account, provisioning, role-write and session commands; outbound consumers still use `IdentityClientConfig`. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -262,7 +273,10 @@ password verification off the broad command client and requires every
 production consumer to depend on the focused provider-neutral port. The
 username-availability contract likewise protects its focused port, names all
 four active direct consumers and rejects the unused broad dependency in
-`UserVerifier`.
+`UserVerifier`. The second-factor contract keeps all five OTP and email
+verification operations off the broad command client, rejects generated
+provider DTOs and string-key maps at application boundaries, and requires the
+five fixed retry-operation tags.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current

@@ -2,9 +2,6 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
-import java.util.Map;
-import java.util.Optional;
 
 public interface IdentityClient {
 
@@ -17,16 +14,6 @@ public interface IdentityClient {
   void changeEmailAddress(final String username, final String emailAddress);
 
   void deleteEmailAddress();
-
-  OtpInfoDTO getOtpCredential(final String userName);
-
-  boolean setUpOtpCredential(final String userName, final String initialCode, final String secret);
-
-  void deleteOtpCredential(final String userName);
-
-  Optional<String> initiateEmailVerification(final String username, final String email);
-
-  Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
   String createKeycloakUser(final UserDTO user);
 
