@@ -210,3 +210,13 @@ max). This is a bounded smoke baseline, not a production capacity claim. The
 aggregate local health group was `DOWN` because the developer RabbitMQ instance
 did not accept the testing profile's credentials; liveness and readiness were
 both `UP`, and the dedicated Redis contract passed independently.
+Local authenticated-write proof on 2026-07-27 used two real UserService JVMs,
+one disposable MariaDB 11.0.6 database, shared Redis and a locally signed
+consultant JWT verified through a disposable JWK endpoint. Eighty concurrent
+tutorial-progress PUTs alternated over both replicas, followed by a read from
+each replica: 0 failures, 439 ms aggregate p95 and exactly one canonical
+database row. After restarting one replica, 12 further writes and both
+cross-replica reads completed with 0 failures and 384 ms p95. The runner applies
+the same zero-error and 1,000 ms p95 bound per operation and per replica. This
+is a bounded authenticated state-transition and restart proof for one slice,
+not deployed PreDev or whole-service multi-replica evidence.
