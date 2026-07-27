@@ -158,7 +158,6 @@ start_replica() {
     IDENTITY_OPENID_CONNECT_URL="${identity_url}" \
     KEYCLOAK_AUTH_SERVER_URL="http://127.0.0.1:${jwk_stub_port}/auth" \
     MATRIX_EVENT_LISTENER_ENABLED=false \
-    ROCKET_CHAT_ENABLED=false \
     SPRING_TASK_SCHEDULING_ENABLED=false \
     LOGGING_LEVEL_ROOT=WARN \
     java -jar "${jar_path}" >"${log_file}" 2>&1 &
