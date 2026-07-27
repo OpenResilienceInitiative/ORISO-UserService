@@ -54,6 +54,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySession;
@@ -292,7 +293,12 @@ class UserControllerIT {
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
 
-  @MockitoBean(extraInterfaces = {IdentityProfileLookup.class, IdentityRoleLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityEmailOwnerLookup.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class
+      })
   private IdentityClient identityClient;
 
   @MockitoBean private DecryptionService encryptionService;

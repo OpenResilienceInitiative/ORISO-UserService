@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,12 @@ public class UpdateAdminServiceIT {
 
   @Autowired private UpdateAdminService updateAdminService;
 
-  @MockitoBean(extraInterfaces = {IdentityProfileLookup.class, IdentityRoleLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityEmailOwnerLookup.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class
+      })
   private IdentityClient identityClient;
 
   @Autowired private RetrieveAdminService retrieveAdminService;

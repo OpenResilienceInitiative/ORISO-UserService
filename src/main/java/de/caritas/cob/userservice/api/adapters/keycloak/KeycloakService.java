@@ -24,6 +24,8 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -65,7 +67,8 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient, IdentityProfileLookup, IdentityRoleLookup {
+public class KeycloakService
+    implements IdentityClient, IdentityEmailOwnerLookup, IdentityProfileLookup, IdentityRoleLookup {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -199,12 +202,11 @@ public class KeycloakService implements IdentityClient, IdentityProfileLookup, I
   }
 
   @Override
-  public Map<String, String> findUserByEmail(String email) {
+  public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> userRepresentation.getEmail().equals(email))
+        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
         .findFirst()
-        .map(keycloakMapper::mapOf)
-        .orElseGet(Map::of);
+        .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
 
   @Override

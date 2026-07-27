@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
@@ -126,7 +127,12 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
-  @MockitoBean(extraInterfaces = {IdentityProfileLookup.class, IdentityRoleLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityEmailOwnerLookup.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class
+      })
   IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;

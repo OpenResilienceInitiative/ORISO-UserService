@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -1481,31 +1482,29 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void findUserByEmail_Should_ReturnMappedUser_When_MatchFound() {
+  public void findByEmail_Should_ReturnTypedOwner_When_ExactMatchFound() {
     var email = "mail@example.com";
     UserRepresentation userRepresentation = mock(UserRepresentation.class);
     when(userRepresentation.getEmail()).thenReturn(email);
+    when(userRepresentation.getUsername()).thenReturn(USERNAME);
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.search(email, 0, Integer.MAX_VALUE))
         .thenReturn(singletonList(userRepresentation));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    var expected = new HashMap<String, String>();
-    expected.put("email", email);
-    when(keycloakMapper.mapOf(userRepresentation)).thenReturn(expected);
 
-    var result = keycloakService.findUserByEmail(email);
+    var result = keycloakService.findByEmail(email);
 
-    assertThat(result, is(expected));
+    assertThat(result, is(Optional.of(new IdentityEmailOwner(USERNAME))));
   }
 
   @Test
-  public void findUserByEmail_Should_ReturnEmptyMap_When_NoMatchFound() {
+  public void findByEmail_Should_ReturnEmpty_When_NoMatchFound() {
     var email = "mail@example.com";
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.search(email, 0, Integer.MAX_VALUE)).thenReturn(List.of());
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var result = keycloakService.findUserByEmail(email);
+    var result = keycloakService.findByEmail(email);
 
     assertThat(result.isEmpty(), is(true));
   }

@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -80,7 +81,12 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @MockitoBean private AgencyService agencyService;
 
-  @MockitoBean(extraInterfaces = {IdentityProfileLookup.class, IdentityRoleLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityEmailOwnerLookup.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class
+      })
   private IdentityClient identityClient;
 
   @MockitoBean private RocketChatFacade rocketChatFacade;
