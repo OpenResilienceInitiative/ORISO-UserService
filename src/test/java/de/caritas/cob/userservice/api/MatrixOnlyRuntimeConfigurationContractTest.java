@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 class MatrixOnlyRuntimeConfigurationContractTest {
 
   private static final Path RESOURCES = Path.of("src/main/resources");
+  private static final Path APPLICATION =
+      Path.of("src/main/java/de/caritas/cob/userservice/api/UserServiceApplication.java");
 
   @Test
   void releaseWorkflowMustPublishImmutableMultiPlatformImagesWithEvidence() throws IOException {
@@ -64,6 +66,31 @@ class MatrixOnlyRuntimeConfigurationContractTest {
             .as(propertyFile.toString())
             .doesNotContain("rocket-chat.", "rocket.technical.", "rocket.systemuser.")
             .doesNotContain("cache.rocketchat.");
+      }
+    }
+  }
+
+  @Test
+  void matrixOnlyRuntimeMustNotShipTheRetiredMongoDbStack() throws IOException {
+    assertThat(Files.readString(Path.of("pom.xml")))
+        .doesNotContain("spring-boot-starter-data-mongodb");
+    assertThat(Files.readString(APPLICATION))
+        .doesNotContain("MongoAutoConfiguration", "DataMongoAutoConfiguration");
+
+    try (var propertyFiles = Files.list(RESOURCES)) {
+      for (var propertyFile :
+          propertyFiles
+              .filter(path -> path.getFileName().toString().endsWith(".properties"))
+              .toList()) {
+        assertThat(Files.readString(propertyFile))
+            .as(propertyFile.toString())
+            .doesNotContain(
+                "spring.data.mongodb",
+                "SPRING_DATA_MONGODB_URI",
+                "mongodb://",
+                "MongoAutoConfiguration",
+                "MongoDataAutoConfiguration",
+                "MongoRepositoriesAutoConfiguration");
       }
     }
   }
