@@ -226,7 +226,7 @@ paths:
       tags:
         - conversation-controller
       summary: 'Set the status of the given session to done [Authorization: Role:
-      anonymous, consultant]'
+        anonymous, consultant]'
       operationId: finishAnonymousConversation
       parameters:
         - name: sessionId

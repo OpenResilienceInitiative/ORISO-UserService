@@ -251,7 +251,7 @@ paths:
       tags:
         - user-controller
       summary: 'Returns sessions for given Matrix room IDs.
-      [Authorization: Role: user, consultant]'
+        [Authorization: Role: user, consultant]'
       operationId: getSessionsForRoomIds
       parameters:
         - name: roomIds[]
@@ -287,7 +287,7 @@ paths:
       tags:
         - user-controller
       summary: 'Returns the session for given ID.
-      [Authorization: Role: user, consultant]'
+        [Authorization: Role: user, consultant]'
       operationId: getSessionForId
       parameters:
         - name: sessionId
@@ -464,7 +464,7 @@ paths:
       tags:
         - user-controller
       summary: 'Sets or updates the email, first and lastname of authorized consultant account
-      [Authorization:  Role: consultant]'
+        [Authorization:  Role: consultant]'
       operationId: updateConsultantData
       requestBody:
         content:
@@ -1460,7 +1460,7 @@ paths:
       tags:
         - user-controller
       summary: 'Returns the chat for given ID.
-      [Authorization: Role: user, consultant]'
+        [Authorization: Role: user, consultant]'
       operationId: getChatById
       parameters:
         - name: chatId
@@ -2600,7 +2600,7 @@ components:
           type: boolean
           example: true
           description: "Is true if consultant has at least one consulting type containing
-          anonymous conversations active"
+            anonymous conversations active"
         hasArchive:
           type: boolean
           example: true
@@ -2730,7 +2730,7 @@ components:
           pa, pi, pl, ps, pt, qu, rm, rn, ro, ru, rw, sa, sc, sd, se, sg, si, sk, sl, sm, sn,
           so, sq, sr, ss, st, su, sv, sw, ta, te, tg, th, ti, tk, tl, tn, to, tr, ts, tt, tw,
           ty, ug, uk, ur, uz, ve, vi, vo, wa, wo, xh, yi, yo, za, zh, zu
-      ]
+        ]
 
     LanguageResponseDTO:
       type: object
