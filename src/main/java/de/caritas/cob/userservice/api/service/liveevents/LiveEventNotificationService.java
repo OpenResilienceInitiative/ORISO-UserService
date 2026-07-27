@@ -34,7 +34,7 @@ public class LiveEventNotificationService {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull MobilePushNotificationService mobilePushNotificationService;
 
-  private static final String RC_GROUP_ID_MESSAGE_TEMPLATE = "Rocket.Chat group ID: %s";
+  private static final String MATRIX_ROOM_ID_MESSAGE_TEMPLATE = "Matrix room ID: %s";
   private static final String NEW_ANONYMOUS_ENQUIRY_MESSAGE_TEMPLATE = "Anonymous Enquiry ID: %s";
 
   /**
@@ -95,19 +95,19 @@ public class LiveEventNotificationService {
    * Collects all relevant user or consultant ids of chats and sessions and sends a new direct
    * message to the live service.
    *
-   * @param rcGroupId the rocket chat group id OR Matrix room ID used to observe relevant users
+   * @param matrixRoomId Matrix room ID used to observe relevant users
    */
-  public void sendLiveDirectMessageEventToUsers(String rcGroupId) {
-    if (isNotBlank(rcGroupId)) {
+  public void sendLiveDirectMessageEventToUsers(String matrixRoomId) {
+    if (isNotBlank(matrixRoomId)) {
       var userIds =
           this.userIdsProviderFactory
-              .byRocketChatGroup(rcGroupId)
-              .collectUserIds(rcGroupId)
+              .forMatrixRoom(matrixRoomId)
+              .collectUserIds(matrixRoomId)
               .stream()
               .filter(this::notInitiatingUser)
               .collect(Collectors.toList());
 
-      triggerDirectMessageLiveEvent(userIds, rcGroupId);
+      triggerDirectMessageLiveEvent(userIds, matrixRoomId);
       this.mobilePushNotificationService.triggerMobilePushNotification(userIds);
     }
   }
@@ -122,15 +122,15 @@ public class LiveEventNotificationService {
     }
   }
 
-  private void triggerDirectMessageLiveEvent(List<String> userIds, String rcGroupId) {
+  private void triggerDirectMessageLiveEvent(List<String> userIds, String matrixRoomId) {
     if (isNotEmpty(userIds)) {
       var liveEventMessage = new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(userIds);
 
       sendLiveEventMessage(
           liveEventMessage,
           () -> {
-            var rcMessage = String.format(RC_GROUP_ID_MESSAGE_TEMPLATE, rcGroupId);
-            return makeUserIdsEventTypeMessage(liveEventMessage, rcMessage);
+            var roomMessage = String.format(MATRIX_ROOM_ID_MESSAGE_TEMPLATE, matrixRoomId);
+            return makeUserIdsEventTypeMessage(liveEventMessage, roomMessage);
           });
     }
   }

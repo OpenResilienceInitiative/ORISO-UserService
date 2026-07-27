@@ -321,16 +321,14 @@ public class EventNotificationService {
 
   @Transactional
   public void createMessageNotificationFromRoom(
-      String roomId, String senderUserId, String messagePreview, boolean matrixRoom) {
-    createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, matrixRoom, false, null, null);
+      String roomId, String senderUserId, String messagePreview) {
+    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null, null);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
-      String roomId, String senderUserId, boolean matrixRoom, PrivacyEnvelope envelope) {
-    createMessageNotificationFromRoom(
-        roomId, senderUserId, null, matrixRoom, false, null, envelope);
+      String roomId, String senderUserId, PrivacyEnvelope envelope) {
+    createMessageNotificationFromRoom(roomId, senderUserId, null, false, null, envelope);
   }
 
   @Transactional
@@ -338,17 +336,10 @@ public class EventNotificationService {
       String roomId,
       String senderUserId,
       String messagePreview,
-      boolean matrixRoom,
       boolean supervisorMessage,
       String senderDisplayName) {
     createMessageNotificationFromRoom(
-        roomId,
-        senderUserId,
-        messagePreview,
-        matrixRoom,
-        supervisorMessage,
-        senderDisplayName,
-        null);
+        roomId, senderUserId, messagePreview, supervisorMessage, senderDisplayName, null);
   }
 
   @Transactional
@@ -356,7 +347,6 @@ public class EventNotificationService {
       String roomId,
       String senderUserId,
       String messagePreview,
-      boolean matrixRoom,
       boolean supervisorMessage,
       String senderDisplayName,
       PrivacyEnvelope envelope) {
@@ -364,10 +354,7 @@ public class EventNotificationService {
       return;
     }
 
-    Optional<Session> sessionOpt =
-        matrixRoom
-            ? sessionRepository.findByMatrixRoomId(roomId)
-            : sessionRepository.findByGroupId(roomId);
+    Optional<Session> sessionOpt = sessionRepository.findByMatrixRoomId(roomId);
     if (sessionOpt.isEmpty()) {
       return;
     }
@@ -416,13 +403,16 @@ public class EventNotificationService {
 
   @Transactional
   public void createThreadReplyNotificationFromRoom(
-      String roomId,
-      String senderUserId,
-      String threadRootId,
-      boolean matrixRoom,
-      PrivacyEnvelope envelope) {
+      String roomId, String senderUserId, String threadRootId, PrivacyEnvelope envelope) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, null, threadRootId, matrixRoom, false, null, null, envelope);
+        roomId, senderUserId, null, threadRootId, false, null, null, envelope);
+  }
+
+  @Transactional
+  public void createThreadReplyNotificationFromRoom(
+      String roomId, String senderUserId, String messagePreview, String threadRootId) {
+    createThreadReplyNotificationFromRoom(
+        roomId, senderUserId, messagePreview, threadRootId, false, null, null, null);
   }
 
   @Transactional
@@ -431,18 +421,6 @@ public class EventNotificationService {
       String senderUserId,
       String messagePreview,
       String threadRootId,
-      boolean matrixRoom) {
-    createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, messagePreview, threadRootId, matrixRoom, false, null, null, null);
-  }
-
-  @Transactional
-  public void createThreadReplyNotificationFromRoom(
-      String roomId,
-      String senderUserId,
-      String messagePreview,
-      String threadRootId,
-      boolean matrixRoom,
       boolean supervisorMessage,
       String senderDisplayName,
       String threadParentPreview) {
@@ -451,7 +429,6 @@ public class EventNotificationService {
         senderUserId,
         messagePreview,
         threadRootId,
-        matrixRoom,
         supervisorMessage,
         senderDisplayName,
         threadParentPreview,
@@ -464,7 +441,6 @@ public class EventNotificationService {
       String senderUserId,
       String messagePreview,
       String threadRootId,
-      boolean matrixRoom,
       boolean supervisorMessage,
       String senderDisplayName,
       String threadParentPreview,
@@ -473,10 +449,7 @@ public class EventNotificationService {
       return;
     }
 
-    Optional<Session> sessionOpt =
-        matrixRoom
-            ? sessionRepository.findByMatrixRoomId(roomId)
-            : sessionRepository.findByGroupId(roomId);
+    Optional<Session> sessionOpt = sessionRepository.findByMatrixRoomId(roomId);
     if (sessionOpt.isEmpty()) {
       return;
     }
@@ -959,8 +932,6 @@ public class EventNotificationService {
     String roomRef = null;
     if (session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()) {
       roomRef = session.getMatrixRoomId();
-    } else if (session.getGroupId() != null && !session.getGroupId().isBlank()) {
-      roomRef = session.getGroupId();
     }
     if (roomRef == null) {
       return null;

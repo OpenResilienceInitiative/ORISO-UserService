@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sun.net.httpserver.HttpServer;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
-import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -71,11 +70,6 @@ class RestTemplateTimeoutBehaviorTest {
   @Test
   void keycloakRestTemplateShouldTimeoutOnSlowResponse() {
     assertReadTimeout(new KeycloakConfig().keycloakRestTemplate(new RestTemplateBuilder()));
-  }
-
-  @Test
-  void rocketChatRestTemplateShouldTimeoutOnSlowResponse() {
-    assertReadTimeout(new RocketChatConfig(null).rocketChatRestTemplate(new RestTemplateBuilder()));
   }
 
   @Test

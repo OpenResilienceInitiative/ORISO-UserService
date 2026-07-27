@@ -29,18 +29,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * Matrix-only integration coverage for the agency pre-assignment (holding) room provisioning path —
  * the room-creation / invite / membership orchestration that runs when an enquiry is created with
- * {@code rocket-chat.enabled=false} and the session does not yet have a Matrix room.
+ * no existing Matrix room.
  *
  * <p>This class-under-test had ZERO test coverage. It is the enquiry-time room provisioner reached
  * via {@code CreateEnquiryMessageFacade.ensureMatrixRoomForEnquiry(...)}. These tests assert the
  * production orchestration deterministically (Mockito, no live Synapse): the agency service account
  * logs in, a room is created, the enquiry user is invited AND joins (membership), and the room id
- * is persisted on the session. No Rocket.Chat interaction is possible here — the service does not
- * depend on RocketChatService at all, which is itself the RC-off contract for this slice.
+ * is persisted on the session.
  *
  * <p>Complements PR #300 (which proved branch selection at the chat/adapter level and explicitly
  * deferred driving the enquiry room-provisioning path end-to-end). Test Quality Audit 2026-07-04 —
- * RC teardown phase 2 + C2.
+ * Matrix room provisioning phase 2 + C2.
  */
 @ExtendWith(MockitoExtension.class)
 class AgencyPreAssignmentRoomServiceTest {

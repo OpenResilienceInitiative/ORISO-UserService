@@ -66,7 +66,8 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
   @MockitoBean private AgencyAdminService agencyAdminService;
 
-  @MockitoBean private RemoveConsultantFromRocketChatService removeConsultantFromRocketChatService;
+  @MockitoBean
+  private RemoveConsultantFromSessionRoomsService removeConsultantFromSessionRoomsService;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -184,7 +185,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
     assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
     assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromRocketChatService, times(1))
+    verify(this.removeConsultantFromSessionRoomsService, times(1))
         .removeConsultantFromSessions(any());
   }
 

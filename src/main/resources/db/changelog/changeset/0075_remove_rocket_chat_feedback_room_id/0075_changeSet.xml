@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <changeSet id="0075-remove-rocket-chat-feedback-room-id-from-session" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="session" columnName="rc_feedback_group_id"/>
+    </preConditions>
+    <dropColumn tableName="session" columnName="rc_feedback_group_id"/>
+    <rollback>
+      <addColumn tableName="session">
+        <column name="rc_feedback_group_id" type="varchar(255)"/>
+      </addColumn>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

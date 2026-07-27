@@ -185,16 +185,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       requestBody:
         content:
           'application/json':
@@ -287,8 +277,8 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         t:
           type: string

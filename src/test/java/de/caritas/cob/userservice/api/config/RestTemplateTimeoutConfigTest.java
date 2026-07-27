@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
-import de.caritas.cob.userservice.api.adapters.rocketchat.config.RocketChatConfig;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
@@ -38,13 +37,6 @@ class RestTemplateTimeoutConfigTest {
   @Test
   void keycloakRestTemplateShouldUseDefaultTimeouts() {
     var restTemplate = new KeycloakConfig().keycloakRestTemplate(new RestTemplateBuilder());
-
-    assertTimeouts(restTemplate, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
-  }
-
-  @Test
-  void rocketChatRestTemplateShouldUseDefaultTimeouts() {
-    var restTemplate = new RocketChatConfig(null).rocketChatRestTemplate(new RestTemplateBuilder());
 
     assertTimeouts(restTemplate, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
   }

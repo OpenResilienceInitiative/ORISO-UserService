@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
@@ -910,10 +909,10 @@ class MatrixEventListenerServiceTest {
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
-            anyString(), any(), anyString(), anyBoolean(), any());
+            anyString(), any(), anyString(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 
@@ -944,10 +943,9 @@ class MatrixEventListenerServiceTest {
             eq(MATRIX_ROOM_ID),
             eq(ASKER_DOMAIN_ID),
             eq("$root-thread"),
-            eq(true),
             any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 
@@ -997,7 +995,7 @@ class MatrixEventListenerServiceTest {
 
     verify(liveEventNotificationService, never()).sendLiveDirectMessageEventToUsers(anyString());
     verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
   }
 
   @Test
@@ -1206,7 +1204,7 @@ class MatrixEventListenerServiceTest {
 
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
   }
 
@@ -1293,7 +1291,7 @@ class MatrixEventListenerServiceTest {
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
   }
 
   @Test

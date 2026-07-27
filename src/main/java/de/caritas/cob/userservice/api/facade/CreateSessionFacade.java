@@ -115,7 +115,7 @@ public class CreateSessionFacade {
       var session = existingSession.get();
       return new NewRegistrationResponseDto()
           .sessionId(session.getId())
-          .rcGroupId(session.getGroupId())
+          .matrixRoomId(session.getMatrixRoomId())
           .status(HttpStatus.CONFLICT);
     }
 

@@ -11,5 +11,5 @@ import lombok.Data;
 public class CreateEnquiryExceptionInformation {
 
   private Session session;
-  private String rcGroupId;
+  private String matrixRoomId;
 }

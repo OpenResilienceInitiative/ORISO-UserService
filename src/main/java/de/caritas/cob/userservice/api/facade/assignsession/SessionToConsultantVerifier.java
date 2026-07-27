@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGI
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -42,8 +41,6 @@ public class SessionToConsultantVerifier {
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 
-    // MATRIX MIGRATION: Commented out RocketChat ID verification
-    // verifyUserAndConsultantHaveRocketChatId(consultantSessionDTO);
     if (REGISTERED.equals(consultantSessionDTO.getSession().getRegistrationType())) {
       verifyIfConsultantIsAssignedToAgencyOrTopic(consultantSessionDTO);
     }
@@ -83,27 +80,6 @@ public class SessionToConsultantVerifier {
               consultantSessionDTO.getConsultant().getId());
 
       throw new ConflictException(message, LogService::logAssignSessionFacadeWarning);
-    }
-  }
-
-  private void verifyUserAndConsultantHaveRocketChatId(ConsultantSessionDTO consultantSessionDTO) {
-
-    if (this.conditionProvider.hasSessionUserNoRcId(consultantSessionDTO.getSession())) {
-      var message =
-          String.format(
-              "The provided user with id %s does not have a Rocket.Chat id assigned in the database.",
-              consultantSessionDTO.getSession().getUser().getUserId());
-
-      throw new InternalServerErrorException(message, LogService::logAssignSessionFacadeError);
-    }
-
-    if (this.conditionProvider.hasConsultantNoRcId(consultantSessionDTO.getConsultant())) {
-      var message =
-          String.format(
-              "The provided consultant with id %s does not have a Rocket.Chat id assigned in the database.",
-              consultantSessionDTO.getConsultant().getId());
-
-      throw new InternalServerErrorException(message, LogService::logAssignSessionFacadeError);
     }
   }
 

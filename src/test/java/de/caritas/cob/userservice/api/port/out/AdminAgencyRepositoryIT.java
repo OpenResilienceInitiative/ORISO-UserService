@@ -83,7 +83,6 @@ class AdminAgencyRepositoryIT {
   private void givenPersistedAdminWIthAgency() {
     admin = easyRandom.nextObject(Admin.class);
     admin.setId(UUID.randomUUID().toString());
-    admin.setRcUserId(null);
     admin.setCreateDate(null);
     admin.setUpdateDate(null);
     admin = adminRepository.save(admin);

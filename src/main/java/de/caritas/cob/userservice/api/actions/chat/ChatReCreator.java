@@ -17,8 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * Re-creates the messenger room of a repetitive group chat for its next occurrence (ADR-004:
- * Matrix-native, Rocket.Chat is disabled).
+ * Re-creates the Matrix room of a repetitive group chat for its next occurrence.
  *
  * <p>The order of operations is fail-safe: the new Matrix room is created first, and only after
  * that succeeded the old room is shut down (best-effort, via {@link MatrixChatShutdownService}) so
@@ -40,16 +39,14 @@ public class ChatReCreator {
   private final GroupChatMembershipService groupChatMembershipService;
 
   /**
-   * Resets the given chat to its next occurrence: the new Matrix room id is persisted both as
-   * legacy group id and as Matrix room id (mirroring chat creation) and the chat is deactivated
-   * until it is started again.
+   * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
+   * reference and the chat remains inactive until its next scheduled start.
    *
    * @param chat the repetitive {@link Chat} to update
    * @param matrixRoomId the id of the freshly created Matrix room
    */
   public void updateAsNextChat(Chat chat, String matrixRoomId) {
     var nextStart = chat.nextStart();
-    chat.setGroupId(matrixRoomId);
     chat.setMatrixRoomId(matrixRoomId);
     chat.setStartDate(nextStart);
     chat.setCurrentOccurrenceIndex(chat.getCurrentOccurrenceIndex() + 1);

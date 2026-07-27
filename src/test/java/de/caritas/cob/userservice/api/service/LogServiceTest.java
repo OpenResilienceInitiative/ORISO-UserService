@@ -103,10 +103,4 @@ public class LogServiceTest {
     LogService.logForbidden(exception);
     verify(exception, atLeastOnce()).printStackTrace(any(PrintWriter.class));
   }
-
-  @Test
-  public void logRocketChatError_Should_LogExceptionMessage() {
-    LogService.logRocketChatError(exception);
-    verify(exception, atLeastOnce()).getMessage();
-  }
 }

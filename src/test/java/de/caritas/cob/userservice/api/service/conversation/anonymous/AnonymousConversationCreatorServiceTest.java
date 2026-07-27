@@ -1,17 +1,13 @@
 package de.caritas.cob.userservice.api.service.conversation.anonymous;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,9 +15,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.conversation.service.AnonymousConversationCreatorService;
-import de.caritas.cob.userservice.api.exception.CreateEnquiryException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
@@ -38,43 +32,33 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class AnonymousConversationCreatorServiceTest {
 
-  @InjectMocks private AnonymousConversationCreatorService anonymousConversationCreatorService;
+  @InjectMocks private AnonymousConversationCreatorService service;
   @Mock private UserService userService;
-  @Mock SessionService sessionService;
-  @Mock RollbackFacade rollbackFacade;
-  @Mock CreateEnquiryMessageFacade createEnquiryMessageFacade;
-  @Mock AgencyService agencyService;
-  @Mock ConsultantAgencyService consultantAgencyService;
-  @Mock LiveEventNotificationService liveEventNotificationService;
-  @Mock EventNotificationService eventNotificationService;
-  @Mock TopicConsultantRoutingService topicConsultantRoutingService;
+  @Mock private SessionService sessionService;
+  @Mock private RollbackFacade rollbackFacade;
+  @Mock private AgencyService agencyService;
+  @Mock private ConsultantAgencyService consultantAgencyService;
+  @Mock private LiveEventNotificationService liveEventNotificationService;
+  @Mock private EventNotificationService eventNotificationService;
+  @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
 
-  EasyRandom easyRandom = new EasyRandom();
-
-  @BeforeEach
-  void enableRocketChatForLegacyTests() {
-    ReflectionTestUtils.setField(anonymousConversationCreatorService, "rocketChatEnabled", true);
-  }
+  private final EasyRandom easyRandom = new EasyRandom();
 
   @Test
-  void createAnonymousConversation_Should_CreateWaitingSession_When_RocketChatIsDisabled() {
-    ReflectionTestUtils.setField(anonymousConversationCreatorService, "rocketChatEnabled", false);
-    Session session = easyRandom.nextObject(Session.class);
-    session.setGroupId(null);
+  void createsWaitingLiveChatSessionWithoutTransportRoom() {
+    var session = easyRandom.nextObject(Session.class);
+    session.setMatrixRoomId(null);
     session.setMainTopicId(11L);
-    AnonymousUserCredentials credentials =
-        AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
+    var credentials = AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
     when(userService.getUser(credentials.getUserId())).thenReturn(Optional.of(USER));
     when(sessionService.initializeSession(
             any(User.class),
@@ -83,114 +67,36 @@ class AnonymousConversationCreatorServiceTest {
             any(RegistrationType.class),
             any(SessionStatus.class)))
         .thenReturn(session);
-    when(topicConsultantRoutingService.findEligibleConsultantIds(
-            session.getMainTopicId(), session.getConsultingTypeId()))
+    when(topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId()))
         .thenReturn(List.of("consultant-id"));
     when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of("consultant-id")))
         .thenReturn(List.of());
 
-    Session created =
-        anonymousConversationCreatorService.createAnonymousConversation(
-            USER_DTO_SUCHT, credentials);
+    var created = service.createAnonymousConversation(USER_DTO_SUCHT, credentials);
 
-    assertThat(created, is(session));
-    assertThat(created.getConversationType(), is(ConversationType.LIVE_CHAT));
-    assertThat(created.getGroupId(), is((Object) null));
+    assertThat(created).isSameAs(session);
+    assertThat(created.getConversationType()).isEqualTo(ConversationType.LIVE_CHAT);
+    assertThat(created.getMatrixRoomId()).isNull();
     verify(sessionService).saveSession(session);
-    verifyNoInteractions(createEnquiryMessageFacade);
     verify(liveEventNotificationService)
         .sendLiveNewAnonymousEnquiryEventToUsers(List.of("consultant-id"), session.getId());
-    // WP-06 Slice 3: the same recipients also get a waiting_room.client.joined timeline card.
     verify(eventNotificationService)
         .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
   }
 
   @Test
-  void
-      createAnonymousConversation_Should_ThrowInternalServerErrorException_When_ProvidedUserDoesNotExist() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          when(userService.getUser(anyString())).thenReturn(Optional.empty());
-          AnonymousUserCredentials credentials =
-              easyRandom.nextObject(AnonymousUserCredentials.class);
+  void rejectsMissingAnonymousUserBeforeCreatingSession() {
+    when(userService.getUser(anyString())).thenReturn(Optional.empty());
+    var credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
 
-          anonymousConversationCreatorService.createAnonymousConversation(
-              USER_DTO_SUCHT, credentials);
+    assertThatThrownBy(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
+        .isInstanceOf(InternalServerErrorException.class);
 
-          verifyNoInteractions(sessionService);
-          verifyNoInteractions(rollbackFacade);
-          verifyNoInteractions(createEnquiryMessageFacade);
-          verifyNoInteractions(agencyService);
-          verifyNoInteractions(consultantAgencyService);
-          verifyNoInteractions(liveEventNotificationService);
-        });
+    verifyNoInteractions(sessionService, rollbackFacade);
   }
 
   @Test
-  void
-      createAnonymousConversation_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_InitializingSessionFails() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
-          when(sessionService.initializeSession(
-                  any(User.class),
-                  any(UserDTO.class),
-                  anyBoolean(),
-                  any(RegistrationType.class),
-                  any(SessionStatus.class)))
-              .thenThrow(new IllegalArgumentException());
-          AnonymousUserCredentials credentials =
-              easyRandom.nextObject(AnonymousUserCredentials.class);
-
-          anonymousConversationCreatorService.createAnonymousConversation(
-              USER_DTO_SUCHT, credentials);
-
-          verifyNoInteractions(rollbackFacade);
-          verifyNoInteractions(createEnquiryMessageFacade);
-          verifyNoInteractions(agencyService);
-          verifyNoInteractions(consultantAgencyService);
-          verifyNoInteractions(liveEventNotificationService);
-        });
-  }
-
-  @Test
-  void
-      createAnonymousConversation_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_CreateRcRoomFails()
-          throws CreateEnquiryException {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
-          when(sessionService.initializeSession(
-                  any(User.class),
-                  any(UserDTO.class),
-                  anyBoolean(),
-                  any(RegistrationType.class),
-                  any(SessionStatus.class)))
-              .thenReturn(SESSION);
-          // EasyRandom cannot instantiate Throwable subclasses on JDK 17 (it fails to access
-          // Throwable's private transient fields via reflection), so build the exception directly.
-          CreateEnquiryException exception =
-              new CreateEnquiryException("error while creating enquiry", new Exception(), null);
-          when(createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(any(), any(), any()))
-              .thenThrow(exception);
-          AnonymousUserCredentials credentials =
-              easyRandom.nextObject(AnonymousUserCredentials.class);
-
-          anonymousConversationCreatorService.createAnonymousConversation(
-              USER_DTO_SUCHT, credentials);
-
-          verifyNoInteractions(agencyService);
-          verifyNoInteractions(consultantAgencyService);
-          verifyNoInteractions(liveEventNotificationService);
-        });
-  }
-
-  @Test
-  void createAnonymousConversation_Should_ReturnSessionAndTriggerLiveEvent()
-      throws CreateEnquiryException {
+  void rollsBackUserWhenSessionInitializationFails() {
     when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
     when(sessionService.initializeSession(
             any(User.class),
@@ -198,38 +104,15 @@ class AnonymousConversationCreatorServiceTest {
             anyBoolean(),
             any(RegistrationType.class),
             any(SessionStatus.class)))
-        .thenReturn(SESSION);
-    when(createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(any(), any(), any()))
-        .thenReturn(ROCKETCHAT_ID);
-    AnonymousUserCredentials credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
+        .thenThrow(new IllegalArgumentException("database unavailable"));
+    var credentials = easyRandom.nextObject(AnonymousUserCredentials.class);
 
-    Session session =
-        anonymousConversationCreatorService.createAnonymousConversation(
-            USER_DTO_SUCHT, credentials);
+    assertThatThrownBy(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("Could not create session");
 
-    assertThat(session, instanceOf(Session.class));
-    verify(liveEventNotificationService, times(1))
-        .sendLiveNewAnonymousEnquiryEventToUsers(any(), any());
-  }
-
-  @Test
-  void createAnonymousConversationShouldStampLiveChatBeforeSaving() throws CreateEnquiryException {
-    Session session = easyRandom.nextObject(Session.class);
-    session.setConversationType(null);
-    when(userService.getUser(anyString())).thenReturn(Optional.of(USER));
-    when(sessionService.initializeSession(
-            any(User.class),
-            any(UserDTO.class),
-            anyBoolean(),
-            any(RegistrationType.class),
-            any(SessionStatus.class)))
-        .thenReturn(session);
-    when(createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(any(), any(), any()))
-        .thenReturn(ROCKETCHAT_ID);
-
-    anonymousConversationCreatorService.createAnonymousConversation(
-        USER_DTO_SUCHT, easyRandom.nextObject(AnonymousUserCredentials.class));
-
-    assertThat(session.getConversationType(), org.hamcrest.Matchers.is(ConversationType.LIVE_CHAT));
+    verify(rollbackFacade).rollBackUserAccount(any());
+    verify(sessionService, never()).saveSession(any());
+    verifyNoInteractions(liveEventNotificationService, eventNotificationService);
   }
 }

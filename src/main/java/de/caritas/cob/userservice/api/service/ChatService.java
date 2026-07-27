@@ -87,10 +87,10 @@ public class ChatService {
     chats.forEach(
         chat ->
             log.info(
-                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                "   - Chat ID: {}, Topic: {}, MatrixRoomId: {}, Owner: {}, Active: {}",
                 chat.getId(),
                 chat.getTopic(),
-                chat.getGroupId(),
+                chat.getMatrixRoomId(),
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
@@ -139,7 +139,7 @@ public class ChatService {
           .toArray(String[]::new);
     }
     return consultantService.findConsultantsByAgencyIds(chatAgencies).stream()
-        .map(Consultant::getRocketChatId)
+        .map(Consultant::getMatrixUserId)
         .toArray(String[]::new);
   }
 
@@ -277,7 +277,7 @@ public class ChatService {
             null,
             null,
             false,
-            chat.getGroupId(),
+            chat.getMatrixRoomId(),
             null,
             false,
             getChatModerators(chat, chatAgencies),
@@ -360,13 +360,13 @@ public class ChatService {
   }
 
   /**
-   * Returns an {@link Optional} of {@link Chat} for the provided group ID.
+   * Returns an {@link Optional} of {@link Chat} for the provided Matrix room ID.
    *
-   * @param groupId rocket chat group ID
+   * @param matrixRoomId Matrix room ID
    * @return {@link Optional} of {@link Chat}
    */
-  public Optional<Chat> getChatByGroupId(String groupId) {
-    return chatRepository.findByGroupId(groupId);
+  public Optional<Chat> getChatByMatrixRoomId(String matrixRoomId) {
+    return chatRepository.findByMatrixRoomId(matrixRoomId);
   }
 
   /**
@@ -386,10 +386,10 @@ public class ChatService {
     chats.forEach(
         chat ->
             log.info(
-                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                "   - Chat ID: {}, Topic: {}, Matrix room ID: {}, Owner: {}, Active: {}",
                 chat.getId(),
                 chat.getTopic(),
-                chat.getGroupId(),
+                chat.getMatrixRoomId(),
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
@@ -409,13 +409,13 @@ public class ChatService {
   }
 
   /**
-   * Returns an {@link List} of {@link UserSessionResponseDTO} for the provided group IDs.
+   * Returns an {@link List} of {@link UserSessionResponseDTO} for the provided Matrix room IDs.
    *
-   * @param groupIds a list of rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @return {@link List<UserSessionResponseDTO>}
    */
-  public List<UserSessionResponseDTO> getChatSessionsByGroupIds(Set<String> groupIds) {
-    var chats = chatRepository.findByGroupIds(groupIds);
+  public List<UserSessionResponseDTO> getChatSessionsByRoomIds(Set<String> matrixRoomIds) {
+    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
     return chats.stream()
         .map(
@@ -425,9 +425,9 @@ public class ChatService {
         .collect(Collectors.toList());
   }
 
-  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByGroupIds(
-      Set<String> groupIds) {
-    var chats = chatRepository.findByGroupIds(groupIds);
+  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByRoomIds(
+      Set<String> matrixRoomIds) {
+    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
     return chats.stream()
         .map(
@@ -519,6 +519,6 @@ public class ChatService {
     this.saveChat(chat);
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
-    return new UpdateChatResponseDTO().groupId(chat.getGroupId());
+    return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }
 }

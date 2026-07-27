@@ -234,7 +234,7 @@ class CreateSessionFacadeTest {
 
     assertThat(result.getStatus(), is(HttpStatus.CONFLICT));
     assertThat(result.getSessionId(), is(session.getId()));
-    assertThat(result.getRcGroupId(), is(session.getGroupId()));
+    assertThat(result.getMatrixRoomId(), is(session.getMatrixRoomId()));
   }
 
   @Test

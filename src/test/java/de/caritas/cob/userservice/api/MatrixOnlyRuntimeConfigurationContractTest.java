@@ -1,0 +1,70 @@
+package de.caritas.cob.userservice.api;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+
+class MatrixOnlyRuntimeConfigurationContractTest {
+
+  private static final Path RESOURCES = Path.of("src/main/resources");
+
+  @Test
+  void releaseWorkflowMustPublishImmutableMultiPlatformImagesWithEvidence() throws IOException {
+    final var buildAction =
+        Files.readString(Path.of(".github/actions/docker-build-push/action.yml"));
+    final var mainWorkflow = Files.readString(Path.of(".github/workflows/ci-main.yml"));
+
+    assertThat(buildAction)
+        .contains("linux/amd64,linux/arm64")
+        .contains("provenance: mode=max")
+        .contains("sbom: true")
+        .contains("value: ${{ steps.build.outputs.digest }}");
+    assertThat(mainWorkflow)
+        .contains("id-token: write")
+        .contains("attestations: write")
+        .contains("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25")
+        .contains("actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
+        .contains(
+            "image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/oriso-userservice@${{ steps.image.outputs.digest }}")
+        .contains("subject-digest: ${{ steps.image.outputs.digest }}");
+  }
+
+  @Test
+  void releaseContainerBaseMustBePinnedByDigest() throws IOException {
+    var fromLines =
+        Files.readAllLines(Path.of("Dockerfile")).stream()
+            .filter(line -> line.startsWith("FROM "))
+            .toList();
+
+    assertThat(fromLines).isNotEmpty().allMatch(line -> line.matches(".*@sha256:[a-f0-9]{64}.*"));
+  }
+
+  @Test
+  void runtimeConfigurationMustNotExposeRocketChatPropertiesOrCaches() throws IOException {
+    var configurationValidator =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/config/ConfigurationValidator.java"));
+    var cacheManager =
+        Files.readString(
+            Path.of("src/main/java/de/caritas/cob/userservice/api/config/CacheManagerConfig.java"));
+
+    assertThat(configurationValidator).doesNotContain("rocket", "Rocket");
+    assertThat(cacheManager).doesNotContain("rocket", "Rocket");
+
+    try (var propertyFiles = Files.list(RESOURCES)) {
+      for (var propertyFile :
+          propertyFiles
+              .filter(path -> path.getFileName().toString().endsWith(".properties"))
+              .toList()) {
+        assertThat(Files.readString(propertyFile))
+            .as(propertyFile.toString())
+            .doesNotContain("rocket-chat.", "rocket.technical.", "rocket.systemuser.")
+            .doesNotContain("cache.rocketchat.");
+      }
+    }
+  }
+}

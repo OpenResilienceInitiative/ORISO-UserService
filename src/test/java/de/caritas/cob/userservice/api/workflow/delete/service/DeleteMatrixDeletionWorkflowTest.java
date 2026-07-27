@@ -11,7 +11,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -48,7 +47,6 @@ class DeleteMatrixDeletionWorkflowTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionRepository sessionRepository;
   @Mock private ChatRepository chatRepository;
-  @Mock private RocketChatService rocketChatService;
 
   @Test
   void askerDeletionWorkflow_Should_purgeRoomAndDeactivateUser_When_matrixDataExists() {
@@ -118,22 +116,18 @@ class DeleteMatrixDeletionWorkflowTest {
   }
 
   @Test
-  void groupChatDeletionWorkflow_Should_purgeMatrixRoom_When_chatHasMatrixRoomId()
-      throws Exception {
+  void groupChatDeletionWorkflow_Should_purgeMatrixRoom_When_chatHasMatrixRoomId() {
     Consultant consultant = new Consultant();
     Chat chat = new Chat();
     chat.setMatrixRoomId(GROUP_CHAT_ROOM_ID);
-    chat.setGroupId("rc-group-id");
     chat.setChatOwner(consultant);
     when(chatRepository.findByChatOwner(consultant)).thenReturn(List.of(chat));
     when(matrixSynapseService.purgeRoom(GROUP_CHAT_ROOM_ID)).thenReturn(true);
 
     var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-    new DeleteChatAction(chatRepository, rocketChatService, matrixSynapseService)
-        .execute(workflowDTO);
+    new DeleteChatAction(chatRepository, matrixSynapseService).execute(workflowDTO);
 
     verify(matrixSynapseService, times(1)).purgeRoom(GROUP_CHAT_ROOM_ID);
-    verify(rocketChatService, times(1)).deleteGroupAsTechnicalUser("rc-group-id");
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
   }
 

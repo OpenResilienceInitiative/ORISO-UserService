@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.facade.conversation;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_SUCHT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
@@ -42,7 +41,7 @@ public class CreateAnonymousEnquiryFacadeTest {
   EasyRandom easyRandom = new EasyRandom();
 
   @Test
-  void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse_WithoutRocketChatCredentials() {
+  void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {
     CreateAnonymousEnquiryDTO request = new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT);
     AnonymousUserCredentials credentials =
         AnonymousUserCredentials.builder()
@@ -53,7 +52,7 @@ public class CreateAnonymousEnquiryFacadeTest {
             .refreshExpiresIn(600)
             .build();
     Session session = easyRandom.nextObject(Session.class);
-    session.setGroupId(null);
+    session.setMatrixRoomId(null);
     when(anonymousUserCreatorService.createAnonymousUser(any())).thenReturn(credentials);
     when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
         .thenReturn(session);
@@ -62,9 +61,6 @@ public class CreateAnonymousEnquiryFacadeTest {
 
     assertEquals("access-token", response.getAccessToken());
     assertEquals(session.getId(), response.getSessionId());
-    assertNull(response.getRcUserId());
-    assertNull(response.getRcToken());
-    assertNull(response.getRcGroupId());
   }
 
   @Test

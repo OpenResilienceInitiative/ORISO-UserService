@@ -839,10 +839,7 @@ public class CaseHandoverService {
   }
 
   private String buildConsultantSessionActionPath(Session session) {
-    String roomRef =
-        session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()
-            ? session.getMatrixRoomId()
-            : session.getGroupId();
+    String roomRef = session.getMatrixRoomId();
     return roomRef != null
         ? "/sessions/consultant/sessionView/" + roomRef + "/" + session.getId()
         : null;
