@@ -11,8 +11,6 @@ public interface IdentityClient {
 
   void updateUserRole(final String userId);
 
-  void ensureRole(final String userId, final String roleName);
-
   void updateRole(final String userId, final UserRole role);
 
   void removeRoleIfPresent(final String userId, final String roleName);

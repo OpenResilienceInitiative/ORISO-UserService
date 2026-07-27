@@ -21,8 +21,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -57,9 +57,9 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock private AgencyService agencyService;
 
-  @Mock private IdentityClient identityClient;
-
   @Mock private IdentityRoleLookup identityRoleLookup;
+
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private RocketChatAsyncHelper rocketChatAsyncHelper;
 
@@ -337,7 +337,9 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         .thenReturn(Optional.of(consultant));
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(0))
-        .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
+        .thenReturn(
+            givenConsultingTypeWithRoles(
+                "main", List.of("consultant-role", "u25-consultant", "consultant-role")));
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("main").agencyId(15L);
@@ -345,7 +347,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         "consultant Id", createConsultantAgencyDTO);
 
-    verify(identityClient).ensureRole("consultant Id", "consultant-role");
+    verify(identityRoleUpdater)
+        .ensureRoles("consultant Id", Set.of("consultant-role", "u25-consultant"));
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 

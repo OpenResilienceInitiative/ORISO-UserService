@@ -198,6 +198,13 @@ closed.
   in-process. Each check therefore performs exactly one external full-role
   read; the broad command client no longer exposes role-membership or authority
   reads.
+- Consultant role assignment now uses the focused `IdentityRoleUpdater` batch
+  port. Empty requests stop without an identity call. Non-empty requests
+  deduplicate role names, perform one initial full-role read and add every
+  missing role in one Keycloak call per attempt. Post-write visibility is also
+  checked for the complete requested set with one full-role read per bounded
+  retry, independent of role count. The broad command client no longer exposes
+  role ensuring.
 - Email-ownership validation now consumes the focused
   `IdentityEmailOwnerLookup` port and the typed `IdentityEmailOwner` result.
   Application code no longer interprets Keycloak adapter map keys. This is a
@@ -266,14 +273,14 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Current-account password and preferred-language changes use the focused `IdentityAccountSettingsUpdater`, leaving provisioning/reset password writes on their existing command. Username availability uses the focused `IdentityUsernameAvailability` port; four active consumers no longer depend on the broad command client for this read, and `UserVerifier` no longer retains an unused identity dependency. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads and application role-membership checks use the focused `IdentityRoleLookup` port; the broad command client no longer exposes full role lists, role-membership reads or the unused authority evaluator. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. OTP and email-verification operations use the focused `IdentitySecondFactor` port and typed application values; generated Keycloak DTOs and string-key maps stay adapter-internal. The unused identity session-close command has been deleted across the broad port and both Keycloak wrappers. | The broad `IdentityClient` still exposes web-layer user command DTOs plus mixed provisioning, role-write and lifecycle commands; outbound consumers still use `IdentityClientConfig`. |
+| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Current-account password and preferred-language changes use the focused `IdentityAccountSettingsUpdater`, leaving provisioning/reset password writes on their existing command. Username availability uses the focused `IdentityUsernameAvailability` port; four active consumers no longer depend on the broad command client for this read, and `UserVerifier` no longer retains an unused identity dependency. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads and application role-membership checks use the focused `IdentityRoleLookup` port; batched consultant role assignment uses `IdentityRoleUpdater`. The broad command client no longer exposes full role lists, role-membership reads, role ensuring or the unused authority evaluator. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. OTP and email-verification operations use the focused `IdentitySecondFactor` port and typed application values; generated Keycloak DTOs and string-key maps stay adapter-internal. The unused identity session-close command has been deleted across the broad port and both Keycloak wrappers. | The broad `IdentityClient` still exposes web-layer user command DTOs plus mixed provisioning, singular role assignment/removal and lifecycle commands; outbound consumers still use `IdentityClientConfig`. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
 The identity/profile seam also includes the focused
 `IdentityEmailAddressUpdater` for current-account and post-verification writes.
-The remaining broad client debt is provisioning, role writes and account
-lifecycle commands.
+The remaining broad client debt is provisioning, singular role
+assignment/removal and account lifecycle commands.
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
@@ -297,6 +304,11 @@ The role-read contract keeps full realm-role reads and application
 role-membership checks behind the focused `IdentityRoleLookup` port, prevents
 per-candidate role checks from returning to consultant-agency validation and
 rejects role-membership or authority reads on the broad command client. The
+role-write contract requires both consultant-role writers to use the focused
+`IdentityRoleUpdater` batch port and rejects role ensuring on the broad command
+client. Adapter interaction tests enforce the zero-call empty path, one initial
+read, deduplication, one batch add per attempt and one complete-set visibility
+read per bounded retry. The
 email-owner contract likewise keeps the read off the broad command port and
 rejects application-level dependence on Keycloak adapter map keys. The
 email-mutation contract requires both active consumers and the Keycloak adapter

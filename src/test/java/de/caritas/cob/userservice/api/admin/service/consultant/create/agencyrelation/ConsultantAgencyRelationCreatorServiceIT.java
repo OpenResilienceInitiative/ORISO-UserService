@@ -10,6 +10,8 @@ import static org.hibernate.search.util.impl.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -185,7 +187,10 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
 
-    roles.forEach(role -> verify(keycloakService).ensureRole(consultant.getId(), role));
+    verify(keycloakService)
+        .ensureRoles(
+            eq(consultant.getId()),
+            argThat(roleNames -> Set.copyOf(roleNames).equals(Set.copyOf(roles))));
     var result =
         consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 

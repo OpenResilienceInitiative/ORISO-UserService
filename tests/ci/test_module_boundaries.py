@@ -557,6 +557,46 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The unused provider-specific authority evaluator must be removed",
         )
 
+    def test_role_write_consumers_use_the_focused_batch_identity_port(self):
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/GrantConsultantIdentityService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Realm-role writers must depend on the focused batch role-write port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            "ensureRole(",
+            identity_client,
+            "The broad identity command client must not own role ensuring",
+        )
+        for source in consumers:
+            self.assertNotIn(
+                "identityClient.ensureRole(",
+                source.read_text(),
+                f"{source.name} must batch role writes through IdentityRoleUpdater",
+            )
+
     def test_email_mutation_consumers_use_a_focused_identity_email_port(self):
         port = (
             ROOT

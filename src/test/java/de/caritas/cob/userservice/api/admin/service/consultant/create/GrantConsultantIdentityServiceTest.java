@@ -30,9 +30,11 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +56,7 @@ class GrantConsultantIdentityServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private RocketChatService rocketChatService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantService consultantService;
@@ -98,7 +101,7 @@ class GrantConsultantIdentityServiceTest {
         BadRequestException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient, never()).ensureRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
     verify(consultantService, never()).saveConsultant(any());
   }
 
@@ -116,7 +119,7 @@ class GrantConsultantIdentityServiceTest {
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0),
         is("CONSULTANT_IDENTITY_ALREADY_GRANTED"));
-    verify(identityClient, never()).ensureRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
     verify(consultantService, never()).saveConsultant(any());
   }
 
@@ -135,7 +138,7 @@ class GrantConsultantIdentityServiceTest {
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0),
         is("CONSULTANT_IDENTITY_ALREADY_GRANTED"));
-    verify(identityClient, never()).ensureRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
   }
 
   @Test
@@ -150,7 +153,7 @@ class GrantConsultantIdentityServiceTest {
 
     var response = grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
 
-    verify(identityClient).ensureRole(ADMIN_ID, CONSULTANT.getValue());
+    verify(identityRoleUpdater).ensureRoles(ADMIN_ID, Set.of(CONSULTANT.getValue()));
 
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
@@ -183,7 +186,7 @@ class GrantConsultantIdentityServiceTest {
         BadRequestException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient, never()).ensureRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
     verify(consultantService, never()).saveConsultant(any());
   }
 
@@ -200,8 +203,8 @@ class GrantConsultantIdentityServiceTest {
 
     grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
 
-    verify(identityClient).ensureRole(ADMIN_ID, CONSULTANT.getValue());
-    verify(identityClient).ensureRole(ADMIN_ID, GROUP_CHAT_CONSULTANT.getValue());
+    verify(identityRoleUpdater)
+        .ensureRoles(ADMIN_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
   }
 
   @Test
