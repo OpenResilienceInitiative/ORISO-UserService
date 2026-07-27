@@ -1154,16 +1154,6 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void closeSession_Should_deleteSession() {
-    RealmResource realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
-
-    this.keycloakService.closeSession("sessionId");
-
-    verify(realmResource, times(1)).deleteSession(anyString(), eq(false));
-  }
-
-  @Test
   public void deactivateUser_Should_deactivateUser() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);

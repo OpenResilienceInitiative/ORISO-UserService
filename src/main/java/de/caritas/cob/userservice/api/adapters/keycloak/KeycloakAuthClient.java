@@ -26,8 +26,8 @@ import org.springframework.web.client.RestTemplate;
 
 /**
  * Keycloak OpenID Connect / session operations extracted from {@link KeycloakService} (issue #91
- * Keycloak refactor, PR1 auth slice). Keeps login/logout/OTP-verify/session close behind a focused
- * collaborator so {@link KeycloakService} can stay the {@code IdentityClient} facade.
+ * Keycloak refactor, PR1 auth slice). Keeps login, refresh-token logout and password verification
+ * behind a focused collaborator.
  */
 @Slf4j
 @Component
@@ -123,15 +123,6 @@ public class KeycloakAuthClient {
 
       return false;
     }
-  }
-
-  /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
-   */
-  public void closeSession(String sessionId) {
-    keycloakClient.getRealmResource().deleteSession(sessionId, false);
   }
 
   private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {

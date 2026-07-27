@@ -35,7 +35,5 @@ public interface IdentityClient {
 
   void deleteUser(String userId);
 
-  void closeSession(String sessionId);
-
   void deactivateUser(String userId);
 }

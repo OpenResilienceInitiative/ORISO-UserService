@@ -10,7 +10,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -25,7 +24,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.admin.client.resource.RealmResource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -194,15 +192,5 @@ class KeycloakAuthClientTest {
 
     assertThat(keycloakAuthClient.logoutUser(REFRESH_TOKEN), is(false));
     assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
-  }
-
-  @Test
-  void closeSession_Should_DeleteSession() {
-    var realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
-
-    keycloakAuthClient.closeSession("sessionId");
-
-    verify(realmResource, times(1)).deleteSession(eq("sessionId"), eq(false));
   }
 }
