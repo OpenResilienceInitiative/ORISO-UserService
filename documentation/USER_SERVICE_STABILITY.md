@@ -201,6 +201,12 @@ hourly interval. A losing replica exits before setting the technical tenant
 context or invoking the lifecycle service. Its two-instance regression test
 first reproduced two workflow calls and now observes exactly one.
 
+The anonymous-user deletion scheduler likewise claims
+`anonymous-user-deletion` for 30 minutes before setting the technical tenant
+context or starting the irreversible deletion workflow. The red two-instance
+proof observed both replicas executing the workflow; the fixed regression
+observes one winner and no downstream work from the losing replica.
+
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
