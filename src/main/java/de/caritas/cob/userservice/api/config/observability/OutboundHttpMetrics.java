@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.restclient.RestTemplateCustomizer;
 import org.springframework.http.HttpRequest;
@@ -56,7 +58,29 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
   @Override
   public void customize(RestTemplate restTemplate) {
     restTemplate.setObservationConvention(OBSERVATION_CONVENTION);
-    restTemplate.getInterceptors().add(new MetricsInterceptor(meterRegistry));
+    restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+  }
+
+  /**
+   * Observes a Java HTTP client call whose transport result is delivered asynchronously.
+   *
+   * <p>Only caller-supplied, low-cardinality dependency and method values become tags. Exception
+   * messages, request URLs and identifiers are deliberately excluded.
+   */
+  public <T> CompletableFuture<T> observeAsyncCall(
+      String dependency, String method, long requestBytes, Callable<CompletableFuture<T>> call) {
+    var sample = Timer.start(meterRegistry);
+    recordPayload(dependency, "request", requestBytes);
+
+    try {
+      return call.call()
+          .whenComplete(
+              (response, failure) ->
+                  recordCall(sample, dependency, method, failure == null ? "2xx" : "async_error"));
+    } catch (Exception failure) {
+      recordCall(sample, dependency, method, "client_error");
+      return CompletableFuture.failedFuture(failure);
+    }
   }
 
   /** Records a deliberately scheduled retry in one of the service's bounded retry loops. */
@@ -69,7 +93,30 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         .increment();
   }
 
-  private record MetricsInterceptor(MeterRegistry meterRegistry)
+  private void recordCall(Timer.Sample sample, String dependency, String method, String outcome) {
+    Counter.builder(CALLS)
+        .description("Outbound HTTP attempts, including attempts that fail")
+        .tags("dependency", dependency, "method", method, "outcome", outcome)
+        .register(meterRegistry)
+        .increment();
+    sample.stop(
+        Timer.builder(LATENCY)
+            .description("Outbound HTTP latency")
+            .serviceLevelObjectives(LATENCY_SLOS)
+            .tags("dependency", dependency, "method", method, "outcome", outcome)
+            .register(meterRegistry));
+  }
+
+  private void recordPayload(String dependency, String direction, long bytes) {
+    DistributionSummary.builder(PAYLOAD)
+        .description("Outbound HTTP payload bytes when their size is known")
+        .baseUnit("bytes")
+        .tags("dependency", dependency, "direction", direction)
+        .register(meterRegistry)
+        .record(bytes);
+  }
+
+  private record MetricsInterceptor(OutboundHttpMetrics metrics)
       implements ClientHttpRequestInterceptor {
 
     @Override
@@ -77,7 +124,7 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         HttpRequest request, byte[] body, ClientHttpRequestExecution execution) throws IOException {
       var dependency = dependency(request);
       var method = request.getMethod().name().toLowerCase(Locale.ROOT);
-      var sample = Timer.start(meterRegistry);
+      var sample = Timer.start(metrics.meterRegistry);
       ClientHttpResponse response = null;
       String outcome = "io_error";
 
@@ -86,10 +133,10 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         outcome = response.getStatusCode().value() / 100 + "xx";
         return response;
       } finally {
-        recordCall(sample, dependency, method, outcome);
-        recordPayload(dependency, "request", body.length);
+        metrics.recordCall(sample, dependency, method, outcome);
+        metrics.recordPayload(dependency, "request", body.length);
         if (response != null && response.getHeaders().getContentLength() >= 0) {
-          recordPayload(dependency, "response", response.getHeaders().getContentLength());
+          metrics.recordPayload(dependency, "response", response.getHeaders().getContentLength());
         }
       }
     }
@@ -97,29 +144,6 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
     private String dependency(HttpRequest request) {
       var host = request.getURI().getHost();
       return host == null || host.isBlank() ? "relative-uri" : host.toLowerCase(Locale.ROOT);
-    }
-
-    private void recordCall(Timer.Sample sample, String dependency, String method, String outcome) {
-      Counter.builder(CALLS)
-          .description("Outbound HTTP attempts, including attempts that fail")
-          .tags("dependency", dependency, "method", method, "outcome", outcome)
-          .register(meterRegistry)
-          .increment();
-      sample.stop(
-          Timer.builder(LATENCY)
-              .description("Outbound HTTP latency")
-              .serviceLevelObjectives(LATENCY_SLOS)
-              .tags("dependency", dependency, "method", method, "outcome", outcome)
-              .register(meterRegistry));
-    }
-
-    private void recordPayload(String dependency, String direction, long bytes) {
-      DistributionSummary.builder(PAYLOAD)
-          .description("Outbound HTTP payload bytes when their size is known")
-          .baseUnit("bytes")
-          .tags("dependency", dependency, "direction", direction)
-          .register(meterRegistry)
-          .record(bytes);
     }
   }
 }

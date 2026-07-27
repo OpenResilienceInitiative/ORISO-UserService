@@ -135,6 +135,31 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_live_event_callers_do_not_import_generated_liveservice_transport(self):
+        application_roots = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/liveevents",
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/actions/session",
+        )
+        forbidden_prefix = (
+            "import de.caritas.cob.userservice.liveservice.generated."
+        )
+        offenders = []
+
+        for application_root in application_roots:
+            for source in application_root.rglob("*.java"):
+                for line in source.read_text().splitlines():
+                    if line.startswith(forbidden_prefix):
+                        offenders.append(f"{source.relative_to(ROOT)} imports {line}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Live-event callers must use the transport-neutral gateway; generated "
+            "LiveService types stay inside the outbound adapter:\n"
+            + "\n".join(offenders),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

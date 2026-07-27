@@ -1,41 +1,32 @@
 package de.caritas.cob.userservice.api.service.liveevents;
 
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_CONVERSATION_FINISHED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_ENQUIRY_ACCEPTED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.DIRECT_MESSAGE;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.NEW_ANONYMOUS_ENQUIRY;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.anonymousConversationFinished;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.anonymousEnquiryAccepted;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.directMessage;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.newAnonymousEnquiry;
 import static java.util.Collections.singletonList;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.config.apiclient.LiveServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.LiveEventGateway;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
-import de.caritas.cob.userservice.liveservice.generated.ApiException;
-import de.caritas.cob.userservice.liveservice.generated.web.model.LiveEventMessage;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
 import java.util.List;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Service class to provide live event triggers to the live service. */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LiveEventNotificationService {
 
-  private final @NonNull LiveServiceApiControllerFactory liveServiceApiControllerFactory;
+  private final @NonNull LiveEventGateway liveEventGateway;
   private final @NonNull UserIdsProviderFactory userIdsProviderFactory;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull MobilePushNotificationService mobilePushNotificationService;
-
-  private static final String MATRIX_ROOM_ID_MESSAGE_TEMPLATE = "Matrix room ID: %s";
-  private static final String NEW_ANONYMOUS_ENQUIRY_MESSAGE_TEMPLATE = "Anonymous Enquiry ID: %s";
 
   /**
    * Sends a anonymous enquiry accepted event to the live service,
@@ -44,11 +35,7 @@ public class LiveEventNotificationService {
    */
   public void sendAcceptAnonymousEnquiryEventToUser(String userId) {
     if (isNotBlank(userId)) {
-      var liveEventMessage =
-          new LiveEventMessage()
-              .eventType(ANONYMOUS_ENQUIRY_ACCEPTED)
-              .userIds(singletonList(userId));
-      sendLiveEventMessage(liveEventMessage);
+      liveEventGateway.send(anonymousEnquiryAccepted(singletonList(userId)));
     }
   }
 
@@ -66,28 +53,7 @@ public class LiveEventNotificationService {
    */
   public void sendEventNotificationCreatedEventToUser(String userId) {
     if (isNotBlank(userId)) {
-      var liveEventMessage =
-          new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList(userId));
-      sendLiveEventMessage(liveEventMessage);
-    }
-  }
-
-  private void sendLiveEventMessage(LiveEventMessage liveEventMessage) {
-    sendLiveEventMessage(
-        liveEventMessage,
-        () -> String.format("Unable to trigger live event message %s", liveEventMessage));
-  }
-
-  private void sendLiveEventMessage(
-      LiveEventMessage liveEventMessage, Supplier<String> errorMessageSupplier) {
-    try {
-      this.liveServiceApiControllerFactory.createControllerApi().sendLiveEvent(liveEventMessage);
-    } catch (ApiException | RuntimeException e) {
-      // Live events are best-effort. Besides the declared ApiException, a transport failure (e.g.
-      // the live service host is unreachable → UnresolvedAddressException/ConnectException wrapped
-      // in a RuntimeException by the java.net.http client) must never break the enquiry/session
-      // flow that fired the event — online consultants reconcile via the next queue poll anyway.
-      log.error("Internal Server Error: {}", errorMessageSupplier.get(), e);
+      liveEventGateway.send(directMessage(singletonList(userId)));
     }
   }
 
@@ -124,22 +90,8 @@ public class LiveEventNotificationService {
 
   private void triggerDirectMessageLiveEvent(List<String> userIds, String matrixRoomId) {
     if (isNotEmpty(userIds)) {
-      var liveEventMessage = new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(userIds);
-
-      sendLiveEventMessage(
-          liveEventMessage,
-          () -> {
-            var roomMessage = String.format(MATRIX_ROOM_ID_MESSAGE_TEMPLATE, matrixRoomId);
-            return makeUserIdsEventTypeMessage(liveEventMessage, roomMessage);
-          });
+      liveEventGateway.send(directMessage(userIds));
     }
-  }
-
-  private String makeUserIdsEventTypeMessage(
-      LiveEventMessage triggeredLiveEventMessage, String withMessage) {
-    return String.format(
-        "Unable to trigger %s live event message %s",
-        triggeredLiveEventMessage.getEventType(), withMessage);
   }
 
   /**
@@ -150,16 +102,7 @@ public class LiveEventNotificationService {
    */
   public void sendLiveNewAnonymousEnquiryEventToUsers(List<String> userIds, Long sessionId) {
     if (isNotEmpty(userIds)) {
-      var liveEventMessage =
-          new LiveEventMessage().eventType(NEW_ANONYMOUS_ENQUIRY).userIds(userIds);
-
-      sendLiveEventMessage(
-          liveEventMessage,
-          () -> {
-            var anonymousEnquiryMessage =
-                String.format(NEW_ANONYMOUS_ENQUIRY_MESSAGE_TEMPLATE, sessionId);
-            return makeUserIdsEventTypeMessage(liveEventMessage, anonymousEnquiryMessage);
-          });
+      liveEventGateway.send(newAnonymousEnquiry(userIds));
     }
   }
 
@@ -169,15 +112,9 @@ public class LiveEventNotificationService {
    * @param userIds list of consultant user IDs
    */
   public void sendLiveFinishedAnonymousConversationToUsers(
-      List<String> userIds, FinishConversationPhaseEnum finishConversationPhase) {
+      List<String> userIds, FinishConversationPhase finishConversationPhase) {
     if (isNotEmpty(userIds)) {
-      var liveEventMessage =
-          new LiveEventMessage()
-              .eventType(ANONYMOUS_CONVERSATION_FINISHED)
-              .eventContent(new StatusSource().finishConversationPhase(finishConversationPhase))
-              .userIds(userIds);
-
-      sendLiveEventMessage(liveEventMessage);
+      liveEventGateway.send(anonymousConversationFinished(userIds, finishConversationPhase));
     }
   }
 }
