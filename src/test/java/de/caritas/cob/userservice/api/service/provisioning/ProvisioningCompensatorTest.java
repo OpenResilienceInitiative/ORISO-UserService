@@ -128,6 +128,7 @@ class ProvisioningCompensatorTest {
     ProvisioningAttempt attempt = compensator.begin(ProvisioningWorkflow.LEGACY_ASKER_WITH_SESSION);
     attempt.register(
         ProvisioningResource.DATABASE_USER,
+        "db-user-42",
         () -> {
           throw new IllegalStateException("sensitive failure details");
         });
@@ -144,8 +145,33 @@ class ProvisioningCompensatorTest {
                           result.operationId(),
                           "legacy_asker_with_session",
                           "database_user",
+                          "repairReference=db-user-42",
                           "IllegalStateException")
                       .doesNotContain("sensitive failure details"));
+    }
+  }
+
+  @Test
+  void repairIdentifierIsBoundedAndCannotInjectAnotherLogLine() {
+    ProvisioningAttempt attempt = compensator.begin(ProvisioningWorkflow.REGISTERED_USER);
+    attempt.register(
+        ProvisioningResource.CHAT_IDENTITY,
+        "chat-id\n" + "x".repeat(200),
+        () -> {
+          throw new IllegalStateException("failure");
+        });
+
+    try (LogbackCaptor logs = LogbackCaptor.forClass(ProvisioningAttempt.class)) {
+      attempt.compensateIfIncomplete();
+
+      assertThat(logs.messages(Level.WARN))
+          .singleElement()
+          .satisfies(
+              message ->
+                  assertThat(message)
+                      .contains("repairReference=chat-id_x")
+                      .doesNotContain("\n")
+                      .hasSizeLessThan(400));
     }
   }
 }

@@ -110,9 +110,12 @@ public class CreateUserFacade {
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
       ProvisioningAttempt activeAttempt = provisioningAttempt;
-      activeAttempt.register(IDENTITY_USER, () -> identityClient.rollBackUser(identityUserId));
       activeAttempt.register(
-          DATABASE_USER, () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
+          IDENTITY_USER, identityUserId, () -> identityClient.rollBackUser(identityUserId));
+      activeAttempt.register(
+          DATABASE_USER,
+          identityUserId,
+          () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
       var user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER);
       provisionedUser.set(user);
 
@@ -145,7 +148,8 @@ public class CreateUserFacade {
       }
 
       var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      activeAttempt.register(SESSION, () -> deleteSessionsForUser(provisionedUser.get()));
+      activeAttempt.register(
+          SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
 
       NewRegistrationResponseDto registration;
       try {
@@ -209,6 +213,7 @@ public class CreateUserFacade {
         if (provisioningAttempt != null) {
           provisioningAttempt.register(
               CHAT_IDENTITY,
+              user.getUserId(),
               () -> {
                 if (!matrixSynapseService.deactivateUser(matrixUserId)) {
                   throw new IllegalStateException(

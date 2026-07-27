@@ -174,7 +174,7 @@ public class AskerImportService {
         CreatedIdentity response = identityClient.createUser(userDTO, "", "");
         String keycloakUserId = CreatedIdentity.requireUserId(response);
         provisioningAttempt.register(
-            IDENTITY_USER, () -> identityClient.rollBackUser(keycloakUserId));
+            IDENTITY_USER, keycloakUserId, () -> identityClient.rollBackUser(keycloakUserId));
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
@@ -198,7 +198,8 @@ public class AskerImportService {
                 userDTO.getEmail(),
                 extendedConsultingTypeResponseDTO.getLanguageFormal());
         if (dbUser != null) {
-          provisioningAttempt.register(DATABASE_USER, () -> userService.deleteUser(dbUser));
+          provisioningAttempt.register(
+              DATABASE_USER, dbUser.getUserId(), () -> userService.deleteUser(dbUser));
         }
         if (dbUser.getUserId() == null || dbUser.getUserId().equals(StringUtils.EMPTY)) {
           throw new ImportException(
@@ -212,7 +213,7 @@ public class AskerImportService {
         String rcUserId = rcUserResponse.getBody().getData().getUserId();
         if (StringUtils.isNotBlank(rcUserId)) {
           provisioningAttempt.register(
-              LEGACY_CHAT_USER, () -> rocketChatService.deleteUser(rcUserId));
+              LEGACY_CHAT_USER, rcUserId, () -> rocketChatService.deleteUser(rcUserId));
         }
         if (rcUserToken == null
             || rcUserToken.equals(StringUtils.EMPTY)
@@ -242,7 +243,7 @@ public class AskerImportService {
         // Create user-agency-relation
         UserAgency userAgency = getUserAgency(dbUser, agencyDTO.getId());
         provisioningAttempt.register(
-            USER_AGENCY, () -> userAgencyService.deleteUserAgency(userAgency));
+            USER_AGENCY, dbUser.getUserId(), () -> userAgencyService.deleteUserAgency(userAgency));
         userAgencyService.saveUserAgency(userAgency);
 
         writeToImportLog(
@@ -382,7 +383,7 @@ public class AskerImportService {
         CreatedIdentity response = identityClient.createUser(userDTO, "", "");
         String keycloakUserId = CreatedIdentity.requireUserId(response);
         provisioningAttempt.register(
-            IDENTITY_USER, () -> identityClient.rollBackUser(keycloakUserId));
+            IDENTITY_USER, keycloakUserId, () -> identityClient.rollBackUser(keycloakUserId));
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
           userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
@@ -406,7 +407,8 @@ public class AskerImportService {
                 userDTO.getEmail(),
                 extendedConsultingTypeResponseDTO.getLanguageFormal());
         if (dbUser != null) {
-          provisioningAttempt.register(DATABASE_USER, () -> userService.deleteUser(dbUser));
+          provisioningAttempt.register(
+              DATABASE_USER, dbUser.getUserId(), () -> userService.deleteUser(dbUser));
         }
         if (dbUser.getUserId() == null || dbUser.getUserId().equals(StringUtils.EMPTY)) {
           throw new ImportException(
@@ -417,7 +419,8 @@ public class AskerImportService {
         Session session =
             sessionService.initializeSession(dbUser, userDTO, isTrue(agencyDTO.getTeamAgency()));
         if (session != null) {
-          provisioningAttempt.register(SESSION, () -> sessionService.deleteSession(session));
+          provisioningAttempt.register(
+              SESSION, dbUser.getUserId(), () -> sessionService.deleteSession(session));
         }
         if (session.getId() == null) {
           throw new ImportException(
@@ -431,7 +434,7 @@ public class AskerImportService {
         String rcUserId = rcUserResponse.getBody().getData().getUserId();
         if (StringUtils.isNotBlank(rcUserId)) {
           provisioningAttempt.register(
-              LEGACY_CHAT_USER, () -> rocketChatService.deleteUser(rcUserId));
+              LEGACY_CHAT_USER, rcUserId, () -> rocketChatService.deleteUser(rcUserId));
         }
         if (rcUserToken == null
             || rcUserToken.equals(StringUtils.EMPTY)
@@ -458,6 +461,7 @@ public class AskerImportService {
         if (StringUtils.isNotBlank(rcGroupId)) {
           provisioningAttempt.register(
               LEGACY_CHAT_GROUP,
+              rcGroupId,
               () -> {
                 if (!rocketChatService.deleteGroupAsSystemUser(rcGroupId)) {
                   throw new IllegalStateException(

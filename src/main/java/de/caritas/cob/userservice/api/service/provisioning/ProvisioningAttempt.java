@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class ProvisioningAttempt {
 
+  private static final int MAX_REPAIR_REFERENCE_LENGTH = 128;
+
   private final MeterRegistry meterRegistry;
   private final ProvisioningWorkflow workflow;
   private final String operationId;
@@ -24,7 +26,12 @@ public final class ProvisioningAttempt {
   }
 
   public void register(ProvisioningResource resource, CompensationAction action) {
-    steps.add(new CompensationStep(resource, action));
+    register(resource, "unavailable", action);
+  }
+
+  public void register(
+      ProvisioningResource resource, String repairReference, CompensationAction action) {
+    steps.add(new CompensationStep(resource, boundedRepairReference(repairReference), action));
   }
 
   public void complete() {
@@ -52,10 +59,11 @@ public final class ProvisioningAttempt {
         failedResources.add(step.resource());
         recordStep(step.resource(), "failure");
         log.warn(
-            "Provisioning compensation failed operationId={} workflow={} resource={} exception={}",
+            "Provisioning compensation failed operationId={} workflow={} resource={} repairReference={} exception={}",
             operationId,
             workflow.metricValue(),
             step.resource().metricValue(),
+            step.repairReference(),
             exception.getClass().getSimpleName());
       }
     }
@@ -91,5 +99,15 @@ public final class ProvisioningAttempt {
         .increment();
   }
 
-  private record CompensationStep(ProvisioningResource resource, CompensationAction action) {}
+  private String boundedRepairReference(String repairReference) {
+    if (repairReference == null || repairReference.isBlank()) {
+      return "unavailable";
+    }
+    String logSafeReference = repairReference.replaceAll("[^A-Za-z0-9._:@-]", "_");
+    return logSafeReference.substring(
+        0, Math.min(logSafeReference.length(), MAX_REPAIR_REFERENCE_LENGTH));
+  }
+
+  private record CompensationStep(
+      ProvisioningResource resource, String repairReference, CompensationAction action) {}
 }
