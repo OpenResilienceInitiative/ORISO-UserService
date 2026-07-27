@@ -90,6 +90,28 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "concrete identity or chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_username_availability_web_boundaries_depend_on_identity_input_port(self):
+        sources = (
+            CONTROLLERS / "UserController.java",
+            CONTROLLERS / "UserRegistrationControllerDelegate.java",
+        )
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Username-availability web adapters must call IdentityManaging instead "
+            "of bypassing the application boundary through IdentityClient:\n"
+            + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

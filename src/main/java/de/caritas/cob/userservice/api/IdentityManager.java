@@ -65,6 +65,11 @@ public class IdentityManager implements IdentityManaging {
   }
 
   @Override
+  public boolean isUsernameAvailable(String username) {
+    return identityClient.isUsernameAvailable(username);
+  }
+
+  @Override
   public boolean isEmailAvailableOrOwn(String username, String email) {
     var user = identityClient.findUserByEmail(email);
 
