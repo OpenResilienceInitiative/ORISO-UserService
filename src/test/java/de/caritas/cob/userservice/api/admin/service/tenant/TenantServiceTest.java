@@ -14,7 +14,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -77,9 +76,8 @@ class TenantServiceTest {
     var result = tenantService.getRestrictedTenantData(Set.of(TENANT_ID, 99L));
 
     assertThat(result).containsExactly(knownTenant);
-    assertThat(tenantControllerApi.requestedTenantIds.get())
-        .containsExactlyInAnyOrder(TENANT_ID, 99L);
     assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+    assertThat(tenantControllerApi.lastTenantIds).containsExactlyInAnyOrder(TENANT_ID, 99L);
     assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 
@@ -280,24 +278,24 @@ class TenantServiceTest {
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
     List<RestrictedTenantDTO> tenantIdsResult;
+    List<Long> lastTenantIds;
     RuntimeException subdomainException;
     RuntimeException tenantIdException;
     final AtomicInteger subdomainCalls = new AtomicInteger();
     final AtomicInteger tenantIdCalls = new AtomicInteger();
     final AtomicInteger tenantIdsCalls = new AtomicInteger();
-    final AtomicReference<List<Long>> requestedTenantIds = new AtomicReference<>();
     CountDownLatch[] subdomainLatch;
 
     void reset() {
       subdomainResult = null;
       tenantIdResult = null;
       tenantIdsResult = null;
+      lastTenantIds = null;
       subdomainException = null;
       tenantIdException = null;
       subdomainCalls.set(0);
       tenantIdCalls.set(0);
       tenantIdsCalls.set(0);
-      requestedTenantIds.set(null);
       subdomainLatch = null;
     }
 
@@ -325,7 +323,7 @@ class TenantServiceTest {
     @Override
     public List<RestrictedTenantDTO> getRestrictedTenantDataByTenantIds(List<Long> tenantIds) {
       tenantIdsCalls.incrementAndGet();
-      requestedTenantIds.set(List.copyOf(tenantIds));
+      lastTenantIds = List.copyOf(tenantIds);
       return tenantIdsResult != null ? tenantIdsResult : List.of();
     }
 

@@ -659,7 +659,7 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
-  void searchTenantAdmin_Should_acceptTenantBatchLimit() throws Exception {
+  void searchTenantAdmin_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
     this.mockMvc
         .perform(
             get(
@@ -748,7 +748,7 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void searchAgencyAdmins_Should_acceptTenantBatchLimit() throws Exception {
+  void searchAgencyAdmins_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
     this.mockMvc
         .perform(
             get(
