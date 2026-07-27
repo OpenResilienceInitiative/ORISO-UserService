@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import org.junit.jupiter.api.Test;
 
 class EnquiryDataTest {
@@ -11,16 +10,8 @@ class EnquiryDataTest {
     return User.builder().userId("user-1").username("username").email("user@example.com").build();
   }
 
-  private RocketChatCredentials givenRocketChatCredentials() {
-    return RocketChatCredentials.builder()
-        .rocketChatToken("token")
-        .rocketChatUserId("rcUserId")
-        .rocketChatUsername("rcUsername")
-        .build();
-  }
-
   private EnquiryData givenAFullyPopulated() {
-    var data = new EnquiryData(givenAUser(), 1L, "message", "de", givenRocketChatCredentials());
+    var data = new EnquiryData(givenAUser(), 1L, "message", "de");
     data.setType("ENQUIRY");
     data.setConsultantEmail("consultant@example.com");
     return data;
@@ -29,22 +20,20 @@ class EnquiryDataTest {
   @Test
   void allArgsConstructor_Should_SetAllFinalFields() {
     var user = givenAUser();
-    var rcCredentials = givenRocketChatCredentials();
 
-    var data = new EnquiryData(user, 1L, "message", "de", rcCredentials);
+    var data = new EnquiryData(user, 1L, "message", "de");
 
     assertThat(data.getUser()).isEqualTo(user);
     assertThat(data.getSessionId()).isEqualTo(1L);
     assertThat(data.getMessage()).isEqualTo("message");
     assertThat(data.getLanguage()).isEqualTo("de");
-    assertThat(data.getRocketChatCredentials()).isEqualTo(rcCredentials);
     assertThat(data.getType()).isNull();
     assertThat(data.getConsultantEmail()).isNull();
   }
 
   @Test
   void setType_And_SetConsultantEmail_Should_UpdateMutableFields() {
-    var data = new EnquiryData(givenAUser(), 1L, "message", "de", givenRocketChatCredentials());
+    var data = new EnquiryData(givenAUser(), 1L, "message", "de");
 
     data.setType("ENQUIRY");
     data.setConsultantEmail("consultant@example.com");
@@ -104,7 +93,7 @@ class EnquiryDataTest {
   @Test
   void equals_Should_ReturnFalse_When_SessionIdDiffers() {
     var base = givenAFullyPopulated();
-    var other = new EnquiryData(givenAUser(), 2L, "message", "de", givenRocketChatCredentials());
+    var other = new EnquiryData(givenAUser(), 2L, "message", "de");
     other.setType("ENQUIRY");
     other.setConsultantEmail("consultant@example.com");
 

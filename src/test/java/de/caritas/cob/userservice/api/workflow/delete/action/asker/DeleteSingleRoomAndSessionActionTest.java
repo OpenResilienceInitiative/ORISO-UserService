@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
-import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ROCKET_CHAT;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -15,8 +14,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import ch.qos.logback.classic.Level;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
@@ -45,8 +42,6 @@ class DeleteSingleRoomAndSessionActionTest {
   @Mock private SessionRepository sessionRepository;
 
   @Mock private SessionDataRepository sessionDataRepository;
-
-  @Mock private RocketChatService rocketChatService;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
 
@@ -77,7 +72,6 @@ class DeleteSingleRoomAndSessionActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     assertThat(logCaptor.events()).isEmpty();
-    verify(this.rocketChatService, times(1)).deleteGroupAsTechnicalUser(any());
     verify(this.sessionDataRepository, times(1)).findBySessionId(session.getId());
     verify(this.sessionDataRepository, times(1)).deleteAll(any());
     verify(this.caseHandoverRequestRepository, times(1)).deleteAllBySessionId(session.getId());
@@ -90,9 +84,6 @@ class DeleteSingleRoomAndSessionActionTest {
   void execute_Should_returnExpectedWorkflowErrors_When_noUserSessionDeletedStepIsSuccessful()
       throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
-    doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
-        .when(this.rocketChatService)
-        .deleteGroupAsTechnicalUser(any());
     doThrow(new RuntimeException()).when(this.sessionDataRepository).deleteAll(any());
     doThrow(new RuntimeException())
         .when(this.caseHandoverRequestRepository)
@@ -107,30 +98,8 @@ class DeleteSingleRoomAndSessionActionTest {
     this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
-    assertThat(workflowErrors, hasSize(5));
-    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(5);
-  }
-
-  @Test
-  void execute_Should_returnExpectedWorkflowErrors_When_rocketChatDeletionFails() throws Exception {
-    Session session = new EasyRandom().nextObject(Session.class);
-    doThrow(new RocketChatDeleteGroupException(new RuntimeException()))
-        .when(this.rocketChatService)
-        .deleteGroupAsTechnicalUser(any());
-    SessionDeletionWorkflowDTO workflowDTO =
-        new SessionDeletionWorkflowDTO(session, new ArrayList<>());
-
-    this.deleteSingleRoomAndSessionAction.execute(workflowDTO);
-    List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
-
-    assertThat(workflowErrors, hasSize(1));
-    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(1);
-    assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
-    assertThat(workflowErrors.get(0).getDeletionSourceType(), is(ASKER));
-    assertThat(workflowErrors.get(0).getDeletionTargetType(), is(ROCKET_CHAT));
-    assertThat(workflowErrors.get(0).getIdentifier(), is(session.getGroupId()));
-    assertThat(workflowErrors.get(0).getReason(), is("Deletion of Rocket.Chat group failed"));
-    assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
+    assertThat(workflowErrors, hasSize(4));
+    assertThat(logCaptor.count(Level.ERROR)).isEqualTo(4);
   }
 
   @Test

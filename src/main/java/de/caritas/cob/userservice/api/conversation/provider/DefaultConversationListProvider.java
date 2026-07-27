@@ -29,8 +29,7 @@ public abstract class DefaultConversationListProvider implements ConversationLis
     enquiriesForConsultant.setPageSize(pageableListRequest.getCount());
 
     List<ConsultantSessionResponseDTO> pageList = enquiriesForConsultant.getPageList();
-    consultantSessionEnricher.updateRequiredConsultantSessionValues(
-        pageList, pageableListRequest.getRcToken(), consultant);
+    consultantSessionEnricher.updateRequiredConsultantSessionValues(pageList);
 
     return new ConsultantSessionListResponseDTO()
         .sessions(pageList)

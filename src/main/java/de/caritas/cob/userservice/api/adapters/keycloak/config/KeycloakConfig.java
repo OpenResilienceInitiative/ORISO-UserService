@@ -19,6 +19,7 @@ import org.hibernate.validator.constraints.URL;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,6 +44,7 @@ public class KeycloakConfig {
   @Bean("keycloakRestTemplate")
   public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
     return restTemplateBuilder
+        .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
         .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
         .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .build();

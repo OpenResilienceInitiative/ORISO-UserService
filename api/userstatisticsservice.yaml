@@ -17,9 +17,9 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: rcGroupId
+        - name: matrixRoomId
           in: query
-          description: 'The rc group id of the session. if the session id is also passed, the query is done via it.'
+          description: 'The Matrix room ID of the session. If the session ID is also passed, the query uses it.'
           schema:
             type: string
       responses:
@@ -48,9 +48,9 @@ components:
           type: integer
           format: int64
           example: 94
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: y77uzd
+          example: "!aBcDeF123:matrix.example"
         consultingType:
           type: integer
           example: 1
@@ -67,5 +67,4 @@ components:
           type: string
         createDate:
           type: string
-
 

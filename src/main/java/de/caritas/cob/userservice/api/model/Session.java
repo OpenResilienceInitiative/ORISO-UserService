@@ -160,9 +160,6 @@ public class Session implements TenantAware {
   @Nullable
   private LocalDateTime enquiryMessageDate;
 
-  @Column(name = "rc_group_id")
-  private String groupId;
-
   @Column(name = "matrix_room_id")
   private String matrixRoomId;
 

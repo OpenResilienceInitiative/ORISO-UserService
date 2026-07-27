@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -23,21 +22,12 @@ public class PatchConsultantSaga {
 
   private final UserServiceMapper userServiceMapper;
 
-  private final MessageClient messageClient;
-
   private final AppointmentService appointmentService;
-
-  private final PatchConsultantSagaRollbackHandler patchConsultantSagaRollbackHandler;
 
   @Transactional
   public Map<String, Object> executeTransactional(
       Consultant patchedConsultant, Map<String, Object> patchMap) {
     Consultant savedConsultant = saveConsultant(patchedConsultant);
-    userServiceMapper
-        .encodedDisplayNameOf(patchMap)
-        .ifPresent(
-            encodedUserName -> updateUserInRocketChatOrRollback(savedConsultant, encodedUserName));
-
     userServiceMapper
         .displayNameOf(patchMap)
         .ifPresent(
@@ -55,31 +45,15 @@ public class PatchConsultantSaga {
       log.error(
           "Error while patching consultant in appointment service. Will rollback patchConsultantSaga.",
           e);
-      patchConsultantSagaRollbackHandler.rollbackUpdateUserInRocketchat(savedConsultant);
       // rollback on MariaDB will be handled automatically by spring due to @Transactional
       throw new DistributedTransactionException(
           e,
           DistributedTransactionInfo.builder()
               .completedTransactionalOperations(
-                  Lists.newArrayList(
-                      TransactionalStep.SAVE_CONSULTANT_IN_MARIADB,
-                      TransactionalStep.UPDATE_ROCKET_CHAT_USER_DISPLAY_NAME))
+                  Lists.newArrayList(TransactionalStep.SAVE_CONSULTANT_IN_MARIADB))
               .name("patchConsultant")
               .failedStep(TransactionalStep.PATCH_APPOINTMENT_SERVICE_CONSULTANT)
               .build());
-    }
-  }
-
-  private void updateUserInRocketChatOrRollback(Consultant savedConsultant, String displayName) {
-    try {
-      if (savedConsultant.getRocketChatId() != null) {
-        messageClient.updateUser(savedConsultant.getRocketChatId(), displayName);
-      }
-    } catch (Exception e) {
-      log.warn(
-          "RocketChat update failed for consultant {}. Continuing without rollback: {}",
-          savedConsultant.getId(),
-          e.getMessage());
     }
   }
 

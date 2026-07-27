@@ -87,7 +87,7 @@ class CaseHandoverServiceTest {
     session.setUser(asker);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
-    session.setGroupId("room-123");
+    session.setMatrixRoomId(null);
     session.setTenantId(7L);
     session.setPostcode("12345");
     session.setLanguageCode(LanguageCode.de);

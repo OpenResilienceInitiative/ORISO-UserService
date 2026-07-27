@@ -9,7 +9,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_U25;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.EMAIL;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.STATE_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -57,8 +57,8 @@ class SessionDataProviderTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(USERNAME)
-          .username(ROCKETCHAT_ID)
+          .matrixUserId(USERNAME)
+          .username(MATRIX_USER_ID)
           .firstName("first name")
           .lastName("last name")
           .email("consultant@cob.de")

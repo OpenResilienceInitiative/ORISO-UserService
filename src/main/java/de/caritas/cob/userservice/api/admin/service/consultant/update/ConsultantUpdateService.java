@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -43,7 +42,6 @@ public class ConsultantUpdateService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
-  private final @NonNull MessageClient messageClient;
   private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull SessionRepository sessionRepository;
@@ -107,18 +105,7 @@ public class ConsultantUpdateService {
       identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
     }
 
-    // MATRIX MIGRATION: RocketChat update is optional, don't block on errors
-    if (identityDataChanged) {
-      try {
-        this.messageClient.updateUserEmail(
-            consultant.getRocketChatId(), updateConsultantDTO.getEmail());
-      } catch (Exception e) {
-        // RocketChat is being replaced by Matrix, so failures are non-blocking
-        // Silently continue - consultant update will succeed in database
-      }
-    }
-
-    // MATRIX MIGRATION: Update Matrix user display name using ADMIN API (no password needed)
+    // Update Matrix user display name using the admin API (no password needed).
     if (identityDataChanged && consultant.getMatrixUserId() != null) {
       try {
         String newDisplayName =

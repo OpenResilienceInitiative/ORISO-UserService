@@ -38,8 +38,8 @@ public class AssignSessionFacade {
   private final @NonNull HttpServletRequest httpServletRequest;
 
   /**
-   * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
-   * consultants from the Rocket.Chat group which don't have the right to view this session anymore.
+   * Assigns the given {@link Session} session to the given {@link Consultant}. Removes consultants
+   * from the Matrix room when they no longer have the right to view this session.
    *
    * <p>If the statistics function is enabled, the assignment of the session is processed as a
    * statistical event.
@@ -50,8 +50,8 @@ public class AssignSessionFacade {
         ConsultantSessionDTO.builder().consultant(consultantToAssign).session(session).build();
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO);
 
+    sessionAssignmentChatGateway.prepareAssignment(session, consultantToAssign);
     updateSessionInDatabase(session, consultantToAssign);
-    addConsultantToRocketChatGroup(session.getGroupId(), consultantToAssign);
     removeUnauthorizedMembersFromGroups(session, consultantToAssign, authConsultant);
     if (!authenticatedUser.isAdviceSeeker()) {
       sendEmailForConsultantChange(session, consultantToAssign);
@@ -74,25 +74,19 @@ public class AssignSessionFacade {
         initialStatus == SessionStatus.NEW ? SessionStatus.IN_PROGRESS : initialStatus);
   }
 
-  private void addConsultantToRocketChatGroup(String rcGroupId, Consultant consultant) {
-    sessionAssignmentChatGateway.addUserToGroup(consultant.getRocketChatId(), rcGroupId);
-    sessionAssignmentChatGateway.removeSystemMessages(rcGroupId);
-  }
-
   private void removeUnauthorizedMembersFromGroups(
       Session session, Consultant consultant, Consultant consultantToKeep) {
-    var memberIds = sessionAssignmentChatGateway.findMemberIds(session.getGroupId());
+    var memberIds = sessionAssignmentChatGateway.findMemberIds(session.getMatrixRoomId());
     removeUnauthorizedMembersFromGroup(session, consultant, memberIds, consultantToKeep);
   }
 
   private void removeUnauthorizedMembersFromGroup(
       Session session, Consultant consultant, List<String> memberIds, Consultant consultantToKeep) {
-    var consultantsToRemoveFromRocketChat =
+    var consultantsToRemove =
         unauthorizedMembersProvider.obtainConsultantsToRemove(
-            session.getGroupId(), session, consultant, memberIds, consultantToKeep);
+            session.getMatrixRoomId(), session, consultant, memberIds, consultantToKeep);
 
-    sessionAssignmentChatGateway.removeConsultantsOrRollback(
-        session, consultantsToRemoveFromRocketChat);
+    sessionAssignmentChatGateway.removeConsultants(session, consultant, consultantsToRemove);
   }
 
   private void sendEmailForConsultantChange(Session session, Consultant consultant) {

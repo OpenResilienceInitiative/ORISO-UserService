@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
@@ -37,6 +38,7 @@ public class AppConfig {
   @Primary
   public RestTemplate restTemplate(RestTemplateBuilder builder) {
     return builder
+        .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
         .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
         .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
         .build();
@@ -45,6 +47,7 @@ public class AppConfig {
   @Bean("matrixLongPollRestTemplate")
   public RestTemplate matrixLongPollRestTemplate(RestTemplateBuilder builder) {
     return builder
+        .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
         .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
         .readTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
         .build();

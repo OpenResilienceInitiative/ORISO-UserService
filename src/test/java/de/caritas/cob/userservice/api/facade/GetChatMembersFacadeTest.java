@@ -55,7 +55,6 @@ public class GetChatMembersFacadeTest {
     var chat = new Chat();
     chat.setId(CHAT_ID);
     chat.setActive(true);
-    chat.setGroupId(MATRIX_ROOM_ID);
     chat.setMatrixRoomId(MATRIX_ROOM_ID);
     return chat;
   }

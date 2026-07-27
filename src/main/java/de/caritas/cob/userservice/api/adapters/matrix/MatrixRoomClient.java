@@ -240,8 +240,7 @@ public class MatrixRoomClient {
 
   /**
    * Bans a user from a Matrix room ({@code POST /rooms/{roomId}/ban}). A ban both removes the user
-   * from the room and prevents them from re-joining until unbanned, which is the Matrix-native
-   * equivalent of the former Rocket.Chat "mute/ban from chat".
+   * from the room and prevents them from re-joining until unbanned.
    *
    * <p>Best-effort: never throws. A ban of a user who is already banned is treated as success.
    *

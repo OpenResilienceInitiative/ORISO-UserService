@@ -5,7 +5,6 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -38,13 +37,10 @@ public class CreateNewSessionFacade {
   private final @NonNull StatisticsService statisticsService;
 
   public NewRegistrationResponseDto initializeNewSession(
-      UserRegistrationDTO userRegistrationDTO,
-      User user,
-      RocketChatCredentials rocketChatCredentials) {
+      UserRegistrationDTO userRegistrationDTO, User user) {
     return initializeNewSession(
         userRegistrationDTO,
         user,
-        rocketChatCredentials,
         Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
   }
 
@@ -54,25 +50,19 @@ public class CreateNewSessionFacade {
    *
    * @param userRegistrationDTO {@link UserRegistrationDTO}
    * @param user {@link User}
-   * @param rocketChatCredentials {@link RocketChatCredentials}
    * @return session ID of created session (if not consulting id refers to a group only consulting
    *     type)
    */
   public NewRegistrationResponseDto initializeNewSession(
       UserRegistrationDTO userRegistrationDTO,
       User user,
-      RocketChatCredentials rocketChatCredentials,
       List<NewSessionValidationConstraint> validationConstraints) {
     try {
       var extendedConsultingTypeResponseDTO =
           consultingTypeManager.getConsultingTypeSettings(userRegistrationDTO.getConsultingType());
 
       return createSessionOrChat(
-          userRegistrationDTO,
-          user,
-          extendedConsultingTypeResponseDTO,
-          rocketChatCredentials,
-          validationConstraints);
+          userRegistrationDTO, user, extendedConsultingTypeResponseDTO, validationConstraints);
     } catch (MissingConsultingTypeException | IllegalArgumentException e) {
       throw new BadRequestException(e.getMessage(), e);
     }
@@ -95,7 +85,6 @@ public class CreateNewSessionFacade {
         userRegistrationDTO,
         user,
         extendedConsultingTypeResponseDTO,
-        null,
         Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
   }
 
@@ -103,7 +92,6 @@ public class CreateNewSessionFacade {
       UserRegistrationDTO userRegistrationDTO,
       User user,
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
-      RocketChatCredentials rocketChatCredentials,
       List<NewSessionValidationConstraint> validationConstraints) {
 
     if (isNotBlank(userRegistrationDTO.getConsultantId())) {
@@ -126,7 +114,7 @@ public class CreateNewSessionFacade {
     var groupChat = extendedConsultingTypeResponseDTO.getGroupChat();
     if (nonNull(groupChat) && isTrue(groupChat.getIsGroupChat())) {
       createUserChatRelationFacade.initializeUserChatAgencyRelation(
-          convertToUserDTO(userRegistrationDTO), user, rocketChatCredentials);
+          convertToUserDTO(userRegistrationDTO), user);
       // Also create a session for group chat users
       sessionId =
           createSessionFacade.createUserSession(

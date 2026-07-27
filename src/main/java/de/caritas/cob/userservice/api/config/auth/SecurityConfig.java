@@ -177,18 +177,16 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(
                     "/users/email",
-                    "/users/mails/messages/new",
                     "/users/drafts",
                     "/users/drafts/**",
                     "/users/event-notifications",
                     "/users/event-notifications/**",
                     "/users/notifications/do-not-disturb",
                     "/users/chat/{chatId:[0-9]+}",
-                    "/users/chat/e2e",
                     "/users/chat/{chatId:[0-9]+}/join",
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
-                    "/users/chat/{groupId}/assign",
+                    "/users/chat/{matrixRoomId}/assign",
                     "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
@@ -246,7 +244,7 @@ public class SecurityConfig {
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
-                        HttpMethod.GET, "(/service)?/users/sessions/room\\?rcGroupIds=.+"))
+                        HttpMethod.GET, "(/service)?/users/sessions/room\\?matrixRoomIds=.+"))
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
@@ -294,11 +292,7 @@ public class SecurityConfig {
                 .hasAnyAuthority(ASSIGN_CONSULTANT_TO_ENQUIRY, ASSIGN_CONSULTANT_TO_SESSION)
                 .requestMatchers("/users/consultants")
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
-                .requestMatchers(
-                    "/users/consultants/import",
-                    "/users/askers/import",
-                    "/users/askersWithoutSession/import",
-                    "/users/sessions/rocketChatGroupId")
+                .requestMatchers("/users/consultants/import")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers("/liveproxy/send")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
@@ -312,7 +306,7 @@ public class SecurityConfig {
                 .hasAuthority(STOP_CHAT)
                 .requestMatchers(
                     "/users/chat/{chatId:[0-9]+}/update",
-                    "/users/{chatUserId:[0-9A-Za-z]+}/chat/{chatId:[0-9]+}/ban")
+                    "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)

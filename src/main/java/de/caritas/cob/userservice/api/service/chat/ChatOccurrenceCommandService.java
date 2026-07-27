@@ -117,7 +117,7 @@ public class ChatOccurrenceCommandService {
         series.getId(),
         occurrenceIndex(series, originalStartUtc),
         originalStartUtc,
-        series.getMatrixRoomId() != null ? series.getMatrixRoomId() : series.getGroupId(),
+        series.getMatrixRoomId(),
         null,
         series.getChatModality() == ChatModality.VIDEO,
         notificationRecipientService.resolveRecipientIds(series));

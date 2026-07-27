@@ -120,10 +120,15 @@
     file="db/changelog/changeset/0071_tutorial_progress/0071_changeSet.xml" />
   <include
     file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
+    file="db/changelog/changeset/0073_remove_rocket_chat_user_ids/0073_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0073_handshake/0073_changeSet.xml" />
+    file="db/changelog/changeset/0074_remove_rocket_chat_room_ids/0074_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0074_support_room/0074_changeSet.xml" />
+    file="db/changelog/changeset/0075_remove_rocket_chat_feedback_room_id/0075_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0076_handshake/0076_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0077_support_room/0077_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

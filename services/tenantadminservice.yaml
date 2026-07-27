@@ -1,91 +1,298 @@
 openapi: 3.0.1
-
 info:
   title: Definition for Tenant API
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
-
 paths:
-  /tenant:
+  /tenantadmin:
     post:
       tags:
-        - tenant-admin-controller
+        - tenant-controller
       summary: 'Creates a new tenant [Authorization: Role: tenant-admin]'
       operationId: createTenant
       requestBody:
         content:
-          'application/json':
+          application/json:
             schema:
-              $ref: '#/components/schemas/TenantDTO'
+              $ref: '#/components/schemas/MultilingualTenantDTO'
       responses:
-        200:
+        '200':
           description: OK - successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantDTO'
-        400:
+                $ref: '#/components/schemas/MultilingualTenantDTO'
+        '400':
           description: BAD REQUEST - invalid/incomplete request or body object
-        401:
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        500:
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
     get:
       tags:
-        - tenant-admin-controller
-      summary: 'Get all tenants'
-      operationId: getAllTenants
+        - tenant-controller
+      summary: 'Get all tenants with admin data [Authorization: Role: tenant-admin]'
+      operationId: getAllTenantsWithAdminData
       responses:
-        200:
+        '200':
           description: OK - successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/BasicTenantLicensingDTO'
-        204:
+                  $ref: '#/components/schemas/AdminTenantDTO'
+        '204':
           description: NO CONTENT - no content found
-        400:
+        '400':
           description: BAD REQUEST - invalid/incomplete request or body object
-        401:
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        500:
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
-  /tenant/{id}:
-    summary: Represents a tenant
-    description: This resource represents an individual tenant in a system.
+  /tenantadmin/search:
     get:
       tags:
-        - tenant-admin-controller
-      summary: 'Gets a tenant by its id [Authorization: Role: tenant-admin or single-tenant-admin]'
-      operationId: getTenantById
+        - tenant-controller
+      summary: 'Get tenants matching the given query [Auth: tenant-admin]'
+      operationId: searchTenants
       parameters:
-        - name: id
-          in: path
-          description: Tenant ID
+        - name: query
+          in: query
+          description: URL-encoded infix to search for name or id. A non-encoded star symbol searches for all.
           required: true
           schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number (first page = 1)
+          schema:
             type: integer
-            format: int64
+            default: 1
+            minimum: 1
+        - name: perPage
+          in: query
+          description: Number of items returned per page
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+        - name: field
+          in: query
+          description: field to sort by
+          schema:
+            type: string
+            enum:
+              - NAME
+              - ID
+              - SUBDOMAIN
+              - BERATERCOUNT
+            default: NAME
+            pattern: ^(NAME|ID|SUBDOMAIN|BERATERCOUNT)$
+        - name: order
+          in: query
+          description: sort order
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+            default: ASC
+            pattern: ^(ASC|DESC)$
       responses:
-        200:
+        '200':
+          description: OK - successful operation
+          content:
+            application/hal+json:
+              schema:
+                $ref: '#/components/schemas/TenantsSearchResultDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+  /tenantadmin/controls:
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets platform-level tenant admin controls [Authorization: Super admin]'
+      operationId: getTenantAdminControls
+      responses:
+        '200':
           description: Successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenantDTO'
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
+                $ref: '#/components/schemas/TenantAdminControls'
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        404:
-          description: Not found
-        500:
+        '403':
+          description: FORBIDDEN - only super admin can access platform controls
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
     put:
       tags:
-        - tenant-admin-controller
+        - tenant-controller
+      summary: 'Updates platform-level tenant admin controls [Authorization: Super admin]'
+      operationId: updateTenantAdminControls
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantAdminControls'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantAdminControls'
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '403':
+          description: FORBIDDEN - only super admin can update platform controls
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/translation/keys:
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets the configured machine-translation provider API keys, masked [Authorization: Super admin]'
+      description: Returns the platform-global translation provider API keys. Keys are always returned MASKED (first characters plus the last 4, e.g. "sk-…abcd") and can never be read back in full. A provider without a configured key is returned as null.
+      operationId: getTranslationApiKeys
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationApiKeysDTO'
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '403':
+          description: FORBIDDEN - only super admin can access translation provider keys
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/translation/keys/{provider}:
+    put:
+      tags:
+        - tenant-controller
+      summary: 'Sets the machine-translation API key for a provider [Authorization: Super admin]'
+      description: Stores the API key for the given provider ("openrouter" or "mistral") in the platform-global admin controls. Returns all keys masked.
+      operationId: setTranslationApiKey
+      parameters:
+        - name: provider
+          in: path
+          description: Translation provider id, one of "openrouter" or "mistral" (validated server-side, unknown providers are rejected with 400)
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationApiKeyUpdateDTO'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationApiKeysDTO'
+        '400':
+          description: BAD REQUEST - unknown provider or invalid/empty key
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '403':
+          description: FORBIDDEN - only super admin can update translation provider keys
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/translate:
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Machine-translates HTML texts into one or more target languages [Authorization: Authority.UPDATE_TENANT]'
+      description: 'Translates the given HTML texts (fieldKey -> HTML) from sourceLang into every requested target language using an LLM provider (OpenRouter or Mistral) with the platform-global API keys. HTML tags, attributes and structure are preserved; only human-readable text is translated. If no provider is requested explicitly, openrouter is used when its key is configured, otherwise mistral. Typed error codes: TRANSLATION_NOT_CONFIGURED (409, no API key configured), TRANSLATION_KEY_INVALID (502, provider rejected the key), TRANSLATION_NO_CREDIT (502, provider credit exhausted), TRANSLATION_RATE_LIMITED (502, provider rate limit hit), TRANSLATION_PROVIDER_UNAVAILABLE (502, provider timeout or 5xx). The response is meant to be published together with the machine-translation metadata convention: for every machine translated language the client stores a parallel "<lang>__meta" key with the strict JSON value {"mt":true,"src":"<sourceLang>","at":"<ISO-timestamp>"} next to the translated HTML in the same language->HTML map.'
+      operationId: translate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationRequestDTO'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationResponseDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or unknown provider
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '409':
+          description: CONFLICT - no translation provider API key configured (TRANSLATION_NOT_CONFIGURED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationErrorDTO'
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        '502':
+          description: BAD GATEWAY - translation provider error (TRANSLATION_KEY_INVALID, TRANSLATION_NO_CREDIT, TRANSLATION_RATE_LIMITED, TRANSLATION_PROVIDER_UNAVAILABLE)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationErrorDTO'
+  /tenant/translate/group-chat-author-content:
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Translates bounded self-help group welcome and rule content [Authorization: consultant, group-chat-consultant]'
+      description: Uses the configured translation provider for short, plain-text welcome and group-rule content. The endpoint is intentionally separate from tenant administration so consultants never receive tenant-management privileges.
+      operationId: translateGroupChatAuthorContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationRequestDTO'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationResponseDTO'
+        '400':
+          description: BAD REQUEST - content is missing or exceeds the group-chat limits
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '403':
+          description: FORBIDDEN - dedicated group-chat translation authority is missing
+        '409':
+          description: CONFLICT - no translation provider API key configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationErrorDTO'
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        '502':
+          description: BAD GATEWAY - translation provider error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationErrorDTO'
+  /tenantadmin/{id}:
+    put:
+      tags:
+        - tenant-controller
       summary: 'Updates a tenant [Authorization: Role: tenant-admin or single-tenant-admin]'
       operationId: updateTenant
       parameters:
@@ -98,24 +305,673 @@ paths:
             format: int64
       requestBody:
         content:
-          'application/json':
+          application/json:
             schema:
-              $ref: '#/components/schemas/TenantDTO'
+              $ref: '#/components/schemas/MultilingualTenantDTO'
       responses:
-        200:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultilingualTenantDTO'
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '409':
+          description: CONFLICT - unique constraint validation fails
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant by its id [Authorization: Role: tenant-admin or single-tenant-admin]'
+      operationId: getMultilingualTenantById
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultilingualTenantDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant:
+    get:
+      tags:
+        - tenant-controller
+      summary: Get all tenants
+      operationId: getAllTenants
+      responses:
+        '200':
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BasicTenantLicensingDTO'
+        '204':
+          description: NO CONTENT - no content found
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/{id}:
+    summary: Represents a tenant
+    description: This resource represents an individual tenant in a system.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant by its id [Authorization: Role: tenant-admin or single-tenant-admin]'
+      operationId: getTenantById
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
           description: Successful operation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TenantDTO'
-        401:
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
           description: UNAUTHORIZED - no/invalid Keycloak token
-        409:
-          description: CONFLICT - unique constraint validation fails
-        500:
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/{subdomain}:
+    summary: Represents a publicly allowed tenant data
+    description: This resource represents an individual tenant in a system.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant public information [Authorization: no-auth]'
+      operationId: getRestrictedTenantDataBySubdomain
+      parameters:
+        - name: subdomain
+          in: path
+          description: Subdomain
+          required: true
+          schema:
+            type: string
+        - name: tenantId
+          in: query
+          description: Tenant Id
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedTenantDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/id/{tenantId}:
+    summary: Represents a publicly allowed tenant data
+    description: This resource represents an individual tenant in a system.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant public information [Authorization: no-auth]'
+      operationId: getRestrictedTenantDataByTenantId
+      parameters:
+        - name: tenantId
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedTenantDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/single:
+    summary: Represents a publicly allowed tenant data
+    description: This resource represents the tenant in a single-tenant system.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant public information [Authorization: no-auth]'
+      operationId: getRestrictedSingleTenancyTenantData
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedTenantDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/:
+    summary: Represents a publicly allowed tenant data. Tenant is resolved based on the request context. For single domain multitenancy it overerrides some of the attributes from main tenant and the current tenant like privacy or some tenant settings
+    description: This resource represents the tenant.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Gets a tenant public information [Authorization: no-auth]'
+      operationId: getRestrictedTenantData
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestrictedTenantDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/access:
+    summary: Validate if user can access tenant
+    description: This resource represents the access status for the given user to current tenant.
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Validate if user can access tenant [Authorization: no-auth]'
+      operationId: canAccessTenant
+      responses:
+        '204':
+          description: Successful operation
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '401':
+          description: UNAUTHORIZED - no/invalid permission for current tenant
+        '404':
+          description: Not found
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/dpa/confirm/{token}:
+    summary: Public confirmation (signature) of a tenant Data Processing Agreement
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Shows the exact published DPA bound to a valid sign token [Authorization: no-auth]'
+      operationId: getDataProcessingAgreementPreview
+      parameters:
+        - name: token
+          in: path
+          description: Single-use sign token from the invite link
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaSignPreviewDTO'
+        '410':
+          description: GONE - token unknown, already used, expired, or its contract version is missing
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Confirms a tenant DPA via a single-use sign token [Authorization: no-auth]'
+      operationId: confirmDataProcessingAgreement
+      parameters:
+        - name: token
+          in: path
+          description: Single-use sign token from the invite link
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DpaSignatureRequestDTO'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaSignatureDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '410':
+          description: GONE - token unknown, already used, or expired
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/signatures:
+    summary: Confirmed DPA signatures of a tenant (audit list)
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Lists the DPA confirmations of a tenant [Authorization: Authority.GET_TENANT]'
+      operationId: getDataProcessingAgreementSignatures
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DpaSignatureDTO'
+        '403':
+          description: FORBIDDEN - not authorized to access this tenant
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/gate:
+    summary: DPA legal-gate status of a tenant
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Whether the tenant DPA is published and signed [Authorization: Authority.GET_TENANT]'
+      operationId: getDataProcessingAgreementGate
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaGateStatusDTO'
+        '403':
+          description: FORBIDDEN - not authorized to access this tenant
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/invite:
+    summary: Create a single-use DPA sign invite (link) for a tenant
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Creates a single-use sign link for a tenant DPA [Authorization: Authority.UPDATE_TENANT]'
+      operationId: createDataProcessingAgreementSignInvite
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaSignInviteDTO'
+        '403':
+          description: FORBIDDEN - not authorized to access this tenant
+        '409':
+          description: CONFLICT - the tenant has no published DPA to sign yet
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa:
+    summary: Publish a tenant Data Processing Agreement (multilingual)
+    put:
+      tags:
+        - tenant-controller
+      summary: 'Publishes the tenant DPA text and stamps a new version [Authorization: Authority.UPDATE_TENANT]'
+      operationId: publishDataProcessingAgreement
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        description: 'Per-language DPA HTML content (language code -> HTML). Supports the machine-translation metadata convention: next to a translated language (e.g. "en") the map may carry a parallel "en__meta" key whose value is the strict JSON string {"mt":true,"src":"de","at":"<ISO-timestamp>"} marking the language as machine translated. Meta values are validated as strict JSON with only these fields and stored unsanitized; all other values are HTML-sanitized. When the HTML of a language is changed manually (i.e. the content changed but the resent meta is the previously stored one), the meta key for that language is removed - a manual edit clears the machine-translated tag.'
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaGateStatusDTO'
+        '403':
+          description: FORBIDDEN - not authorized to access this tenant
+        '404':
+          description: NOT FOUND - tenant does not exist
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/dpa/versions:
+    summary: Published DPA versions of a tenant (newest first)
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Lists the published DPA versions of a tenant [Authorization: Authority.GET_TENANT]'
+      operationId: getDataProcessingAgreementVersions
+      parameters:
+        - name: id
+          in: path
+          description: Tenant ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DpaVersionDTO'
+        '403':
+          description: FORBIDDEN - not authorized to access this tenant
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/media:
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Uploads an editor image owned by the calling admin''s tenant. Content type is derived from magic bytes (PNG/JPEG/WebP only, max 2 MB) [Authorization: tenant-admin, single-tenant-admin]'
+      operationId: uploadTenantMedia
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: CREATED - media stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMediaResponseDTO'
+        '400':
+          description: BAD REQUEST - unsupported content or size limit exceeded
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /media/{mediaId}:
+    get:
+      tags:
+        - tenant-controller
+      summary: 'Serves a stored tenant media file. Public: legal-text images are read by anonymous visitors. Immutable content (UUID ids), aggressively cacheable.'
+      operationId: getTenantMedia
+      parameters:
+        - name: mediaId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK - media content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: NOT FOUND - unknown media id
+        '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
 components:
   schemas:
+    TranslationApiKeysDTO:
+      type: object
+      description: Masked machine-translation provider API keys. A key is shown as its first characters plus the last 4 (e.g. "sk-…abcd"); null means no key is configured for that provider.
+      properties:
+        openrouter:
+          type: string
+          example: sk-…abcd
+        mistral:
+          type: string
+          example: Fgh…9xyz
+    TranslationApiKeyUpdateDTO:
+      type: object
+      required:
+        - apiKey
+      properties:
+        apiKey:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: sk-or-v1-0123456789abcdef
+    TranslationRequestDTO:
+      type: object
+      required:
+        - sourceLang
+        - targetLangs
+        - texts
+      properties:
+        sourceLang:
+          type: string
+          maxLength: 10
+          example: de
+        targetLangs:
+          type: array
+          items:
+            type: string
+            maxLength: 10
+          minItems: 1
+          example:
+            - en
+            - fr
+        provider:
+          type: string
+          description: Optional explicit provider (openrouter or mistral). If omitted, openrouter is used when its key is configured, otherwise mistral.
+          example: openrouter
+        texts:
+          type: object
+          description: HTML texts to translate, keyed by a caller-defined field key (e.g. "privacy", "impressum").
+          additionalProperties:
+            type: string
+    TranslationResponseDTO:
+      type: object
+      description: Translations keyed by target language, each holding the translated HTML per field key. HTML tags, attributes and structure are preserved by the provider prompt.
+      properties:
+        translations:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+        provider:
+          type: string
+          example: openrouter
+        model:
+          type: string
+          example: openai/gpt-4o-mini
+    TranslationErrorDTO:
+      type: object
+      description: Typed machine-translation error. errorCode is one of TRANSLATION_NOT_CONFIGURED, TRANSLATION_KEY_INVALID, TRANSLATION_NO_CREDIT, TRANSLATION_RATE_LIMITED, TRANSLATION_PROVIDER_UNAVAILABLE.
+      properties:
+        errorCode:
+          type: string
+          example: TRANSLATION_KEY_INVALID
+        provider:
+          type: string
+          example: openrouter
+        message:
+          type: string
+    DpaVersionDTO:
+      type: object
+      properties:
+        activationDate:
+          type: string
+        content:
+          type: string
+    DpaSignInviteDTO:
+      type: object
+      properties:
+        token:
+          type: string
+        signLink:
+          type: string
+        expiresAt:
+          type: string
+    DpaSignPreviewDTO:
+      type: object
+      required:
+        - tenantName
+        - dpaVersion
+        - content
+        - expiresAt
+      properties:
+        tenantName:
+          type: string
+        dpaVersion:
+          type: string
+        content:
+          type: string
+          description: Sanitized multilingual DPA snapshot as JSON (language code -> HTML).
+        expiresAt:
+          type: string
+    DpaGateStatusDTO:
+      type: object
+      properties:
+        dpaPublished:
+          type: boolean
+        dpaSigned:
+          type: boolean
+    DpaSignatureRequestDTO:
+      type: object
+      required:
+        - signerName
+        - signerPosition
+        - signerEmail
+        - signerOrganisation
+        - language
+        - accepted
+      properties:
+        signerName:
+          type: string
+          maxLength: 255
+          example: Erika Mustermann
+        signerPosition:
+          type: string
+          maxLength: 255
+          example: Geschäftsführerin
+        signerEmail:
+          type: string
+          maxLength: 255
+          format: email
+          example: erika.mustermann@example.org
+        signerOrganisation:
+          type: string
+          maxLength: 255
+          example: Caritas Beispiel e.V.
+        forwardedByUserId:
+          type: string
+          maxLength: 64
+          example: tenant-admin-1
+        source:
+          type: string
+          maxLength: 64
+          example: PUBLIC_SIGN_LINK
+        signerIsMember:
+          type: boolean
+          example: false
+        accepted:
+          type: boolean
+          example: true
+        language:
+          type: string
+          maxLength: 10
+          example: de
+    DpaSignatureDTO:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        status:
+          type: string
+          example: SIGNED
+        signerName:
+          type: string
+        signerPosition:
+          type: string
+        signerEmail:
+          type: string
+        signerOrganisation:
+          type: string
+        forwardedByUserId:
+          type: string
+        source:
+          type: string
+        signedAt:
+          type: string
     TenantDTO:
       type: object
       required:
@@ -129,12 +985,19 @@ components:
           example: 12132
         name:
           type: string
-          example: "Company name AG"
+          example: Company name AG
           maxLength: 40
         subdomain:
           type: string
-          example: "companyname"
+          example: companyname
           maxLength: 100
+        address:
+          type: string
+          maxLength: 255
+          example: Musterstraße 1, 12345 Musterstadt
+        description:
+          type: string
+          example: Short description of the tenant.
         createDate:
           type: string
         updateDate:
@@ -142,14 +1005,52 @@ components:
         licensing:
           $ref: '#/components/schemas/Licensing'
         theming:
-          $ref:
-            '#/components/schemas/Theming'
+          $ref: '#/components/schemas/Theming'
         content:
-          $ref:
-            '#/components/schemas/Content'
+          $ref: '#/components/schemas/Content'
         settings:
-          $ref:
-            '#/components/schemas/Settings'
+          $ref: '#/components/schemas/Settings'
+    MultilingualTenantDTO:
+      type: object
+      required:
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12132
+        name:
+          type: string
+          example: Company name AG
+          maxLength: 40
+        subdomain:
+          type: string
+          example: companyname
+          maxLength: 100
+        address:
+          type: string
+          maxLength: 255
+          example: Musterstraße 1, 12345 Musterstadt
+        description:
+          type: string
+          example: Short description of the tenant.
+        adminEmails:
+          type: array
+          items:
+            type: string
+          example: '[admin1@ob.de, admin2@ob.de]'
+        createDate:
+          type: string
+        updateDate:
+          type: string
+        licensing:
+          $ref: '#/components/schemas/Licensing'
+        theming:
+          $ref: '#/components/schemas/Theming'
+        content:
+          $ref: '#/components/schemas/MultilingualContent'
+        settings:
+          $ref: '#/components/schemas/Settings'
     BasicTenantLicensingDTO:
       type: object
       required:
@@ -163,11 +1064,11 @@ components:
           example: 12132
         name:
           type: string
-          example: "Company name AG"
+          example: Company name AG
           maxLength: 40
         subdomain:
           type: string
-          example: "companyname"
+          example: companyname
           maxLength: 100
         createDate:
           type: string
@@ -175,6 +1076,30 @@ components:
           type: string
         licensing:
           $ref: '#/components/schemas/Licensing'
+    RestrictedTenantDTO:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12132
+        name:
+          type: string
+          example: Company name AG
+          maxLength: 40
+        subdomain:
+          type: string
+          example: subdomain
+          maxLength: 100
+        theming:
+          $ref: '#/components/schemas/Theming'
+        content:
+          $ref: '#/components/schemas/Content'
+        settings:
+          $ref: '#/components/schemas/Settings'
     Licensing:
       type: object
       required:
@@ -188,16 +1113,19 @@ components:
       properties:
         logo:
           type: string
-          example: "base64 encoded image"
+          example: base64 encoded image
+        associationLogo:
+          type: string
+          example: base64 encoded image
         favicon:
           type: string
-          example: "base64 encoded image"
+          example: base64 encoded image
         primaryColor:
           type: string
-          example: "#FFFFFF"
+          example: '#FFFFFF'
         secondaryColor:
           type: string
-          example: "#FFFFFF"
+          example: '#FFFFFF'
     Content:
       type: object
       required:
@@ -205,44 +1133,590 @@ components:
       properties:
         impressum:
           type: string
-          example: "Llorem ipsum..."
+          example: Llorem ipsum...
+        impressumLanguages:
+          type: object
+          additionalProperties:
+            type: string
+          description: Raw stored language map for the impressum, including the `<lang>__meta` machine-translation metadata keys (JSON strings like `{"mt":true,"src":"de","at":"<ISO>"}`). Lets clients show a "machine translated / legally binding is German" notice. The `<lang>` values are the same sanitized HTML the resolved `impressum` field is picked from; the map is exposed as stored, no additional processing.
         claim:
           type: string
-          example: "Llorem ipsum..."
+          example: Llorem ipsum...
           maxLength: 40
         privacy:
           type: string
-          example: "Llorem ipsum..."
+          example: Llorem ipsum...
+        privacyLanguages:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Raw stored language map for the privacy statement, including the `<lang>__meta` machine-translation metadata keys. Same semantics as `impressumLanguages`. Note: contains the stored (unrendered) privacy text, i.e. without the data-protection placeholder rendering applied to `renderedPrivacy`.'
+        renderedPrivacy:
+          type: string
+          example: Llorem ipsum...
         termsAndConditions:
           type: string
-          example: "Llorem ipsum..."
+          example: Llorem ipsum...
+        termsAndConditionsConfirmation:
+          type: string
+          format: date-time
+          example: '2022-12-07T11:51:01'
+          description: Datetime stamp when new terms and condition defined
+        dataPrivacyConfirmation:
+          type: string
+          format: date-time
+          example: '2022-12-07T11:51:01'
+          description: Datetime stamp when new privacy defined
+        dataProtectionContactTemplate:
+          $ref: '#/components/schemas/DataProtectionContactTemplateDTO'
     Settings:
       type: object
       properties:
         featureStatisticsEnabled:
           type: boolean
-          example: "false"
+          example: 'false'
         featureTopicsEnabled:
           type: boolean
-          example: "false"
+          example: 'false'
         topicsInRegistrationEnabled:
           type: boolean
-          example: "false"
+          example: 'false'
         featureDemographicsEnabled:
           type: boolean
-          example: "false"
+          example: 'false'
         featureAppointmentsEnabled:
           type: boolean
-          example: "false"
+          example: 'false'
         featureGroupChatV2Enabled:
           type: boolean
-          example: "false"
+          example: 'false'
+        featureTeamDiscussionEnabled:
+          type: boolean
+          example: 'false'
         featureToolsEnabled:
           type: boolean
-          example: "false"
-        featureAttachmentUploadDisabled:
+          example: 'false'
+        featureAnonymousChatEnabled:
           type: boolean
-          example: "false"
+          example: 'true'
+        featureCallsEnabled:
+          type: boolean
+          example: 'true'
+        featureSupervisionEnabled:
+          type: boolean
+          example: 'true'
+          description: Master toggle for supervision functionality (adding/removing supervisors, supervision views).
+        featureSupervisionAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable supervision functionality in anonymous chats.
+        featureSupervisionOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable supervision functionality in 1-on-1 chats.
+        featureAudioCallsEnabled:
+          type: boolean
+          example: 'true'
+          description: Master toggle for audio call button availability (all chat types).
+        featureAudioCallsAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable audio call button in anonymous chats.
+        featureAudioCallsOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable audio call button in 1-on-1 chats.
+        featureAudioCallsGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable audio call button in group chats.
+        featureAudioCallsSupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable audio call button when a user is in supervision mode.
+        featureVideoCallsEnabled:
+          type: boolean
+          example: 'true'
+          description: Master toggle for video call button availability (all chat types).
+        featureVideoCallsAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable video call button in anonymous chats.
+        featureVideoCallsOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable video call button in 1-on-1 chats.
+        featureVideoCallsGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable video call button in group chats.
+        featureVideoCallsSupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable video call button when a user is in supervision mode.
+        featureThreadsEnabled:
+          type: boolean
+          example: 'true'
+          description: Master toggle for threads availability (all chat types).
+        featureThreadsAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable threads in anonymous chats.
+        featureThreadsGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable threads in group chats.
+        featureThreadsOneOnOneEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable threads in 1-on-1 chats.
+        featureThreadsSupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable threads when a user is in supervision mode.
+        featureVoiceMessagesEnabled:
+          type: boolean
+          example: 'true'
+          description: Master toggle for voice messages availability (all chat types).
+        featureVoiceMessagesAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable voice messages in anonymous chats.
+        featureVoiceMessagesOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable voice messages in 1-on-1 chats.
+        featureVoiceMessagesGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable voice messages in group chats.
+        featureVoiceMessagesSupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable voice messages when a user is in supervision mode.
+        featureMediaUploadEnabled:
+          type: boolean
+          example: 'true'
+          description: 'Master toggle: may images/media be uploaded into chats at all. Replaces the retired featureAttachmentUploadDisabled (ADR-015).'
+        featureMediaUploadAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable media upload in anonymous chats.
+        featureMediaUploadOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable media upload in 1-on-1 chats.
+        featureMediaUploadGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable media upload in group chats.
+        featureMediaUploadSupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Enable media upload when a user is in supervision mode.
+        featureMediaInlineDisplayEnabled:
+          type: boolean
+          example: 'true'
+          description: 'Master toggle: render media as scaled thumbnails (on) or deliver as downloadable file only (off). The virus-scan requirement is attached to this switch.'
+        featureMediaInlineDisplayAnonymousChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Inline media display in anonymous chats.
+        featureMediaInlineDisplayOneOnOneChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Inline media display in 1-on-1 chats.
+        featureMediaInlineDisplayGroupChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Inline media display in group chats.
+        featureMediaInlineDisplaySupervisionChatsEnabled:
+          type: boolean
+          example: 'true'
+          description: Inline media display when a user is in supervision mode.
+        featureMediaAiScanEnabled:
+          type: boolean
+          example: 'false'
+          description: 'Master toggle: AI content check (content scanner) sets the media check state automatically; off = phase-1 behaviour (blurred until counsellor click-to-reveal).'
+        featureMediaAiScanAnonymousChatsEnabled:
+          type: boolean
+          example: 'false'
+          description: AI media scan for anonymous chats.
+        featureMediaAiScanOneOnOneChatsEnabled:
+          type: boolean
+          example: 'false'
+          description: AI media scan for 1-on-1 chats.
+        featureMediaAiScanGroupChatsEnabled:
+          type: boolean
+          example: 'false'
+          description: AI media scan for group chats.
+        featureMediaAiScanSupervisionChatsEnabled:
+          type: boolean
+          example: 'false'
+          description: AI media scan when a user is in supervision mode.
         featureToolsOICDToken:
           type: string
-          example: "1234-1234-1234-1234"
+          example: 1234-1234-1234-1234
+        activeLanguages:
+          type: array
+          items:
+            type: string
+          example: '[en, de, fr]'
+        showAskerProfile:
+          type: boolean
+          default: false
+          example: 'false'
+        isVideoCallAllowed:
+          type: boolean
+          default: false
+          example: 'false'
+        featureSystemNotificationEmailsEnabled:
+          type: boolean
+          example: 'false'
+        smtp:
+          $ref: '#/components/schemas/SmtpConfig'
+        extendedSettings:
+          $ref: '#/components/schemas/ConsultingTypePatchDTO'
+        featureCentralDataProtectionTemplateEnabled:
+          type: boolean
+          example: 'false'
+        tenantAdminControls:
+          $ref: '#/components/schemas/TenantAdminControls'
+    TenantAdminControls:
+      type: object
+      properties:
+        permissionsPageEnabled:
+          type: boolean
+          example: 'true'
+        allowedPermissionToggles:
+          $ref: '#/components/schemas/TenantAdminAllowedPermissionToggles'
+        enforcedPermissionToggles:
+          $ref: '#/components/schemas/TenantAdminAllowedPermissionToggles'
+    TenantAdminAllowedPermissionToggles:
+      type: object
+      properties:
+        appearance:
+          type: boolean
+          example: 'true'
+        anonymousChat:
+          type: boolean
+          example: 'true'
+        calls:
+          type: boolean
+          example: 'true'
+        groupChat:
+          type: boolean
+          example: 'true'
+        supervision:
+          type: boolean
+          example: 'true'
+        supervisionAnonymousChats:
+          type: boolean
+          example: 'true'
+        supervisionOneOnOneChats:
+          type: boolean
+          example: 'true'
+        audioCalls:
+          type: boolean
+          example: 'true'
+        audioCallsAnonymousChats:
+          type: boolean
+          example: 'true'
+        audioCallsOneOnOneChats:
+          type: boolean
+          example: 'true'
+        audioCallsGroupChats:
+          type: boolean
+          example: 'true'
+        audioCallsSupervisionChats:
+          type: boolean
+          example: 'true'
+        videoCalls:
+          type: boolean
+          example: 'true'
+        videoCallsAnonymousChats:
+          type: boolean
+          example: 'true'
+        videoCallsOneOnOneChats:
+          type: boolean
+          example: 'true'
+        videoCallsGroupChats:
+          type: boolean
+          example: 'true'
+        videoCallsSupervisionChats:
+          type: boolean
+          example: 'true'
+        threads:
+          type: boolean
+          example: 'true'
+        threadsAnonymousChats:
+          type: boolean
+          example: 'true'
+        threadsOneOnOneChats:
+          type: boolean
+          example: 'true'
+        threadsGroupChats:
+          type: boolean
+          example: 'true'
+        threadsSupervisionChats:
+          type: boolean
+          example: 'true'
+        voiceMessages:
+          type: boolean
+          example: 'true'
+        voiceMessagesAnonymousChats:
+          type: boolean
+          example: 'true'
+        voiceMessagesOneOnOneChats:
+          type: boolean
+          example: 'true'
+        voiceMessagesGroupChats:
+          type: boolean
+          example: 'true'
+        voiceMessagesSupervisionChats:
+          type: boolean
+          example: 'true'
+        mediaUpload:
+          type: boolean
+          example: 'true'
+        mediaUploadAnonymousChats:
+          type: boolean
+          example: 'true'
+        mediaUploadOneOnOneChats:
+          type: boolean
+          example: 'true'
+        mediaUploadGroupChats:
+          type: boolean
+          example: 'true'
+        mediaUploadSupervisionChats:
+          type: boolean
+          example: 'true'
+        mediaInlineDisplay:
+          type: boolean
+          example: 'true'
+        mediaInlineDisplayAnonymousChats:
+          type: boolean
+          example: 'true'
+        mediaInlineDisplayOneOnOneChats:
+          type: boolean
+          example: 'true'
+        mediaInlineDisplayGroupChats:
+          type: boolean
+          example: 'true'
+        mediaInlineDisplaySupervisionChats:
+          type: boolean
+          example: 'true'
+        mediaAiScan:
+          type: boolean
+          example: 'true'
+        mediaAiScanAnonymousChats:
+          type: boolean
+          example: 'true'
+        mediaAiScanOneOnOneChats:
+          type: boolean
+          example: 'true'
+        mediaAiScanGroupChats:
+          type: boolean
+          example: 'true'
+        mediaAiScanSupervisionChats:
+          type: boolean
+          example: 'true'
+    TenantMediaResponseDTO:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 3f6f1c1e-8a7b-4c2d-9e0f-1a2b3c4d5e6f
+        url:
+          type: string
+          description: Server-relative path the stored media is served from.
+          example: /media/3f6f1c1e-8a7b-4c2d-9e0f-1a2b3c4d5e6f
+        contentType:
+          type: string
+          example: image/png
+    SmtpConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: 'false'
+        host:
+          type: string
+          example: smtp.titan.email
+        port:
+          type: integer
+          example: 587
+        secure:
+          type: boolean
+          example: 'false'
+        username:
+          type: string
+          example: notifications@oriso.org
+        password:
+          type: string
+          example: '********'
+        from:
+          type: string
+          example: notifications@oriso.org
+        emailThemeColor:
+          type: string
+          example: '#0f3b8f'
+    MultilingualContent:
+      type: object
+      required:
+        - impressum
+      properties:
+        impressum:
+          type: object
+          additionalProperties:
+            type: string
+        claim:
+          type: object
+          additionalProperties:
+            type: string
+        privacy:
+          type: object
+          additionalProperties:
+            type: string
+        confirmPrivacy:
+          type: boolean
+        termsAndConditions:
+          type: object
+          additionalProperties:
+            type: string
+        confirmTermsAndConditions:
+          type: boolean
+        dataProtectionContactTemplate:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/DataProtectionContactTemplateDTO'
+    DataProtectionContactTemplateDTO:
+      type: object
+      properties:
+        agencyContext:
+          $ref: '#/components/schemas/AgencyContextDTO'
+        noAgencyContext:
+          $ref: '#/components/schemas/NoAgencyContextDTO'
+    AgencyContextDTO:
+      type: object
+      properties:
+        responsibleContact:
+          type: string
+        dataProtectionOfficer:
+          $ref: '#/components/schemas/DataProtectionOfficerDTO'
+    NoAgencyContextDTO:
+      type: object
+      properties:
+        responsibleContact:
+          type: string
+        dataProtectionOfficerContact:
+          type: string
+    DataProtectionOfficerDTO:
+      type: object
+      properties:
+        agencyResponsibleContact:
+          type: string
+        alternativeRepresentativeContact:
+          type: string
+        dataProtectionOfficerContact:
+          type: string
+    AdminTenantDTO:
+      type: object
+      required:
+        - id
+        - name
+        - subdomain
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12132
+        name:
+          type: string
+          example: Company name AG
+          maxLength: 40
+        subdomain:
+          type: string
+          example: companyname
+          maxLength: 100
+        address:
+          type: string
+          maxLength: 255
+          example: Musterstraße 1, 12345 Musterstadt
+        description:
+          type: string
+          example: Short description of the tenant.
+        beraterCount:
+          type: integer
+          example: 10
+        adminEmails:
+          type: array
+          items:
+            type: string
+          example: '[admin1@ob.de, admin2@ob.de]'
+        createDate:
+          type: string
+        updateDate:
+          type: string
+    TenantsSearchResultDTO:
+      type: object
+      properties:
+        _embedded:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminTenantDTO'
+        _links:
+          $ref: '#/components/schemas/PaginationLinks'
+        total:
+          type: integer
+    PaginationLinks:
+      type: object
+      required:
+        - self
+      properties:
+        self:
+          $ref: '#/components/schemas/HalLink'
+        next:
+          $ref: '#/components/schemas/HalLink'
+        previous:
+          $ref: '#/components/schemas/HalLink'
+    HalLink:
+      type: object
+      required:
+        - href
+      properties:
+        href:
+          type: string
+        method:
+          type: string
+          enum:
+            - GET
+            - POST
+            - DELETE
+            - PUT
+        templated:
+          type: boolean
+    WelcomeMessageDTO:
+      type: object
+      properties:
+        sendWelcomeMessage:
+          type: boolean
+          example: true
+        welcomeMessageText:
+          type: string
+          example: Lorem ipsum
+    ConsultingTypePatchDTO:
+      type: object
+      properties:
+        isVideoCallAllowed:
+          type: boolean
+          example: true
+        languageFormal:
+          type: boolean
+          example: true
+        sendFurtherStepsMessage:
+          type: boolean
+          example: true
+        welcomeMessage:
+          allOf:
+            - $ref: '#/components/schemas/WelcomeMessageDTO'

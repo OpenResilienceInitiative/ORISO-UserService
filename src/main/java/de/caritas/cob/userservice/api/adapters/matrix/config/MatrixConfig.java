@@ -21,8 +21,8 @@ public class MatrixConfig {
 
   /**
    * When {@code true}, consultant live-chat availability is derived from real-time Matrix presence.
-   * Set to {@code false} to fall back to the legacy RocketChat presence / best-effort signal (e.g.
-   * if consultant clients do not keep a Matrix sync open and presence is therefore unreliable).
+   * Set to {@code false} when presence must be treated as unavailable, for example when consultant
+   * clients do not keep a Matrix sync open.
    */
   private boolean presenceEnabled = true;
 

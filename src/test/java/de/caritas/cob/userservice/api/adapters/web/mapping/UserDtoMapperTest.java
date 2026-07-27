@@ -130,16 +130,6 @@ class UserDtoMapperTest {
   }
 
   @Test
-  void chatUserIdOf_Should_returnValue_When_keyPresent() {
-    assertThat(mapper.chatUserIdOf(Map.of("chatUserId", "rc-1"))).isEqualTo("rc-1");
-  }
-
-  @Test
-  void chatUserIdOf_Should_returnNull_When_keyAbsent() {
-    assertThat(mapper.chatUserIdOf(Map.of())).isNull();
-  }
-
-  @Test
   void preferredLanguageOf_Should_returnLanguage_When_present() {
     var dto = new PatchUserDTO();
     dto.setPreferredLanguage(LanguageCode.DE);
