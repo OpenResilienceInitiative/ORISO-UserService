@@ -8,11 +8,13 @@ import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControlle
 import de.caritas.cob.userservice.tenantservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -39,7 +41,8 @@ class TenantServiceTest {
   void setUp() {
     tenantControllerApi = new StubTenantControllerApi();
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(tenantControllerApi));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(tenantControllerApi), testCacheManager());
   }
 
   // Tenant resolution must reach the external tenant service on a cache miss.
@@ -66,6 +69,27 @@ class TenantServiceTest {
     assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
   }
 
+  @Test
+  void getRestrictedTenantData_validTenantIds_returnsDtosFromOneBatchCall() {
+    var knownTenant = new RestrictedTenantDTO().id(TENANT_ID).name("Berlin");
+    tenantControllerApi.tenantIdsResult = List.of(knownTenant);
+
+    var result = tenantService.getRestrictedTenantData(Set.of(TENANT_ID, 99L));
+
+    assertThat(result).containsExactly(knownTenant);
+    assertThat(tenantControllerApi.requestedTenantIds.get())
+        .containsExactlyInAnyOrder(TENANT_ID, 99L);
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
+  @Test
+  void getRestrictedTenantData_emptyTenantIds_doesNotCallApi() {
+    assertThat(tenantService.getRestrictedTenantData(Set.of())).isEmpty();
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isZero();
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
   // Callers such as HttpTenantFilter rely on upstream errors surfacing unchanged.
   @Test
   void getRestrictedTenantData_subdomainApiFailure_propagatesRestClientException() {
@@ -90,7 +114,9 @@ class TenantServiceTest {
   @Test
   void getRestrictedTenantData_nullSubdomain_throwsHttpClientErrorException() {
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(new TenantControllerApi()));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(new TenantControllerApi()),
+            testCacheManager());
 
     assertThatThrownBy(() -> tenantService.getRestrictedTenantData((String) null))
         .isInstanceOf(HttpClientErrorException.class)
@@ -101,7 +127,9 @@ class TenantServiceTest {
   @Test
   void getRestrictedTenantData_nullTenantId_throwsHttpClientErrorException() {
     tenantService =
-        new TenantService(new StubTenantServiceApiControllerFactory(new TenantControllerApi()));
+        new TenantService(
+            new StubTenantServiceApiControllerFactory(new TenantControllerApi()),
+            testCacheManager());
 
     assertThatThrownBy(() -> tenantService.getRestrictedTenantData((Long) null))
         .isInstanceOf(HttpClientErrorException.class)
@@ -146,6 +174,21 @@ class TenantServiceTest {
       cachedTenantService.getRestrictedTenantData(TENANT_ID);
 
       assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void getRestrictedTenantData_batchPopulatesIdAndSubdomainCacheEntries() {
+      var tenant = new RestrictedTenantDTO().id(TENANT_ID).subdomain(SUBDOMAIN).name("Berlin");
+      tenantControllerApi.tenantIdsResult = List.of(tenant);
+
+      assertThat(cachedTenantService.getRestrictedTenantData(Set.of(TENANT_ID)))
+          .containsExactly(tenant);
+
+      assertThat(cachedTenantService.getRestrictedTenantData(TENANT_ID)).isSameAs(tenant);
+      assertThat(cachedTenantService.getRestrictedTenantData(SUBDOMAIN)).isSameAs(tenant);
+      assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+      assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+      assertThat(tenantControllerApi.subdomainCalls.get()).isZero();
     }
 
     @Test
@@ -217,8 +260,10 @@ class TenantServiceTest {
     }
 
     @Bean
-    TenantService tenantService(StubTenantControllerApi stubTenantControllerApi) {
-      return new TenantService(new StubTenantServiceApiControllerFactory(stubTenantControllerApi));
+    TenantService tenantService(
+        StubTenantControllerApi stubTenantControllerApi, CacheManager cacheManager) {
+      return new TenantService(
+          new StubTenantServiceApiControllerFactory(stubTenantControllerApi), cacheManager);
     }
 
     @Bean
@@ -234,19 +279,25 @@ class TenantServiceTest {
 
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
+    List<RestrictedTenantDTO> tenantIdsResult;
     RuntimeException subdomainException;
     RuntimeException tenantIdException;
     final AtomicInteger subdomainCalls = new AtomicInteger();
     final AtomicInteger tenantIdCalls = new AtomicInteger();
+    final AtomicInteger tenantIdsCalls = new AtomicInteger();
+    final AtomicReference<List<Long>> requestedTenantIds = new AtomicReference<>();
     CountDownLatch[] subdomainLatch;
 
     void reset() {
       subdomainResult = null;
       tenantIdResult = null;
+      tenantIdsResult = null;
       subdomainException = null;
       tenantIdException = null;
       subdomainCalls.set(0);
       tenantIdCalls.set(0);
+      tenantIdsCalls.set(0);
+      requestedTenantIds.set(null);
       subdomainLatch = null;
     }
 
@@ -269,6 +320,13 @@ class TenantServiceTest {
         throw tenantIdException;
       }
       return tenantIdResult != null ? tenantIdResult : new RestrictedTenantDTO().id(tenantId);
+    }
+
+    @Override
+    public List<RestrictedTenantDTO> getRestrictedTenantDataByTenantIds(List<Long> tenantIds) {
+      tenantIdsCalls.incrementAndGet();
+      requestedTenantIds.set(List.copyOf(tenantIds));
+      return tenantIdsResult != null ? tenantIdsResult : List.of();
     }
 
     private void awaitLatch() {
@@ -298,5 +356,12 @@ class TenantServiceTest {
     public TenantControllerApi createControllerApi() {
       return api;
     }
+  }
+
+  private static CacheManager testCacheManager() {
+    var cacheManager = new SimpleCacheManager();
+    cacheManager.setCaches(List.of(new ConcurrentMapCache(CacheManagerConfig.TENANT_CACHE)));
+    cacheManager.initializeCaches();
+    return cacheManager;
   }
 }

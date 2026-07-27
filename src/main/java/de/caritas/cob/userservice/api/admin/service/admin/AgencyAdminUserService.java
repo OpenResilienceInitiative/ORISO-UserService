@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -28,9 +27,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
@@ -153,27 +150,17 @@ public class AgencyAdminUserService {
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
-    return fullAdmins.stream()
-        .filter(admin -> admin.getTenantId() != null)
-        .map(admin -> new AbstractMap.SimpleEntry<>(admin.getTenantId(), tenantName(admin)))
-        .filter(entry -> entry.getValue() != null)
+    Set<Long> tenantIds =
+        fullAdmins.stream()
+            .map(Admin::getTenantId)
+            .filter(java.util.Objects::nonNull)
+            .collect(Collectors.toSet());
+    return tenantService.getRestrictedTenantData(tenantIds).stream()
+        .filter(tenant -> tenant.getId() != null && tenant.getName() != null)
         .collect(
             Collectors.toMap(
-                Map.Entry::getKey, Map.Entry::getValue, (existing, replacement) -> existing));
-  }
-
-  private String tenantName(Admin admin) {
-    try {
-      return tenantService.getRestrictedTenantData(admin.getTenantId()).getName();
-    } catch (HttpClientErrorException exception) {
-      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
-        log.warn(
-            "Tenant data not found for agency admin {} and tenantId {}",
-            admin.getId(),
-            admin.getTenantId());
-        return null;
-      }
-      throw exception;
-    }
+                tenant -> tenant.getId(),
+                tenant -> tenant.getName(),
+                (existing, replacement) -> existing));
   }
 }
