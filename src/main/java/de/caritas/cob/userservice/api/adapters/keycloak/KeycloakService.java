@@ -584,15 +584,6 @@ public class KeycloakService
     throw new KeycloakException("ERROR: Keycloak user id is missing");
   }
 
-  /**
-   * Assigns the role "user" to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   */
-  public void updateUserRole(final String userId) {
-    updateRole(userId, "user");
-  }
-
   @Override
   public void ensureRoles(final String userId, final Collection<String> roleNames) {
     var requestedRoles = new LinkedHashSet<>(roleNames);
@@ -603,18 +594,16 @@ public class KeycloakService
     var assignedRoles = new LinkedHashSet<>(findAllByUserId(userId));
     requestedRoles.removeAll(assignedRoles);
     if (!requestedRoles.isEmpty()) {
-      updateRoles(userId, requestedRoles);
+      assignRoles(userId, requestedRoles);
     }
   }
 
-  /**
-   * Assigns the given {@link UserRole} to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param role {@link UserRole}
-   */
-  public void updateRole(final String userId, final UserRole role) {
-    this.updateRole(userId, role.getValue());
+  @Override
+  public void assignRoles(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (!requestedRoles.isEmpty()) {
+      updateRoles(userId, requestedRoles);
+    }
   }
 
   @Override
@@ -644,16 +633,6 @@ public class KeycloakService
           .findFirst();
     }
     return Optional.empty();
-  }
-
-  /**
-   * Assigns the role with the given name to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param roleName Keycloak role name
-   */
-  public void updateRole(final String userId, final String roleName) {
-    updateRoles(userId, Collections.singletonList(roleName));
   }
 
   private void updateRoles(final String userId, final Collection<String> roleNames) {

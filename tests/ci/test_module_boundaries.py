@@ -568,6 +568,19 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
             / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/CreateConsultantSaga.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin"
+            / "create/CreateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "update/ConsultantUpdateService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/AskerImportService.java",
         )
         missing_focused_port = [
             str(source.relative_to(ROOT))
@@ -589,6 +602,16 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "ensureRole(",
             identity_client,
             "The broad identity command client must not own role ensuring",
+        )
+        self.assertNotIn(
+            "updateUserRole(",
+            identity_client,
+            "The broad identity command client must not own default role assignment",
+        )
+        self.assertNotIn(
+            "updateRole(",
+            identity_client,
+            "The broad identity command client must not own role assignment",
         )
         for source in consumers:
             self.assertNotIn(

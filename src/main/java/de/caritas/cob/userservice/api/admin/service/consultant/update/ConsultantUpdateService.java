@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -40,6 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantUpdateService {
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
@@ -100,7 +102,7 @@ public class ConsultantUpdateService {
 
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && updateConsultantDTO.getIsGroupchatConsultant()) {
-      identityClient.updateRole(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+      identityRoleUpdater.ensureRoles(consultant.getId(), Set.of(GROUP_CHAT_CONSULTANT.getValue()));
     }
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && !updateConsultantDTO.getIsGroupchatConsultant()) {

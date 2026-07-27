@@ -5,5 +5,7 @@ import java.util.Collection;
 /** Focused outbound identity realm-role write contract. */
 public interface IdentityRoleUpdater {
 
+  void assignRoles(String userId, Collection<String> roleNames);
+
   void ensureRoles(String userId, Collection<String> roleNames);
 }

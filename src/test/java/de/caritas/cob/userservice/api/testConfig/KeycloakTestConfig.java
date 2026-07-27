@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import java.util.Collection;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -112,13 +113,7 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void updateUserRole(String userId) {}
-
-      @Override
-      public void updateRole(String userId, UserRole role) {}
-
-      @Override
-      public void updateRole(String userId, String roleName) {}
+      public void assignRoles(String userId, Collection<String> roleNames) {}
 
       @Override
       public void removeRoleIfPresent(String userId, String roleName) {}

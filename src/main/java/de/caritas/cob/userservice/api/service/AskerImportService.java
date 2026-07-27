@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.config.auth.UserRole.USER;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.helper.SessionDataProvider.fromUserDTO;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
@@ -30,6 +31,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
@@ -83,6 +85,7 @@ public class AskerImportService {
   private final String IMPORT_LOG_CHARSET = "UTF-8";
   private final String DUMMY_POSTCODE = "00000";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull UserService userService;
   private final @NonNull SessionService sessionService;
@@ -169,7 +172,7 @@ public class AskerImportService {
         identityClient.updatePassword(keycloakUserId, record.getPassword());
 
         // Set asker/user role
-        identityClient.updateUserRole(keycloakUserId);
+        identityRoleUpdater.assignRoles(keycloakUserId, List.of(USER.getValue()));
 
         // Create user in MariaDB
         ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO =
@@ -359,7 +362,7 @@ public class AskerImportService {
         identityClient.updatePassword(keycloakUserId, record.getPassword());
 
         // Set asker/user role
-        identityClient.updateUserRole(keycloakUserId);
+        identityRoleUpdater.assignRoles(keycloakUserId, List.of(USER.getValue()));
 
         // Create user in MariaDB
         ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO =

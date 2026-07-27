@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -52,6 +53,7 @@ import org.springframework.web.client.RestClientException;
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserService userService;
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
@@ -346,7 +348,7 @@ public class CreateUserFacade {
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
     checkIfUserIdNotNull(userId, userDTO);
-    identityClient.updateRole(userId, role);
+    identityRoleUpdater.assignRoles(userId, List.of(role.getValue()));
     identityClient.updatePassword(userId, userDTO.getPassword());
   }
 
