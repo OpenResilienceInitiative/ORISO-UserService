@@ -24,12 +24,15 @@ import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginExcept
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatPostWelcomeMessageException;
 import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveSystemMessagesException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
@@ -66,6 +69,7 @@ class AskerImportServiceTest {
   @InjectMocks private AskerImportService askerImportService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
@@ -231,7 +235,8 @@ class AskerImportServiceTest {
     String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
-    when(userHelper.getDummyEmail("kc-user-id")).thenReturn("dummy@example.com");
+    when(identityDummyEmailUpdater.updateDummyEmail(eq("kc-user-id"), any()))
+        .thenReturn("dummy@example.com");
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(true));
     User dbUser = new User();
@@ -244,8 +249,12 @@ class AskerImportServiceTest {
 
     askerImportService.startImportForAskersWithoutSession();
 
-    verify(userHelper).getDummyEmail("kc-user-id");
-    verify(identityClient).updateDummyEmail(eq("kc-user-id"), any(UserDTO.class));
+    verify(identityDummyEmailUpdater)
+        .updateDummyEmail(
+            eq("kc-user-id"),
+            eq(
+                new IdentityDummyEmailUpdate(
+                    new UsernameTranscoder().encodeUsername("newasker"), null)));
   }
 
   // ---------------------------------------------------------------------------
@@ -839,7 +848,8 @@ class AskerImportServiceTest {
     when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
-    when(userHelper.getDummyEmail("kc-id")).thenReturn("dummy@example.com");
+    when(identityDummyEmailUpdater.updateDummyEmail(eq("kc-id"), any()))
+        .thenReturn("dummy@example.com");
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(extendedConsultingType(false));
     User dbUser = new User();
@@ -852,8 +862,12 @@ class AskerImportServiceTest {
 
     askerImportService.startImport();
 
-    verify(userHelper).getDummyEmail("kc-id");
-    verify(identityClient).updateDummyEmail(eq("kc-id"), any(UserDTO.class));
+    verify(identityDummyEmailUpdater)
+        .updateDummyEmail(
+            eq("kc-id"),
+            eq(
+                new IdentityDummyEmailUpdate(
+                    new UsernameTranscoder().encodeUsername("validuser"), null)));
   }
 
   // --- startImport — blank password → getRandomPassword called ---

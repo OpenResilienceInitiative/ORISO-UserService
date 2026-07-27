@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import java.util.Collection;
 import java.util.List;
@@ -106,9 +107,8 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public String updateDummyEmail(String userId, UserDTO user) {
+      public String updateDummyEmail(String userId, IdentityDummyEmailUpdate update) {
         var dummyMail = userId + "@dummy.du";
-        user.setEmail(dummyMail);
         return dummyMail;
       }
 

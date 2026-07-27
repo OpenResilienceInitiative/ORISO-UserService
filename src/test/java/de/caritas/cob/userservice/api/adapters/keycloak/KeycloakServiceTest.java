@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -292,10 +293,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteEmailAddress_Should_useServicesCorrectly() {
-    // deleteEmailAddress -> updateDummyEmail(userId) -> updateEmail(...), which now persists the
-    // dummy email to Keycloak (verifyEmail + setEmail + userResource.update). Verify the dummy
-    // email
-    // is resolved and actually written via UserResource#update.
+    // Current-user deletion stays on the focused email-address boundary and persists the resolved
+    // dummy email through the normal verified email update path.
     var userId = random(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
     when(userHelper.getDummyEmail(userId)).thenReturn("dummy");
@@ -1113,31 +1112,37 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updateDummyMail_id_dto_Should_callServicesCorrectly() {
+  public void updateDummyEmail_Should_updateOnceWithProviderNeutralIdentityValues() {
+    setField(keycloakService, "multiTenancyEnabled", true);
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(this.userHelper.getDummyEmail(anyString())).thenReturn("dummy");
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
 
-    String dummyMail = this.keycloakService.updateDummyEmail("userId", new UserDTO());
+    String dummyMail =
+        this.keycloakService.updateDummyEmail(
+            "userId", new IdentityDummyEmailUpdate("username", 2L));
 
-    verify(userResource, times(1)).update(any());
+    verify(usersResource, times(1)).get("userId");
+    verify(userResource, times(1)).update(representationCaptor.capture());
+    var representation = representationCaptor.getValue();
+    assertThat(representation.getUsername(), is("username"));
+    assertThat(representation.getEmail(), is("dummy"));
+    assertThat(representation.getAttributes().get("tenantId"), is(singletonList("2")));
     assertThat(dummyMail, is("dummy"));
   }
 
   @Test
-  public void updateDummyMail_id_Should_callServicesCorrectly() {
-    // updateDummyEmail(String) -> updateEmail(...), which now persists the dummy email to Keycloak
-    // (verifyEmail + setEmail + userResource.update). Verify the dummy email is computed and
-    // written
-    // via UserResource#update.
+  public void deleteCurrentUserEmail_Should_callServicesCorrectly() {
     when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    when(authenticatedUser.getUserId()).thenReturn("userId");
     UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.updateDummyEmail("userId");
+    keycloakService.deleteCurrentUserEmail();
 
     verify(userHelper).getDummyEmail("userId");
     verify(userRepresentation).setEmail("dummy");

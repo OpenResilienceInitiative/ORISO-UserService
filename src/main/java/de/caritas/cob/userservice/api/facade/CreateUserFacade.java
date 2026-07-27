@@ -23,6 +23,8 @@ import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -54,6 +56,7 @@ import org.springframework.web.client.RestClientException;
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserService userService;
@@ -363,7 +366,8 @@ public class CreateUserFacade {
 
   private String returnDummyEmailIfNoneGiven(UserDTO userDTO, String userId) {
     if (isBlank(userDTO.getEmail())) {
-      return identityClient.updateDummyEmail(userId, userDTO);
+      return identityDummyEmailUpdater.updateDummyEmail(
+          userId, new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId()));
     }
 
     return userDTO.getEmail();

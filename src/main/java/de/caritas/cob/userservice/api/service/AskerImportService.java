@@ -31,6 +31,8 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
@@ -86,6 +88,7 @@ public class AskerImportService {
   private final String IMPORT_LOG_CHARSET = "UTF-8";
   private final String DUMMY_POSTCODE = "00000";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
@@ -166,8 +169,10 @@ public class AskerImportService {
         String keycloakUserId = identityClient.createKeycloakUser(userDTO, "", "");
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
-          userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
-          identityClient.updateDummyEmail(keycloakUserId, userDTO);
+          userDTO.setEmail(
+              identityDummyEmailUpdater.updateDummyEmail(
+                  keycloakUserId,
+                  new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId())));
         }
 
         // Set Keycloak password
@@ -356,8 +361,10 @@ public class AskerImportService {
         String keycloakUserId = identityClient.createKeycloakUser(userDTO, "", "");
 
         if (record.getEmail() == null || record.getEmail().equals(StringUtils.EMPTY)) {
-          userDTO.setEmail(userHelper.getDummyEmail(keycloakUserId));
-          identityClient.updateDummyEmail(keycloakUserId, userDTO);
+          userDTO.setEmail(
+              identityDummyEmailUpdater.updateDummyEmail(
+                  keycloakUserId,
+                  new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId())));
         }
 
         // Set Keycloak password

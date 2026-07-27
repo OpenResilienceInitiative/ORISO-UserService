@@ -46,6 +46,7 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -521,7 +522,7 @@ public class CreateUserFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     doNothing().when(keycloakService).updatePassword(anyString(), anyString());
-    when(keycloakService.updateDummyEmail(anyString(), any(UserDTO.class)))
+    when(keycloakService.updateDummyEmail(anyString(), any(IdentityDummyEmailUpdate.class)))
         .thenReturn("dummy@example.com");
     UserDTO userDtoWithBlankEmail =
         UserDTO.builder()
@@ -533,7 +534,12 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, userDtoWithBlankEmail, UserRole.USER);
 
-    verify(keycloakService, times(1)).updateDummyEmail(eq(USER_ID), any(UserDTO.class));
+    verify(keycloakService, times(1))
+        .updateDummyEmail(
+            eq(USER_ID),
+            eq(
+                new IdentityDummyEmailUpdate(
+                    userDtoWithBlankEmail.getUsername(), userDtoWithBlankEmail.getTenantId())));
   }
 
   @Test
