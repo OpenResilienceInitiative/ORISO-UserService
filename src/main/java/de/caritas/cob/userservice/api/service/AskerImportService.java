@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -82,6 +83,7 @@ public class AskerImportService {
   private final String IMPORT_LOG_CHARSET = "UTF-8";
   private final String DUMMY_POSTCODE = "00000";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull UserService userService;
   private final @NonNull SessionService sessionService;
   private final @NonNull RocketChatService rocketChatService;
@@ -143,7 +145,7 @@ public class AskerImportService {
         }
 
         // Check if decoded username is already taken
-        if (!identityClient.isUsernameAvailable(record.getUsername())) {
+        if (!identityUsernameAvailability.isUsernameAvailable(record.getUsername())) {
           writeToImportLog(
               String.format(
                   "Could not create Keycloak user %s - username or e-mail address is already taken.",
@@ -336,7 +338,7 @@ public class AskerImportService {
         UserDTO userDTO = convertAskerToUserDTO(record, agencyDTO.getConsultingType());
 
         // Check if decoded username is already taken
-        if (!identityClient.isUsernameAvailable(record.getUsername())) {
+        if (!identityUsernameAvailability.isUsernameAvailable(record.getUsername())) {
           writeToImportLog(
               String.format(
                   "Could not create Keycloak user %s - username or e-mail address is already taken.",

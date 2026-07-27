@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -38,7 +39,8 @@ public class UpdateAdminServiceIT {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityProfileLookup.class,
-        IdentityRoleLookup.class
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
 

@@ -3,9 +3,6 @@ package de.caritas.cob.userservice.api.helper;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,12 +11,10 @@ import org.springframework.stereotype.Component;
 
 /** Verifier class for user verifications. */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class UserVerifier {
 
   public static final int MAX_AGE_VALUE = 100;
-  private final @NonNull IdentityClient identityClient;
 
   @Value("${feature.demographics.enabled}")
   private boolean demographicsFeatureEnabled;
@@ -35,12 +30,6 @@ public class UserVerifier {
     // TODO: Fix Keycloak permissions for technical user
     log.info("Skipping username availability check for user: {}", userDTO.getUsername());
     return;
-
-    // Original code (commented out):
-    // if (!identityClient.isUsernameAvailable(userDTO.getUsername())) {
-    //   throw new CustomValidationHttpStatusException(
-    //       HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
-    // }
   }
 
   public void checkIfAllRequiredAttributesAreCorrectlyFilled(UserDTO userDTO) {

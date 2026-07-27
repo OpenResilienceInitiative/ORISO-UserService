@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -69,7 +70,8 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityProfileLookup.class,
-        IdentityRoleLookup.class
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
 

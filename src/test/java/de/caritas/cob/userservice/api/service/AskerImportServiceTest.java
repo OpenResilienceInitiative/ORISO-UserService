@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.message.MessageServiceProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -63,6 +64,7 @@ class AskerImportServiceTest {
   @InjectMocks private AskerImportService askerImportService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Mock private UserService userService;
   @Mock private SessionService sessionService;
   @Mock private RocketChatService rocketChatService;
@@ -156,7 +158,7 @@ class AskerImportServiceTest {
 
     askerImportService.startImportForAskersWithoutSession();
 
-    verify(identityClient, never()).isUsernameAvailable(anyString());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
   // ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,takenuser,,42,password123\r\n");
     when(userHelper.isUsernameValid("takenuser")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("takenuser")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("takenuser")).thenReturn(false);
 
     askerImportService.startImportForAskersWithoutSession();
 
@@ -185,7 +187,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
 
     String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(UserDTO.class), anyString(), anyString()))
@@ -220,7 +222,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
 
     String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
@@ -252,7 +254,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String keycloakResponse = "kc-user-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
@@ -339,7 +341,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -362,7 +364,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -390,7 +392,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -415,7 +417,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenThrow(
             new CustomValidationHttpStatusException(
@@ -437,7 +439,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,validuser,valid@example.com,42,\r\n");
     when(userHelper.isUsernameValid("validuser")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(false);
     when(userHelper.getRandomPassword()).thenReturn("generated-pw");
 
     askerImportService.startImportForAskersWithoutSession();
@@ -487,7 +489,7 @@ class AskerImportServiceTest {
 
     askerImportService.startImport();
 
-    verify(identityClient, never()).isUsernameAvailable(anyString());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
   // --- startImport — consultant not in agency ---
@@ -506,7 +508,7 @@ class AskerImportServiceTest {
 
     askerImportService.startImport();
 
-    verify(identityClient, never()).isUsernameAvailable(anyString());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
   // --- startImport — username already taken ---
@@ -520,7 +522,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(false);
 
     askerImportService.startImport();
 
@@ -538,7 +540,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -563,7 +565,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -592,7 +594,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -626,7 +628,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -670,7 +672,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -717,7 +719,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -788,7 +790,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -809,7 +811,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenThrow(new RuntimeException("unexpected"));
 
@@ -830,7 +832,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(userHelper.getDummyEmail("kc-id")).thenReturn("dummy@example.com");
@@ -862,7 +864,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(false);
 
     askerImportService.startImport();
 
@@ -880,7 +882,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -911,7 +913,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -944,7 +946,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -979,7 +981,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1020,7 +1022,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1066,7 +1068,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1099,7 +1101,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1148,7 +1150,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenThrow(new RuntimeException("unexpected loop error"));
 
@@ -1190,7 +1192,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1213,7 +1215,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1238,7 +1240,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1263,7 +1265,7 @@ class AskerImportServiceTest {
     writeAskerWithoutSessionCsv("1,newasker,valid@example.com,42,password123\r\n");
     when(userHelper.isUsernameValid("newasker")).thenReturn(true);
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
-    when(identityClient.isUsernameAvailable("newasker")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("newasker")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1323,7 +1325,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1349,7 +1351,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1380,7 +1382,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1411,7 +1413,7 @@ class AskerImportServiceTest {
     when(agencyService.getAgencyWithoutCaching(42L)).thenReturn(agencyDTO(42L, 1, false));
     Consultant consultant = consultantInAgency("cons-id", 42L);
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1445,7 +1447,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))
@@ -1482,7 +1484,7 @@ class AskerImportServiceTest {
     Consultant consultant = consultantInAgency("cons-id", 42L);
     consultant.setRocketChatId("rc-cons-id");
     when(consultantService.getConsultant("cons-id")).thenReturn(Optional.of(consultant));
-    when(identityClient.isUsernameAvailable("validuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("validuser")).thenReturn(true);
     String kc = "kc-id";
     when(identityClient.createKeycloakUser(any(), anyString(), anyString())).thenReturn(kc);
     when(consultingTypeManager.getConsultingTypeSettings(1))

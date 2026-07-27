@@ -788,6 +788,7 @@ public class KeycloakServiceTest {
     boolean isAvailable = this.keycloakService.isUsernameAvailable("username");
 
     assertThat(isAvailable, is(true));
+    verify(usersResource, times(2)).search(any());
   }
 
   @Test

@@ -226,6 +226,58 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_username_availability_uses_a_focused_provider_neutral_port(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        availability_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityUsernameAvailability.java"
+        )
+        consumers = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
+            "anonymous/AnonymousUsernameRegistry.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/AskerImportService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/"
+            "ConsultantImportService.java",
+        )
+        user_verifier = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/helper/UserVerifier.java"
+        ).read_text()
+
+        self.assertTrue(
+            availability_port.exists(),
+            "A focused IdentityUsernameAvailability port must own availability reads",
+        )
+        self.assertNotIn(
+            "isUsernameAvailable(",
+            identity_port,
+            "The broad identity command port must not expose username availability",
+        )
+
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if "IdentityUsernameAvailability" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            offenders,
+            "All active availability consumers must use the focused port:\n"
+            + "\n".join(offenders),
+        )
+        self.assertNotIn(
+            "IdentityClient",
+            user_verifier,
+            "UserVerifier must not retain an unused broad identity dependency",
+        )
+
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
             ROOT

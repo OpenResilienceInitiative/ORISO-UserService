@@ -179,6 +179,12 @@ closed.
   identity outage, but logs only the bounded exception class. The outbound
   metrics retain attempt/outcome/latency evidence without one full stack trace
   per public request.
+- Username-availability reads now consume the focused, provider-neutral
+  `IdentityUsernameAvailability` port, and the unused broad identity dependency
+  was removed from `UserVerifier`. This is a module-boundary improvement, not a
+  call-count reduction: one availability operation still performs exactly two
+  adapter-internal identity lookups, one for the decoded and one for the encoded
+  username.
 - Consultant role-set validation reads the user's complete realm-role list once
   and performs the requested-set intersection in-process. The code-level bound
   is therefore zero identity calls for an empty role set and exactly one for a
@@ -225,7 +231,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads use the focused `IdentityRoleLookup` port; the broad command client no longer exposes full role lists. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. | The broad `IdentityClient` still exposes web-layer user command DTOs and OTP values; outbound consumers still use `IdentityClientConfig`. |
+| Identity/profile | User web entry points use `AccountManaging`, `IdentityManaging` and the application-owned `IdentityPolicy`; web adapters no longer read outbound identity configuration for OTP permissions, consultant display names or Magic Link email classification. Consultant DTO mapping also asks `IdentityManaging` for role decisions instead of calling the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Login, refresh-token logout and password verification use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin`; the broad command client no longer exposes authentication. Username availability uses the focused `IdentityUsernameAvailability` port; four active consumers no longer depend on the broad command client for this read, and `UserVerifier` no longer retains an unused identity dependency. Profile lookup uses the focused `IdentityProfileLookup` port and returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. Realm-role reads use the focused `IdentityRoleLookup` port; the broad command client no longer exposes full role lists. Email-owner reads use the focused `IdentityEmailOwnerLookup` port and return `Optional<IdentityEmailOwner>`; provider map keys stay inside the deleted adapter mapping instead of leaking into application logic. | The broad `IdentityClient` still exposes web-layer user command DTOs and OTP values; outbound consumers still use `IdentityClientConfig`. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -253,7 +259,10 @@ to consultant-agency validation. The email-owner contract likewise keeps the
 read off the broad command port and rejects application-level dependence on
 Keycloak adapter map keys. The authentication contract keeps login, logout and
 password verification off the broad command client and requires every
-production consumer to depend on the focused provider-neutral port.
+production consumer to depend on the focused provider-neutral port. The
+username-availability contract likewise protects its focused port, names all
+four active direct consumers and rejects the unused broad dependency in
+`UserVerifier`.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current

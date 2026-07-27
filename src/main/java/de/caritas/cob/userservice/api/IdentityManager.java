@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class IdentityManager implements IdentityManaging {
   private final IdentityAuthentication identityAuthentication;
   private final IdentityClient identityClient;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
@@ -71,7 +73,7 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean isUsernameAvailable(String username) {
-    return identityClient.isUsernameAvailable(username);
+    return identityUsernameAvailability.isUsernameAvailable(username);
   }
 
   @Override

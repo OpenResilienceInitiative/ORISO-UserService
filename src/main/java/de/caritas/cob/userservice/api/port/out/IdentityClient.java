@@ -32,8 +32,6 @@ public interface IdentityClient {
 
   String createKeycloakUser(final UserDTO user, final String firstName, final String lastName);
 
-  boolean isUsernameAvailable(String username);
-
   void updateUserRole(final String userId);
 
   void ensureRole(final String userId, final String roleName);

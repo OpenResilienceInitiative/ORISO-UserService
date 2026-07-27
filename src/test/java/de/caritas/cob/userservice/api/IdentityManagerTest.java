@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ class IdentityManagerTest {
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
@@ -108,12 +110,12 @@ class IdentityManagerTest {
   }
 
   @Test
-  void isUsernameAvailableShouldDelegateToIdentityClient() {
-    when(identityClient.isUsernameAvailable(RAW_USERNAME)).thenReturn(true);
+  void isUsernameAvailableShouldDelegateToFocusedAvailabilityPort() {
+    when(identityUsernameAvailability.isUsernameAvailable(RAW_USERNAME)).thenReturn(true);
 
     assertThat(identityManager.isUsernameAvailable(RAW_USERNAME)).isTrue();
 
-    verify(identityClient).isUsernameAvailable(RAW_USERNAME);
+    verify(identityUsernameAvailability).isUsernameAvailable(RAW_USERNAME);
   }
 
   @Test

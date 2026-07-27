@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -73,7 +74,8 @@ public class KeycloakService
         IdentityClient,
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
-        IdentityRoleLookup {
+        IdentityRoleLookup,
+        IdentityUsernameAvailability {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -411,6 +413,7 @@ public class KeycloakService
    * @param username (decoded or encoded)
    * @return true if does not exist, else false
    */
+  @Override
   public boolean isUsernameAvailable(String username) {
     List<UserRepresentation> keycloakDecodedUserList =
         findByUsername(usernameTranscoder.decodeUsername(username));

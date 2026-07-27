@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -58,7 +59,8 @@ class CreateAdminServiceIT {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityProfileLookup.class,
-        IdentityRoleLookup.class
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
 
