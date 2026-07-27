@@ -106,7 +106,8 @@ public class ConsultantUpdateService {
     }
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && !updateConsultantDTO.getIsGroupchatConsultant()) {
-      identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+      identityRoleUpdater.removeRolesIfPresent(
+          consultant.getId(), Set.of(GROUP_CHAT_CONSULTANT.getValue()));
     }
 
     // MATRIX MIGRATION: RocketChat update is optional, don't block on errors

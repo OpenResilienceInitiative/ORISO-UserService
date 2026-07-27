@@ -607,32 +607,42 @@ public class KeycloakService
   }
 
   @Override
-  public void removeRoleIfPresent(final String userId, final String roleName) {
-    // Get realm and user resources
-    var realmResource = keycloakClient.getRealmResource();
-    UsersResource userRessource = realmResource.users();
-    UserResource user = userRessource.get(userId);
-    // Remove role
-    var optionalRole = findRole(user, roleName);
-    if (optionalRole.isPresent()) {
-      RoleRepresentation roleRepresentation =
-          realmResource.roles().get(optionalRole.get()).toRepresentation();
-      if (roleRepresentation != null) {
-        user.roles().realmLevel().remove(Collections.singletonList(roleRepresentation));
-      }
+  public void removeRolesIfPresent(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (requestedRoles.isEmpty()) {
+      return;
+    }
+
+    try {
+      removeRolesOnce(userId, requestedRoles);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while removing {} roles from user {}, forcing"
+              + " token refresh and retrying once",
+          requestedRoles.size(),
+          userId);
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      removeRolesOnce(userId, requestedRoles);
     }
   }
 
-  Optional<String> findRole(UserResource user, String roleName) {
-
-    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
-    if (userRoles != null) {
-      return userRoles.stream()
-          .filter(role -> role.getName() != null && role.getName().equals(roleName))
-          .map(RoleRepresentation::getName)
-          .findFirst();
+  private void removeRolesOnce(final String userId, final Collection<String> roleNames) {
+    var realmResource = keycloakClient.getRealmResource();
+    var user = realmResource.users().get(userId);
+    var realmRoles = user.roles().realmLevel();
+    var assignedRoles = realmRoles.listAll();
+    if (assignedRoles == null) {
+      return;
     }
-    return Optional.empty();
+
+    var rolesToRemove =
+        assignedRoles.stream()
+            .filter(role -> role.getName() != null && roleNames.contains(role.getName()))
+            .toList();
+    if (!rolesToRemove.isEmpty()) {
+      realmRoles.remove(rolesToRemove);
+    }
   }
 
   private void updateRoles(final String userId, final Collection<String> roleNames) {

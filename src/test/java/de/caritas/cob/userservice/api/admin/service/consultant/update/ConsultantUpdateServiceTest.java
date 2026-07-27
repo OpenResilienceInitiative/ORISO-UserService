@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAc
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -179,8 +180,8 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
-    verify(this.keycloakService, Mockito.never())
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify((IdentityRoleUpdater) this.keycloakService, Mockito.never())
+        .removeRolesIfPresent(any(), any());
 
     ArgumentCaptor<UserDTO> userDTOArgumentCaptor = ArgumentCaptor.forClass(UserDTO.class);
     verify(this.keycloakService, times(1))
@@ -221,7 +222,8 @@ public class ConsultantUpdateServiceTest {
 
     verify(this.keycloakService, Mockito.never()).updateUserData(any(), any(), any(), any());
     verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
-    verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
+    verify((IdentityRoleUpdater) this.keycloakService, Mockito.never())
+        .removeRolesIfPresent(any(), any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
     verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
     verify(this.consultantService, times(1)).saveConsultant(any());
@@ -264,8 +266,9 @@ public class ConsultantUpdateServiceTest {
 
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
-    verify(this.keycloakService)
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify((IdentityRoleUpdater) this.keycloakService)
+        .removeRolesIfPresent(
+            consultant.getId(), Set.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     verify(this.keycloakService, times(1))
         .updateUserData(

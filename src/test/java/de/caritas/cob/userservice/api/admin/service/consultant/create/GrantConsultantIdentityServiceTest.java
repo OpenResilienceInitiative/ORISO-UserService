@@ -55,7 +55,6 @@ class GrantConsultantIdentityServiceTest {
 
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantRepository consultantRepository;
-  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private RocketChatService rocketChatService;
   @Mock private MatrixSynapseService matrixSynapseService;
@@ -259,7 +258,7 @@ class GrantConsultantIdentityServiceTest {
         DistributedTransactionException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
+    verify(identityRoleUpdater).removeRolesIfPresent(ADMIN_ID, Set.of(CONSULTANT.getValue()));
   }
 
   @Test
@@ -295,7 +294,7 @@ class GrantConsultantIdentityServiceTest {
         BadRequestException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
+    verify(identityRoleUpdater).removeRolesIfPresent(ADMIN_ID, Set.of(CONSULTANT.getValue()));
   }
 
   @Test
@@ -393,8 +392,9 @@ class GrantConsultantIdentityServiceTest {
         DistributedTransactionException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient).removeRoleIfPresent(ADMIN_ID, CONSULTANT.getValue());
-    verify(identityClient).removeRoleIfPresent(ADMIN_ID, GROUP_CHAT_CONSULTANT.getValue());
+    verify(identityRoleUpdater)
+        .removeRolesIfPresent(
+            ADMIN_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
   }
 
   @Test
@@ -415,6 +415,8 @@ class GrantConsultantIdentityServiceTest {
         BadRequestException.class,
         () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
 
-    verify(identityClient).removeRoleIfPresent(ADMIN_ID, GROUP_CHAT_CONSULTANT.getValue());
+    verify(identityRoleUpdater)
+        .removeRolesIfPresent(
+            ADMIN_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
   }
 }

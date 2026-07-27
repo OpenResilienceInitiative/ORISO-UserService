@@ -54,6 +54,7 @@ import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -960,36 +961,91 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void removeRole_Should_removeRole_When_rolePresent() {
-    String validRole = "role";
+  public void removeRolesIfPresent_Should_doNothing_When_requestIsEmpty() {
+    this.keycloakService.removeRolesIfPresent("user", List.of());
 
+    verifyNoInteractions(keycloakClient);
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_removeAllPresentRolesWithOneCompleteReadAndOneWrite() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.get(anyString())).thenReturn(userResource);
     RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    RoleRepresentation keycloakRoleMock = mock(RoleRepresentation.class);
-    when(keycloakRoleMock.getName()).thenReturn(validRole);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
-    when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
+    RoleRepresentation consultantRole = mock(RoleRepresentation.class);
+    RoleRepresentation groupChatRole = mock(RoleRepresentation.class);
+    RoleRepresentation unrelatedRole = mock(RoleRepresentation.class);
+    when(consultantRole.getName()).thenReturn("consultant");
+    when(groupChatRole.getName()).thenReturn("group-chat-consultant");
+    when(unrelatedRole.getName()).thenReturn("user");
+    when(roleScopeResource.listAll())
+        .thenReturn(List.of(consultantRole, groupChatRole, unrelatedRole));
     RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
     when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
     when(userResource.roles()).thenReturn(roleMappingResource);
 
-    RoleRepresentation roleRepresentation = new EasyRandom().nextObject(RoleRepresentation.class);
-    roleRepresentation.setName("role");
-    RoleResource roleResource = mock(RoleResource.class);
-    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
-    RolesResource rolesResource = mock(RolesResource.class);
-    when(rolesResource.get(any())).thenReturn(roleResource);
-
     RealmResource realmResource = mock(RealmResource.class);
     when(realmResource.users()).thenReturn(usersResource);
-    when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.removeRoleIfPresent("user", validRole);
+    this.keycloakService.removeRolesIfPresent(
+        "user", List.of("consultant", "group-chat-consultant", "consultant"));
 
-    verify(roleScopeResource, times(1)).remove(any());
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource).remove(List.of(consultantRole, groupChatRole));
+    verify(realmResource, never()).roles();
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_notWrite_When_requestedRolesAreAbsent() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation assignedRole = mock(RoleRepresentation.class);
+    when(assignedRole.getName()).thenReturn("user");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(assignedRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource, never()).remove(any());
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_refreshAndRetryCompleteBatchOnce_When_unauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation consultantRole = mock(RoleRepresentation.class);
+    when(consultantRole.getName()).thenReturn("consultant");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(consultantRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource())
+        .thenThrow(new NotAuthorizedException("Bearer"))
+        .thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(keycloakClient, times(2)).getRealmResource();
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource).remove(singletonList(consultantRole));
   }
 
   @Test
