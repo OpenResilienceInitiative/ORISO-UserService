@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.port.out;
+package de.caritas.cob.userservice.api.port.out.identity;
 
 /** Provider-neutral authenticated session returned by an identity-provider exchange. */
 public record IdentitySession(
