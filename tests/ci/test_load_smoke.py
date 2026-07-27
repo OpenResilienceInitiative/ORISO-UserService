@@ -18,6 +18,7 @@ AGENCY_STUB_SCRIPT = ROOT / "tests/load/seeded_agency_stub.py"
 SEEDED_PUBLIC_READ_RUNNER = ROOT / "scripts/load/run-seeded-public-read.sh"
 SEEDED_REPLICA_RUNNER = ROOT / "scripts/load/run-seeded-public-read-replicas.sh"
 JAVA_21_RUNTIME = ROOT / "scripts/load/ensure-java-21.sh"
+OUTBOUND_METRICS_SCRIPT = ROOT / "tests/load/outbound_dependency_metrics.py"
 SPEC = importlib.util.spec_from_file_location("user_service_load_smoke", LOAD_SCRIPT)
 LOAD_SMOKE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -616,6 +617,132 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertIn('docker rm -f "${mariadb_container}"', runner)
         self.assertIn('docker rm -f "${redis_container}"', runner)
         self.assertIn("trap cleanup EXIT", runner)
+
+    def test_replica_runner_enforces_production_outbound_dependency_metrics(self):
+        runner = SEEDED_REPLICA_RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,loggers,metrics",
+            runner,
+        )
+        self.assertGreaterEqual(runner.count("outbound_dependency_metrics.py"), 3)
+        self.assertIn('" capture \\\n', runner)
+        self.assertIn('" compare \\\n', runner)
+        self.assertIn("--max-calls-per-consultant-read", runner)
+        self.assertIn("--max-mean-latency-ms", runner)
+        self.assertIn("--max-response-bytes-per-call", runner)
+        self.assertNotIn("ROCKET_CHAT_ENABLED", runner)
+
+    def test_outbound_dependency_delta_reports_calls_payload_and_latency(self):
+        spec = importlib.util.spec_from_file_location(
+            "outbound_dependency_metrics", OUTBOUND_METRICS_SCRIPT
+        )
+        metrics = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = metrics
+        spec.loader.exec_module(metrics)
+
+        before = {
+            "targets": {
+                "replica-1": {
+                    "calls": {"COUNT": 2},
+                    "latency": {"COUNT": 2, "TOTAL_TIME": 0.02, "MAX": 0.015},
+                    "response_payload": {"COUNT": 2, "TOTAL": 400, "MAX": 200},
+                },
+                "replica-2": {
+                    "calls": {"COUNT": 2},
+                    "latency": {"COUNT": 2, "TOTAL_TIME": 0.03, "MAX": 0.02},
+                    "response_payload": {"COUNT": 2, "TOTAL": 400, "MAX": 200},
+                },
+            }
+        }
+        after = {
+            "targets": {
+                "replica-1": {
+                    "calls": {"COUNT": 7},
+                    "latency": {"COUNT": 7, "TOTAL_TIME": 0.12, "MAX": 0.03},
+                    "response_payload": {"COUNT": 7, "TOTAL": 1400, "MAX": 200},
+                },
+                "replica-2": {
+                    "calls": {"COUNT": 7},
+                    "latency": {"COUNT": 7, "TOTAL_TIME": 0.13, "MAX": 0.04},
+                    "response_payload": {"COUNT": 7, "TOTAL": 1400, "MAX": 200},
+                },
+            }
+        }
+        load_result = {
+            "summary": {
+                "operations": {
+                    "consultant-profile-first": {"requests": 6},
+                    "consultant-profile-second": {"requests": 4},
+                    "agency-languages": {"requests": 4},
+                }
+            }
+        }
+
+        report, violations = metrics.compare_snapshots(
+            before,
+            after,
+            load_result,
+            max_calls_per_consultant_read=1.0,
+            max_mean_latency_ms=25.0,
+            max_response_bytes_per_call=250.0,
+        )
+
+        self.assertEqual([], violations)
+        self.assertEqual(10, report["consultant_reads"])
+        self.assertEqual(10, report["outbound_calls"])
+        self.assertEqual(1.0, report["calls_per_consultant_read"])
+        self.assertEqual(20.0, report["latency_mean_ms"])
+        self.assertEqual(200.0, report["response_bytes_per_call"])
+
+    def test_outbound_dependency_delta_rejects_chatty_call_growth(self):
+        spec = importlib.util.spec_from_file_location(
+            "outbound_dependency_metrics_chatty", OUTBOUND_METRICS_SCRIPT
+        )
+        metrics = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = metrics
+        spec.loader.exec_module(metrics)
+
+        before = {
+            "targets": {
+                "replica": {
+                    "calls": {"COUNT": 0},
+                    "latency": {"COUNT": 0, "TOTAL_TIME": 0, "MAX": 0},
+                    "response_payload": {"COUNT": 0, "TOTAL": 0, "MAX": 0},
+                }
+            }
+        }
+        after = {
+            "targets": {
+                "replica": {
+                    "calls": {"COUNT": 11},
+                    "latency": {"COUNT": 11, "TOTAL_TIME": 0.11, "MAX": 0.02},
+                    "response_payload": {"COUNT": 11, "TOTAL": 1100, "MAX": 100},
+                }
+            }
+        }
+        load_result = {
+            "summary": {
+                "operations": {
+                    "consultant-profile": {"requests": 10},
+                }
+            }
+        }
+
+        _report, violations = metrics.compare_snapshots(
+            before,
+            after,
+            load_result,
+            max_calls_per_consultant_read=1.0,
+            max_mean_latency_ms=25.0,
+            max_response_bytes_per_call=250.0,
+        )
+
+        self.assertTrue(
+            any("calls per consultant read" in violation for violation in violations)
+        )
 
 
 if __name__ == "__main__":

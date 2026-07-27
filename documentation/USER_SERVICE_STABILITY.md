@@ -15,8 +15,8 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,795 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 940 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,373 | 0 | 0 | 4 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
@@ -26,12 +26,14 @@ CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 900 executed tests and
+suite, starts from a clean build, requires at least 830 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The three environment-gated cases are not quarantined: Redis has
-its own required service-container job, and both MariaDB cases run in a required
-fresh-MariaDB job on branch, pull-request and publish workflows.
+were removed. The current Matrix-only floor is 830 tests; the older 900-test
+floor included deleted Rocket.Chat-only tests. The two environment-gated cases
+are not quarantined: Redis and MariaDB have their own required
+service-container/fresh-database jobs on branch, pull-request and publish
+workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -55,7 +57,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; residual Rocket.Chat code only when explicitly enabled | HTTP long-poll + HTTP; optional legacy MongoDB |
+| Chat | Matrix only | HTTP long-poll + HTTP |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -81,15 +83,15 @@ transport are not covered by the payload interceptor; their higher-level retry
 paths are covered by the explicit retry counter. This is a known measurement
 boundary, not an implied zero.
 
-Rocket.Chat is a removal target, not a supported second transport in the target
-architecture. Matrix/Synapse is the sole messaging backbone, the ORISO frontend
-remains the product surface, and LiveKit plus the controlled Element Call path
-is the target calling stack. The remaining Rocket.Chat configuration, adapters,
-DTOs, database/wire names and optional MongoDB access are migration debt to
-delete after data and contract gates; they must not be preserved merely because
-the current ports can hide them. Jitsi removal is coordinated outside this
-UserService-only stability change across Frontend, call/appointment contracts
-and deployment.
+Current `pre-dev` has removed the Rocket.Chat production adapter,
+configuration, DTOs, database/wire fields and optional MongoDB access.
+Matrix/Synapse is the sole messaging backbone, the ORISO frontend remains the
+product surface, and LiveKit plus the controlled Element Call/MatrixRTC fork is
+the target calling stack. Remaining Rocket.Chat names are limited to the
+forward-only removal changelogs, removal/migration contracts and historic
+architecture diagrams; they are not a supported runtime or fallback. Jitsi
+removal is coordinated outside this UserService-only stability change across
+Frontend, call/appointment contracts and deployment.
 
 ### Live PreDev baseline before this change
 
@@ -123,9 +125,8 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- With the default `rocket-chat.enabled=false`, account and availability reads
-  no longer call Rocket.Chat. Matrix-only deployments also do not create the
-  Rocket.Chat MongoDB client or credential job.
+- The seeded load proof carries no Rocket.Chat configuration or dependency.
+  The current production source is Matrix-only.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
@@ -147,7 +148,7 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, Rocket.Chat, repositories and generated clients]
+  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
@@ -158,25 +159,23 @@ whole codebase as modular:
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
-| Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
-`service.session` application package from importing Matrix or Rocket.Chat
-adapters. It also prevents the Identity/Profile packages and the Admin module
-from importing their protected concrete chat adapters. The assignment boundary
-also forbids the legacy admin Rocket.Chat operation implementation, so rollback
-policy cannot leak back into orchestration. The appointment deletion repair
-stays behind `Organizing` and `AppointmentRepository`.
+`service.session` application package from importing Matrix adapters. It also
+prevents the Identity/Profile packages and the Admin module from importing
+their protected concrete chat adapters. The separate removal contract prevents
+Rocket.Chat production packages, configuration, DTOs and schema fields from
+returning. The appointment deletion repair stays behind `Organizing` and
+`AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next migration-aligned sequence is the
-session-list Rocket.Chat deletion slice, anonymous identity/provisioning
-cleanup, then Admin chat operations. Coordinated wire/database renames follow
-only after a verified Matrix identity and room-ID backfill. Each step must add a
-failing boundary contract before moving dependencies, and a slice is not
-complete while both transports remain reachable behind a cleaner interface.
+domains are already isolated. Rocket.Chat removal is complete in production
+source; the next sequence is identity/provisioning cleanup, then smaller Admin
+and Session orchestration boundaries. Each step must add a failing boundary
+contract before moving dependencies.
 
 ## Microservice decision
 
@@ -271,25 +270,46 @@ seeds the exact integration-test dataset, and sends requests directly to both
 replicas in deterministic round-robin order. Scheduling and external chat event
 listeners are disabled so the result isolates the seeded public-read paths. The
 CLI reports and enforces thresholds for the aggregate, each operation, and each
-replica; cleanup removes both JVMs, the dependency containers, the AgencyService
-stub, and the temporary run directory.
+replica.
 
-Local two-replica proof on 2026-07-26:
+The runner also exposes the normal Micrometer endpoint only on the disposable
+local JVMs and captures `userservice.outbound.http.calls`,
+`userservice.outbound.http.latency` and
+`userservice.outbound.http.payload` immediately before and after the measured
+workload. It fails if the AgencyService path is not exercised, produces more
+than one call per consultant-profile read, loses a latency/payload measurement,
+or exceeds the configured mean-latency or response-payload bounds. The bounds
+can be overridden with
+`USERSERVICE_LOAD_MAX_AGENCY_CALLS_PER_CONSULTANT_READ`,
+`USERSERVICE_LOAD_MAX_AGENCY_MEAN_LATENCY_MS` and
+`USERSERVICE_LOAD_MAX_AGENCY_RESPONSE_BYTES_PER_CALL`.
+
+Cleanup removes both JVMs, the dependency containers, the AgencyService stub,
+and the temporary run directory.
+
+Local two-replica proof on 2026-07-27:
 
 | Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Replica one | 700 | 0 | 230,700 | 48.73 ms | 88.95 ms | 218.58 ms |
-| Replica two | 700 | 0 | 174,700 | 34.35 ms | 62.11 ms | 202.77 ms |
-| **Overall** | **1,400** | **0** | **405,400** | **41.54 ms** | **80.83 ms** | **218.58 ms** |
+| Replica one | 700 | 0 | 274,800 | 44.79 ms | 81.29 ms | 183.89 ms |
+| Replica two | 700 | 0 | 206,200 | 30.01 ms | 56.67 ms | 218.61 ms |
+| **Overall** | **1,400** | **0** | **481,000** | **37.40 ms** | **68.61 ms** | **218.61 ms** |
 
-The current rerun completed in 1.829 seconds at 765.46 requests/second. The
-slowest named operation was `consultant-profile-parenting-team` at 102.75 ms
-p95; all six operations had zero failures. This proves that the bounded
-mixed-read scenario can run across two real JVMs sharing MariaDB and Redis. It
-does **not** yet prove replica safety for concurrent writes, scheduled jobs,
-authentication and authorization flows, Kubernetes service routing, or
-deployed PreDev behavior. The production replica maximum must therefore remain
-one until those paths and their idempotency/locking contracts are exercised.
+The current rerun completed in 1.648 seconds at 849.42 requests/second. The
+slowest named operation was `consultant-profile-peer` at 82.23 ms p95; all six
+operations had zero failures. The measured 900 consultant-profile reads caused
+exactly 900 AgencyService calls across both JVMs: 1.0 call per profile read,
+6.74 ms mean and 140.55 ms maximum outbound latency, with 260,000 response
+bytes in total, 288.89 bytes per call on average and 436 bytes maximum. Every
+successful call had a latency and payload measurement.
+
+This proves that the bounded mixed-read scenario can run across two real JVMs
+sharing MariaDB and Redis, and that its healthy AgencyService dependency has no
+hidden retry or 1+N call amplification. It does **not** yet prove replica safety
+for concurrent writes, scheduled jobs, authentication and authorization flows,
+Kubernetes service routing, or deployed PreDev behavior. The production
+replica maximum must therefore remain one until those paths and their
+idempotency/locking contracts are exercised.
 
 The same seeded workload was also run with AgencyService deliberately
 unavailable. UserService still returned all 1,400 responses through its local

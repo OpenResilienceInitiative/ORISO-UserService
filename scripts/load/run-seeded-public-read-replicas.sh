@@ -11,6 +11,9 @@ agency_stub_port="${AGENCY_STUB_PORT:-18083}"
 request_count="${USERSERVICE_LOAD_REQUESTS:-1400}"
 concurrency="${USERSERVICE_LOAD_CONCURRENCY:-32}"
 max_p95_ms="${USERSERVICE_LOAD_MAX_P95_MS:-1000}"
+max_calls_per_consultant_read="${USERSERVICE_LOAD_MAX_AGENCY_CALLS_PER_CONSULTANT_READ:-1.0}"
+max_dependency_mean_latency_ms="${USERSERVICE_LOAD_MAX_AGENCY_MEAN_LATENCY_MS:-500}"
+max_dependency_response_bytes_per_call="${USERSERVICE_LOAD_MAX_AGENCY_RESPONSE_BYTES_PER_CALL:-4096}"
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/userservice-replica-load.XXXXXX")"
 run_id="userservice-replica-load-$$"
 mariadb_container="${run_id}-mariadb"
@@ -122,7 +125,7 @@ start_replica() {
   SPRING_DATA_REDIS_PORT="${redis_port}" \
   AGENCY_SERVICE_API_URL="http://127.0.0.1:${agency_stub_port}" \
   MATRIX_EVENT_LISTENER_ENABLED=false \
-  ROCKET_CHAT_ENABLED=false \
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,loggers,metrics \
   SPRING_TASK_SCHEDULING_ENABLED=false \
   LOGGING_LEVEL_ROOT=WARN \
   java -jar "${jar_path}" >"${log_file}" 2>&1 &
@@ -181,6 +184,11 @@ python3 "${repo_root}/tests/load/user_service_load_smoke.py" \
   --max-p95-ms "${max_p95_ms}" \
   >/dev/null
 
+python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" capture \
+  --base-url "http://127.0.0.1:${replica_one_port}" \
+  --base-url "http://127.0.0.1:${replica_two_port}" \
+  --output "${run_dir}/outbound-before.json"
+
 python3 "${repo_root}/tests/load/user_service_load_smoke.py" \
   --base-url "http://127.0.0.1:${replica_one_port}" \
   --replica-url "http://127.0.0.1:${replica_two_port}" \
@@ -188,4 +196,19 @@ python3 "${repo_root}/tests/load/user_service_load_smoke.py" \
   --requests "${request_count}" \
   --concurrency "${concurrency}" \
   --max-error-rate 0 \
-  --max-p95-ms "${max_p95_ms}"
+  --max-p95-ms "${max_p95_ms}" \
+  >"${run_dir}/load-result.json"
+
+python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" capture \
+  --base-url "http://127.0.0.1:${replica_one_port}" \
+  --base-url "http://127.0.0.1:${replica_two_port}" \
+  --output "${run_dir}/outbound-after.json"
+
+python3 -m json.tool "${run_dir}/load-result.json"
+python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" compare \
+  --before "${run_dir}/outbound-before.json" \
+  --after "${run_dir}/outbound-after.json" \
+  --load-result "${run_dir}/load-result.json" \
+  --max-calls-per-consultant-read "${max_calls_per_consultant_read}" \
+  --max-mean-latency-ms "${max_dependency_mean_latency_ms}" \
+  --max-response-bytes-per-call "${max_dependency_response_bytes_per_call}"
