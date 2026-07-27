@@ -314,7 +314,7 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(String rcToken, Long chatId) {
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(Long chatId, String rcToken) {
     return userSessionControllerDelegate.getChatById(rcToken, chatId);
   }
 
@@ -378,10 +378,10 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getSessionsForAuthenticatedConsultant(
-      @RequestHeader String rcToken,
       Integer offset,
       Integer count,
       @RequestParam String filter,
+      @RequestHeader(required = false) String rcToken,
       @RequestParam Integer status) {
     return userSessionControllerDelegate.getSessionsForAuthenticatedConsultant(
         rcToken, offset, count, filter, status);
@@ -398,7 +398,10 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      @RequestHeader String rcToken, Integer offset, Integer count, @RequestParam String filter) {
+      Integer offset,
+      Integer count,
+      @RequestParam String filter,
+      @RequestHeader(required = false) String rcToken) {
     return userSessionControllerDelegate.getTeamSessionsForAuthenticatedConsultant(
         rcToken, offset, count, filter);
   }

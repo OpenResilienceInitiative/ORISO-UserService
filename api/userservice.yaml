@@ -761,7 +761,7 @@ paths:
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: status
@@ -871,7 +871,7 @@ paths:
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: offset
@@ -1694,7 +1694,7 @@ paths:
       parameters:
         - name: RCToken
           in: header
-          required: true
+          required: false
           schema:
             type: string
         - name: chatId
