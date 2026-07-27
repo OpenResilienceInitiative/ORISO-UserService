@@ -4,6 +4,8 @@ import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControlle
 import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.api.service.cache.SharedReadCache.CacheName;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.List;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +71,30 @@ public class TenantService {
       sharedReadCache.put(CacheName.TENANT, tenantIdKey(tenantId), tenant);
     }
     return tenant;
+  }
+
+  public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      return List.of();
+    }
+    log.info("Calling tenant service to get tenant data for {} tenant ids", tenantIds.size());
+    var tenants =
+        tenantServiceApiControllerFactory
+            .createControllerApi()
+            .getRestrictedTenantDataByTenantIds(List.copyOf(tenantIds));
+    if (tenants == null) {
+      return List.of();
+    }
+    tenants.forEach(
+        tenant -> {
+          if (tenant.getId() != null) {
+            sharedReadCache.put(CacheName.TENANT, tenantIdKey(tenant.getId()), tenant);
+          }
+          if (tenant.getSubdomain() != null) {
+            sharedReadCache.put(CacheName.TENANT, subdomainKey(tenant.getSubdomain()), tenant);
+          }
+        });
+    return tenants;
   }
 
   private String subdomainKey(String subdomain) {

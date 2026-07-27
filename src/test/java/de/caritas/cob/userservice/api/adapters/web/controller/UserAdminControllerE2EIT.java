@@ -654,6 +654,16 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_rejectPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnOk_When_sortingByUpdateDate() throws Exception {
 
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
@@ -719,6 +729,16 @@ class UserAdminControllerE2EIT {
     JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
 
     assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_rejectPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

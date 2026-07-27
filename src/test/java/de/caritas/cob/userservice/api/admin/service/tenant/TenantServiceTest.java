@@ -12,7 +12,9 @@ import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControlle
 import de.caritas.cob.userservice.api.service.cache.SharedReadCache;
 import de.caritas.cob.userservice.tenantservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -68,6 +70,24 @@ class TenantServiceTest {
 
     assertThat(result).isSameAs(expected);
     assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
+  }
+
+  @Test
+  void getRestrictedTenantData_validTenantIds_returnsDtosFromOneBatchCall() {
+    var knownTenant = new RestrictedTenantDTO().id(TENANT_ID).name("Berlin");
+    tenantControllerApi.tenantIdsResult = List.of(knownTenant);
+
+    var result = tenantService.getRestrictedTenantData(Set.of(TENANT_ID, 99L));
+
+    assertThat(result).containsExactly(knownTenant);
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
+  @Test
+  void getRestrictedTenantData_emptyTenantIds_doesNotCallApi() {
+    assertThat(tenantService.getRestrictedTenantData(Set.of())).isEmpty();
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isZero();
   }
 
   // Callers such as HttpTenantFilter rely on upstream errors surfacing unchanged.
@@ -278,19 +298,23 @@ class TenantServiceTest {
 
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
+    List<RestrictedTenantDTO> tenantIdsResult;
     RuntimeException subdomainException;
     RuntimeException tenantIdException;
     final AtomicInteger subdomainCalls = new AtomicInteger();
     final AtomicInteger tenantIdCalls = new AtomicInteger();
+    final AtomicInteger tenantIdsCalls = new AtomicInteger();
     CountDownLatch[] subdomainLatch;
 
     void reset() {
       subdomainResult = null;
       tenantIdResult = null;
+      tenantIdsResult = null;
       subdomainException = null;
       tenantIdException = null;
       subdomainCalls.set(0);
       tenantIdCalls.set(0);
+      tenantIdsCalls.set(0);
       subdomainLatch = null;
     }
 
@@ -313,6 +337,12 @@ class TenantServiceTest {
         throw tenantIdException;
       }
       return tenantIdResult != null ? tenantIdResult : new RestrictedTenantDTO().id(tenantId);
+    }
+
+    @Override
+    public List<RestrictedTenantDTO> getRestrictedTenantDataByTenantIds(List<Long> tenantIds) {
+      tenantIdsCalls.incrementAndGet();
+      return tenantIdsResult != null ? tenantIdsResult : List.of();
     }
 
     private void awaitLatch() {
