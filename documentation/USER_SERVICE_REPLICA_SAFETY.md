@@ -236,6 +236,29 @@ database reads, provider cleanup or error-mail work.
 one context setup and one invocation of each mode under two concurrent
 scheduler instances. Its 12-hour claim has the same daily duration constraint.
 
+Authenticated tutorial-progress writes no longer implement read-then-insert in
+the service layer. `TutorialProgressStore` owns the transaction and uses
+MariaDB's native `ON DUPLICATE KEY UPDATE` against the unique
+user/surface/tour/version scope. Its small transaction uses `READ_COMMITTED`:
+when two replicas send an identical update within the same `DATETIME` second,
+the database may perform a no-op update, and a `REPEATABLE_READ` snapshot would
+otherwise remain unable to see the winning row. The real-MariaDB
+`TutorialProgressServiceMariaDbReplicaIT` forces both instances to read the
+missing scope before either writes and proves both calls return the one
+canonical row without a duplicate-key warning. It also preserves the per-user
+row cap for new scopes while allowing existing scopes to update.
+
+`scripts/load/run-authenticated-write-replicas.sh` extends that database proof
+through the running HTTP/security stack. It starts two real UserService JVMs
+against one disposable MariaDB and Redis, verifies a locally signed consultant
+JWT through a disposable JWK endpoint, alternates concurrent CSRF-protected
+PUTs over both replicas, reads through both, restarts one JVM and repeats the
+cross-replica verification. The contract fails on any non-200 response,
+per-operation or per-replica p95 above the bound, more than one canonical row,
+or a duplicate-key warning. The reusable MariaDB workflow runs this proof.
+This establishes the authenticated tutorial-progress slice only; it does not
+raise the global supported replica count.
+
 ## Current dependency sequence
 
 1. Land the Redis-backed single-use token PR #740 in `pre-dev` before merging
