@@ -71,7 +71,6 @@ import org.hibernate.service.spi.ServiceException;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -289,8 +288,6 @@ class UserControllerIT {
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
   @MockitoBean private CreateUserFacade createUserFacade;
-
-  @MockitoBean KeycloakConfigResolver resolver;
 
   @MockitoBean
   @SuppressWarnings("unused")
