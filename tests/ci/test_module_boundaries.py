@@ -733,6 +733,42 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+    def test_legacy_chat_and_supervision_paths_have_no_dead_identity_wiring(self):
+        sources = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/rocketchat/"
+            "RocketChatOperationConditionProvider.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/rocketchat/"
+            "RocketChatGroupOperation.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/rocketchat/"
+            "RocketChatAddToGroupOperationService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/rocketchat/"
+            "RocketChatRemoveFromGroupOperationService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/rocketchat/"
+            "RocketChatSessionAssignmentGateway.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/create/"
+            "agencyrelation/RocketChatAsyncHelper.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/"
+            "SessionSupervisorFacade.java",
+        )
+        dead_wiring = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if "IdentityClient" in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            dead_wiring,
+            "Legacy chat and supervision paths must not retain unused broad identity wiring:\n"
+            + "\n".join(dead_wiring),
+        )
+
     def test_email_mutation_consumers_use_a_focused_identity_email_port(self):
         port = (
             ROOT

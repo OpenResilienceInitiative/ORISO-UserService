@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +20,6 @@ public class RocketChatSessionAssignmentGateway implements SessionAssignmentChat
 
   private final RocketChatFacade rocketChatFacade;
   private final RocketChatCredentialsProvider credentialsProvider;
-  private final IdentityClient identityClient;
   private final ConsultingTypeManager consultingTypeManager;
 
   @Override
@@ -61,7 +59,7 @@ public class RocketChatSessionAssignmentGateway implements SessionAssignmentChat
   private RocketChatRemoveFromGroupOperationService operation(
       Session session, List<Consultant> consultants) {
     return RocketChatRemoveFromGroupOperationService.getInstance(
-            rocketChatFacade, identityClient, consultingTypeManager)
+            rocketChatFacade, consultingTypeManager)
         .onSessionConsultants(Map.of(session, consultants));
   }
 }

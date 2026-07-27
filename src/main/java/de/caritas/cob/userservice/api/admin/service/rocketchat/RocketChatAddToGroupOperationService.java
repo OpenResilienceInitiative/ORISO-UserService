@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.util.List;
 import java.util.function.Consumer;
@@ -19,10 +18,9 @@ public class RocketChatAddToGroupOperationService extends RocketChatGroupOperati
 
   private RocketChatAddToGroupOperationService(
       RocketChatFacade rocketChatFacade,
-      IdentityClient identityClient,
       Consumer<String> logMethod,
       ConsultingTypeManager consultingTypeManager) {
-    super(rocketChatFacade, identityClient);
+    super(rocketChatFacade);
     this.logMethod = logMethod;
     this.consultingTypeManager = consultingTypeManager;
   }
@@ -35,11 +33,10 @@ public class RocketChatAddToGroupOperationService extends RocketChatGroupOperati
    */
   public static RocketChatAddToGroupOperationService getInstance(
       RocketChatFacade rocketChatFacade,
-      IdentityClient identityClient,
       Consumer<String> logMethod,
       ConsultingTypeManager consultingTypeManager) {
     return new RocketChatAddToGroupOperationService(
-        rocketChatFacade, identityClient, logMethod, consultingTypeManager);
+        rocketChatFacade, logMethod, consultingTypeManager);
   }
 
   /**

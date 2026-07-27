@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.util.List;
 import java.util.function.BiConsumer;
@@ -17,15 +16,13 @@ import lombok.RequiredArgsConstructor;
 abstract class RocketChatGroupOperation {
 
   private final @NonNull RocketChatFacade rocketChatFacade;
-  private final @NonNull IdentityClient identityClient;
 
   protected Consumer<String> logMethod = LogService::logInfo;
 
   void addConsultantToGroupOfSession(
       Session session, Consultant consultant, ConsultingTypeManager consultingTypeManager) {
     var operationConditionProvider =
-        new RocketChatOperationConditionProvider(
-            this.identityClient, session, consultant, consultingTypeManager);
+        new RocketChatOperationConditionProvider(session, consultant, consultingTypeManager);
 
     if (operationConditionProvider.canAddToRocketChatGroup()) {
       rocketChatFacade.addUserToRocketChatGroup(consultant.getRocketChatId(), session.getGroupId());

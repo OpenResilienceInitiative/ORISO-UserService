@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -39,7 +38,6 @@ public class RocketChatAsyncHelper {
 
   private final @NonNull RocketChatFacade rocketChatFacade;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -56,7 +54,7 @@ public class RocketChatAsyncHelper {
       TenantContext.setCurrentTenant(tenantId);
       List<Session> relevantSessions = collectRelevantSessionsToAddConsultant(agency);
       RocketChatAddToGroupOperationService.getInstance(
-              this.rocketChatFacade, identityClient, logMethod, consultingTypeManager)
+              this.rocketChatFacade, logMethod, consultingTypeManager)
           .onSessions(relevantSessions)
           .withConsultant(consultant)
           .addToGroupsOrRollbackOnFailure();

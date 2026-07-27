@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,7 +23,6 @@ class RocketChatSessionAssignmentGatewayTest {
 
   @Mock private RocketChatFacade rocketChatFacade;
   @Mock private RocketChatCredentialsProvider credentialsProvider;
-  @Mock private IdentityClient identityClient;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @InjectMocks private RocketChatSessionAssignmentGateway gateway;
 

@@ -6,12 +6,10 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -23,12 +21,8 @@ class RocketChatOperationConditionProviderTest {
 
   @InjectMocks private RocketChatOperationConditionProvider conditionProvider;
 
-  @Mock private KeycloakService keycloakService;
-
   @Mock private Session session;
   @Mock private Consultant consultant;
-  @Mock private IdentityClient identityClient;
-
   @Mock private ConsultingTypeManager consultingTypeManager;
 
   @Test
