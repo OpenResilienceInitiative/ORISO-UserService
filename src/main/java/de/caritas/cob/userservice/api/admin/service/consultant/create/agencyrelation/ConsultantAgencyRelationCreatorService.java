@@ -180,7 +180,7 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private AgencyDTO retrieveAgency(Long agencyId) {
-    var agencyDto = this.agencyService.getAgencyWithoutCaching(agencyId);
+    var agencyDto = this.agencyService.getAgency(agencyId);
     return Optional.ofNullable(agencyDto)
         .orElseThrow(
             () ->

@@ -9,6 +9,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,6 +30,8 @@ import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.AfterEach;
@@ -168,6 +172,64 @@ class AgencyServiceTest {
             eq("tenant:7:ids:[42, 43]"),
             any(TypeReference.class),
             any());
+  }
+
+  @Test
+  void getAgencies_ShouldWarmTenantScopedIdCacheForSubsequentSingleReads() {
+    TenantContext.setCurrentTenant(7L);
+    List<Long> agencyIds = List.of(42L);
+    AgencyDTO agency = new AgencyDTO().id(42L).name("Agency 42");
+    Map<String, Object> cacheValues = new ConcurrentHashMap<>();
+    when(sharedReadCache.getOrLoadTyped(any(), any(), any(TypeReference.class), any()))
+        .thenAnswer(
+            invocation -> {
+              String key = invocation.getArgument(1);
+              if (cacheValues.containsKey(key)) {
+                return cacheValues.get(key);
+              }
+              Object loaded = invocation.<Supplier<?>>getArgument(3).get();
+              cacheValues.put(key, loaded);
+              return loaded;
+            });
+    when(sharedReadCache.getOrLoad(any(), any(), any(Class.class), any()))
+        .thenAnswer(
+            invocation -> {
+              String key = invocation.getArgument(1);
+              if (cacheValues.containsKey(key)) {
+                return cacheValues.get(key);
+              }
+              Object loaded = invocation.<Supplier<?>>getArgument(3).get();
+              cacheValues.put(key, loaded);
+              return loaded;
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              cacheValues.put(invocation.getArgument(1), invocation.getArgument(2));
+              return null;
+            })
+        .when(sharedReadCache)
+        .put(eq(SharedReadCache.CacheName.AGENCY), any(), any());
+    stubAgencyLookup(List.of(toAgencyResponseDTO(agency)));
+
+    agencyService.getAgencies(agencyIds);
+    AgencyDTO cachedAgency = agencyService.getAgency(42L);
+
+    assertThat(cachedAgency.getId()).isEqualTo(42L);
+    verify(sharedReadCache).put(SharedReadCache.CacheName.AGENCY, "tenant:7:id:42", agency);
+    verify(agencyControllerApi, times(1)).getAgenciesByIds(agencyIds);
+  }
+
+  @Test
+  void getAgencies_ShouldNotNegativeCacheMissingIds() {
+    TenantContext.setCurrentTenant(7L);
+    AgencyDTO resolvedAgency = new AgencyDTO().id(42L).name("Agency 42");
+    stubAgencyLookup(List.of(toAgencyResponseDTO(resolvedAgency)));
+
+    agencyService.getAgencies(List.of(42L, 43L));
+
+    verify(sharedReadCache).put(SharedReadCache.CacheName.AGENCY, "tenant:7:id:42", resolvedAgency);
+    verify(sharedReadCache, never())
+        .put(eq(SharedReadCache.CacheName.AGENCY), eq("tenant:7:id:43"), any(AgencyDTO.class));
   }
 
   @Test

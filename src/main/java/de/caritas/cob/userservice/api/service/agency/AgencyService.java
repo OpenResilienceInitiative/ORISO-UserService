@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -82,11 +83,26 @@ public class AgencyService {
     if (!isNotEmpty(agencyIds)) {
       return emptyList();
     }
-    return sharedReadCache.getOrLoadTyped(
-        CacheName.AGENCY,
-        tenantKey("ids:" + agencyIds),
-        AGENCY_LIST_TYPE,
-        () -> getAgenciesFromAgencyService(agencyIds));
+    var agencies =
+        sharedReadCache.getOrLoadTyped(
+            CacheName.AGENCY,
+            tenantKey("ids:" + agencyIds),
+            AGENCY_LIST_TYPE,
+            () -> getAgenciesFromAgencyService(agencyIds));
+    cacheAgenciesById(agencies);
+    return agencies;
+  }
+
+  private void cacheAgenciesById(List<AgencyDTO> agencies) {
+    if (agencies == null) {
+      return;
+    }
+    agencies.stream()
+        .filter(Objects::nonNull)
+        .filter(agency -> agency.getId() != null)
+        .forEach(
+            agency ->
+                sharedReadCache.put(CacheName.AGENCY, tenantKey("id:" + agency.getId()), agency));
   }
 
   public List<AgencyDTO> getAgenciesNotCached(List<Long> agencyIds) {

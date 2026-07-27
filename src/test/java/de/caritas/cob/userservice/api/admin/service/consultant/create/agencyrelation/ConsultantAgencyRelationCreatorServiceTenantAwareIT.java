@@ -113,8 +113,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
     agencyDTO.setTenantId(1L);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -157,8 +157,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
         new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
     when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
     AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
 
