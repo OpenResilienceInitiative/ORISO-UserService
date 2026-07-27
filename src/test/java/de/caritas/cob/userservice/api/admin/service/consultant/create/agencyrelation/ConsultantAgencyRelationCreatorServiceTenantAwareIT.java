@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -90,6 +91,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountRemover.class,
         IdentityAccountSettingsUpdater.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,

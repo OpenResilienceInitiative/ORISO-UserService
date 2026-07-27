@@ -11,8 +11,4 @@ public interface IdentityClient {
   String updateDummyEmail(final String userId, UserDTO user);
 
   void updateDummyEmail(String userId);
-
-  void rollBackUser(String userId);
-
-  void deleteUser(String userId);
 }

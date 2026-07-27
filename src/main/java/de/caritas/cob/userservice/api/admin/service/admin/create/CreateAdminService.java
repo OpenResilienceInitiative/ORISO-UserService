@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
@@ -41,6 +42,7 @@ public class CreateAdminService {
   private boolean multitenancyWithSingleDomain;
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
@@ -104,16 +106,16 @@ public class CreateAdminService {
           keycloakUserId, getDefaultRoles(adminType).stream().map(UserRole::getValue).toList());
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
-      identityClient.rollBackUser(keycloakUserId);
+      identityAccountRemover.rollbackUser(keycloakUserId);
       throw e;
     } catch (NotFoundException e) {
       // A required Keycloak realm role (e.g. restricted-agency-admin or user-admin) is missing.
       // Surface a specific, machine-readable reason so the admin panel can show a clear message
       // instead of a generic 500, while still rolling back the partially created user.
-      identityClient.rollBackUser(keycloakUserId);
+      identityAccountRemover.rollbackUser(keycloakUserId);
       throw new CustomValidationHttpStatusException(ROLE_NOT_FOUND, HttpStatus.NOT_FOUND);
     } catch (RuntimeException e) {
-      identityClient.rollBackUser(keycloakUserId);
+      identityAccountRemover.rollbackUser(keycloakUserId);
       throw new InternalServerErrorException(
           String.format("Could not complete admin provisioning for type %s", adminType), e);
     }

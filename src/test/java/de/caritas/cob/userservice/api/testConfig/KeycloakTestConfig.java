@@ -126,7 +126,7 @@ public class KeycloakTestConfig {
           String userId, de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate profile) {}
 
       @Override
-      public void rollBackUser(String userId) {}
+      public void rollbackUser(String userId) {}
 
       @Override
       public void deleteUser(String userId) {}
