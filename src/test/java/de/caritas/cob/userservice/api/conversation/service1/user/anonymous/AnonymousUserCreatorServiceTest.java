@@ -74,7 +74,7 @@ class AnonymousUserCreatorServiceTest {
     String responseDTO = "identity-id";
     IdentityLogin identityLogin = identityLogin();
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
+    when(keycloakService.login(anyString(), anyString())).thenReturn(identityLogin);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
 
@@ -97,7 +97,7 @@ class AnonymousUserCreatorServiceTest {
         () -> {
           String responseDTO = "identity-id";
           when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-          when(keycloakService.loginUser(anyString(), anyString()))
+          when(keycloakService.login(anyString(), anyString()))
               .thenThrow(new BadRequestException(ERROR));
 
           anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
@@ -136,7 +136,7 @@ class AnonymousUserCreatorServiceTest {
         () -> {
           String responseDTO = "identity-id";
           when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-          when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin());
+          when(keycloakService.login(anyString(), anyString())).thenReturn(identityLogin());
           when(userHelper.getDummyEmail(anyString())).thenReturn("user-id@beratungcaritas.de");
           when(rocketChatService.createUser(anyString(), anyString(), anyString()))
               .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
@@ -159,7 +159,7 @@ class AnonymousUserCreatorServiceTest {
     String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     IdentityLogin identityLogin = identityLogin();
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
+    when(keycloakService.login(anyString(), anyString())).thenReturn(identityLogin);
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
@@ -191,7 +191,7 @@ class AnonymousUserCreatorServiceTest {
     String responseDTO = "identity-id";
     when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
     IdentityLogin identityLogin = identityLogin();
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(identityLogin);
+    when(keycloakService.login(anyString(), anyString())).thenReturn(identityLogin);
     LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
     ResponseEntity<LoginResponseDTO> responseEntity =
         new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);

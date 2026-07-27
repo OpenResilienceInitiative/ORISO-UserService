@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -35,6 +36,7 @@ public class AnonymousUserCreatorService {
   private boolean rocketChatEnabled;
 
   private final @NonNull CreateUserFacade createUserFacade;
+  private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull RocketChatService rocketChatService;
   private final @NonNull RollbackFacade rollbackFacade;
@@ -63,7 +65,7 @@ public class AnonymousUserCreatorService {
       if (!rocketChatEnabled) {
         createUserFacade.provisionMatrixUser(user, userDto.getUsername());
       }
-      identityLogin = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+      identityLogin = identityAuthentication.login(userDto.getUsername(), userDto.getPassword());
       if (rocketChatEnabled) {
         ensureRocketChatUserExists(userDto, identityId);
         rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());

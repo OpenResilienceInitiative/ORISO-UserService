@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -68,7 +69,11 @@ import org.springframework.web.client.RestClientResponseException;
 @Slf4j
 @RequiredArgsConstructor
 public class KeycloakService
-    implements IdentityClient, IdentityEmailOwnerLookup, IdentityProfileLookup, IdentityRoleLookup {
+    implements IdentityAuthentication,
+        IdentityClient,
+        IdentityEmailOwnerLookup,
+        IdentityProfileLookup,
+        IdentityRoleLookup {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -151,7 +156,8 @@ public class KeycloakService
    * @param password the password
    * @return provider-neutral identity credentials
    */
-  public IdentityLogin loginUser(final String userName, final String password) {
+  @Override
+  public IdentityLogin login(final String userName, final String password) {
     var response = keycloakAuthClient.loginUser(userName, password);
     return new IdentityLogin(
         response.getAccessToken(),
@@ -161,7 +167,7 @@ public class KeycloakService
   }
 
   @Override
-  public boolean verifyIgnoringOtp(String username, String password) {
+  public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
     return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }
 
@@ -172,7 +178,8 @@ public class KeycloakService
    * @param refreshToken the refreshToken
    * @return true if logout was successful
    */
-  public boolean logoutUser(final String refreshToken) {
+  @Override
+  public boolean logout(final String refreshToken) {
     return keycloakAuthClient.logoutUser(refreshToken);
   }
 

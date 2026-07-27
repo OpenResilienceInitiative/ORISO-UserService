@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -65,6 +66,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityProfileLookup.class,
         IdentityRoleLookup.class

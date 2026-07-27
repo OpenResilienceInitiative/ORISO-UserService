@@ -9,7 +9,7 @@ import static org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace;
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.config.apiclient.MessageServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -30,7 +30,7 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   private final @NonNull MessageServiceApiControllerFactory messageServiceApiControllerFactory;
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
@@ -77,7 +77,8 @@ public class PostConversationFinishedAliasMessageActionCommand implements Action
   @SuppressWarnings("Duplicates")
   private void addDefaultHeaders(ApiClient apiClient) {
     var techUser = identityClientConfig.getTechnicalUser();
-    var keycloakLogin = identityClient.loginUser(techUser.getUsername(), techUser.getPassword());
+    var keycloakLogin =
+        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));

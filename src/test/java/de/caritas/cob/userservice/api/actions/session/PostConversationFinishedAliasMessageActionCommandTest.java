@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.config.apiclient.MessageServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -43,7 +43,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
 
   @Mock private TenantHeaderSupplier tenantHeaderSupplier;
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAuthentication identityAuthentication;
 
   @Mock private IdentityClientConfig identityClientConfig;
 
@@ -54,7 +54,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
   void execute_Should_doNothing_When_sessionIsNullOrWithoutRcRooms(Session session) {
     this.actionCommand.execute(session);
 
-    verifyNoMoreInteractions(this.identityClient);
+    verifyNoMoreInteractions(this.identityAuthentication);
     verifyNoMoreInteractions(this.securityHeaderSupplier);
     verifyNoMoreInteractions(this.messageControllerApi);
   }
@@ -68,7 +68,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
   @Test
   void execute_Should_postFinishedConversationMessage_When_sessionHasGroupId() {
     var identityLogin = new IdentityLogin("token", 0, 0, "refresh-token");
-    when(this.identityClient.loginUser(any(), any())).thenReturn(identityLogin);
+    when(this.identityAuthentication.login(any(), any())).thenReturn(identityLogin);
     when(identityClientConfig.getTechnicalUser()).thenReturn(new TechnicalUserConfig());
     when(this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any()))
         .thenReturn(new HttpHeaders());
@@ -78,7 +78,7 @@ class PostConversationFinishedAliasMessageActionCommandTest {
 
     this.actionCommand.execute(session);
 
-    verify(this.identityClient, times(1)).loginUser(null, null);
+    verify(this.identityAuthentication, times(1)).login(null, null);
     verify(this.securityHeaderSupplier, times(1)).getKeycloakAndCsrfHttpHeaders("token");
     var expectedMessageType = new AliasOnlyMessageDTO().messageType(FINISHED_CONVERSATION);
     verify(this.messageControllerApi, times(1))

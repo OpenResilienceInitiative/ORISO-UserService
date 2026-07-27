@@ -13,7 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
@@ -37,7 +37,7 @@ class AgencyMatrixCredentialClientTest {
 
   private RestTemplate restTemplate;
   private MockRestServiceServer mockServer;
-  private IdentityClient identityClient;
+  private IdentityAuthentication identityAuthentication;
   private IdentityClientConfig identityClientConfig;
   private AgencyMatrixCredentialClient agencyMatrixCredentialClient;
 
@@ -45,7 +45,7 @@ class AgencyMatrixCredentialClientTest {
   void setUp() {
     restTemplate = new RestTemplate();
     mockServer = MockRestServiceServer.bindTo(restTemplate).build();
-    identityClient = mock(IdentityClient.class);
+    identityAuthentication = mock(IdentityAuthentication.class);
     identityClientConfig = mock(IdentityClientConfig.class);
 
     var securityHeaderSupplier = new SecurityHeaderSupplier(new AuthenticatedUser());
@@ -60,7 +60,7 @@ class AgencyMatrixCredentialClientTest {
             restTemplate,
             securityHeaderSupplier,
             tenantHeaderSupplier,
-            identityClient,
+            identityAuthentication,
             identityClientConfig);
     ReflectionTestUtils.setField(
         agencyMatrixCredentialClient, "agencyServiceBaseUrl", AGENCY_SERVICE_URL);
@@ -101,7 +101,7 @@ class AgencyMatrixCredentialClientTest {
     technicalUser.setPassword("secret");
 
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityClient.loginUser("technical", "secret"))
+    when(identityAuthentication.login("technical", "secret"))
         .thenThrow(new BadRequestException("Keycloak unavailable"));
 
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
@@ -142,6 +142,6 @@ class AgencyMatrixCredentialClientTest {
     var loginResponse = new IdentityLogin(accessToken, 0, 0, "refresh-token");
 
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityClient.loginUser("technical", "secret")).thenReturn(loginResponse);
+    when(identityAuthentication.login("technical", "secret")).thenReturn(loginResponse);
   }
 }

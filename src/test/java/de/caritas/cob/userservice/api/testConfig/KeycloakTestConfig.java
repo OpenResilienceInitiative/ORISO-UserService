@@ -69,12 +69,12 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public IdentityLogin loginUser(String userName, String password) {
+      public IdentityLogin login(String userName, String password) {
         return new IdentityLogin("", 0, 0, "");
       }
 
       @Override
-      public boolean logoutUser(String refreshToken) {
+      public boolean logout(String refreshToken) {
         return true;
       }
 

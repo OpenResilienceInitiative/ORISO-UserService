@@ -159,7 +159,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void loginUser_Should_MapKeycloakResponseToProviderNeutralCredentials() {
+  public void login_Should_MapKeycloakResponseToProviderNeutralCredentials() {
     KeycloakLoginResponseDTO loginResponseDTO =
         new EasyRandom().nextObject(KeycloakLoginResponseDTO.class);
     when(restTemplate.postForEntity(
@@ -168,7 +168,7 @@ public class KeycloakServiceTest {
             ArgumentMatchers.<Class<KeycloakLoginResponseDTO>>any()))
         .thenReturn(new ResponseEntity<>(loginResponseDTO, HttpStatus.OK));
 
-    IdentityLogin response = keycloakService.loginUser(USER_ID, OLD_PW);
+    IdentityLogin response = keycloakService.login(USER_ID, OLD_PW);
 
     assertThat(response.accessToken(), is(loginResponseDTO.getAccessToken()));
     assertThat(response.expiresIn(), is(loginResponseDTO.getExpiresIn()));
@@ -177,7 +177,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void loginUser_Should_ReturnBadRequest_When_KeycloakLoginFails() {
+  public void login_Should_ReturnBadRequest_When_KeycloakLoginFails() {
     var exception =
         new RestClientResponseException("some exception", 500, "text", null, null, null);
     when(restTemplate.postForEntity(
@@ -187,7 +187,7 @@ public class KeycloakServiceTest {
         .thenThrow(exception);
 
     try {
-      keycloakService.loginUser(USER_ID, OLD_PW);
+      keycloakService.login(USER_ID, OLD_PW);
       fail("Expected exception: BadRequestException");
     } catch (BadRequestException badRequestException) {
       assertTrue(true, "Excepted BadRequestException thrown");
@@ -195,33 +195,33 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void logoutUser_Should_ReturnTrue_When_KeycloakLoginWasSuccessful() {
+  public void logout_Should_ReturnTrue_When_KeycloakLoginWasSuccessful() {
     when(restTemplate.postForEntity(
             ArgumentMatchers.anyString(), any(), ArgumentMatchers.<Class<Void>>any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.NO_CONTENT));
 
-    assertTrue(keycloakService.logoutUser(REFRESH_TOKEN));
+    assertTrue(keycloakService.logout(REFRESH_TOKEN));
   }
 
   @Test
-  public void logoutUser_Should_ReturnFalseAndLogError_WhenKeycloakLogoutFailsWithException() {
+  public void logout_Should_ReturnFalseAndLogError_WhenKeycloakLogoutFailsWithException() {
     RestClientException exception = new RestClientException("error");
     when(restTemplate.postForEntity(ArgumentMatchers.anyString(), any(), any()))
         .thenThrow(exception);
 
-    boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
+    boolean response = keycloakService.logout(REFRESH_TOKEN);
 
     assertFalse(response);
     assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
-  public void logoutUser_Should_ReturnFalseAndLogError_When_KeycloakLogoutFails() {
+  public void logout_Should_ReturnFalseAndLogError_When_KeycloakLogoutFails() {
     when(restTemplate.postForEntity(
             ArgumentMatchers.anyString(), any(), ArgumentMatchers.<Class<Void>>any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.BAD_REQUEST));
 
-    boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
+    boolean response = keycloakService.logout(REFRESH_TOKEN);
 
     assertFalse(response);
     assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
@@ -1365,33 +1365,35 @@ public class KeycloakServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnFalse_When_OtherBadRequest() {
+  public void verifyPasswordIgnoringSecondFactor_Should_ReturnFalse_When_OtherBadRequest() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     when(exception.getResponseBodyAsString()).thenReturn("Invalid credentials");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(false));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrueAndLogout_When_LoginSucceedsWithRefreshToken() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrueAndLogout_When_LoginSucceedsWithRefreshToken() {
     var loginResponse = mock(KeycloakLoginResponseDTO.class);
     when(loginResponse.getRefreshToken()).thenReturn(REFRESH_TOKEN);
     ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
@@ -1402,14 +1404,15 @@ public class KeycloakServiceTest {
     ResponseEntity<Void> logoutResponse = new ResponseEntity<>(HttpStatus.NO_CONTENT);
     when(restTemplate.postForEntity(anyString(), any(), eq(Void.class))).thenReturn(logoutResponse);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
     verify(restTemplate).postForEntity(anyString(), any(), eq(Void.class));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrueWithoutLogout_When_NoRefreshToken() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrueWithoutLogout_When_NoRefreshToken() {
     var loginResponse = mock(KeycloakLoginResponseDTO.class);
     when(loginResponse.getRefreshToken()).thenReturn(null);
     ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
@@ -1417,7 +1420,7 @@ public class KeycloakServiceTest {
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(responseEntity);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
     verify(restTemplate, org.mockito.Mockito.never())

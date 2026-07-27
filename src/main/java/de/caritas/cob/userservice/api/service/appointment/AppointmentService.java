@@ -10,7 +10,7 @@ import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceA
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -48,7 +48,7 @@ public class AppointmentService {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   @Value("${feature.appointment.enabled}")
@@ -164,7 +164,8 @@ public class AppointmentService {
   @SuppressWarnings("Duplicates")
   private void addTechnicalUserHeaders(ApiClient apiClient) {
     var techUser = identityClientConfig.getTechnicalUser();
-    var keycloakLogin = identityClient.loginUser(techUser.getUsername(), techUser.getPassword());
+    var keycloakLogin =
+        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
     var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.accessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));

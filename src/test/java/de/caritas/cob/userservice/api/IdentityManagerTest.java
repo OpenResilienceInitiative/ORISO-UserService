@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -26,10 +27,21 @@ class IdentityManagerTest {
   private static final String EMAIL = "consultant@example.org";
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
+
+  @Test
+  void validatePasswordIgnoring2faShouldPreserveEncodedUsernameForIdentityAuthentication() {
+    when(identityAuthentication.verifyPasswordIgnoringSecondFactor(ENCODED_USERNAME, "password"))
+        .thenReturn(true);
+
+    assertThat(identityManager.validatePasswordIgnoring2fa(ENCODED_USERNAME, "password")).isTrue();
+
+    verify(identityAuthentication).verifyPasswordIgnoringSecondFactor(ENCODED_USERNAME, "password");
+  }
 
   @Test
   void validateOneTimePasswordShouldUseRawUsernameForKeycloakEmailUpdate() {

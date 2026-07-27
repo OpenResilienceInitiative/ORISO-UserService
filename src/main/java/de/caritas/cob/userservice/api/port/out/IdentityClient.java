@@ -12,10 +12,6 @@ public interface IdentityClient {
 
   void changeLanguage(final String userId, final String language);
 
-  IdentityLogin loginUser(final String userName, final String password);
-
-  boolean logoutUser(final String refreshToken);
-
   void changeEmailAddress(final String emailAddress);
 
   void changeEmailAddress(final String username, final String emailAddress);
@@ -69,6 +65,4 @@ public interface IdentityClient {
   void closeSession(String sessionId);
 
   void deactivateUser(String userId);
-
-  boolean verifyIgnoringOtp(String username, String password);
 }
