@@ -30,8 +30,8 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,843 | 0 | 0 | 7 | `./mvnw -B -Dskip.integration-tests=true clean test` |
-| Integration + contract + E2E | 964 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,849 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
+| Integration + contract + E2E | 968 | 0 | 0 | 14 | `./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
@@ -40,23 +40,32 @@ replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
 later serial Maven completions. The latest clean integration completion
-independently reports 964/0/0/5.
+independently reports 968/0/0/14; the 14 skips are the required
+environment-gated reports exercised below.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
 CSRF token, which contradicts the service's security contract. No failing test
-is skipped or quarantined.
+is skipped or quarantined. Seven email-supplier log regressions were also
+re-enabled after their appenders were given the production logger context and a
+complete lifecycle. The 30-test focused email-supplier suite now runs with zero
+failures, errors or skips.
+
+`scripts/ci/check-no-test-quarantine.py` is exercised by the blocking Python CI
+contract suite. It rejects JUnit `@Disabled*` and `@Ignore` annotations anywhere
+under `src/test`, so the zero-quarantine state cannot silently regress.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
 suite, starts from a clean build, requires at least 900 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The nineteen environment-gated integration tests are not
-quarantined: all fourteen Redis tests pass in their required Redis 7
-service-container job. The five MariaDB tests skipped without an external
-database are covered by the required fresh-MariaDB 10.11 job; its seven selected
-schema and replica contract classes execute nine tests on branch, pull-request
-and publish workflows.
+were removed. The broad execution without external containers records fourteen
+environment-gated container-level skips: one for each of nine Redis contract
+classes and five MariaDB contract classes. They are not quarantine. The
+required Redis 7 service-container job executes fourteen test methods from the
+nine Redis classes. The required fresh-MariaDB 10.11 job executes nine test
+methods from the five MariaDB classes on branch, pull-request and publish
+workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so

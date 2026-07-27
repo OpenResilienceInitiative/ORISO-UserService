@@ -188,7 +188,8 @@
     "additionalRequiredContracts": [
       "fresh MariaDB schema and replica contracts",
       "Redis replica-state contracts",
-      "CI contract forbidding the removed quarantine workflow"
+      "CI contract forbidding the removed quarantine workflow",
+      "CI source guard rejecting JUnit disabled and ignored test annotations"
     ]
   }
 }
