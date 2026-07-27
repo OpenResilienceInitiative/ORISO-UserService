@@ -120,6 +120,7 @@
     file="db/changelog/changeset/0071_tutorial_progress/0071_changeSet.xml" />
   <include
     file="db/changelog/changeset/0072_user_do_not_disturb/0072_changeSet.xml" />
+  <include
     file="db/changelog/changeset/0073_remove_rocket_chat_user_ids/0073_changeSet.xml" />
   <include
     file="db/changelog/changeset/0074_remove_rocket_chat_room_ids/0074_changeSet.xml" />
