@@ -136,6 +136,32 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "Keycloak SDK types",
         )
 
+    def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
+        sources = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
+            "MagicLinkLoginService.java",
+            CONTROLLERS / "UserController.java",
+            CONTROLLERS / "UserRegistrationControllerDelegate.java",
+        )
+        forbidden_prefix = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak."
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)} imports {line}"
+            for source in sources
+            for line in source.read_text().splitlines()
+            if line.startswith(forbidden_prefix)
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Magic-link application and web boundaries must expose "
+            "application-owned sessions instead of Keycloak transport DTOs:\n"
+            + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

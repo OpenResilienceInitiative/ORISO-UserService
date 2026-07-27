@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Date: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -30,8 +30,8 @@ suites serially:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,843 | 0 | 0 | 7 | `./mvnw -B -Dskip.integration-tests=true clean test` |
-| Integration + contract + E2E | 964 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,852 | 0 | 0 | 0 | `./mvnw -B -Dskip.integration-tests=true clean test` |
+| Integration + contract + E2E | 969 | 0 | 0 | 5 | `ORISO_LOCAL_REDIS_IT=true ./mvnw -B -Dskip.unit-tests=true clean integration-test` |
 | MariaDB schema + replica contracts | 9 | 0 | 0 | 0 | required fresh MariaDB 10.11 job |
 | Redis replica-safety contracts | 14 | 0 | 0 | 0 | required Redis 7 job |
 
@@ -40,7 +40,7 @@ replica tests. Those focused tests pass, including the scheduler proof on fresh
 MariaDB 10.11 and the browser-login proof on Redis 7. Earlier overlapping broad
 attempts remain excluded from evidence; the totals above come only from the
 later serial Maven completions. The latest clean integration completion
-independently reports 964/0/0/5.
+independently reports 969/0/0/5.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -187,17 +187,22 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, Rocket.Chat, repositories and generated clients]
+  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
+
+Rocket.Chat references below describe legacy code that still has to be removed;
+they are not part of the target architecture. The target chat transport is
+Matrix only, with the ORISO frontend and the controlled MatrixRTC/Element Call
+fork using LiveKit.
 
 The current state is deliberately tracked per domain instead of describing the
 whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login return the provider-neutral `IdentityLogin` value. Profile lookup returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs, OTP values and provider configuration. `MagicLinkLoginService` and its HTTP response still expose the Keycloak token transport separately from this port. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-login and password-reset tokens use the shared `OneTimeTokenStore` port with a two-instance Redis contract. Magic-link token exchange returns the provider-neutral `IdentitySession`; only the Keycloak adapter owns grant fields and provider DTO parsing, while the web adapter preserves the existing seven-field snake-case response. Identity creation returns a provider-neutral identifier; the Keycloak adapter owns response parsing and recovers a missing `Location` identifier only from one exact authoritative username match. Password and technical-user login return the provider-neutral `IdentityLogin` value. Profile lookup returns `Optional<IdentityProfile>`; Keycloak not-found behavior is mapped to absence, and fuzzy username search stays adapter-internal. | The broad `IdentityClient` still exposes web-layer user command DTOs, OTP values and provider configuration. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. Admin and consultant creation now consume only the provider-neutral identity identifier. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
 
@@ -213,7 +218,9 @@ contract rejects any reintroduction of the deleted
 `KeycloakCreateUserResponseDTO` outside the Keycloak adapter boundary. The
 identity port contract also rejects imports from the concrete Keycloak adapter
 and Keycloak SDK types, so its login and profile results cannot regress from
-`IdentityLogin` and `IdentityProfile` to provider transports.
+`IdentityLogin` and `IdentityProfile` to provider transports. A dedicated
+Magic-Link boundary contract applies the same rule to the service and both web
+entry points.
 
 Replica-local caches, maps and scheduled side effects are tracked separately in
 [`USER_SERVICE_REPLICA_SAFETY.md`](USER_SERVICE_REPLICA_SAFETY.md). The current
@@ -221,11 +228,10 @@ runtime contract reports a maximum supported replica count of one; modular
 source layout must not be confused with proven multi-instance behavior.
 
 This is a ratcheted incremental modularization, not a claim that all three
-domains are already isolated. The next safe sequence is the remaining
-Magic-Link token transport and broad identity command/configuration decoupling,
-then the admin controller composition boundary, then session-list adapter
-removal. Each step must add a failing boundary contract before moving
-dependencies.
+domains are already isolated. The next safe sequence is broad identity
+command/configuration decoupling, then the admin controller composition
+boundary, then session-list adapter removal. Each step must add a failing
+boundary contract before moving dependencies.
 
 ## Microservice decision
 
