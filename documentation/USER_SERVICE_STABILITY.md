@@ -55,7 +55,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; Rocket.Chat only when explicitly enabled | HTTP long-poll + HTTP; optional MongoDB |
+| Chat | Matrix | HTTP long-poll + HTTP |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -113,9 +113,9 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- With the default `rocket-chat.enabled=false`, account and availability reads
-  no longer call Rocket.Chat. Matrix-only deployments also do not create the
-  Rocket.Chat MongoDB client or credential job.
+- The Matrix-only cutover physically removed the Rocket.Chat adapter, credential
+  provider, MongoDB client and scheduler. Negative architecture contracts
+  prevent those production paths from returning.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
@@ -137,7 +137,7 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, Rocket.Chat, repositories and generated clients]
+  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
@@ -148,17 +148,17 @@ whole codebase as modular:
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
-| Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and configuration. Both protected application packages have executable import boundaries. | Session-list transport DTO ownership still needs a narrower module seam. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
-`service.session` application package from importing Matrix or Rocket.Chat
-adapters. It also prevents the Identity/Profile packages and the Admin module
-from importing their protected concrete chat adapters. The assignment boundary
-also forbids the legacy admin Rocket.Chat operation implementation, so rollback
-policy cannot leak back into orchestration. The appointment deletion repair
-stays behind `Organizing` and `AppointmentRepository`.
+`service.session` application package from importing concrete Matrix adapters.
+It also prevents the Identity/Profile packages and the Admin module from
+importing their protected concrete chat adapters. Separate Matrix-only removal
+contracts prevent legacy Rocket.Chat production adapters and operations from
+returning. The appointment deletion repair stays behind `Organizing` and
+`AppointmentRepository`.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. The next safe sequence is the remaining identity

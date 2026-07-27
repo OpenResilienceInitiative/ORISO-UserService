@@ -1,0 +1,302 @@
+{
+  "schemaVersion": 1,
+  "scope": "UserService process-local state and scheduled work on the Matrix-only runtime",
+  "targetArchitecture": "Matrix chat + ORISO frontend + ORISO-controlled Element Call/MatrixRTC fork + LiveKit",
+  "runtimeMetric": "userservice.replica.local_state",
+  "schedulerRegistrationMetric": "userservice.scheduler.registered",
+  "components": [
+    {
+      "id": "matrix-access-token-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "identity-profile",
+      "risk": "performance",
+      "components": ["accessTokenCache"],
+      "decision": "Retain locally with the existing TTL; a miss re-authenticates without losing correctness.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "matrix-browser-login-locks",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "identity-profile",
+      "risk": "correctness",
+      "components": ["browserLoginLocks"],
+      "decision": "Externalize login coordination before more than one replica is supported.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "matrix-sync-token-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": ["syncTokenCache"],
+      "decision": "Externalize the cursor and prove handoff without duplicate event side effects.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "matrix-presence-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "performance",
+      "components": ["presenceCache"],
+      "decision": "Retain as a short-lived local optimization with deterministic TTL tests.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "matrix-admin-token-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "performance",
+      "components": ["cachedAdminToken", "adminTokenExpiry"],
+      "decision": "Retain locally with expiry; a miss or expiry re-authenticates.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "matrix-impersonation-token-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/adapters/matrix/MatrixSynapseService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "performance",
+      "components": ["impersonationTokenCache"],
+      "decision": "Retain locally with TTL; a miss requests a new bounded token.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "matrix-room-session-map",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/MatrixEventListenerService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "performance",
+      "components": ["roomToSessionMap"],
+      "decision": "Retain only while the database fallback is covered and observable.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "safe"
+    },
+    {
+      "id": "matrix-room-users-map",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/MatrixEventListenerService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": ["roomToUsersMap"],
+      "decision": "Externalize or deterministically rebuild recipients before multi-replica execution.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "matrix-sync-loop",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/MatrixEventListenerService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": ["executorService", "adminAccessToken", "syncToken", "running"],
+      "decision": "Add shared leadership, cursor handoff and durable side-effect deduplication.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "notification-active-view-map",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/EventNotificationService.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "correctness",
+      "components": ["activeViewByUserId"],
+      "decision": "Externalize with TTL before cross-replica notification suppression is claimed.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "caffeine-cache-manager",
+      "source": "src/main/java/de/caritas/cob/userservice/api/config/CacheManagerConfig.java",
+      "kind": "local-state",
+      "owner": "platform",
+      "risk": "correctness",
+      "components": [
+        "agencyCache",
+        "consultingTypeCache",
+        "applicationSettingsCache",
+        "tenantCache",
+        "tenantAdminCache",
+        "topicsCache"
+      ],
+      "decision": "Keep the one-replica ceiling until every correctness cache has shared invalidation or a measured freshness bound.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "agency-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyService.java",
+      "kind": "local-state",
+      "owner": "agency-tenant",
+      "risk": "performance",
+      "components": ["agencyCache"],
+      "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "consulting-type-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/ConsultingTypeService.java",
+      "kind": "local-state",
+      "owner": "consulting-configuration",
+      "risk": "performance",
+      "components": ["consultingTypeCache"],
+      "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "application-settings-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/ApplicationSettingsService.java",
+      "kind": "local-state",
+      "owner": "consulting-configuration",
+      "risk": "correctness",
+      "components": ["applicationSettingsCache"],
+      "decision": "Add shared invalidation or an explicit measured freshness contract.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "tenant-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantService.java",
+      "kind": "local-state",
+      "owner": "agency-tenant",
+      "risk": "correctness",
+      "components": ["tenantCache"],
+      "decision": "Add shared invalidation for tenant changes before scale-out.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "tenant-admin-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/admin/service/tenant/TenantAdminService.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "correctness",
+      "components": ["tenantAdminCache"],
+      "decision": "Add shared invalidation for administrator changes before scale-out.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "blocker"
+    },
+    {
+      "id": "topics-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/consultingtype/TopicService.java",
+      "kind": "local-state",
+      "owner": "consulting-configuration",
+      "risk": "performance",
+      "components": ["topicsCache"],
+      "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
+      "id": "appointment-cleanup-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
+      "kind": "scheduler",
+      "owner": "sessions-appointments",
+      "risk": "duplicate-side-effect",
+      "components": ["deleteOldAppointments"],
+      "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "enquiry-notification-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["performEnquiryNotifications"],
+      "decision": "Lease execution and keep notification delivery idempotent.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "group-chat-deactivation-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/deactivate/scheduler/DeactivateGroupChatScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": ["performDeactivation"],
+      "decision": "Prove Matrix and notification effects idempotent or add a lease.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "anonymous-deactivation-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/deactivate/scheduler/DeactivateAnonymousUserScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": ["performDeactivation"],
+      "decision": "Lease execution and make every external side effect idempotent.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "group-chat-reminder-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/groupchatreminder/scheduler/GroupChatReminderScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["sendReminders"],
+      "decision": "Deduplicate by reminder identity and prove concurrent execution.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "inactive-account-notification-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["sendNotifications"],
+      "decision": "Claim each dispatch durably and deduplicate replay.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "account-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAccountScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": ["performDeletion"],
+      "decision": "Lease execution and make provider cleanup idempotent.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "anonymous-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUserAnonymousScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": ["performDeletion"],
+      "decision": "Lease execution and make provider cleanup idempotent.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "registered-only-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteUsersRegisteredOnlyScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": ["performDeletion"],
+      "decision": "Lease execution and make provider cleanup idempotent.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    }
+  ]
+}
