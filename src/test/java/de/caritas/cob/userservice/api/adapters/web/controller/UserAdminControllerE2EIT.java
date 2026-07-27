@@ -664,6 +664,16 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnOk_When_sortingByUpdateDate() throws Exception {
 
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
@@ -739,6 +749,16 @@ class UserAdminControllerE2EIT {
             get(
                 "/useradmin/agencyadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
         .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
   }
 
   @Test

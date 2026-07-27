@@ -81,6 +81,7 @@ class TenantServiceTest {
 
     assertThat(result).containsExactly(knownTenant);
     assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+    assertThat(tenantControllerApi.lastTenantIds).containsExactlyInAnyOrder(TENANT_ID, 99L);
     assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 
@@ -88,6 +89,7 @@ class TenantServiceTest {
   void getRestrictedTenantData_emptyTenantIds_doesNotCallApi() {
     assertThat(tenantService.getRestrictedTenantData(Set.of())).isEmpty();
     assertThat(tenantControllerApi.tenantIdsCalls.get()).isZero();
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 
   // Callers such as HttpTenantFilter rely on upstream errors surfacing unchanged.
@@ -178,6 +180,20 @@ class TenantServiceTest {
       cachedTenantService.getRestrictedTenantData(TENANT_ID);
 
       assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void getRestrictedTenantData_batchPopulatesIdAndSubdomainCache() {
+      var expected = new RestrictedTenantDTO().id(TENANT_ID).subdomain(SUBDOMAIN);
+      tenantControllerApi.tenantIdsResult = List.of(expected);
+
+      cachedTenantService.getRestrictedTenantData(Set.of(TENANT_ID));
+
+      assertThat(cachedTenantService.getRestrictedTenantData(TENANT_ID)).isSameAs(expected);
+      assertThat(cachedTenantService.getRestrictedTenantData(SUBDOMAIN)).isSameAs(expected);
+      assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+      assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+      assertThat(tenantControllerApi.subdomainCalls.get()).isZero();
     }
 
     @Test
@@ -299,6 +315,7 @@ class TenantServiceTest {
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
     List<RestrictedTenantDTO> tenantIdsResult;
+    List<Long> lastTenantIds;
     RuntimeException subdomainException;
     RuntimeException tenantIdException;
     final AtomicInteger subdomainCalls = new AtomicInteger();
@@ -310,6 +327,7 @@ class TenantServiceTest {
       subdomainResult = null;
       tenantIdResult = null;
       tenantIdsResult = null;
+      lastTenantIds = null;
       subdomainException = null;
       tenantIdException = null;
       subdomainCalls.set(0);
@@ -342,6 +360,7 @@ class TenantServiceTest {
     @Override
     public List<RestrictedTenantDTO> getRestrictedTenantDataByTenantIds(List<Long> tenantIds) {
       tenantIdsCalls.incrementAndGet();
+      lastTenantIds = List.copyOf(tenantIds);
       return tenantIdsResult != null ? tenantIdsResult : List.of();
     }
 
