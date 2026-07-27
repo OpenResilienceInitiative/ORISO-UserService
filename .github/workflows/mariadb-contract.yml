@@ -5,7 +5,7 @@ on:
 
 jobs:
   verify:
-    name: MariaDB schema and statistics contract
+    name: MariaDB schema, statistics and scheduler lease contract
     runs-on: ubuntu-latest
     services:
       mariadb:
@@ -38,5 +38,5 @@ jobs:
     - name: Verify real MariaDB schema contracts
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
-        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT
+        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,ScheduledTaskClaimMariaDbIT
         integration-test
