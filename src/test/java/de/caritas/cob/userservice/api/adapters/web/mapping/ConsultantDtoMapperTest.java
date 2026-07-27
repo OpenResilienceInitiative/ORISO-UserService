@@ -11,8 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.ArrayList;
@@ -33,7 +33,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 @ExtendWith(MockitoExtension.class)
 class ConsultantDtoMapperTest {
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityManaging identityManager;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private TopicService topicService;
 
@@ -52,8 +52,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_MapMasterTableFields() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
-    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
-    when(identityClient.userHasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT.getValue()))
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
+    when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
 
     // when
@@ -71,8 +71,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_MapOtherIdentityFields_WhenPresentInMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
-    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
-    when(identityClient.userHasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT.getValue()))
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
+    when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
     var map = consultantMap();
     map.put("hasOtherIdentity", true);
@@ -93,8 +93,8 @@ class ConsultantDtoMapperTest {
   void consultantDtoOf_Should_DefaultOtherIdentityFields_WhenAbsentFromMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
-    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
-    when(identityClient.userHasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT.getValue()))
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
+    when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
         .thenReturn(false);
 
     // when
@@ -134,7 +134,7 @@ class ConsultantDtoMapperTest {
 
   private ConsultantDtoMapper givenAMapper() {
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
-    ReflectionTestUtils.setField(consultantDtoMapper, "identityClient", identityClient);
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
     ReflectionTestUtils.setField(
         consultantDtoMapper, "consultantTopicRepository", consultantTopicRepository);
     ReflectionTestUtils.setField(consultantDtoMapper, "topicService", topicService);
@@ -144,7 +144,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantDtoOf_Should_MapCounsellorRole_When_NotSupervisor() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     Map<String, Object> map = consultantMap();
     map.put("isSupervisor", false);
     map.put("deletedAt", null);
@@ -160,7 +160,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantDtoOf_Should_LeaveTenantIdNull_When_TenantIdIsNull() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     Map<String, Object> map = consultantMap();
     map.put("tenantId", null);
 
@@ -170,9 +170,9 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
-  void consultantDtoOf_Should_SetGroupchatConsultantFalse_When_IdentityClientThrows() {
+  void consultantDtoOf_Should_SetGroupchatConsultantFalse_When_IdentityInputThrows() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString()))
+    when(identityManager.hasRole(anyString(), any(UserRole.class)))
         .thenThrow(new RuntimeException("keycloak user missing"));
 
     var consultant = consultantDtoMapper.consultantDtoOf(consultantMap());
@@ -183,7 +183,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantDtoOf_Should_MapAgencies_When_AgenciesPresent() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     Map<String, Object> map = consultantMap();
     Map<String, Object> agencyMap = new HashMap<>();
     agencyMap.put("id", 1L);
@@ -395,7 +395,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantSearchResultOf_Should_SkipTopicLookup_When_NoTopicIdsFoundForAnyConsultant() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
 
     var result =
@@ -412,7 +412,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantSearchResultOf_Should_EnrichTopics_When_TopicIdsFoundForConsultant() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     List<Object[]> rows = java.util.Collections.singletonList(new Object[] {"consultant-id", 42L});
     when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(rows);
     var topicDto = new TopicDTO();
@@ -432,7 +432,7 @@ class ConsultantDtoMapperTest {
   @Test
   void consultantSearchResultOf_Should_AddPreviousAndNextLinks_When_NotFirstOrLastPage() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
-    when(identityClient.userHasRole(anyString(), anyString())).thenReturn(false);
+    when(identityManager.hasRole(anyString(), any(UserRole.class))).thenReturn(false);
     when(consultantTopicRepository.findTopicIdsByConsultantIdIn(any())).thenReturn(List.of());
 
     var result =
