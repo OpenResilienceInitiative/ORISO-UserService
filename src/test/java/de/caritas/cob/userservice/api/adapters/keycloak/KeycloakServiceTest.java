@@ -29,7 +29,6 @@ import com.google.common.collect.Maps;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -1151,56 +1150,6 @@ public class KeycloakServiceTest {
 
     assertTrue(
         logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnTrue_When_userHasAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority =
-        this.keycloakService.userHasAuthority("user", AuthorityValue.USER_DEFAULT);
-
-    assertThat(hasAuthority, is(true));
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnThrowKeycloakException_When_userHasNoRoles() {
-    assertThrows(
-        KeycloakException.class,
-        () -> {
-          UserResource userResource = mock(UserResource.class);
-          UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-          when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-          this.keycloakService.userHasAuthority("user", "authority");
-        });
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnFalse_When_userHasNotAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority = this.keycloakService.userHasAuthority("user", AuthorityValue.USER_ADMIN);
-
-    assertThat(hasAuthority, is(false));
   }
 
   @Test

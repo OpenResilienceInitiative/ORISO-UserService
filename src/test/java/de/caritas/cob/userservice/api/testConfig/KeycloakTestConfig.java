@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -138,6 +139,11 @@ public class KeycloakTestConfig {
       @Override
       public boolean userHasRole(String userId, String userRole) {
         return true;
+      }
+
+      @Override
+      public List<String> findAllByUserId(String userId) {
+        return List.of(UserRole.values()).stream().map(UserRole::getValue).toList();
       }
     };
   }

@@ -499,6 +499,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;"
         )
         consumers = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
             / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
@@ -511,8 +512,8 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             for source in consumers
             if focused_lookup_import not in source.read_text()
         ]
-        user_identities_service = consumers[1].read_text()
-        agency_relation_service = consumers[0].read_text()
+        agency_relation_service = consumers[1].read_text()
+        user_identities_service = consumers[2].read_text()
         identity_client = (
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
@@ -538,6 +539,22 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "getRealmRoles(",
             identity_client,
             "The broad identity command client must not own realm-role reads",
+        )
+        for method in ("userHasRole(", "userHasAuthority("):
+            self.assertNotIn(
+                method,
+                identity_client,
+                "The broad identity command client must not own role membership reads",
+            )
+        keycloak_adapter = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        self.assertNotIn(
+            "userHasAuthority(",
+            keycloak_adapter,
+            "The unused provider-specific authority evaluator must be removed",
         )
 
     def test_admin_module_depends_on_ports_not_chat_adapters(self):

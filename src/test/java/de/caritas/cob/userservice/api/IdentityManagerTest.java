@@ -13,8 +13,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,6 +35,7 @@ class IdentityManagerTest {
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private IdentityRoleLookup identityRoleLookup;
   @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -160,11 +163,12 @@ class IdentityManagerTest {
   }
 
   @Test
-  void hasRoleShouldDelegateTheApplicationRoleValueToIdentityClient() {
-    when(identityClient.userHasRole("consultant-id", "group-chat-consultant")).thenReturn(true);
+  void hasRoleShouldReadAllRolesOnceAndEvaluateTheApplicationRoleInProcess() {
+    when(identityRoleLookup.findAllByUserId("consultant-id"))
+        .thenReturn(List.of("user", "group-chat-consultant"));
 
     assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
 
-    verify(identityClient).userHasRole("consultant-id", "group-chat-consultant");
+    verify(identityRoleLookup).findAllByUserId("consultant-id");
   }
 }

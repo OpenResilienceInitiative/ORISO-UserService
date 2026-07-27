@@ -43,10 +43,6 @@ public interface IdentityClient {
 
   void deleteUser(String userId);
 
-  boolean userHasAuthority(String userId, String authority);
-
-  boolean userHasRole(String userId, String userRole);
-
   void closeSession(String sessionId);
 
   void deactivateUser(String userId);
