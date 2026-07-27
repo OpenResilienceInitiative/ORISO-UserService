@@ -17,10 +17,9 @@ from urllib.request import Request, urlopen
 
 
 USER_ID = "tutorial-replica-jwt-user"
-SCOPE = {
+BASE_SCOPE = {
     "surface": "frontend",
     "tourId": "consultant-walkthrough",
-    "tourVersion": 1,
 }
 
 
@@ -63,6 +62,7 @@ def request(
     token: str,
     operation: str,
     payload: dict[str, object] | None,
+    scope: dict[str, object],
     timeout_seconds: float,
 ) -> Sample:
     started = time.perf_counter()
@@ -88,7 +88,7 @@ def request(
             timeout=timeout_seconds,
         ) as response:
             body = response.read()
-            error = validate_read(body) if payload is None else None
+            error = validate_read(body, scope) if payload is None else None
             return Sample(
                 operation,
                 target,
@@ -118,14 +118,14 @@ def request(
         )
 
 
-def validate_read(body: bytes) -> str | None:
+def validate_read(body: bytes, scope: dict[str, object]) -> str | None:
     progress = json.loads(body)
     if not isinstance(progress, list):
         return "read-body-is-not-a-list"
     matching = [
         row
         for row in progress
-        if all(row.get(key) == value for key, value in SCOPE.items())
+        if all(row.get(key) == value for key, value in scope.items())
     ]
     if len(matching) != 1:
         return f"canonical-scope-count-{len(matching)}"
@@ -140,6 +140,7 @@ def main() -> int:
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--requests", type=int, default=200)
     parser.add_argument("--concurrency", type=int, default=16)
+    parser.add_argument("--tour-version", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=5.0)
     parser.add_argument("--max-p95-ms", type=float, default=1000.0)
     args = parser.parse_args()
@@ -149,11 +150,12 @@ def main() -> int:
         raise ValueError("requests must be at least two and concurrency must be positive")
 
     token = args.token_file.read_text(encoding="utf-8").strip()
+    scope = {**BASE_SCOPE, "tourVersion": args.tour_version}
     writes = [
         (
             args.replica_url[index % len(args.replica_url)],
             {
-                **SCOPE,
+                **scope,
                 "status": "in_progress",
                 "currentStepId": "profile" if index % 2 == 0 else "messages",
             },
@@ -165,13 +167,13 @@ def main() -> int:
         write_samples = list(
             executor.map(
                 lambda item: request(
-                    item[0], token, "upsert", item[1], args.timeout_seconds
+                    item[0], token, "upsert", item[1], scope, args.timeout_seconds
                 ),
                 writes,
             )
         )
     read_samples = [
-        request(target, token, "read", None, args.timeout_seconds)
+        request(target, token, "read", None, scope, args.timeout_seconds)
         for target in args.replica_url
     ]
     samples = [*write_samples, *read_samples]
@@ -193,7 +195,7 @@ def main() -> int:
     }
     output = {
         "authenticated_user": USER_ID,
-        "scope": SCOPE,
+        "scope": scope,
         "summary": summary,
         "errors": [asdict(sample) for sample in samples if sample.error is not None][
             :10

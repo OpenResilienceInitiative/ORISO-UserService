@@ -253,11 +253,13 @@ through the running HTTP/security stack. It starts two real UserService JVMs
 against one disposable MariaDB and Redis, verifies a locally signed consultant
 JWT through a disposable JWK endpoint, alternates concurrent CSRF-protected
 PUTs over both replicas, reads through both, restarts one JVM and repeats the
-cross-replica verification. The contract fails on any non-200 response,
-per-operation or per-replica p95 above the bound, more than one canonical row,
-or a duplicate-key warning. The reusable MariaDB workflow runs this proof.
-This establishes the authenticated tutorial-progress slice only; it does not
-raise the global supported replica count.
+cross-replica verification. A separate versioned scope warms the fresh JVM and
+is excluded from the report; the measured scope remains absent until the main
+phase, so its first-write race is still exercised. The contract fails on any
+non-200 response, per-operation or per-replica p95 above the bound, more than
+one canonical row, or a duplicate-key warning. The reusable MariaDB workflow
+runs this proof. This establishes the authenticated tutorial-progress slice
+only; it does not raise the global supported replica count.
 
 ## Current dependency sequence
 

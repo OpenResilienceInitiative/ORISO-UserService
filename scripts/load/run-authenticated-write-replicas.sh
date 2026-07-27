@@ -197,6 +197,18 @@ start_replica "${replica_two_port}" "${run_dir}/replica-two.log"
 replica_two_pid="${started_replica_pid}"
 wait_for_replica "${replica_two_port}" "${replica_two_pid}" "${run_dir}/replica-two.log"
 
+# Warm the JWT/JWK, security, controller, transaction and SQL paths on a separate scope. The
+# measured version-1 scope remains absent, so the main phase still exercises its first-write race.
+python3 "${repo_root}/tests/load/authenticated_tutorial_replica_load.py" \
+  --replica-url "http://127.0.0.1:${replica_one_port}" \
+  --replica-url "http://127.0.0.1:${replica_two_port}" \
+  --token-file "${run_dir}/consultant.jwt" \
+  --tour-version 999 \
+  --requests 12 \
+  --concurrency 2 \
+  --max-p95-ms 5000 \
+  >/dev/null
+
 python3 "${repo_root}/tests/load/authenticated_tutorial_replica_load.py" \
   --replica-url "http://127.0.0.1:${replica_one_port}" \
   --replica-url "http://127.0.0.1:${replica_two_port}" \
