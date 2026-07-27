@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantSettings;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -33,7 +33,7 @@ class TeamDiscussionFeatureGateTest {
     return new RestrictedTenantDTO()
         .id(id)
         .name("Tenant")
-        .settings(new RestrictedTenantSettings().featureTeamDiscussionEnabled(flag));
+        .settings(new Settings().featureTeamDiscussionEnabled(flag));
   }
 
   @Test

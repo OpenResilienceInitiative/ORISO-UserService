@@ -79,7 +79,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantSettings;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -1537,7 +1537,7 @@ class UserControllerChatE2EIT {
         new RestrictedTenantDTO()
             .id(consultant.getTenantId())
             .name("Test tenant")
-            .settings(new RestrictedTenantSettings().featureGroupChatV2Enabled(true));
+            .settings(new Settings().featureGroupChatV2Enabled(true));
     when(tenantService.getRestrictedTenantDataFresh(consultant.getTenantId())).thenReturn(tenant);
   }
 

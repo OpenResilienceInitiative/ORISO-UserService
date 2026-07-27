@@ -223,8 +223,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Accept an enquiry and assign it to the currently authenticated consultant
-        [Authorization: Role: consultant]'
+      summary: >-
+        Accept an enquiry and assign it to the currently authenticated consultant
+        [Authorization: Role: consultant]
       operationId: acceptEnquiry
       parameters:
         - name: sessionId
@@ -260,9 +261,10 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns a list of open session(s) for the currently authenticated
+      summary: >-
+        Returns a list of open session(s) for the currently authenticated
         user. Note: Either a session or a chat object is provided. [Authorization:
-        Role: user, anonymous]'
+        Role: user, anonymous]
       operationId: getSessionsForAuthenticatedUser
       parameters:
         - name: RCToken
@@ -293,8 +295,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns sessions for given chat room IDs (legacy Rocket.Chat-era naming).
-      [Authorization: Role: user, consultant]'
+      summary: >-
+        Returns sessions for given chat room IDs (legacy Rocket.Chat-era naming).
+        [Authorization: Role: user, consultant]
       operationId: getSessionsForGroupIds
       parameters:
         - name: RCToken
@@ -334,8 +337,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the session for given ID.
-      [Authorization: Role: user, consultant]'
+      summary: >-
+        Returns the session for given ID.
+        [Authorization: Role: user, consultant]
       operationId: getSessionForId
       parameters:
         - name: RCToken
@@ -475,8 +479,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Update the absence status and message for a consultant [Authorization:
-        Role: consultant]'
+      summary: >-
+        Update the absence status and message for a consultant [Authorization:
+        Role: consultant]
       operationId: updateAbsence
       requestBody:
         content:
@@ -501,8 +506,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Get the languages of all consultants who work for the given agency
-       [Authorization: none]'
+      summary: >-
+        Get the languages of all consultants who work for the given agency
+        [Authorization: none]
       operationId: getLanguages
       parameters:
         - name: agencyId
@@ -530,8 +536,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns user (meta)data for the currently authenticated user [Authorization:
-        Role: user, anonymous, consultant]'
+      summary: >-
+        Returns user (meta)data for the currently authenticated user [Authorization:
+        Role: user, anonymous, consultant]
       operationId: getUserData
       responses:
         200:
@@ -553,8 +560,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Sets or updates the email, first and lastname of authorized consultant account
-      [Authorization:  Role: consultant]'
+      summary: >-
+        Sets or updates the email, first and lastname of authorized consultant account
+        [Authorization: Role: consultant]
       operationId: updateConsultantData
       requestBody:
         content:
@@ -606,8 +614,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns notification settings for the currently authenticated user [Authorization:
-        Role: technical-calcom]'
+      summary: >-
+        Returns notification settings for the currently authenticated user [Authorization:
+        Role: technical-calcom]
       operationId: getUserEmailNotifications
       parameters:
         - name: email
@@ -636,8 +645,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Sets or updates the email address of the authorized user account [Authorization:
-          Role: asker/consultant]'
+      summary: >-
+        Sets or updates the email address of the authorized user account [Authorization:
+        Role: asker/consultant]
       operationId: updateEmailAddress
       requestBody:
         content:
@@ -663,8 +673,9 @@ paths:
     delete:
       tags:
         - user-controller
-      summary: 'Deletes the email address of the authorized user account [Authorization:
-          Role: asker/consultant]'
+      summary: >-
+        Deletes the email address of the authorized user account [Authorization:
+        Role: asker/consultant]
       operationId: deleteEmailAddress
       responses:
         200:
@@ -683,9 +694,10 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Sets or updates the mobile registration token of the authorized asker account for
-       the u25 app. This token is used to send push notifications to native mobile applications
-       on android and ios. [Authorization: Role: asker]'
+      summary: >-
+        Sets or updates the mobile registration token of the authorized asker account for
+        the u25 app. This token is used to send push notifications to native mobile applications
+        on android and ios. [Authorization: Role: asker]
       operationId: updateMobileToken
       requestBody:
         content:
@@ -710,9 +722,10 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Adds a mobile registration token of the authorized user account.
+      summary: >-
+        Adds a mobile registration token of the authorized user account.
         This token is used to send push notifications to native mobile applications on android and
-        ios. [Authorization: Roles: asker, consultant]'
+        ios. [Authorization: Roles: asker, consultant]
       operationId: addMobileAppToken
       requestBody:
         content:
@@ -739,10 +752,11 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns a list of sessions for the currently authenticated consultant.
+      summary: >-
+        Returns a list of sessions for the currently authenticated consultant.
         Status 1 returns all enquiries of an agency. Status 2 returns sessions of
         the calling consultant which are open/in progress. Note: Either a session
-        or a chat object is provided. [Authorization: Role: consultant]'
+        or a chat object is provided. [Authorization: Role: consultant]
       operationId: getSessionsForAuthenticatedConsultant
       parameters:
         - name: RCToken
@@ -830,8 +844,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Imports a list of askers without a session from a file [Authorization:
-        Role: technical]'
+      summary: >-
+        Imports a list of askers without a session from a file [Authorization:
+        Role: technical]
       operationId: importAskersWithoutSession
       responses:
         200:
@@ -848,9 +863,10 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns a list of team consulting sessions, which were accepted by
+      summary: >-
+        Returns a list of team consulting sessions, which were accepted by
         other consultants of the team, for the currently authenticated consultant
-        [Authorization: Role: consultant]'
+        [Authorization: Role: consultant]
       operationId: getTeamSessionsForAuthenticatedConsultant
       parameters:
         - name: RCToken
@@ -899,8 +915,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Sends a notification e-mail that a new message/answer has been written
-        [Authorization: Role: user, consultant]'
+      summary: >-
+        Sends a notification e-mail that a new message/answer has been written
+        [Authorization: Role: user, consultant]
       operationId: sendNewMessageNotification
       requestBody:
         content:
@@ -925,8 +942,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Sends a notification e-mail that a reassignment has been requested/confirmed
-          [Authorization: Role: user, consultant]'
+      summary: >-
+        Sends a notification e-mail that a reassignment has been requested/confirmed
+        [Authorization: Role: user, consultant]
       operationId: sendReassignmentNotification
       requestBody:
         content:
@@ -949,8 +967,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns an alphabetically sorted list of consultants depending on
-        the query filter parameters [Authorization: Authority: VIEW_AGENCY_CONSULTANTS]'
+      summary: >-
+        Returns an alphabetically sorted list of consultants depending on
+        the query filter parameters [Authorization: Authority: VIEW_AGENCY_CONSULTANTS]
       operationId: getConsultants
       parameters:
         - name: agencyId
@@ -1073,8 +1092,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Assign a session to the specified consultant id [Authorization: Authority:
-        ASSIGN_CONSULTANT_TO_ENQUIRY or ASSIGN_CONSULTANT_TO_SESSION]'
+      summary: >-
+        Assign a session to the specified consultant id [Authorization: Authority:
+        ASSIGN_CONSULTANT_TO_ENQUIRY or ASSIGN_CONSULTANT_TO_SESSION]
       operationId: assignSession
       parameters:
         - name: sessionId
@@ -1109,8 +1129,9 @@ paths:
     delete:
       tags:
         - user-controller
-      summary: 'Remove a consultant from a session 
-        [Auth: ASSIGN_CONSULTANT_TO_ENQUIRY or ASSIGN_CONSULTANT_TO_SESSION]'
+      summary: >-
+        Remove a consultant from a session
+        [Auth: ASSIGN_CONSULTANT_TO_ENQUIRY or ASSIGN_CONSULTANT_TO_SESSION]
       operationId: removeFromSession
       parameters:
         - name: sessionId
@@ -1148,8 +1169,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Update the (Keycloak) password of a user [Authorization: Role: consultant,
-        user]'
+      summary: >-
+        Update the (Keycloak) password of a user [Authorization: Role: consultant,
+        user]
       operationId: updatePassword
       requestBody:
         content:
@@ -1174,8 +1196,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Update the master key fragment for the session key [Authorization:
-        Role: technical]'
+      summary: >-
+        Update the master key fragment for the session key [Authorization:
+        Role: technical]
       operationId: updateKey
       requestBody:
         content:
@@ -1200,8 +1223,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the session data for the given session id [Authorization: Role:
-            consultant]'
+      summary: >-
+        Returns the session data for the given session id [Authorization: Role:
+        consultant]
       operationId: fetchSessionForConsultant
       parameters:
         - name: sessionId
@@ -1244,10 +1268,11 @@ paths:
         required: true
       responses:
         202:
-          description: 'ACCEPTED - request processed but update not executed. This status is being
-          returned if a new registered advice seeker wants to update e2e in chats. The therfore
-          required user chat id for rocket chat is being initialized as soon as the enquiry
-          message has been written!'
+          description: >-
+            ACCEPTED - request processed but update not executed. This status is being
+            returned if a new registered advice seeker wants to update e2e in chats. The therefore
+            required user chat id for Rocket.Chat is being initialized as soon as the enquiry
+            message has been written!
         204:
           description: NO CONTENT - successful operation
         400:
@@ -1264,8 +1289,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Create a new group chat with chat_agency relation so that all advice seekers from that agency can see this chat. [Authorization: Role: consultant with authority
-        CREATE_NEW_CHAT]'
+      summary: >-
+        Create a new group chat with chat_agency relation so that all advice seekers from that agency can see this chat. [Authorization: Role: consultant with authority
+        CREATE_NEW_CHAT]
       operationId: createChatV1
       requestBody:
         content:
@@ -1294,8 +1320,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Create a new group chat that will be visible to the user only by invitation [Authorization: Role: consultant with authority
-        CREATE_NEW_CHAT]'
+      summary: >-
+        Create a new group chat that will be visible to the user only by invitation [Authorization: Role: consultant with authority
+        CREATE_NEW_CHAT]
       operationId: createChatV2
       requestBody:
         content:
@@ -1324,8 +1351,9 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Update a group chat [Authorization: Role: consultant with authority
-        UPDATE_CHAT]'
+      summary: >-
+        Update a group chat [Authorization: Role: consultant with authority
+        UPDATE_CHAT]
       operationId: updateChat
       parameters:
         - name: chatId
@@ -1363,8 +1391,9 @@ paths:
     post:
       tags:
         - user-controller
-      summary: 'Ban a user from a group chat 
-        [Authorization: Role: consultant with authority UPDATE_CHAT]'
+      summary: >-
+        Ban a user from a group chat
+        [Authorization: Role: consultant with authority UPDATE_CHAT]
       operationId: banFromChat
       parameters:
         - name: rcToken
@@ -1436,9 +1465,10 @@ paths:
     put:
       tags:
         - user-controller
-      summary: 'Stop a chat and delete all users and messages from the chat
+      summary: >-
+        Stop a chat and delete all users and messages from the chat
         room (repetitive chat) or delete room (singular chat) [Authorization: Role:
-        consultant with authority STOP_CHAT]'
+        consultant with authority STOP_CHAT]
       operationId: stopChat
       parameters:
         - name: chatId
@@ -1468,8 +1498,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the information of provided chat (Id) [Authorization: Role:
-        consultant or user]'
+      summary: >-
+        Returns the information of provided chat (Id) [Authorization: Role:
+        consultant or user]
       operationId: getChat
       parameters:
         - name: chatId
@@ -1588,8 +1619,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the members of provided chat (Id) [Authorization: Role: consultant
-        or user]'
+      summary: >-
+        Returns the members of provided chat (Id) [Authorization: Role: consultant
+        or user]
       operationId: getChatMembers
       parameters:
         - name: chatId
@@ -1655,8 +1687,9 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the chat for given ID.
-      [Authorization: Role: user, consultant]'
+      summary: >-
+        Returns the chat for given ID.
+        [Authorization: Role: user, consultant]
       operationId: getChatById
       parameters:
         - name: RCToken
@@ -1694,8 +1727,9 @@ paths:
     delete:
       tags:
         - user-controller
-      summary: 'Flags an asker account for deletion. The account will be deactivated and deleted
-       within 48 hours. [Authorization: Role: user]'
+      summary: >-
+        Flags an asker account for deletion. The account will be deactivated and deleted
+        within 48 hours. [Authorization: Role: user]
       operationId: deactivateAndFlagUserAccountForDeletion
       requestBody:
         content:
@@ -1721,8 +1755,9 @@ paths:
       tags:
         - user-controller
       summary: 'Deletes a session. [Authorization: Role: consultant]'
-      description: 'If the user has no other sessions, the account will be deleted, too, unless the
-       system''s setting prevents it.'
+      description: >-
+        If the user has no other sessions, the account will be deleted, too, unless the
+        system's setting prevents it.
       operationId: deleteSessionAndInactiveUser
       parameters:
         - name: sessionId
@@ -2806,8 +2841,9 @@ components:
         hasAnonymousConversations:
           type: boolean
           example: true
-          description: "Is true if consultant has at least one consulting type containing
-          anonymous conversations active"
+          description: >-
+            Is true if consultant has at least one consulting type containing
+            anonymous conversations active
         hasArchive:
           type: boolean
           example: true
@@ -2937,7 +2973,7 @@ components:
           pa, pi, pl, ps, pt, qu, rm, rn, ro, ru, rw, sa, sc, sd, se, sg, si, sk, sl, sm, sn,
           so, sq, sr, ss, st, su, sv, sw, ta, te, tg, th, ti, tk, tl, tn, to, tr, ts, tt, tw,
           ty, ug, uk, ur, uz, ve, vi, vo, wa, wo, xh, yi, yo, za, zh, zu
-      ]
+          ]
 
     LanguageResponseDTO:
       type: object

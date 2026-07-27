@@ -8,8 +8,9 @@ paths:
     get:
       tags:
         - conversation-controller
-      summary: 'Returns all open enquiries of registered users for the currently authenticated
-        consultant. [Authorization: Role: consultant]'
+      summary: >-
+        Returns all open enquiries of registered users for the currently authenticated
+        consultant. [Authorization: Role: consultant]
       operationId: getRegisteredEnquiries
       parameters:
         - name: offset
@@ -52,8 +53,9 @@ paths:
     get:
       tags:
         - conversation-controller
-      summary: 'Returns all open enquiries of anonymous users for the currently authenticated
-        consultant. [Authorization: Role: consultant]'
+      summary: >-
+        Returns all open enquiries of anonymous users for the currently authenticated
+        consultant. [Authorization: Role: consultant]
       operationId: getAnonymousEnquiries
       parameters:
         - name: offset
@@ -96,8 +98,9 @@ paths:
     get:
       tags:
         - conversation-controller
-      summary: 'Returns all archived sessions for the currently authenticated consultant
-            [Authorization: Role: consultant]'
+      summary: >-
+        Returns all archived sessions for the currently authenticated consultant
+        [Authorization: Role: consultant]
       operationId: getArchivedSessions
       parameters:
         - name: offset
@@ -140,8 +143,9 @@ paths:
     get:
       tags:
         - conversation-controller
-      summary: 'Returns all archived teams sessions for the currently authenticated consultant
-              [Authorization: Role: consultant]'
+      summary: >-
+        Returns all archived teams sessions for the currently authenticated consultant
+        [Authorization: Role: consultant]
       operationId: getArchivedTeamSessions
       parameters:
         - name: offset
@@ -214,8 +218,9 @@ paths:
     put:
       tags:
         - conversation-controller
-      summary: 'Accept an anonymous enquiry and assign it to the currently authenticated consultant
-            [Authorization: Role: consultant]'
+      summary: >-
+        Accept an anonymous enquiry and assign it to the currently authenticated consultant
+        [Authorization: Role: consultant]
       operationId: acceptAnonymousEnquiry
       parameters:
         - name: sessionId
@@ -245,8 +250,9 @@ paths:
     put:
       tags:
         - conversation-controller
-      summary: 'Set the status of the given session to done [Authorization: Role:
-      anonymous, consultant]'
+      summary: >-
+        Set the status of the given session to done [Authorization: Role:
+        anonymous, consultant]
       operationId: finishAnonymousConversation
       parameters:
         - name: sessionId
