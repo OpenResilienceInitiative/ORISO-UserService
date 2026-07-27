@@ -645,6 +645,94 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{source.relative_to(ROOT)} must not use broad-client role removal",
             )
 
+    def test_identity_profile_mutations_use_a_focused_provider_neutral_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityProfileUpdater.java"
+        )
+        value = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityProfileUpdate.java"
+        )
+        self.assertTrue(port.exists(), "Identity profile updates need a focused output port")
+        self.assertTrue(
+            value.exists(), "Identity profile updates need an application-owned value"
+        )
+        if not port.exists() or not value.exists():
+            return
+
+        port_text = port.read_text()
+        value_text = value.read_text()
+        for source_text in (port_text, value_text):
+            self.assertNotIn(
+                ".adapters.web.",
+                source_text,
+                "The focused identity profile boundary must not expose web DTOs",
+            )
+            self.assertNotIn(
+                "org.keycloak.",
+                source_text,
+                "The focused identity profile boundary must not expose Keycloak DTOs",
+            )
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin"
+            / "update/UpdateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "update/ConsultantUpdateService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused profile-update port",
+            )
+            self.assertIn(
+                "identityProfileUpdater.updateProfile(",
+                source_text,
+                f"{source.relative_to(ROOT)} must call the focused profile-update port",
+            )
+            self.assertNotIn(
+                "identityClient.updateUserData(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client profile mutation",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updateUserData(",
+            identity_client,
+            "The broad identity command client must not own profile mutation",
+        )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "extraInterfaces = {" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityProfileUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused profile-update port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_email_mutation_consumers_use_a_focused_identity_email_port(self):
         port = (
             ROOT

@@ -14,7 +14,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.MessageClient;
@@ -40,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ConsultantUpdateService {
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityProfileUpdater identityProfileUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
@@ -93,11 +94,14 @@ public class ConsultantUpdateService {
 
     if (identityDataChanged) {
       UserDTO userDTO = buildValidatedUserDTO(updateConsultantDTO, consultant);
-      this.identityClient.updateUserData(
+      this.identityProfileUpdater.updateProfile(
           consultant.getId(),
-          userDTO,
-          updateConsultantDTO.getFirstname(),
-          updateConsultantDTO.getLastname());
+          new IdentityProfileUpdate(
+              userDTO.getUsername(),
+              userDTO.getEmail(),
+              userDTO.getTenantId(),
+              updateConsultantDTO.getFirstname(),
+              updateConsultantDTO.getLastname()));
     }
 
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
