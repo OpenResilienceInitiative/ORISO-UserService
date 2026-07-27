@@ -52,7 +52,7 @@
 		<json-smart.version>2.4.7</json-smart.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<ehcache.version>2.10.9.2</ehcache.version>
-		<testcontainers.version>1.17.6</testcontainers.version>
+		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 

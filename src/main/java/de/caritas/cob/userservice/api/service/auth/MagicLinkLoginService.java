@@ -27,7 +27,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,13 +49,13 @@ public class MagicLinkLoginService {
   private static final String TOKEN_GRANT_EXCHANGE =
       "urn:ietf:params:oauth:grant-type:token-exchange";
   private static final Duration MAGIC_LINK_TOKEN_TTL = Duration.ofMinutes(15);
+  private static final String TOKEN_SCOPE = "magic-login";
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
-
-  private final Map<String, MagicLoginTokenEntry> magicLoginTokens = new ConcurrentHashMap<>();
+  private final @NonNull OneTimeTokenStore oneTimeTokenStore;
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
@@ -104,16 +103,28 @@ public class MagicLinkLoginService {
       return Optional.empty();
     }
 
-    cleanupExpiredTokens();
-    MagicLoginTokenEntry entry = magicLoginTokens.remove(token);
-    if (entry == null || entry.getExpiresAt().isBefore(Instant.now())) {
+    Optional<OneTimeTokenStore.TokenClaim> claim;
+    try {
+      claim = oneTimeTokenStore.claim(TOKEN_SCOPE, token);
+    } catch (RuntimeException redisFailure) {
+      log.warn(
+          "Magic-link token validation unavailable ({})", redisFailure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+    if (claim.isEmpty()) {
       return Optional.empty();
     }
 
-    KeycloakLoginResponseDTO exchanged = exchangeTokenForUser(entry.getKeycloakUserId());
+    KeycloakLoginResponseDTO exchanged = exchangeTokenForUser(claim.get().subjectId());
     if (exchanged == null) {
       // Restore token for short-lived retry if exchange failed due transient infra issue.
-      magicLoginTokens.put(token, entry);
+      try {
+        oneTimeTokenStore.restore(TOKEN_SCOPE, token, claim.get(), false);
+      } catch (RuntimeException redisFailure) {
+        log.warn(
+            "Magic-link token retry restoration unavailable ({})",
+            redisFailure.getClass().getSimpleName());
+      }
       return Optional.empty();
     }
     return Optional.of(exchanged);
@@ -241,14 +252,9 @@ public class MagicLinkLoginService {
     String token =
         UUID.randomUUID().toString().replace("-", "")
             + UUID.randomUUID().toString().replace("-", "");
-    magicLoginTokens.put(
-        token, new MagicLoginTokenEntry(keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL)));
+    oneTimeTokenStore.store(
+        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL), false);
     return token;
-  }
-
-  private void cleanupExpiredTokens() {
-    Instant now = Instant.now();
-    magicLoginTokens.entrySet().removeIf(entry -> entry.getValue().getExpiresAt().isBefore(now));
   }
 
   private String buildMagicFrontendUrl(String oneTimeToken) {
@@ -400,12 +406,6 @@ public class MagicLinkLoginService {
     String username;
     String email;
     Boolean magicLinkLoginEnabled;
-  }
-
-  @lombok.Value
-  private static class MagicLoginTokenEntry {
-    String keycloakUserId;
-    Instant expiresAt;
   }
 
   public enum MagicLinkRequestResult {
