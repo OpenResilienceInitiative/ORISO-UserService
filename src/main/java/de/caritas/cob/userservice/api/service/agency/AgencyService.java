@@ -3,15 +3,12 @@ package de.caritas.cob.userservice.api.service.agency;
 import static java.util.Collections.emptyList;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import java.util.Collections;
@@ -132,15 +129,17 @@ public class AgencyService {
   }
 
   private AgencyDTO fromOriginalAgency(AgencyResponseDTO agencyResponseDTO) {
-    var objectMapper = new ObjectMapper();
-    try {
-      return objectMapper.readValue(
-          objectMapper.writeValueAsString(agencyResponseDTO), AgencyDTO.class);
-    } catch (JsonProcessingException e) {
-      throw new InternalServerErrorException(
-          "Model definition of agency in userservice does not "
-              + "match the definition of agencyservice");
-    }
+    return new AgencyDTO()
+        .id(agencyResponseDTO.getId())
+        .name(agencyResponseDTO.getName())
+        .postcode(agencyResponseDTO.getPostcode())
+        .city(agencyResponseDTO.getCity())
+        .description(agencyResponseDTO.getDescription())
+        .teamAgency(agencyResponseDTO.getTeamAgency())
+        .offline(agencyResponseDTO.getOffline())
+        .consultingType(agencyResponseDTO.getConsultingType())
+        .tenantId(agencyResponseDTO.getTenantId())
+        .topicIds(agencyResponseDTO.getTopicIds());
   }
 
   /**

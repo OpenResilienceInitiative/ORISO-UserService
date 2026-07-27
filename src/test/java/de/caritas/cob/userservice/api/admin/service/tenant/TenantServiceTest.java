@@ -251,7 +251,7 @@ class TenantServiceTest {
     }
 
     @Override
-    public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain) {
+    public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain, Long tenantId) {
       subdomainCalls.incrementAndGet();
       awaitLatch();
       if (subdomainException != null) {
