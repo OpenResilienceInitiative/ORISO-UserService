@@ -21,6 +21,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -49,7 +50,6 @@ import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -86,6 +86,8 @@ class NewMessageEmailSupplierTest {
   private de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
       doNotDisturbService;
 
+  private Logger logger;
+  private Level originalLogLevel;
   private TestLogAppender testLogAppender;
 
   @BeforeEach
@@ -107,9 +109,11 @@ class NewMessageEmailSupplierTest {
             .build();
 
     // Attach a custom appender to the logger
-    ch.qos.logback.classic.Logger logger =
-        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(NewMessageEmailSupplier.class);
+    logger = (Logger) LoggerFactory.getLogger(NewMessageEmailSupplier.class);
+    originalLogLevel = logger.getLevel();
+    logger.setLevel(Level.DEBUG);
     testLogAppender = new TestLogAppender();
+    testLogAppender.setContext(logger.getLoggerContext());
     testLogAppender.start();
     logger.addAppender(testLogAppender);
   }
@@ -117,7 +121,11 @@ class NewMessageEmailSupplierTest {
   @AfterEach
   public void tearDownTestLogAppender() {
     if (testLogAppender != null) {
+      logger.detachAppender(testLogAppender);
       testLogAppender.stop();
+    }
+    if (logger != null) {
+      logger.setLevel(originalLogLevel);
     }
   }
 
@@ -420,7 +428,6 @@ class NewMessageEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void
       generateEmails_Should_LogDebugMessage_When_ConsultantIsOfflineAndNotificationsDisabledWithLogAppender() {
     when(roles.contains(UserRole.USER.getValue())).thenReturn(true);
@@ -439,7 +446,6 @@ class NewMessageEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_UserIsOnlineWithLogAppender() {
     when(roles.contains(UserRole.CONSULTANT.getValue())).thenReturn(true);
     when(session.getUser()).thenReturn(USER);
@@ -454,7 +460,6 @@ class NewMessageEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_ConsultantIsOnlineWithLogAppender() {
     when(roles.contains(UserRole.USER.getValue())).thenReturn(true);
     when(session.getConsultant()).thenReturn(CONSULTANT);
