@@ -22,8 +22,14 @@ public class MatrixSessionAssignmentGateway implements SessionAssignmentChatGate
   public void prepareAssignment(Session session, Consultant consultant) {
     String roomId = session.getMatrixRoomId();
     String newConsultantId = consultant.getMatrixUserId();
-    String currentConsultantId =
-        session.getConsultant() == null ? null : session.getConsultant().getMatrixUserId();
+    Consultant currentConsultant = session.getConsultant();
+    if (currentConsultant == null) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Cannot hand over unassigned session %s; enquiries must use the initial Matrix assignment flow",
+              session.getId()));
+    }
+    String currentConsultantId = currentConsultant.getMatrixUserId();
 
     if (!MatrixIds.isRoomId(roomId)
         || !MatrixIds.isUserId(newConsultantId)

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -63,6 +64,17 @@ class MatrixSessionAssignmentGatewayTest {
 
     assertThatThrownBy(() -> gateway.prepareAssignment(session, newConsultant))
         .isInstanceOf(InternalServerErrorException.class);
+  }
+
+  @Test
+  void rejectsUnassignedEnquiryBeforeAnyMatrixCall() {
+    when(session.getConsultant()).thenReturn(null);
+
+    assertThatThrownBy(() -> gateway.prepareAssignment(session, newConsultant))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("initial Matrix assignment flow");
+
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test

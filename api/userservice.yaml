@@ -941,6 +941,8 @@ paths:
             agency of session is not assigned to consultant
         409:
           description: CONFLICT - session is already assigned to this consultant
+        404:
+          description: NOT FOUND - session does not exist
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1305,7 +1307,7 @@ paths:
       parameters:
         - name: matrixRoomId
           in: path
-          description: Matrix room ID of the chat
+          description: Matrix room ID of the chat; numeric database IDs are not accepted
           required: true
           schema:
             type: string

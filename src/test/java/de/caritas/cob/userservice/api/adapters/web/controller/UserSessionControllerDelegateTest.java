@@ -324,12 +324,12 @@ class UserSessionControllerDelegateTest {
   }
 
   @Test
-  void assignSessionShouldReturnInternalServerErrorWhenSessionDoesNotExist() {
+  void assignSessionShouldReturnNotFoundWhenSessionDoesNotExist() {
     when(sessionService.getSession(1L)).thenReturn(Optional.empty());
 
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     verifyNoInteractions(assignSessionFacade, userAccountProvider, consultantService);
   }
 

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -81,15 +82,10 @@ class UserChatControllerDelegate {
   }
 
   ResponseEntity<Void> assignChat(String matrixRoomId) {
-    if (matrixRoomId.matches("\\d+")) {
-      try {
-        assignChatFacade.assignChat(Long.parseLong(matrixRoomId), authenticatedUser);
-      } catch (NumberFormatException exception) {
-        throw new BadRequestException("Numeric chat id is outside the supported range.");
-      }
-    } else {
-      assignChatFacade.assignChat(matrixRoomId, authenticatedUser);
+    if (!MatrixIds.isRoomId(matrixRoomId)) {
+      throw new BadRequestException("A valid Matrix room ID is required.");
     }
+    assignChatFacade.assignChat(matrixRoomId, authenticatedUser);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

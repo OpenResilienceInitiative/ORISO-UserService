@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -125,35 +126,17 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatShouldDelegateAndReturnOk() {
-    var response = delegate.assignChat("group-id");
+    var response = delegate.assignChat("!group:matrix.example");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat("group-id", authenticatedUser);
+    verify(assignChatFacade).assignChat("!group:matrix.example", authenticatedUser);
   }
 
   @Test
-  void assignChatShouldDelegateNumericSeriesIdToV2AssignmentFlow() {
-    var response = delegate.assignChat("1013");
+  void assignChatRejectsNumericDatabaseIdentifier() {
+    assertThatThrownBy(() -> delegate.assignChat("1013")).isInstanceOf(BadRequestException.class);
 
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
-    verify(joinAndLeaveChatFacade, never()).joinChat(any(), any());
-  }
-
-  @Test
-  void assignChatShouldRejectNumericSeriesIdAboveLongRange() {
-    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
-        .isInstanceOf(BadRequestException.class);
-
-    verify(assignChatFacade, never()).assignChat(anyLong(), any());
-  }
-
-  @Test
-  void assignChatShouldAcceptLongMaxValue() {
-    var response = delegate.assignChat(String.valueOf(Long.MAX_VALUE));
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat(Long.MAX_VALUE, authenticatedUser);
+    verify(assignChatFacade, never()).assignChat(anyString(), any());
   }
 
   @Test

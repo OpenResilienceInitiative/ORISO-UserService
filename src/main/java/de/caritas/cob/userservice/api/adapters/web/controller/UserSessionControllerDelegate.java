@@ -184,9 +184,9 @@ class UserSessionControllerDelegate {
   ResponseEntity<Void> assignSession(Long sessionId, String consultantId) {
     var session = sessionService.getSession(sessionId);
     if (session.isEmpty()) {
-      log.error("Internal Server Error: Session with id {} not found.", sessionId);
+      log.info("Session with id {} not found for assignment.", sessionId);
 
-      return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+      return new ResponseEntity<>(HttpStatus.NOT_FOUND);
     }
 
     var userId = authenticatedUser.getUserId();
