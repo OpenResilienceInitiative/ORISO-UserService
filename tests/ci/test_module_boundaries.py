@@ -7,6 +7,7 @@ CONTROLLERS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller"
 )
+USERDATA_FACADES = ROOT / "src/main/java/de/caritas/cob/userservice/api/facade/userdata"
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
@@ -133,6 +134,59 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             offenders,
             "The magic-link web response must map an application/domain model, "
             "not expose the outbound-port package:\n" + "\n".join(offenders),
+        )
+
+    def test_user_data_facades_use_a_focused_identity_profile_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityProfileLookup.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Authenticated profile reads need a focused provider-neutral output port",
+        )
+
+        broad_client_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in USERDATA_FACADES.glob("*.java")
+            if broad_client_import in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User-data facades must depend on the focused profile-read port:\n"
+            + "\n".join(offenders),
+        )
+        self.assertNotIn(
+            "getById(",
+            identity_client,
+            "The broad identity command client must not own profile reads",
+        )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityProfileLookup" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused profile-read port:\n"
+            + "\n".join(missing_test_interface),
         )
 
     def test_admin_module_depends_on_ports_not_chat_adapters(self):

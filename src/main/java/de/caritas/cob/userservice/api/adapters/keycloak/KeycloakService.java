@@ -26,6 +26,8 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -63,7 +65,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService implements IdentityClient, IdentityProfileLookup {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -891,13 +893,27 @@ public class KeycloakService implements IdentityClient {
     }
   }
 
-  public UserRepresentation getById(String userId) {
-    UserResource userResource = keycloakClient.getUsersResource().get(userId);
-    if (userResource == null) {
-      log.error("Could not get user with id {} from keycloak", userId);
-      throw new KeycloakException("User with id not found in keycloak: " + userId);
+  @Override
+  public Optional<IdentityProfile> findById(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return Optional.empty();
+      }
+      var user = userResource.toRepresentation();
+      if (user == null) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          new IdentityProfile(
+              user.getId(),
+              user.getUsername(),
+              user.getFirstName(),
+              user.getLastName(),
+              user.getEmail()));
+    } catch (NotFoundException ex) {
+      return Optional.empty();
     }
-    return userResource.toRepresentation();
   }
 
   /**
