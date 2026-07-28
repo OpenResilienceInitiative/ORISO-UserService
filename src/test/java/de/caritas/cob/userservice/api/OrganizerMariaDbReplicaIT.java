@@ -26,10 +26,13 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -68,11 +71,13 @@ class OrganizerMariaDbReplicaIT {
   @Autowired private Organizer organizer;
   @Autowired private AppointmentRepository appointmentRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private Clock clock;
 
   @BeforeEach
   void setUp() {
-    appointmentRepository.deleteAll();
+    deleteOwnedAppointments();
     consultantRepository.deleteById(CONSULTANT_ID);
     consultantRepository.save(
         Consultant.builder()
@@ -97,12 +102,12 @@ class OrganizerMariaDbReplicaIT {
 
   @AfterEach
   void cleanUp() {
-    appointmentRepository.deleteAll();
+    deleteOwnedAppointments();
     consultantRepository.deleteById(CONSULTANT_ID);
   }
 
   @Test
-  void concurrentCleanupTransactionsDeleteEveryExpiredAppointmentExactlyOnce() throws Exception {
+  void concurrentCleanupTransactionsAreIdempotent() throws Exception {
     var consultant = consultantRepository.findById(CONSULTANT_ID).orElseThrow();
     saveAppointments(consultant, NOW.minus(48, ChronoUnit.HOURS), EXPIRED_APPOINTMENTS, "expired");
     saveAppointments(consultant, NOW, CURRENT_APPOINTMENTS, "current");
@@ -122,7 +127,7 @@ class OrganizerMariaDbReplicaIT {
       executor.shutdownNow();
     }
 
-    var remaining = appointmentRepository.findAll();
+    var remaining = appointmentRepository.findAllOrderByDatetimeAfter(Instant.EPOCH, CONSULTANT_ID);
     assertThat(remaining)
         .hasSize(CURRENT_APPOINTMENTS)
         .allSatisfy(appointment -> assertThat(appointment.getDatetime()).isEqualTo(NOW));
@@ -143,9 +148,17 @@ class OrganizerMariaDbReplicaIT {
   }
 
   private void runCleanup(CountDownLatch ready, CountDownLatch start) {
-    ready.countDown();
-    await(start);
-    organizer.deleteObsoleteAppointments();
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              ready.countDown();
+              await(start);
+              organizer.deleteObsoleteAppointments();
+            });
+  }
+
+  private void deleteOwnedAppointments() {
+    jdbcTemplate.update("DELETE FROM appointment WHERE consultant_id = ?", CONSULTANT_ID);
   }
 
   private void await(CountDownLatch latch) {
