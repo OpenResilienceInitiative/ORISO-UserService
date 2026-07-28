@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerApi;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -34,6 +36,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -55,12 +59,17 @@ class AgencyServiceTest {
 
   @Mock ApiClient apiClient;
 
+  @Mock CacheManager cacheManager;
+
+  @Mock Cache agencyCache;
+
   @BeforeEach
   void setUp() {
     lenient()
         .when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(agencyControllerApi);
     lenient().when(agencyControllerApi.getApiClient()).thenReturn(apiClient);
+    lenient().when(cacheManager.getCache(CacheManagerConfig.AGENCY_CACHE)).thenReturn(agencyCache);
   }
 
   @AfterEach
@@ -124,6 +133,31 @@ class AgencyServiceTest {
     assertThat(result).isNotNull();
     assertThat(result.getId()).isEqualTo(AGENCY_ID);
     assertThat(result.getName()).isEqualTo(AGENCY_DTO_SUCHT.getName());
+  }
+
+  @Test
+  void getAgencies_ShouldWarmOnlyResolvedTenantScopedIdCacheEntries() {
+    TenantContext.setCurrentTenant(7L);
+    AgencyDTO resolvedAgency = new AgencyDTO().id(42L).name("Agency 42");
+    stubAgencyLookup(List.of(toAgencyResponseDTO(resolvedAgency)));
+
+    agencyService.getAgencies(List.of(42L, 43L));
+
+    verify(agencyCache).put("tenant:7:id:42", resolvedAgency);
+    verify(agencyCache, never()).put(eq("tenant:7:id:43"), any(AgencyDTO.class));
+  }
+
+  @Test
+  void agencyCacheKeys_ShouldSeparateTenantsAndBatchEntries() {
+    TenantContext.setCurrentTenant(7L);
+
+    assertThat(AgencyService.tenantScopedAgencyKey(42L)).isEqualTo("tenant:7:id:42");
+    assertThat(AgencyService.tenantScopedAgencyListKey(List.of(42L, 43L)))
+        .isEqualTo("tenant:7:ids:[42, 43]");
+
+    TenantContext.setCurrentTenant(8L);
+
+    assertThat(AgencyService.tenantScopedAgencyKey(42L)).isEqualTo("tenant:8:id:42");
   }
 
   @Test

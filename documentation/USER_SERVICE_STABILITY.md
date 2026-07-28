@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Last verified: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -11,14 +11,44 @@ Spring Security assumptions, test-database replacement, Spring Boot 4 / Jackson
 3 migration gaps, incomplete external-service test doubles, stale chat migration
 expectations and two production regressions.
 
+The counted classification is machine-readable in
+[`user-service-historical-failure-classification.json`](user-service-historical-failure-classification.json)
+and protected by an executable CI contract. Its failure clusters sum exactly
+to 28: 19 obsolete security assertions, two Actuator contract mismatches, one
+Rocket.Chat configuration expectation, three session-locking test doubles and
+one case each for a Jackson request fixture, the public-consultant test double
+and a stale chat aggregate assertion. Its error clusters sum exactly to 704:
+637 replacement-H2 datasource failures, 22 Spring Plugin/HATEOAS ABI errors
+and 45 initial Spring context-threshold cascades. The artifact preserves the
+15-suite breakdown behind those 45 errors and does not invent a more specific
+original exception where the retained report did not contain one.
+
 After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,373 | 0 | 0 | 4 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,373 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+
+The rows are not one additive total: the MariaDB and Redis rows are dedicated
+environment proofs for cases that belong to the integration inventory. The
+comparable primary current inventory is therefore 3,373 unit plus 840
+integration executions, or 4,213.
+
+The historical 4,707 figure is the raw failing discovery run, not the same test
+inventory with failures simply subtracted. After the original repair work, the
+last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
+or 4,722. The Matrix-only cutover then changed the executable product and test
+inventory to the current 4,213: 409 fewer unit and 100 fewer integration
+executions. The source diff for that same pre-cutover-to-current interval
+deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
+Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
+execution counts include parameterized and dynamic cases, class counts do not
+map one-to-one to the 509-execution net reduction. This is intentional scope
+removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -29,11 +59,14 @@ is skipped or quarantined.
 suite, starts from a clean build, requires at least 830 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The current Matrix-only floor is 830 tests; the older 900-test
-floor included deleted Rocket.Chat-only tests. The two environment-gated cases
-are not quarantined: Redis and MariaDB have their own required
-service-container/fresh-database jobs on branch, pull-request and publish
-workflows.
+were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
+`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
+deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
+that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
+floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
+disabled or ignored tests. The two environment-gated cases are not quarantined:
+Redis and MariaDB have their own required service-container/fresh-database jobs
+on branch, pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -173,10 +206,11 @@ model.
 
 ## Internal module boundaries
 
-The target is Matrix-only. Rocket.Chat references below describe legacy code
-that remains to be deleted; they are not an approved fallback or target
-adapter. Video calling belongs to the ORISO-controlled Element Call/MatrixRTC
-fork with LiveKit, without Jitsi.
+The target is Matrix-only. The Rocket.Chat production adapter, configuration,
+DTOs and optional MongoDB access have been removed; retained names are limited
+to forward-only changelogs, removal contracts and historic evidence. Video
+calling belongs to the ORISO-controlled Element Call/MatrixRTC fork with
+LiveKit, without Jitsi.
 
 The intended dependency direction is:
 
@@ -196,7 +230,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -209,10 +243,15 @@ Rocket.Chat production packages, configuration, DTOs and schema fields from
 returning. The appointment deletion repair stays behind `Organizing` and
 `AppointmentRepository`.
 
+A dedicated magic-link boundary contract prevents the application service and
+both web entry points from importing Keycloak transport types. It also prevents
+the public magic-link response DTO from depending on an outbound-port package.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source; the next sequence is identity/provisioning cleanup, then smaller Admin
-and Session orchestration boundaries. Each step must add a failing boundary
+source. The next safe sequence is the remaining identity create-user DTO
+decoupling, then the Admin controller composition boundary, then smaller
+Session orchestration boundaries. Each step must add a failing boundary
 contract before moving dependencies.
 
 ## Microservice decision
@@ -364,3 +403,25 @@ read scenario for application-path evidence. The
 aggregate local health group was `DOWN` because the developer RabbitMQ instance
 did not accept the testing profile's credentials; liveness and readiness were
 both `UP`, and the dedicated Redis contract passed independently.
+
+Local authenticated-write proof refreshed on 2026-07-28 used two real
+UserService JVMs,
+one disposable MariaDB 11.0.6 database, shared Redis and a locally signed
+consultant JWT verified through a disposable JWK endpoint. Eighty concurrent
+tutorial-progress PUTs alternated over both replicas, followed by a read from
+each replica: 0 failures, 41.76 ms aggregate p95 and exactly one canonical
+database row. After restarting one replica and initializing its authenticated
+path on the isolated warm-up scope, 12 further writes and both cross-replica
+reads completed with 0 failures and 19.22 ms p95. The runner applies the same
+zero-error and 1,000 ms p95 bound per operation and per replica. Startup
+liveness and authenticated-path initialization are deliberately separated from
+the measured state-transition latency.
+MariaDB's native upsert protects one versioned scope. A database advisory lock,
+whose name hashes the user identifier, serializes only first writes for a user
+so concurrent replicas cannot exceed the per-user row cap while creating
+different scopes. Existing-scope writes do not acquire that lock. Real MariaDB
+contracts prove both the cross-replica same-scope race and the different-scope
+row-cap race, including lock release after a rejected write.
+It introduces no Rocket.Chat or Jitsi configuration or dependency. This is a
+bounded authenticated state-transition and restart proof for one slice, not
+deployed PreDev or whole-service multi-replica evidence.

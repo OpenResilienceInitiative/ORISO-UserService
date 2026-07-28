@@ -291,6 +291,7 @@ public class KeycloakService implements IdentityClient {
       log.warn(
           "Keycloak admin session was unauthorized for an OTP provider request, forcing token"
               + " refresh and retrying once");
+      recordRetry("admin-session-refresh");
       keycloakClient.refreshAdminSession();
       return request.get();
     }

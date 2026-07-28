@@ -5,15 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
+import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -31,7 +30,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
@@ -42,7 +40,7 @@ class MagicLinkLoginServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private RestTemplate restTemplate;
-  @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private IdentitySessionExchange identitySessionExchange;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
   @Mock private ApplicationSettingsService applicationSettingsService;
 
@@ -54,9 +52,6 @@ class MagicLinkLoginServiceTest {
     ReflectionTestUtils.setField(magicLinkLoginService, "consultingTypeServiceApiUrl", "");
     ReflectionTestUtils.setField(
         magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.oriso.org");
-    ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAdminUsername", "admin");
-    ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAdminPassword", "secret");
-    ReflectionTestUtils.setField(magicLinkLoginService, "keycloakAppClientId", "app");
     when(oneTimeTokenStore.claim(anyString(), anyString())).thenReturn(Optional.empty());
   }
 
@@ -135,30 +130,28 @@ class MagicLinkLoginServiceTest {
 
   @Test
   void consumeMagicLink_Should_ReturnEmpty_When_TokenIsBlank() {
-    Optional<KeycloakLoginResponseDTO> result = magicLinkLoginService.consumeMagicLink("  ");
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink("  ");
 
     assertThat(result).isEmpty();
   }
 
   @Test
   void consumeMagicLink_Should_ReturnEmpty_When_TokenIsNull() {
-    Optional<KeycloakLoginResponseDTO> result = magicLinkLoginService.consumeMagicLink(null);
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink(null);
 
     assertThat(result).isEmpty();
   }
 
   @Test
   void consumeMagicLink_Should_ReturnEmpty_When_TokenNotFound() {
-    Optional<KeycloakLoginResponseDTO> result =
-        magicLinkLoginService.consumeMagicLink("non-existent-token");
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink("non-existent-token");
 
     assertThat(result).isEmpty();
   }
 
   @Test
   void consumeMagicLink_Should_ReturnEmpty_When_TokenExchangeFails() {
-    Optional<KeycloakLoginResponseDTO> result =
-        magicLinkLoginService.consumeMagicLink("some-random-token");
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink("some-random-token");
 
     assertThat(result).isEmpty();
   }
@@ -260,14 +253,12 @@ class MagicLinkLoginServiceTest {
 
   @Test
   void consumeMagicLink_Should_ReturnEmpty_When_AdminLoginFails() {
-    // Store a valid token via reflection trick — skip SMTP, inject token directly
-    // by calling loginAdminForToken indirectly: restTemplate.postForEntity returns null body
-    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
-    when(restTemplate.postForEntity(contains("/token"), any(), any()))
-        .thenReturn(ResponseEntity.ok(null));
+    OneTimeTokenStore.TokenClaim claim = validClaim("user-keycloak-id");
+    when(oneTimeTokenStore.claim("magic-login", "valid-token")).thenReturn(Optional.of(claim));
+    when(identitySessionExchange.exchangeForUser("user-keycloak-id")).thenReturn(Optional.empty());
 
-    // Consume non-existent token → empty (token not in map)
-    assertThat(magicLinkLoginService.consumeMagicLink("no-such-token")).isEmpty();
+    assertThat(magicLinkLoginService.consumeMagicLink("valid-token")).isEmpty();
+    verify(oneTimeTokenStore).restore("magic-login", "valid-token", claim, false);
   }
 
   // ── NPE guard: emailDummySuffix = null ───────────────────────────────────
@@ -298,13 +289,10 @@ class MagicLinkLoginServiceTest {
     OneTimeTokenStore.TokenClaim claim = validClaim("user-keycloak-id");
     when(oneTimeTokenStore.claim("magic-login", "valid-token")).thenReturn(Optional.of(claim));
 
-    // First call: token is in map, but exchange will fail (no admin credentials) → returns empty
-    // The important thing is the token is REMOVED from the map after first consume attempt
-    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
-    when(restTemplate.postForEntity(contains("/token"), any(), any()))
+    when(identitySessionExchange.exchangeForUser("user-keycloak-id"))
         .thenThrow(new RuntimeException("connection refused"));
 
-    magicLinkLoginService.consumeMagicLink("valid-token");
+    assertThat(magicLinkLoginService.consumeMagicLink("valid-token")).isEmpty();
 
     verify(oneTimeTokenStore).restore("magic-login", "valid-token", claim, false);
   }
@@ -316,14 +304,9 @@ class MagicLinkLoginServiceTest {
     OneTimeTokenStore.TokenClaim claim = validClaim("user-keycloak-id");
     when(oneTimeTokenStore.claim("magic-login", "retry-token")).thenReturn(Optional.of(claim));
 
-    // Admin login returns null body → loginAdminForToken returns null → exchangeTokenForUser
-    // returns null → token is restored
-    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
-    when(restTemplate.postForEntity(contains("/token"), any(), any()))
-        .thenReturn(ResponseEntity.ok(null));
+    when(identitySessionExchange.exchangeForUser("user-keycloak-id")).thenReturn(Optional.empty());
 
-    Optional<KeycloakLoginResponseDTO> result =
-        magicLinkLoginService.consumeMagicLink("retry-token");
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink("retry-token");
 
     assertThat(result).isEmpty();
     verify(oneTimeTokenStore).restore("magic-login", "retry-token", claim, false);
@@ -548,28 +531,19 @@ class MagicLinkLoginServiceTest {
         .doesNotThrowAnyException();
   }
 
-  // ── consumeMagicLink — happy path returns KeycloakLoginResponseDTO ────────
+  // ── consumeMagicLink — happy path returns provider-neutral session ────────
 
   @Test
   void consumeMagicLink_Should_ReturnDto_When_TokenValidAndExchangeSucceeds() {
     when(oneTimeTokenStore.claim("magic-login", "happy-token"))
         .thenReturn(Optional.of(validClaim("user-kc-id")));
 
-    Map<String, Object> adminBody = new HashMap<>();
-    adminBody.put("access_token", "admin-access-token");
-    KeycloakLoginResponseDTO responseDTO = new KeycloakLoginResponseDTO();
+    IdentitySession session = identitySession();
+    when(identitySessionExchange.exchangeForUser("user-kc-id")).thenReturn(Optional.of(session));
 
-    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
-    when(restTemplate.postForEntity(anyString(), any(), org.mockito.ArgumentMatchers.eq(Map.class)))
-        .thenReturn(ResponseEntity.ok(adminBody));
-    when(restTemplate.postForEntity(
-            anyString(), any(), org.mockito.ArgumentMatchers.eq(KeycloakLoginResponseDTO.class)))
-        .thenReturn(ResponseEntity.ok(responseDTO));
+    Optional<IdentitySession> result = magicLinkLoginService.consumeMagicLink("happy-token");
 
-    Optional<KeycloakLoginResponseDTO> result =
-        magicLinkLoginService.consumeMagicLink("happy-token");
-
-    assertThat(result).isPresent();
+    assertThat(result).contains(session);
   }
 
   // ── exchangeTokenForUser catch block — admin succeeds, exchange throws ────
@@ -580,19 +554,12 @@ class MagicLinkLoginServiceTest {
     when(oneTimeTokenStore.claim("magic-login", "exchange-fail-token"))
         .thenReturn(Optional.of(claim));
 
-    Map<String, Object> adminBody = new HashMap<>();
-    adminBody.put("access_token", "admin-token");
-    when(identityClientConfig.getOpenIdConnectUrl(anyString())).thenReturn("http://kc/token");
-    when(restTemplate.postForEntity(anyString(), any(), org.mockito.ArgumentMatchers.eq(Map.class)))
-        .thenReturn(ResponseEntity.ok(adminBody));
-    when(restTemplate.postForEntity(
-            anyString(), any(), org.mockito.ArgumentMatchers.eq(KeycloakLoginResponseDTO.class)))
+    when(identitySessionExchange.exchangeForUser("user-id"))
         .thenThrow(new RuntimeException("exchange failed"));
 
-    Optional<KeycloakLoginResponseDTO> result =
+    Optional<IdentitySession> result =
         magicLinkLoginService.consumeMagicLink("exchange-fail-token");
 
-    // exchangeTokenForUser catch → returns null → token restored
     assertThat(result).isEmpty();
     verify(oneTimeTokenStore).restore("magic-login", "exchange-fail-token", claim, false);
   }
@@ -749,6 +716,11 @@ class MagicLinkLoginServiceTest {
 
   private OneTimeTokenStore.TokenClaim validClaim(String subjectId) {
     return new OneTimeTokenStore.TokenClaim(subjectId, Instant.now().plusSeconds(900));
+  }
+
+  private IdentitySession identitySession() {
+    return new IdentitySession(
+        "access-token", 300, 600, "refresh-token", "Bearer", "session-state", "openid profile");
   }
 
   private User validUserWithMagicLinkEnabled() {

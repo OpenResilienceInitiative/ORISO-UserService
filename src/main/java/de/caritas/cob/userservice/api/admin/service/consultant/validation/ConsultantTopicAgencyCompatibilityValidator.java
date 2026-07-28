@@ -125,7 +125,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   }
 
   private List<AgencyDTO> agenciesFor(List<Long> selectedAgencyIds) {
-    var agencies = agencyService.getAgenciesWithoutCaching(selectedAgencyIds);
+    var agencies = agencyService.getAgencies(selectedAgencyIds);
     if (agencies == null) {
       return Collections.emptyList();
     }

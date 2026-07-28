@@ -30,6 +30,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -55,9 +57,14 @@ class AgencySecurityHeaderSupplierTest {
 
   @Mock private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
+  @Mock private CacheManager cacheManager;
+
+  @Mock private Cache agencyCache;
+
   @BeforeEach
   void setup() throws NoSuchFieldException, SecurityException {
     when(agencyServiceApiControllerFactory.createControllerApi()).thenReturn(agencyControllerApi);
+    when(cacheManager.getCache("agencyCache")).thenReturn(agencyCache);
     this.agencyResponseDTOS =
         AGENCY_DTO_LIST.stream().map(this::toAgencyResponseDTO).collect(Collectors.toList());
     when(this.securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
@@ -93,7 +100,8 @@ class AgencySecurityHeaderSupplierTest {
         new AgencyService(
             mock(SecurityHeaderSupplier.class),
             mock(TenantHeaderSupplier.class),
-            mock(AgencyServiceApiControllerFactory.class));
+            mock(AgencyServiceApiControllerFactory.class),
+            mock(CacheManager.class));
     Class classToTest = agencyService.getClass();
     Method methodToTest =
         classToTest.getMethod(GET_AGENCIES_METHOD_NAME, GET_AGENCIES_METHOD_PARAMS);
@@ -121,7 +129,8 @@ class AgencySecurityHeaderSupplierTest {
         new AgencyService(
             mock(SecurityHeaderSupplier.class),
             mock(TenantHeaderSupplier.class),
-            mock(AgencyServiceApiControllerFactory.class));
+            mock(AgencyServiceApiControllerFactory.class),
+            mock(CacheManager.class));
     Class classToTest = agencyService.getClass();
     Method methodToTest = classToTest.getMethod(GET_AGENCY_METHOD_NAME, GET_AGENCY_METHOD_PARAMS);
     Cacheable annotation = methodToTest.getAnnotation(Cacheable.class);

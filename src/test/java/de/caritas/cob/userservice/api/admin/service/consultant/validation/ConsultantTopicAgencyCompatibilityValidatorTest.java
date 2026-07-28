@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.validation;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -32,7 +33,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
   @Test
   void validateGrantTopicsAgainstSelectedAgencies_AllowsTopicsCoveredAcrossActiveAgencies() {
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+    when(agencyService.getAgencies(List.of(10L, 20L)))
         .thenReturn(
             List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
 
@@ -44,7 +45,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
   @Test
   void validateGrantTopicsAgainstSelectedAgencies_AllowsTopicsCoveredByOfflineAgency() {
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+    when(agencyService.getAgencies(List.of(10L, 20L)))
         .thenReturn(
             List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, true, List.of(7L))));
 
@@ -56,7 +57,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
   @Test
   void validateGrantTopicsAgainstSelectedAgencies_RejectsAgencyFromDifferentTenant() {
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L)))
+    when(agencyService.getAgencies(List.of(10L)))
         .thenReturn(List.of(agency(10L, 2L, false, List.of(3L))));
 
     var exception =
@@ -71,7 +72,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
 
   @Test
   void validateGrantTopicsAgainstSelectedAgencies_RejectsForeignAgencyWithoutTopics() {
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L)))
+    when(agencyService.getAgencies(List.of(10L)))
         .thenReturn(List.of(agency(10L, 2L, false, List.of())));
 
     var exception =
@@ -89,7 +90,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
         .thenReturn(Optional.of(consultant("consultant-id", 1L)));
     when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
         .thenReturn(List.of(3L, 7L));
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+    when(agencyService.getAgencies(List.of(10L, 20L)))
         .thenReturn(
             List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
 
@@ -106,7 +107,7 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
         .thenReturn(List.of());
     when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
         .thenReturn(List.of(3L, 7L));
-    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+    when(agencyService.getAgencies(List.of(10L, 20L)))
         .thenReturn(
             List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
 
@@ -114,6 +115,20 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
         () ->
             validator.validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
                 "consultant-id", List.of(10L, 20L), 1L));
+  }
+
+  @Test
+  void validateGrantTopicsAgainstSelectedAgencies_UsesTenantScopedCachedBatchLookup() {
+    when(agencyService.getAgencies(List.of(10L, 20L)))
+        .thenReturn(
+            List.of(agency(10L, 1L, false, List.of(3L)), agency(20L, 1L, false, List.of(7L))));
+
+    assertDoesNotThrow(
+        () ->
+            validator.validateGrantTopicsAgainstSelectedAgencies(
+                List.of(3L, 7L), List.of(10L, 20L), 1L));
+
+    verify(agencyService).getAgencies(List.of(10L, 20L));
   }
 
   private AgencyDTO agency(Long agencyId, Long tenantId, boolean offline, List<Long> topicIds) {
