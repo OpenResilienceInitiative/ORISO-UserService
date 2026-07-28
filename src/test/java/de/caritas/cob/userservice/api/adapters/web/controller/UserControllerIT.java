@@ -776,8 +776,9 @@ class UserControllerIT {
   }
 
   @Test
-  void registerNewConsultingTyp_Should_ReturnCreated_When_ProvidedWithValidRequestBody()
-      throws Exception {
+  void
+      registerNewConsultingType_Should_ReturnCreated_When_PublicRequestOmitsInternalNewUserAccount()
+          throws Exception {
 
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
     when(createNewSessionFacade.initializeNewSession(
@@ -788,7 +789,7 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
+                .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated());
@@ -2243,14 +2244,8 @@ class UserControllerIT {
   }
 
   @Test
-  void
-      registerNewSession_Should_ReturnResponseStatusFromConsultingTypeFasade_When_ProvidedWithValidRequestBody()
-          throws Exception {
-    var newRegistrationDto = new NewRegistrationDto();
-    newRegistrationDto.setMainTopicId(1L);
-    newRegistrationDto.setPostcode("00001");
-    newRegistrationDto.setAgencyId(1L);
-    newRegistrationDto.setConsultingType("1");
+  void registerNewSession_Should_ReturnCreated_When_PublicRequestOmitsInternalNewUserAccount()
+      throws Exception {
     when(userAccountService.retrieveValidatedUser()).thenReturn(new User());
     when(createNewSessionFacade.initializeNewSession(
             Mockito.any(UserRegistrationDTO.class),
@@ -2263,7 +2258,7 @@ class UserControllerIT {
         mvc.perform(
                 post("/users/askers/session/new")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(new ObjectMapper().writeValueAsString(newRegistrationDto)))
+                    .content(VALID_NEW_REGISTRATION_BODY))
             .andExpect(status().isCreated())
             .andReturn();
 
