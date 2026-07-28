@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -133,10 +132,19 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
-  void assignChatRejectsNumericDatabaseIdentifier() {
-    assertThatThrownBy(() -> delegate.assignChat("1013")).isInstanceOf(BadRequestException.class);
+  void assignChatDelegatesStableNumericSeriesIdentifier() {
+    var response = delegate.assignChat("1013");
 
-    verify(assignChatFacade, never()).assignChat(anyString(), any());
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+  }
+
+  @Test
+  void assignChatRejectsNumericSeriesIdentifierAboveLongRange() {
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+        .isInstanceOf(BadRequestException.class);
+
+    verify(assignChatFacade, never()).assignChat(anyLong(), any());
   }
 
   @Test
