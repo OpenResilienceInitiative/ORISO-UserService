@@ -226,6 +226,20 @@ wait_for_replica \
   "${replica_one_pid}" \
   "${run_dir}/replica-one-restarted.log"
 
+# Liveness does not initialize the JWT/JWK, controller, transaction and SQL path. Warm the
+# restarted process on the same isolated scope used before the initial measurement, so scheduler
+# noise on its first authenticated request cannot make the bounded state-transition measurement
+# flaky. The measured version-1 row remains untouched.
+python3 "${repo_root}/tests/load/authenticated_tutorial_replica_load.py" \
+  --replica-url "http://127.0.0.1:${replica_one_port}" \
+  --replica-url "http://127.0.0.1:${replica_one_port}" \
+  --token-file "${run_dir}/consultant.jwt" \
+  --tour-version 999 \
+  --requests 2 \
+  --concurrency 1 \
+  --max-p95-ms 5000 \
+  >/dev/null
+
 python3 "${repo_root}/tests/load/authenticated_tutorial_replica_load.py" \
   --replica-url "http://127.0.0.1:${replica_one_port}" \
   --replica-url "http://127.0.0.1:${replica_two_port}" \

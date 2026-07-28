@@ -14,11 +14,13 @@ import de.caritas.cob.userservice.api.port.out.TutorialProgressRepository;
 import jakarta.servlet.http.Cookie;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -39,8 +41,28 @@ class TutorialProgressControllerE2EIT {
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private TutorialProgressRepository tutorialProgressRepository;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
+
+  @BeforeEach
+  void registerMariaDbAdvisoryLockAliasesInH2() {
+    jdbcTemplate.execute(
+        """
+        CREATE ALIAS IF NOT EXISTS SHA2 FOR
+        'de.caritas.cob.userservice.api.testsupport.H2MariaDbAdvisoryLockFunctions.sha2'
+        """);
+    jdbcTemplate.execute(
+        """
+        CREATE ALIAS IF NOT EXISTS GET_LOCK FOR
+        'de.caritas.cob.userservice.api.testsupport.H2MariaDbAdvisoryLockFunctions.getLock'
+        """);
+    jdbcTemplate.execute(
+        """
+        CREATE ALIAS IF NOT EXISTS RELEASE_LOCK FOR
+        'de.caritas.cob.userservice.api.testsupport.H2MariaDbAdvisoryLockFunctions.releaseLock'
+        """);
+  }
 
   @AfterEach
   void cleanUp() {
