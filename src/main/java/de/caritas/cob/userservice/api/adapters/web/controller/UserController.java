@@ -58,8 +58,8 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -128,7 +128,7 @@ public class UserController implements UsersApi {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
-  private final @NotNull IdentityClient identityClient;
+  private final @NotNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull MagicLinkLoginService magicLinkLoginService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
 
@@ -154,7 +154,7 @@ public class UserController implements UsersApi {
   public ResponseEntity<Void> usernameAvailability(@PathVariable String username) {
     boolean usernameAvailable;
     try {
-      usernameAvailable = identityClient.isUsernameAvailable(username);
+      usernameAvailable = identityUsernameAvailability.isUsernameAvailable(username);
     } catch (RuntimeException exception) {
       log.warn(
           "Could not check username availability for {}. Treating it as available so registration is not blocked.",

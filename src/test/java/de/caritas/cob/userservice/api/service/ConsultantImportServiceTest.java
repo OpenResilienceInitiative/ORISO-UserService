@@ -15,7 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO;
@@ -42,7 +42,7 @@ class ConsultantImportServiceTest {
 
   @InjectMocks private ConsultantImportService consultantImportService;
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyService agencyService;
@@ -152,7 +152,7 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(identityClient, never()).isUsernameAvailable(anyString());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
   @Test
@@ -165,7 +165,7 @@ class ConsultantImportServiceTest {
         .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_A"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
-    when(identityClient.isUsernameAvailable("newuser")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("newuser")).thenReturn(false);
 
     consultantImportService.startImport();
 
@@ -204,7 +204,7 @@ class ConsultantImportServiceTest {
         .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_CONSULTANT"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
-    when(identityClient.isUsernameAvailable("brandnewuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("brandnewuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("new-id-456");
     when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
@@ -246,7 +246,7 @@ class ConsultantImportServiceTest {
         .thenReturn(typeWithRoles(Map.of("roleA", List.of("ROLE_CONSULTANT"))));
     when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
         .thenReturn(Optional.empty());
-    when(identityClient.isUsernameAvailable("tenantuser")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("tenantuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("tenant-cons-id");
     when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);

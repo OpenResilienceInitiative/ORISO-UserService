@@ -74,6 +74,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -155,7 +156,10 @@ class UserControllerAuthorizationIT {
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
   @MockitoBean private ConsultantImportService consultantImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(extraInterfaces = IdentityUsernameAvailability.class)
+  private IdentityClient identityClient;
+
   @MockitoBean private IdentityManager identityManager;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;
@@ -213,27 +217,31 @@ class UserControllerAuthorizationIT {
     verifyNoInteractions(identityClient);
   }
 
+  private IdentityUsernameAvailability identityUsernameAvailability() {
+    return (IdentityUsernameAvailability) identityClient;
+  }
+
   @Test
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNotFound());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityUsernameAvailability()).isUsernameAvailable(username);
   }
 
   @Test
   void usernameAvailability_Should_StayPublic_WhenNoKeycloakAuthorization() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityUsernameAvailability()).isUsernameAvailable(username);
   }
 
   @Test
