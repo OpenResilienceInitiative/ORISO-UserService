@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.keycloak.config;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.config.RestTemplateTimeouts;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -17,7 +18,6 @@ import java.util.stream.Collectors;
 import lombok.Data;
 import org.hibernate.validator.constraints.URL;
 import org.keycloak.admin.client.Keycloak;
-import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.restclient.RestTemplateBuilder;
@@ -42,12 +42,16 @@ public class KeycloakConfig {
   private static final String TENANT_ID_CLAIM = "tenantId";
 
   @Bean("keycloakRestTemplate")
-  public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
-    return restTemplateBuilder
-        .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
-        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
-        .build();
+  public RestTemplate keycloakRestTemplate(
+      RestTemplateBuilder restTemplateBuilder, OutboundHttpMetrics outboundHttpMetrics) {
+    var restTemplate =
+        restTemplateBuilder
+            .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
+            .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+            .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+            .build();
+    outboundHttpMetrics.customize(restTemplate);
+    return restTemplate;
   }
 
   @Bean
@@ -124,14 +128,9 @@ public class KeycloakConfig {
   }
 
   @Bean
-  public Keycloak keycloak() {
-    return KeycloakBuilder.builder()
-        .serverUrl(authServerUrl)
-        .realm(realm)
-        .username(config.getAdminUsername())
-        .password(config.getAdminPassword())
-        .clientId(config.getAdminClientId())
-        .build();
+  public Keycloak keycloak(OutboundHttpMetrics outboundHttpMetrics) {
+    return new KeycloakAdminClientTransport(outboundHttpMetrics)
+        .create(authServerUrl, realm, config);
   }
 
   @URL private String authServerUrl;
