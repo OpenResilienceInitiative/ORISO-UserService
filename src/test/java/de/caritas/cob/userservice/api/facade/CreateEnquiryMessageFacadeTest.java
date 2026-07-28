@@ -18,7 +18,6 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -49,7 +48,6 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private EmailNotificationFacade emailNotificationFacade;
   @Mock private ConsultantAgencyService consultantAgencyService;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
-  @Mock private LiveEventNotificationService liveEventNotificationService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   @InjectMocks private CreateEnquiryMessageFacade facade;

@@ -28,6 +28,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity second factor | [#882](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/882) | OTP and email verification use typed application values, bounded retries, and five stable low-cardinality operation tags |
 | Identity email mutations | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Current-account and post-verification email writes use a focused output port with explicit no-op and provider-call bounds |
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
+| Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
 Every row is represented by a separate merge commit so the original PR head and
 its review history remain traceable.
@@ -39,7 +40,9 @@ email-owner, role-read, and username-availability interfaces in
 and the combined architecture contract retains every earlier boundary while
 adding typed OTP/email-verification, bounded retries, and explicit email-write
 call bounds. The #886 merge removes the unused session-close command while
-preserving the active refresh-token logout flow.
+preserving the active refresh-token logout flow. The #902 merge deletes the
+unreachable LiveService dependency while keeping Matrix push and durable
+timeline notifications independent of partial persistence and cache failures.
 
 ## Deliberately not integrated yet
 
@@ -56,13 +59,21 @@ the focused replay PRs.
 
 Executed on 2026-07-28 with Temurin JDK 21:
 
-- unit suite: 3,445 tests, 0 failures, 0 errors, 0 skipped;
-- required integration/contract/E2E suite: 854 tests, 0 failures, 0 errors,
-  9 environment-gated skips;
+- unit suite: 3,412 tests, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 852 tests in 82 reports, 0 failures,
+  0 errors, 9 environment-gated skips;
 - CI and executable architecture contracts: 58 tests and 2 subtests passed;
 - OpenAPI contract gate: 8 tests passed;
+- focused Matrix push, durable-notification and LiveService-removal composition:
+  154 tests passed;
 - package build and Spotless: passed;
 - `git diff --check`: passed.
+
+Compared with the preceding #886 integration head, the net reduction of 33
+unit tests and two integration tests is the removal of tests that exercised the
+deleted LiveService transport and forwarding controller. The replacement
+contracts cover the dependency-free `410 Gone` tombstone, Matrix-recipient
+push, durable timeline delivery and partial-failure isolation.
 
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because the integration suite
@@ -104,7 +115,8 @@ build-duration number.
    - confirm the one-replica ceiling;
    - require unit, integration, MariaDB, Redis, OpenAPI, and architecture gates.
 2. **Bounded observability and outbound delivery**
-   - ship existing Matrix, LiveService, Keycloak, and outbound measurement PRs;
+   - ship the Matrix, Keycloak, outbound measurement and dead-LiveService
+     removal PRs;
    - verify traces and redaction in SigNoz after deployment.
 3. **Idempotent schedulers and lifecycle effects**
    - ship one scheduler/notification claim at a time;

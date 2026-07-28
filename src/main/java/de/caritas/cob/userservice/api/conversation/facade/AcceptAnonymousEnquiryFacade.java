@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.conversation.facade;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -17,7 +16,6 @@ import org.springframework.stereotype.Service;
 public class AcceptAnonymousEnquiryFacade {
 
   private final @NonNull AssignEnquiryFacade assignEnquiryFacade;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull SessionService sessionService;
   private final @NonNull UserAccountService userAccountProvider;
 
@@ -50,8 +48,6 @@ public class AcceptAnonymousEnquiryFacade {
 
       var consultant = this.userAccountProvider.retrieveValidatedConsultant();
       this.assignEnquiryFacade.assignAnonymousEnquiry(session, consultant);
-      this.liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
-          session.getUser().getUserId());
     } finally {
       if (callerTenant == null) {
         TenantContext.clear();

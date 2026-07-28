@@ -127,9 +127,11 @@ Keycloak traces contained dynamic test-identity path segments. No raw values
 are copied into this record. This is current-runtime evidence, not proof of this
 branch being deployed. After merge and rollout, the aggregate-only verification
 query must show zero raw-query URI classes and origin-only `http.url` values.
-The Java `HttpClient` used by LiveService is not covered by the payload
-interceptor; its higher-level retry paths are covered by the explicit retry
-counter. This remains a known measurement boundary, not an implied zero.
+The former LiveService Java `HttpClient`, its retry path and its generated
+transport schema have been removed. `/liveproxy/send` remains for one provider
+contract deprecation cycle as a dependency-free `410 Gone` tombstone; it
+performs no outbound call. Issue #903 tracks final route removal after the
+compatibility cycle.
 
 Keycloak's own RESTEasy admin-client transport is covered separately by
 `KeycloakAdminClientTransport`. It preserves one pooled singleton client (50

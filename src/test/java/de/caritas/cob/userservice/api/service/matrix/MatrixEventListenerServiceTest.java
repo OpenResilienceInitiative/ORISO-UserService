@@ -27,7 +27,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -70,7 +70,7 @@ class MatrixEventListenerServiceTest {
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionService sessionService;
-  @Mock private LiveEventNotificationService liveEventNotificationService;
+  @Mock private MobilePushNotificationService mobilePushNotificationService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -109,7 +109,7 @@ class MatrixEventListenerServiceTest {
     return new MatrixEventListenerService(
         matrixSynapseService,
         sessionService,
-        liveEventNotificationService,
+        mobilePushNotificationService,
         eventNotificationService,
         mirror,
         userRepository,
@@ -179,7 +179,7 @@ class MatrixEventListenerServiceTest {
         new MatrixEventListenerService(
             matrixSynapseService,
             sessionService,
-            liveEventNotificationService,
+            mobilePushNotificationService,
             eventNotificationService,
             Optional.empty(),
             userRepository,
@@ -485,7 +485,7 @@ class MatrixEventListenerServiceTest {
 
   @Test
   void unregisterRoom_shouldRemoveFromBothMaps() {
-    // Ended sessions must stop generating live events for that Matrix room.
+    // Ended sessions must stop generating notifications for that Matrix room.
     var service = newService();
     service.registerRoom(5L, "!room:matrix", Set.of("user-a"));
     service.unregisterRoom("!room:matrix");
@@ -624,7 +624,7 @@ class MatrixEventListenerServiceTest {
         new MatrixEventListenerService(
             matrixSynapseService,
             sessionService,
-            liveEventNotificationService,
+            mobilePushNotificationService,
             eventNotificationService,
             Optional.empty(),
             userRepository,
@@ -656,7 +656,7 @@ class MatrixEventListenerServiceTest {
         new MatrixEventListenerService(
             matrixSynapseService,
             sessionService,
-            liveEventNotificationService,
+            mobilePushNotificationService,
             eventNotificationService,
             Optional.empty(),
             userRepository,
@@ -975,19 +975,16 @@ class MatrixEventListenerServiceTest {
   void processMatrixSyncEvents_shouldReturnEarly_whenSyncResultNull() {
     assertThatCode(() -> invokeProcessMatrixSyncEvents(newService(), null))
         .doesNotThrowAnyException();
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
   void processMatrixSyncEvents_shouldReturnEarly_whenRoomsKeyMissing() {
     invokeProcessMatrixSyncEvents(newService(), Map.of("next_batch", "s1"));
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
   void processMatrixSyncEvents_shouldReturnEarly_whenJoinKeyMissing() {
     invokeProcessMatrixSyncEvents(newService(), Map.of("rooms", Map.of()));
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
@@ -998,8 +995,6 @@ class MatrixEventListenerServiceTest {
     when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());
 
     invokeProcessMatrixSyncEvents(newService(), syncResult);
-
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
@@ -1021,7 +1016,7 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResult);
 
-    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
@@ -1108,7 +1103,7 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResult);
 
-    verify(liveEventNotificationService, never()).sendLiveDirectMessageEventToUsers(anyString());
+    verifyNoInteractions(mobilePushNotificationService);
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
   }
@@ -1126,7 +1121,7 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
 
-    verifyNoInteractions(liveEventNotificationService, eventNotificationService);
+    verifyNoInteractions(eventNotificationService);
   }
 
   @Test
@@ -1137,8 +1132,6 @@ class MatrixEventListenerServiceTest {
     syncResult.put("rooms", rooms);
 
     invokeProcessMatrixSyncEvents(newService(), syncResult);
-
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
@@ -1156,8 +1149,6 @@ class MatrixEventListenerServiceTest {
     syncResult.put("rooms", rooms);
 
     invokeProcessMatrixSyncEvents(service, syncResult);
-
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
@@ -1182,7 +1173,7 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(service, syncResult);
 
     verify(sessionRepository).findByMatrixRoomId(MATRIX_ROOM_ID);
-    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
   }
 
   // ── processMatrixEvent (call events) ───────────────────────────────────────
@@ -1194,17 +1185,15 @@ class MatrixEventListenerServiceTest {
 
     assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event))
         .doesNotThrowAnyException();
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
   void processMatrixEvent_shouldReturnEarly_whenEventTypeNull() {
     invokeProcessMatrixEvent(newService(), MATRIX_ROOM_ID, new HashMap<>());
-    verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
-  void handleCallInvite_shouldWarnAboutUnimplementedLiveEvent_whenRecipientsExist() {
+  void handleCallInvite_shouldLogRecipientCount_whenRecipientsExist() {
     var service = newService();
     service.registerRoom(20L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
@@ -1218,9 +1207,8 @@ class MatrixEventListenerServiceTest {
     assertThat(logAppender.list)
         .anyMatch(
             e ->
-                e.getLevel().toString().equals("WARN")
-                    && e.getFormattedMessage()
-                        .contains("videoCallRequest live event not yet implemented"));
+                e.getLevel().toString().equals("INFO")
+                    && e.getFormattedMessage().contains("Matrix call invite received for 2 users"));
   }
 
   @Test
@@ -1235,7 +1223,7 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
     assertThat(logAppender.list)
-        .noneMatch(e -> e.getFormattedMessage().contains("videoCallRequest live event"));
+        .noneMatch(e -> e.getFormattedMessage().contains("Matrix call invite received"));
   }
 
   @Test
@@ -1249,7 +1237,7 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
     assertThat(logAppender.list)
-        .noneMatch(e -> e.getFormattedMessage().contains("videoCallRequest live event"));
+        .noneMatch(e -> e.getFormattedMessage().contains("Matrix call invite received"));
   }
 
   @Test
@@ -1278,9 +1266,9 @@ class MatrixEventListenerServiceTest {
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
 
-    org.mockito.Mockito.doThrow(new RuntimeException("live down"))
-        .when(liveEventNotificationService)
-        .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    org.mockito.Mockito.doThrow(new RuntimeException("push down"))
+        .when(mobilePushNotificationService)
+        .triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
 
     var syncResult =
         syncResultWithEvents(
@@ -1293,15 +1281,13 @@ class MatrixEventListenerServiceTest {
         .anyMatch(
             e ->
                 e.getLevel().toString().equals("ERROR")
-                    && e.getFormattedMessage().contains("Failed to send LiveService notification"));
+                    && e.getFormattedMessage().contains("Failed to send mobile push notification"));
   }
 
   @Test
-  void handleRoomMessage_shouldStillPersistNotificationAndStatistic_whenLiveOrPushSendFails() {
-    // The live STOMP push is an optimisation; the persisted feed entry is the
-    // source of truth for the Zeitstrahl. A live-send failure (e.g. the
-    // request-scoped AuthenticatedUser being unavailable on the sync-loop
-    // thread) must not prevent the notification row from being written.
+  void handleRoomMessage_shouldStillPersistNotificationAndStatistic_whenPushSendFails() {
+    // Mobile push is best-effort; the persisted feed entry is the source of truth for the
+    // timeline and must still be written when push delivery fails.
     var service = newServiceWithSyncExecutor();
     service.registerRoom(33L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
 
@@ -1311,8 +1297,8 @@ class MatrixEventListenerServiceTest {
         .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
 
     org.mockito.Mockito.doThrow(new IllegalStateException("mobile push failed"))
-        .when(liveEventNotificationService)
-        .sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+        .when(mobilePushNotificationService)
+        .triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
 
     var event = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-live-or-push-down");
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
@@ -1321,6 +1307,38 @@ class MatrixEventListenerServiceTest {
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
+  }
+
+  @Test
+  void handleRoomMessage_shouldStillPushAndPersist_whenSessionMappingDisappears() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(34L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    @SuppressWarnings("unchecked")
+    var roomToSessionMap =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    roomToSessionMap.remove(MATRIX_ROOM_ID);
+
+    var event = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-mapping-race");
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+    verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
+    assertThat(logAppender.list)
+        .anyMatch(
+            entry ->
+                entry.getLevel().toString().equals("WARN")
+                    && entry
+                        .getFormattedMessage()
+                        .contains("No session mapping for Matrix room " + MATRIX_ROOM_ID));
   }
 
   @Test
@@ -1403,7 +1421,8 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
-    verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
+    verify(mobilePushNotificationService)
+        .triggerMobilePushNotification(List.of(CONSULTANT_DOMAIN_ID));
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
@@ -1420,7 +1439,6 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
-    verifyNoInteractions(liveEventNotificationService);
     verifyNoInteractions(eventNotificationService);
   }
 
