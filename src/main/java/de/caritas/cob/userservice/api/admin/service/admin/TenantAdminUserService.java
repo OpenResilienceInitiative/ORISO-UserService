@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.List;
@@ -93,7 +94,7 @@ public class TenantAdminUserService {
   }
 
   private void enrichResponseWithSubdomain(Admin updatedAdmin, AdminResponseDTO responseDTO) {
-    if (updatedAdmin.getTenantId() != null) {
+    if (isConcreteTenantId(updatedAdmin.getTenantId())) {
       var tenantData = tenantService.getRestrictedTenantData(updatedAdmin.getTenantId());
       responseDTO.getEmbedded().setTenantSubdomain(tenantData.getSubdomain());
     }
@@ -127,12 +128,16 @@ public class TenantAdminUserService {
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
     return fullAdmins.stream()
-        .filter(admin -> admin.getTenantId() != null)
+        .filter(admin -> isConcreteTenantId(admin.getTenantId()))
         .map(admin -> new AbstractMap.SimpleEntry<>(admin.getTenantId(), tenantName(admin)))
         .filter(entry -> entry.getValue() != null)
         .collect(
             Collectors.toMap(
                 Map.Entry::getKey, Map.Entry::getValue, (existing, replacement) -> existing));
+  }
+
+  private boolean isConcreteTenantId(Long tenantId) {
+    return tenantId != null && !TenantContext.TECHNICAL_TENANT_ID.equals(tenantId);
   }
 
   private String tenantName(Admin admin) {
