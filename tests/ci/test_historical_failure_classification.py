@@ -116,8 +116,14 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "user-service-historical-failure-classification.json",
             stability_document,
         )
-        self.assertIn("637", stability_document)
-        self.assertIn("45", stability_document)
+        self.assertIn(
+            "637 replacement-H2 datasource failures",
+            stability_document,
+        )
+        self.assertIn(
+            "45 initial Spring context-threshold cascades",
+            stability_document,
+        )
 
 
 if __name__ == "__main__":

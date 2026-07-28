@@ -43,7 +43,7 @@
       "resolution": "Removed the stale environment-value assertions; the Matrix-only cutover subsequently deleted the Rocket.Chat configuration and tests.",
       "evidence": [
         "historical src/test/java/de/caritas/cob/userservice/api/adapters/rocketchat/config/RocketChatConfigIT.java",
-        "commits dce9b2f4d89851d452135de6b0697d22413368c7 and 43f0d43ac"
+        "commits dce9b2f4d89851d452135de6b0697d22413368c7 and 43f0d43ac86a8e692e3a5e05fdb3746d70381ee9"
       ]
     },
     {
