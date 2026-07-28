@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.service.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -14,7 +16,9 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -40,6 +44,7 @@ class MagicLinkLoginServiceTest {
   @Mock private RestTemplate restTemplate;
   @Mock private IdentityClientConfig identityClientConfig;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
+  @Mock private ApplicationSettingsService applicationSettingsService;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
 
@@ -686,6 +691,60 @@ class MagicLinkLoginServiceTest {
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+  }
+
+  // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
+  // CTS-C01 credential-leak fix. Credentials must therefore come from the authenticated source.
+  @Test
+  @SuppressWarnings("unchecked")
+  void
+      requestMagicLink_Should_IssueToken_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(
+            Optional.of(
+                new ApplicationSettingsSmtpCredentialsDTO()
+                    .globalSmtpUsername("smtp-user")
+                    .globalSmtpPassword("smtp-pass")));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+    verify(oneTimeTokenStore)
+        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void requestMagicLink_Should_NotIssueToken_When_AuthenticatedCredentialsAreUnavailable() {
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+
+    // Unavailable SMTP must not be observable to the caller — the result stays ACCEPTED so the
+    // endpoint cannot be used to enumerate accounts; only the token issue is skipped.
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
+  }
+
+  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
+    Map<String, Object> settings = new HashMap<>();
+    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
+    settings.put("globalSmtpEnabled", true);
+    settings.put("globalSmtpHost", "smtp.example.com");
+    settings.put("globalSmtpPort", 587);
+    settings.put("globalSmtpFrom", "noreply@example.com");
+    return settings;
   }
 
   private OneTimeTokenStore.TokenClaim validClaim(String subjectId) {

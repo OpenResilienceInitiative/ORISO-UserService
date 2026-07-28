@@ -5,6 +5,7 @@ import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
@@ -44,7 +45,7 @@ public class WorkflowErrorMailService {
       templateAttributes.add(
           new TemplateDataDTO().key("text").value(convertErrorsToHtmlText(workflowErrors)));
 
-      if (!multitenancyEnabled) {
+      if (!Boolean.TRUE.equals(multitenancyEnabled) || !hasConcreteTenantContext()) {
         templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
       } else {
         templateAttributes.addAll(tenantTemplateSupplier.getTemplateAttributes());
@@ -54,6 +55,10 @@ public class WorkflowErrorMailService {
           new ErrorMailDTO().template(TEMPLATE_FREE_TEXT).templateData(templateAttributes);
       this.mailService.sendErrorEmailNotification(errorMailDTO);
     }
+  }
+
+  private boolean hasConcreteTenantContext() {
+    return TenantContext.contextIsSet() && !TenantContext.isTechnicalOrSuperAdminContext();
   }
 
   private String convertErrorsToHtmlText(List<DeletionWorkflowError> workflowErrors) {

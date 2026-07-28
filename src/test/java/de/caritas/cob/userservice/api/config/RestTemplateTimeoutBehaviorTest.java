@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sun.net.httpserver.HttpServer;
 import de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -64,17 +66,19 @@ class RestTemplateTimeoutBehaviorTest {
 
   @Test
   void defaultRestTemplateShouldTimeoutOnSlowResponse() {
-    assertReadTimeout(new AppConfig().restTemplate(new RestTemplateBuilder()));
+    assertReadTimeout(new AppConfig().restTemplate(new RestTemplateBuilder(), metrics()));
   }
 
   @Test
   void keycloakRestTemplateShouldTimeoutOnSlowResponse() {
-    assertReadTimeout(new KeycloakConfig().keycloakRestTemplate(new RestTemplateBuilder()));
+    assertReadTimeout(
+        new KeycloakConfig().keycloakRestTemplate(new RestTemplateBuilder(), metrics()));
   }
 
   @Test
   void matrixLongPollRestTemplateShouldAllowSlowResponseWithinLongPollWindow() {
-    var restTemplate = new AppConfig().matrixLongPollRestTemplate(new RestTemplateBuilder());
+    var restTemplate =
+        new AppConfig().matrixLongPollRestTemplate(new RestTemplateBuilder(), metrics());
     var startedAt = Instant.now();
 
     var response = restTemplate.getForEntity(slowUrl, String.class);
@@ -96,5 +100,9 @@ class RestTemplateTimeoutBehaviorTest {
     long elapsedMs = Duration.between(startedAt, Instant.now()).toMillis();
     assertThat(elapsedMs).isGreaterThanOrEqualTo(MIN_TIMEOUT_OBSERVATION_MS);
     assertThat(elapsedMs).isLessThan(MAX_TIMEOUT_OBSERVATION_MS);
+  }
+
+  private OutboundHttpMetrics metrics() {
+    return new OutboundHttpMetrics(new SimpleMeterRegistry());
   }
 }
