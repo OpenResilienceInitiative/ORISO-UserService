@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
@@ -56,6 +57,7 @@ public class MagicLinkLoginService {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
@@ -330,21 +332,25 @@ public class MagicLinkLoginService {
       String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
       boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String username = asStringSettingValue(settingsResponse.get("globalSmtpUsername"));
-      String password = asStringSettingValue(settingsResponse.get("globalSmtpPassword"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
       String emailThemeColor =
           asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
-      if (!systemEmailsEnabled
-          || !smtpEnabled
-          || isBlank(host)
-          || port == null
-          || isBlank(username)
-          || isBlank(password)
-          || isBlank(from)) {
+      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
         return Optional.empty();
       }
+
+      // The public /settings payload deliberately omits the SMTP username and password since the
+      // CTS-C01 credential-leak fix, so they must come from the authenticated settings endpoint.
+      var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+      if (credentials.isEmpty()) {
+        log.warn(
+            "Magic link email not sent: global SMTP credentials are unavailable. "
+                + "Set the SMTP username and password in the platform settings.");
+        return Optional.empty();
+      }
+      String username = credentials.get().getGlobalSmtpUsername();
+      String password = credentials.get().getGlobalSmtpPassword();
 
       return Optional.of(
           new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));

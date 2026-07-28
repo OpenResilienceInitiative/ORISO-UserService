@@ -20,7 +20,9 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,6 +48,7 @@ class PasswordResetServiceTest {
   @Mock private IdentityClient identityClient;
   @Mock private RestTemplate restTemplate;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
+  @Mock private ApplicationSettingsService applicationSettingsService;
 
   @InjectMocks private PasswordResetService passwordResetService;
 
@@ -137,6 +140,8 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
@@ -166,6 +171,8 @@ class PasswordResetServiceTest {
             "admin@example.com", "admin@example.com"))
         .thenReturn(Optional.of(admin));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset(
         "admin@example.com", "en", PasswordResetApplication.ADMIN);
@@ -217,6 +224,8 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "xx-unknown");
 
@@ -340,6 +349,57 @@ class PasswordResetServiceTest {
     verify(identityClient, never()).updatePassword(anyString(), anyString());
   }
 
+  // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
+  // CTS-C01 credential-leak fix. Credentials must therefore come from the authenticated source.
+  @Test
+  void
+      requestPasswordReset_Should_SendMail_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).hasSize(1);
+    assertThat(sentMails.get(0).recipient()).isEqualTo("real@example.com");
+  }
+
+  @Test
+  void requestPasswordReset_Should_NotSendMail_When_AuthenticatedCredentialsAreUnavailable() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).isEmpty();
+  }
+
+  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
+    return Map.of(
+        "globalFeatureSystemNotificationEmailsEnabled",
+        true,
+        "globalSmtpEnabled",
+        true,
+        "globalSmtpHost",
+        "smtp.invalid",
+        "globalSmtpPort",
+        587,
+        "globalSmtpFrom",
+        "noreply@example.com");
+  }
+
+  private ApplicationSettingsSmtpCredentialsDTO smtpCredentials(String username, String password) {
+    return new ApplicationSettingsSmtpCredentialsDTO()
+        .globalSmtpUsername(username)
+        .globalSmtpPassword(password);
+  }
+
   private User validUser() {
     User user = new User();
     user.setUserId("u-1");
@@ -349,14 +409,7 @@ class PasswordResetServiceTest {
   }
 
   private Map<String, Object> validSmtpSettings() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled", true,
-        "globalSmtpEnabled", true,
-        "globalSmtpHost", "smtp.invalid",
-        "globalSmtpPort", 587,
-        "globalSmtpUsername", "user",
-        "globalSmtpPassword", "pass",
-        "globalSmtpFrom", "noreply@example.com");
+    return publicSmtpSettingsWithoutCredentials();
   }
 
   private OneTimeTokenStore.TokenClaim validClaim() {
