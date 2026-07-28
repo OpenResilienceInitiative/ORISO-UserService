@@ -15,10 +15,12 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +44,11 @@ public class WorkflowErrorMailServiceTest {
     setField(workflowErrorMailService, "applicationBaseUrl", "www.host.de");
   }
 
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
+
   @Test
   public void buildAndSendErrorMail_Should_sendNoErrorMail_When_workflowErrorsAreNull() {
     this.workflowErrorMailService.buildAndSendErrorMail(null);
@@ -61,6 +68,7 @@ public class WorkflowErrorMailServiceTest {
       buildAndSendErrorMail_Should_buildAndSendExpectedErrorMail_When_workflowErrorsExists() {
     // given
     ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
     TemplateDataDTO tenantData = new TemplateDataDTO().key("tenantData");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(Lists.newArrayList(tenantData));
     List<DeletionWorkflowError> workflowErrors =
@@ -88,5 +96,36 @@ public class WorkflowErrorMailServiceTest {
 
     // clean up
     ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", false);
+  }
+
+  @Test
+  void buildAndSendErrorMail_ShouldUseApplicationUrl_WhenSchedulerHasNoTenantContext() {
+    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", true);
+    var workflowErrors = List.of(DeletionWorkflowError.builder().reason("reason").build());
+
+    workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+
+    verifyNoMoreInteractions(tenantTemplateSupplier);
+    ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
+        ArgumentCaptor.forClass(ErrorMailDTO.class);
+    verify(mailService).sendErrorEmailNotification(errorMailDTOArgumentCaptor.capture());
+    assertThat(errorMailDTOArgumentCaptor.getValue().getTemplateData())
+        .contains(new TemplateDataDTO().key("url").value("www.host.de"));
+  }
+
+  @Test
+  void buildAndSendErrorMail_ShouldUseApplicationUrl_ForTechnicalTenantContext() {
+    ReflectionTestUtils.setField(workflowErrorMailService, "multitenancyEnabled", true);
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    var workflowErrors = List.of(DeletionWorkflowError.builder().reason("reason").build());
+
+    workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+
+    verifyNoMoreInteractions(tenantTemplateSupplier);
+    ArgumentCaptor<ErrorMailDTO> errorMailDTOArgumentCaptor =
+        ArgumentCaptor.forClass(ErrorMailDTO.class);
+    verify(mailService).sendErrorEmailNotification(errorMailDTOArgumentCaptor.capture());
+    assertThat(errorMailDTOArgumentCaptor.getValue().getTemplateData())
+        .contains(new TemplateDataDTO().key("url").value("www.host.de"));
   }
 }

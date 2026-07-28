@@ -237,8 +237,7 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
-                    RegexRequestMatcher.regexMatcher(
-                        HttpMethod.GET, "(/service)?/users/sessions/room\\?matrixRoomIds=.+"))
+                    HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
