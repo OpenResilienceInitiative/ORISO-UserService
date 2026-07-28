@@ -69,7 +69,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
@@ -95,7 +95,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
         .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(anyString(), any(), any());
@@ -120,7 +120,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -144,7 +144,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(280L)).thenReturn(agency);
+    when(agencyService.getAgency(280L)).thenReturn(agency);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
     when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
@@ -176,7 +176,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   public void createNewConsultantAgency_Should_throwBadRequest_When_agencyDoesNotExist() {
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(99L)).thenReturn(null);
+    when(agencyService.getAgency(99L)).thenReturn(null);
 
     assertThrows(
         BadRequestException.class,
@@ -198,8 +198,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(newAgency);
-    when(agencyService.getAgencyWithoutCaching(3L)).thenReturn(existingAgency);
+    when(agencyService.getAgency(2L)).thenReturn(newAgency);
+    when(agencyService.getAgency(3L)).thenReturn(existingAgency);
     when(consultingTypeManager.isConsultantBoundedToAgency(2)).thenReturn(true);
 
     assertThrows(
@@ -232,7 +232,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     when(identityClient.userHasRole("consultant Id", "consultant")).thenReturn(true);
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(1L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(1L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class));
 
@@ -253,7 +253,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -275,7 +275,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
 

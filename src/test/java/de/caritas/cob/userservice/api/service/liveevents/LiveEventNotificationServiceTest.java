@@ -1,36 +1,25 @@
 package de.caritas.cob.userservice.api.service.liveevents;
 
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_CONVERSATION_FINISHED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.ANONYMOUS_ENQUIRY_ACCEPTED;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.EventType.DIRECT_MESSAGE;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase.IN_PROGRESS;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.anonymousConversationFinished;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.anonymousEnquiryAccepted;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.directMessage;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.newAnonymousEnquiry;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import ch.qos.logback.classic.Level;
-import de.caritas.cob.userservice.api.config.apiclient.LiveServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.LiveEventGateway;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
-import de.caritas.cob.userservice.liveservice.generated.ApiException;
-import de.caritas.cob.userservice.liveservice.generated.web.LiveControllerApi;
-import de.caritas.cob.userservice.liveservice.generated.web.model.EventType;
-import de.caritas.cob.userservice.liveservice.generated.web.model.LiveEventMessage;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
-import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,11 +30,9 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class LiveEventNotificationServiceTest {
 
-  private static final LiveEventMessage MESSAGE = new LiveEventMessage().eventType(DIRECT_MESSAGE);
-
   @InjectMocks private LiveEventNotificationService liveEventNotificationService;
 
-  @Mock private LiveControllerApi liveControllerApi;
+  @Mock private LiveEventGateway liveEventGateway;
 
   @Mock private UserIdsProviderFactory userIdsProviderFactory;
 
@@ -57,24 +44,15 @@ public class LiveEventNotificationServiceTest {
 
   @Mock private MobilePushNotificationService mobilePushNotificationService;
 
-  @Mock private LiveServiceApiControllerFactory liveServiceApiControllerFactory;
-
-  @BeforeEach
-  public void setup() {
-    when(liveServiceApiControllerFactory.createControllerApi()).thenReturn(liveControllerApi);
-  }
-
   @Test
-  public void
-      sendLiveDirectMessageEventToUsers_Should_callFactoryAndLiveApi_When_matrixRoomIdIsValid()
-          throws ApiException {
+  public void sendLiveDirectMessageEventToUsers_Should_callGateway_When_matrixRoomIdIsValid() {
     when(this.bySessionProvider.collectUserIds(any())).thenReturn(asList("1", "2"));
     when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(bySessionProvider);
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("valid");
 
     verify(userIdsProviderFactory, times(1)).forMatrixRoom("valid");
-    verify(liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(asList("1", "2")));
+    verify(liveEventGateway, times(1)).send(directMessage(asList("1", "2")));
   }
 
   @Test
@@ -82,7 +60,7 @@ public class LiveEventNotificationServiceTest {
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("");
 
     verifyNoInteractions(userIdsProviderFactory);
-    verifyNoInteractions(liveControllerApi);
+    verifyNoInteractions(liveEventGateway);
     verifyNoInteractions(mobilePushNotificationService);
   }
 
@@ -91,45 +69,12 @@ public class LiveEventNotificationServiceTest {
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers(null);
 
     verifyNoInteractions(userIdsProviderFactory);
-    verifyNoInteractions(liveControllerApi);
-  }
-
-  @Test
-  public void sendLiveDirectMessageEventToUsers_Should_logError_When_apiCallFails()
-      throws ApiException {
-    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(bySessionProvider);
-    when(this.bySessionProvider.collectUserIds(any())).thenReturn(singletonList("test"));
-    doThrow(new ApiException("")).when(this.liveControllerApi).sendLiveEvent(any());
-
-    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
-      this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
-
-      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
-    }
+    verifyNoInteractions(liveEventGateway);
   }
 
   @Test
   public void
-      sendLiveNewAnonymousEnquiryEventToUsers_Should_notPropagate_When_liveServiceUnreachable()
-          throws ApiException {
-    // A live event is best-effort: a transport failure (e.g. the live service host is unreachable,
-    // surfacing as an UnresolvedAddressException/ConnectException — NOT an ApiException) must never
-    // break the enquiry/session flow that fired it.
-    doThrow(new RuntimeException(new java.net.ConnectException("unreachable")))
-        .when(this.liveControllerApi)
-        .sendLiveEvent(any());
-
-    try (var logCaptor = LogbackCaptor.forClass(LiveEventNotificationService.class)) {
-      this.liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
-          asList("consultant-1"), 4711L);
-
-      assertThat(logCaptor.contains(Level.ERROR, "Internal Server Error")).isTrue();
-    }
-  }
-
-  @Test
-  public void sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsersInsteadOfInitiatingUser()
-      throws ApiException {
+      sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsersInsteadOfInitiatingUser() {
     List<String> userIds = asList("id1", "id2", "id3", "id4");
     when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
     when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
@@ -138,12 +83,12 @@ public class LiveEventNotificationServiceTest {
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
     List<String> expectedIds = asList("id1", "id3", "id4");
-    verify(this.liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(expectedIds));
+    verify(this.liveEventGateway, times(1)).send(directMessage(expectedIds));
   }
 
   @Test
-  public void sendLiveDirectMessageEventToUsers_Should_sendToAllUsers_When_noRequestContextIsBound()
-      throws ApiException {
+  public void
+      sendLiveDirectMessageEventToUsers_Should_sendToAllUsers_When_noRequestContextIsBound() {
     // Called from the Matrix sync-loop background thread there is no web request, so the
     // request-scoped AuthenticatedUser proxy throws. The event must still go out (to
     // everyone — without an initiator there is nobody to exclude).
@@ -155,7 +100,7 @@ public class LiveEventNotificationServiceTest {
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
-    verify(this.liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(userIds));
+    verify(this.liveEventGateway, times(1)).send(directMessage(userIds));
   }
 
   @Test
@@ -164,13 +109,12 @@ public class LiveEventNotificationServiceTest {
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
   public void
-      sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsers_When_initiatingUserIsAnother()
-          throws ApiException {
+      sendLiveDirectMessageEventToUsers_Should_sendEventToAllUsers_When_initiatingUserIsAnother() {
     List<String> userIds = asList("id1", "id2", "id3", "id4");
     when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
     when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
@@ -178,79 +122,69 @@ public class LiveEventNotificationServiceTest {
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
-    verify(this.liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(userIds));
+    verify(this.liveEventGateway, times(1)).send(directMessage(userIds));
   }
 
   @Test
-  public void sendLiveNewAnonymousEnquiryEventToUsers_Should_TriggerLiveEventWithCorrectEventType()
-      throws ApiException {
+  public void
+      sendLiveNewAnonymousEnquiryEventToUsers_Should_TriggerLiveEventWithCorrectEventType() {
     List<String> userIds = List.of("1", "2");
 
     this.liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(userIds, 1L);
 
-    ArgumentCaptor<LiveEventMessage> captor = ArgumentCaptor.forClass(LiveEventMessage.class);
-    verify(liveControllerApi, times(1)).sendLiveEvent(captor.capture());
-    assertEquals(EventType.NEW_ANONYMOUS_ENQUIRY, captor.getValue().getEventType());
+    verify(liveEventGateway, times(1)).send(newAnonymousEnquiry(userIds));
   }
 
   // WP-06 Activity Timeline: single-recipient live refresh nudge fired when an event_notification
   // is persisted, so the Activity Timeline updates in real time instead of on the slow fallback
   // poll. Reuses DIRECT_MESSAGE (no new live-service enum), carries only the recipient user id.
   @Test
-  public void sendEventNotificationCreatedEventToUser_Should_sendDirectMessageEventForRecipient()
-      throws ApiException {
+  public void sendEventNotificationCreatedEventToUser_Should_sendDirectMessageEventForRecipient() {
     this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("recipient-1");
 
-    verify(this.liveControllerApi, times(1))
-        .sendLiveEvent(
-            new LiveEventMessage().eventType(DIRECT_MESSAGE).userIds(singletonList("recipient-1")));
+    verify(this.liveEventGateway, times(1)).send(directMessage(singletonList("recipient-1")));
   }
 
   @Test
   public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsBlank() {
     this.liveEventNotificationService.sendEventNotificationCreatedEventToUser("  ");
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
   public void sendEventNotificationCreatedEventToUser_Should_doNothing_When_userIdIsNull() {
     this.liveEventNotificationService.sendEventNotificationCreatedEventToUser(null);
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
   public void sendAcceptAnonymousEnquiryEventToUser_Should_doNothing_When_userIdIsNull() {
     this.liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(null);
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
   public void sendAcceptAnonymousEnquiryEventToUser_Should_doNothing_When_userIdIsEmpty() {
     this.liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser("");
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
-  public void sendAcceptAnonymousEnquiryEventToUser_Should_triggerLiveEvent_When_userIdIsValid()
-      throws ApiException {
+  public void sendAcceptAnonymousEnquiryEventToUser_Should_triggerLiveEvent_When_userIdIsValid() {
     this.liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser("userId");
 
-    verify(this.liveControllerApi, times(1))
-        .sendLiveEvent(
-            new LiveEventMessage()
-                .eventType(ANONYMOUS_ENQUIRY_ACCEPTED)
-                .userIds(singletonList("userId")));
+    verify(this.liveEventGateway, times(1)).send(anonymousEnquiryAccepted(singletonList("userId")));
   }
 
   @Test
   public void sendLiveFinishedAnonymousConversationToUsers_Should_doNothing_When_userIdIsNull() {
     this.liveEventNotificationService.sendLiveFinishedAnonymousConversationToUsers(null, null);
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
@@ -258,23 +192,16 @@ public class LiveEventNotificationServiceTest {
     this.liveEventNotificationService.sendLiveFinishedAnonymousConversationToUsers(
         emptyList(), null);
 
-    verifyNoInteractions(this.liveControllerApi);
+    verifyNoInteractions(this.liveEventGateway);
   }
 
   @Test
   public void
-      sendLiveFinishedAnonymousConversationToUsers_Should_triggerLiveEvent_When_userIdIsValid()
-          throws ApiException {
+      sendLiveFinishedAnonymousConversationToUsers_Should_triggerLiveEvent_When_userIdIsValid() {
     this.liveEventNotificationService.sendLiveFinishedAnonymousConversationToUsers(
-        singletonList("userId"), FinishConversationPhaseEnum.IN_PROGRESS);
+        singletonList("userId"), IN_PROGRESS);
 
-    verify(this.liveControllerApi, times(1))
-        .sendLiveEvent(
-            new LiveEventMessage()
-                .eventType(ANONYMOUS_CONVERSATION_FINISHED)
-                .userIds(singletonList("userId"))
-                .eventContent(
-                    new StatusSource()
-                        .finishConversationPhase(FinishConversationPhaseEnum.IN_PROGRESS)));
+    verify(this.liveEventGateway, times(1))
+        .send(anonymousConversationFinished(singletonList("userId"), IN_PROGRESS));
   }
 }

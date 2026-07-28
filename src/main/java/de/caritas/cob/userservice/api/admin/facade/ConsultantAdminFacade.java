@@ -191,8 +191,7 @@ public class ConsultantAdminFacade {
   public void setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
     var persistedAgencyIds =
-        consultantAgencyAdminService.findConsultantAgencies(consultantId).getEmbedded().stream()
-            .map(agencyAdminResponse -> agencyAdminResponse.getEmbedded().getId())
+        consultantAgencyAdminService.findConsultantAgencyIds(consultantId).stream()
             .collect(Collectors.toSet());
     var desiredAgencyIds =
         agencyList.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
