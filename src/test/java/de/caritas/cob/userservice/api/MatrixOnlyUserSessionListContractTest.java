@@ -56,6 +56,18 @@ class MatrixOnlyUserSessionListContractTest {
         .doesNotContain("rcGroupIds");
   }
 
+  @Test
+  void sessionListAuthorizationMustNotDependOnAnObsoleteQueryParameterName() throws IOException {
+    var securityConfig =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/config/auth/SecurityConfig.java"));
+
+    assertThat(securityConfig)
+        .contains("HttpMethod.GET, \"/users/sessions/room\", \"/service/users/sessions/room\"")
+        .doesNotContain("matrixRoomIds");
+  }
+
   private String operationBlock(String api, String operationId) {
     var operationIndex = api.indexOf("operationId: " + operationId);
     assertThat(operationIndex).isGreaterThanOrEqualTo(0);
