@@ -180,6 +180,65 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_dummy_email_consumer_uses_a_focused_provider_neutral_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdater.java"
+        )
+        value = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdate.java"
+        )
+        self.assertTrue(port.exists(), "Dummy-email updates need a focused output port")
+        self.assertTrue(value.exists(), "Dummy-email updates need provider-neutral values")
+        if not port.exists() or not value.exists():
+            return
+
+        for boundary in (port, value):
+            boundary_text = boundary.read_text()
+            self.assertNotIn(
+                "de.caritas.cob.userservice.api.adapters.",
+                boundary_text,
+            )
+            self.assertNotIn("org.keycloak.", boundary_text)
+
+        registration = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java"
+        ).read_text()
+        self.assertIn("IdentityDummyEmailUpdater", registration)
+        self.assertNotIn("identityClient.updateDummyEmail(", registration)
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updateDummyEmail(",
+            identity_client,
+            "The broad identity command client must not own dummy-email updates",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityDummyEmailUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused dummy-email port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
         source = (
             ROOT
