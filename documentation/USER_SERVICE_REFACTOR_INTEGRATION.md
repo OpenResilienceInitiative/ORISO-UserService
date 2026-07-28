@@ -62,7 +62,7 @@ Executed on 2026-07-28 with Temurin JDK 21:
 - unit suite: 3,412 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 852 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 58 tests and 2 subtests passed;
+- CI and executable architecture contracts: 59 tests and 2 subtests passed;
 - OpenAPI contract gate: 8 tests passed;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
@@ -72,6 +72,9 @@ Executed on 2026-07-28 with Temurin JDK 21:
   exactly 900 AgencyService calls, 8.87 ms mean and 101.91 ms maximum outbound
   latency, 288.89 response bytes per call on average, and no threshold
   violations;
+- authenticated two-replica write proof after the CI port-allocation regression
+  fix: 80 concurrent upserts and both cross-replica reads passed, followed by 12
+  writes and both reads after one replica restart, with one canonical row;
 - package build and Spotless: passed;
 - `git diff --check`: passed.
 

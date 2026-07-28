@@ -19,11 +19,6 @@ replica_two_pid=""
 jwk_stub_pid=""
 started_replica_pid=""
 
-allocate_port() {
-  python3 -c \
-    'import socket; sock = socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()'
-}
-
 stop_process() {
   local process_id="$1"
   if [[ -n "${process_id}" ]] && kill -0 "${process_id}" 2>/dev/null; then
@@ -56,9 +51,8 @@ for command in docker curl grep openssl python3 java; do
   fi
 done
 
-replica_one_port="$(allocate_port)"
-replica_two_port="$(allocate_port)"
-jwk_stub_port="$(allocate_port)"
+read -r replica_one_port replica_two_port jwk_stub_port \
+  < <(python3 "${repo_root}/scripts/load/allocate-distinct-ports.py" 3)
 
 docker run --detach \
   --name "${mariadb_container}" \

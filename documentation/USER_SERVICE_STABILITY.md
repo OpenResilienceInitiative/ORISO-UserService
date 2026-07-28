@@ -494,6 +494,9 @@ reads completed with 0 failures and 19.22 ms p95. The runner applies the same
 zero-error and 1,000 ms p95 bound per operation and per replica. Startup
 liveness and authenticated-path initialization are deliberately separated from
 the measured state-transition latency.
+The runner allocates its two replica ports and JWK-stub port while all three
+allocator sockets are held open, preventing the operating system from returning
+the same ephemeral port more than once within the run.
 MariaDB's native upsert protects one versioned scope. A database advisory lock,
 whose name hashes the user identifier, serializes only first writes for a user
 so concurrent replicas cannot exceed the per-user row cap while creating
