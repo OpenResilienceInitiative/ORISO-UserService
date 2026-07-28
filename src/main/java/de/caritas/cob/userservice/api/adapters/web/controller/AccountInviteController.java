@@ -168,7 +168,10 @@ public class AccountInviteController {
    * idempotent 200s carrying {@code phase = PENDING_2FA_ACTIVATION}; once the gate is satisfied the
    * link is terminally consumed (410 {@code reason=CONSUMED}).
    */
-  @PostMapping("/users/account-invites/{token}/accept")
+  @PostMapping({
+    "/users/account-invites/{token}/accept",
+    "/service/users/account-invites/{token}/accept"
+  })
   public ResponseEntity<AccountInviteResponseDTO> acceptInvite(
       @PathVariable String token, @RequestBody(required = false) AcceptInviteRequestDTO request) {
     String acceptedByUserId = request == null ? null : request.acceptedByUserId;

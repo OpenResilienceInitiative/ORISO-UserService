@@ -582,7 +582,8 @@ public class AccountInviteService {
         || status == EmailVerificationStatus.VERIFIED;
   }
 
-  private static boolean isTwoFactorGateSatisfied(TwoFactorGateStatus status) {
+  /** Public because the tenant-admin onboarding flow shares the resume-window semantics. */
+  public static boolean isTwoFactorGateSatisfied(TwoFactorGateStatus status) {
     return status == TwoFactorGateStatus.NOT_REQUIRED
         || status == TwoFactorGateStatus.ACTIVE
         || status == TwoFactorGateStatus.WAIVED
