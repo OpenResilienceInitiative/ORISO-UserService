@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
@@ -50,7 +51,7 @@ class CreateAdminServiceIT {
 
   @Autowired private CreateAdminService createAdminService;
 
-  @MockitoBean(extraInterfaces = IdentityRoleLookup.class)
+  @MockitoBean(extraInterfaces = {IdentityEmailOwnerLookup.class, IdentityRoleLookup.class})
   private IdentityClient identityClient;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;

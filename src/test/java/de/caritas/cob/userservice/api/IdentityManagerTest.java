@@ -7,7 +7,10 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -23,6 +26,7 @@ class IdentityManagerTest {
   private static final String EMAIL = "consultant@example.org";
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
@@ -54,50 +58,39 @@ class IdentityManagerTest {
 
   @Test
   void isEmailAvailableOrOwnShouldAcceptRawKeycloakUsernameForEncodedConsultant() {
-    when(identityClient.findUserByEmail(EMAIL))
-        .thenReturn(
-            Map.of(
-                "encodedUsername", RAW_USERNAME,
-                "decodedUsername", RAW_USERNAME,
-                "email", EMAIL));
+    when(identityEmailOwnerLookup.findByEmail(EMAIL))
+        .thenReturn(Optional.of(new IdentityEmailOwner(RAW_USERNAME)));
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isTrue();
   }
 
   @Test
   void isEmailAvailableOrOwnShouldAcceptEncodedKeycloakUsernameForEncodedConsultant() {
-    when(identityClient.findUserByEmail(EMAIL))
-        .thenReturn(
-            Map.of(
-                "encodedUsername", ENCODED_USERNAME,
-                "decodedUsername", RAW_USERNAME,
-                "email", EMAIL));
+    when(identityEmailOwnerLookup.findByEmail(EMAIL))
+        .thenReturn(Optional.of(new IdentityEmailOwner(ENCODED_USERNAME)));
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isTrue();
   }
 
   @Test
   void isEmailAvailableOrOwnShouldRejectEmailOwnedByDifferentUser() {
-    when(identityClient.findUserByEmail(EMAIL))
-        .thenReturn(
-            Map.of(
-                "encodedUsername", "other-user",
-                "decodedUsername", "other-user",
-                "email", EMAIL));
+    when(identityEmailOwnerLookup.findByEmail(EMAIL))
+        .thenReturn(Optional.of(new IdentityEmailOwner("other-user")));
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isFalse();
   }
 
   @Test
   void isEmailAvailableOrOwnShouldAcceptUnusedEmail() {
-    when(identityClient.findUserByEmail(EMAIL)).thenReturn(Map.of());
+    when(identityEmailOwnerLookup.findByEmail(EMAIL)).thenReturn(Optional.empty());
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isTrue();
   }
 
   @Test
   void isEmailAvailableOrOwnShouldRejectIncompleteOwnerDataWithoutThrowing() {
-    when(identityClient.findUserByEmail(EMAIL)).thenReturn(Map.of("email", EMAIL));
+    when(identityEmailOwnerLookup.findByEmail(EMAIL))
+        .thenReturn(Optional.of(new IdentityEmailOwner(null)));
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isFalse();
   }

@@ -36,8 +36,6 @@ public interface IdentityClient {
 
   Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
-  Map<String, String> findUserByEmail(String email);
-
   KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
 
   KeycloakCreateUserResponseDTO createKeycloakUser(
