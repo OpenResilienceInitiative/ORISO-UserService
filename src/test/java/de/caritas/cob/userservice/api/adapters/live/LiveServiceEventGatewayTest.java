@@ -3,9 +3,11 @@ package de.caritas.cob.userservice.api.adapters.live;
 import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase.IN_PROGRESS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -36,6 +38,23 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class LiveServiceEventGatewayTest {
 
   @Mock private LiveControllerApi liveControllerApi;
+
+  @Test
+  void shouldContainEventMappingFailuresToPreserveBestEffortDelivery() {
+    var invalidEvent = org.mockito.Mockito.mock(LiveEvent.class);
+    var gateway =
+        new LiveServiceEventGateway(
+            liveControllerApi,
+            new ObjectMapper(),
+            new OutboundHttpMetrics(new SimpleMeterRegistry()));
+
+    try (var logCaptor = LogbackCaptor.forClass(LiveServiceEventGateway.class)) {
+      assertThatCode(() -> gateway.send(invalidEvent)).doesNotThrowAnyException();
+
+      assertThat(logCaptor.contains(Level.ERROR, "Unable to prepare live event")).isTrue();
+    }
+    verifyNoInteractions(liveControllerApi);
+  }
 
   @Test
   void shouldObserveAndContainAsynchronousDeliveryFailures() throws Exception {

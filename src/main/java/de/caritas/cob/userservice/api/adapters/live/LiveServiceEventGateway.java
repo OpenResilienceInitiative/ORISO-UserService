@@ -50,19 +50,8 @@ public class LiveServiceEventGateway implements LiveEventGateway {
 
   @Override
   public void send(LiveEvent event) {
-    var message =
-        new LiveEventMessage()
-            .eventType(EventType.valueOf(event.type().name()))
-            .userIds(event.recipientIds());
-    if (event.finishConversationPhase() != null) {
-      message.eventContent(
-          new StatusSource()
-              .finishConversationPhase(
-                  StatusSource.FinishConversationPhaseEnum.valueOf(
-                      event.finishConversationPhase().name())));
-    }
-
     try {
+      var message = toTransportMessage(event);
       var requestBytes = objectMapper.writeValueAsBytes(message).length;
       outboundHttpMetrics
           .observeAsyncCall(
@@ -73,9 +62,39 @@ public class LiveServiceEventGateway implements LiveEventGateway {
                   log.error("Unable to deliver live event", failure);
                 }
               });
-    } catch (JsonProcessingException failure) {
-      log.error("Unable to serialize live event", failure);
+    } catch (JsonProcessingException | RuntimeException failure) {
+      log.error("Unable to prepare live event", failure);
     }
+  }
+
+  private LiveEventMessage toTransportMessage(LiveEvent event) {
+    var message =
+        new LiveEventMessage()
+            .eventType(toTransportType(event.type()))
+            .userIds(event.recipientIds());
+    if (event.finishConversationPhase() != null) {
+      message.eventContent(
+          new StatusSource()
+              .finishConversationPhase(toTransportPhase(event.finishConversationPhase())));
+    }
+    return message;
+  }
+
+  private EventType toTransportType(LiveEvent.Type type) {
+    return switch (type) {
+      case DIRECT_MESSAGE -> EventType.DIRECT_MESSAGE;
+      case ANONYMOUS_ENQUIRY_ACCEPTED -> EventType.ANONYMOUS_ENQUIRY_ACCEPTED;
+      case NEW_ANONYMOUS_ENQUIRY -> EventType.NEW_ANONYMOUS_ENQUIRY;
+      case ANONYMOUS_CONVERSATION_FINISHED -> EventType.ANONYMOUS_CONVERSATION_FINISHED;
+    };
+  }
+
+  private StatusSource.FinishConversationPhaseEnum toTransportPhase(
+      LiveEvent.FinishConversationPhase phase) {
+    return switch (phase) {
+      case NEW -> StatusSource.FinishConversationPhaseEnum.NEW;
+      case IN_PROGRESS -> StatusSource.FinishConversationPhaseEnum.IN_PROGRESS;
+    };
   }
 
   private static LiveControllerApi createController(
