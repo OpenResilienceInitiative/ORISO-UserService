@@ -160,7 +160,7 @@ slow response timeout, pool-exhaustion timeout, one failed HTTP attempt instead
 of Apache's previous four attempts, and eight concurrent admin reads sharing
 one token acquisition.
 
-Current `pre-dev` has removed the Rocket.Chat production adapter,
+Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.
 Matrix/Synapse is the sole messaging backbone, the ORISO frontend remains the
 product surface, and LiveKit plus the controlled Element Call/MatrixRTC fork is
@@ -195,10 +195,46 @@ That real cardinality defect motivated the bounded observation convention
 above. Existing standard histograms exposed only the `+Inf` bucket, which
 motivated the explicit finite latency buckets.
 
-The audited pod predates this branch. Therefore its live data proves the OTel
-pipeline and supplies a baseline, but it does not prove the new
-`userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
-repair. Those require the branch image to be deployed and queried again.
+The pod audited on July 25 predates this branch. Its data proves the OTel
+pipeline and supplies a historical baseline, but it is not evidence for the
+current integration head.
+
+### Live PreDev deployment truth on 2026-07-28
+
+A fresh read-only cluster and SigNoz audit at 23:53 CEST separates current
+source from current runtime:
+
+- `origin/pre-dev` remained
+  `be15d12f6305f3370e626a0eec131293cceb5624`; integration PR #888 remained
+  unmerged.
+- PreDev ran one ready UserService replica from
+  `docker.io/library/oriso-userservice:fe811-20260728`, resolved by the running
+  pod to image ID
+  `sha256:078e70966811aa1a7aef189a59d6be1c8f3c7d149aa1b0d86f43c234e33d8a04`.
+  The pod started at 21:31 CEST. This is not the integration PR image.
+- The current pod exported the bounded `userservice.outbound.*` metrics. Its
+  cumulative counters contained 73 `live-service` POST attempts, all with
+  `async_error`, 8.31 ms mean attempt latency and 138.08 measured request bytes
+  per call. That is direct runtime proof that the dead LiveService path in
+  #901/#902 has not yet been deployed away.
+- Matrix, the MatrixRTC authorization/gateway components, Element Call and
+  LiveKit were running. No Rocket.Chat pod or Jitsi workload was present.
+- The old `rocketchat` Service nevertheless remained with zero endpoints, and
+  `rocketchat-ingress` still routed `/api/v1` traffic to it. The UserService
+  deployment also still consumed a ConfigMap containing Rocket.Chat and
+  UserService-Mongo configuration keys. No configuration values are copied into
+  this evidence.
+- A shared MongoDB workload remained because AgencyService and
+  ConsultingTypeService still declared MongoDB configuration. Removing the
+  UserService/Rocket.Chat keys is therefore separable from deciding whether
+  those other services still require the shared database.
+
+The runtime is consequently **not yet a completed Matrix-only cutover**, even
+though the current UserService source is. The final gate is an approved
+deployment of the reviewed removal slices plus deployment cleanup, followed by
+an immutable image readback and a new-pod SigNoz query showing zero
+`live-service` attempts and no Rocket.Chat routing or UserService configuration
+residue. Jitsi remains a negative workload assertion.
 
 ## Chatty-call reductions
 
