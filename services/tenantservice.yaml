@@ -1192,14 +1192,22 @@ components:
           example: Llorem ipsum...
         termsAndConditionsConfirmation:
           type: string
-          format: date-time
           example: '2022-12-07T11:51:01'
-          description: Datetime stamp when new terms and condition defined
+          description: >-
+            Datetime stamp when new terms and conditions were defined.
+            TenantService serializes this from a `LocalDateTime`
+            (`TenantEntity.contentTermsAndConditionsActivationDate`), so the wire
+            value carries no UTC offset and is not an RFC 3339 date-time. It must
+            stay a plain string here: `format: date-time` generates an
+            `OffsetDateTime` whose deserialization fails and takes down every
+            request through `HttpTenantFilter`.
         dataPrivacyConfirmation:
           type: string
-          format: date-time
           example: '2022-12-07T11:51:01'
-          description: Datetime stamp when new privacy defined
+          description: >-
+            Datetime stamp when a new privacy text was defined. Same
+            local-date-time wire format as `termsAndConditionsConfirmation` —
+            see the note there.
         dataProtectionContactTemplate:
           $ref: '#/components/schemas/DataProtectionContactTemplateDTO'
     Settings:

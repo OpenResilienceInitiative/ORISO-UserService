@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.tenant;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +36,7 @@ public class TenantService {
 
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "#tenantId")
   public RestrictedTenantDTO getRestrictedTenantData(Long tenantId) {
+    requireConcreteTenantId(tenantId);
     log.info("Calling tenant service to get tenant data for tenantId {}", tenantId);
 
     return tenantServiceApiControllerFactory
@@ -43,6 +45,7 @@ public class TenantService {
   }
 
   public RestrictedTenantDTO getRestrictedTenantDataFresh(Long tenantId) {
+    requireConcreteTenantId(tenantId);
     log.info("Calling tenant service for current tenant data for tenantId {}", tenantId);
     return tenantServiceApiControllerFactory
         .createControllerApi()
@@ -50,14 +53,20 @@ public class TenantService {
   }
 
   public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {
-    if (tenantIds.isEmpty()) {
+    var concreteTenantIds =
+        tenantIds.stream()
+            .filter(Objects::nonNull)
+            .filter(tenantId -> !TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
+            .toList();
+    if (concreteTenantIds.isEmpty()) {
       return List.of();
     }
 
-    log.info("Calling tenant service to get tenant data for {} tenant ids", tenantIds.size());
+    log.info(
+        "Calling tenant service to get tenant data for {} tenant ids", concreteTenantIds.size());
     var tenantControllerApi = tenantServiceApiControllerFactory.createControllerApi();
     var tenants = new ArrayList<RestrictedTenantDTO>();
-    for (var tenantIdBatch : Lists.partition(List.copyOf(tenantIds), MAX_TENANT_IDS_PER_BATCH)) {
+    for (var tenantIdBatch : Lists.partition(concreteTenantIds, MAX_TENANT_IDS_PER_BATCH)) {
       var batchResult = tenantControllerApi.getRestrictedTenantDataByTenantIds(tenantIdBatch);
       if (batchResult != null) {
         tenants.addAll(batchResult);
@@ -80,5 +89,11 @@ public class TenantService {
               }
             });
     return tenants;
+  }
+
+  private void requireConcreteTenantId(Long tenantId) {
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
+      throw new IllegalArgumentException("Concrete tenant id required");
+    }
   }
 }

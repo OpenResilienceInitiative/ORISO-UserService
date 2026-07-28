@@ -104,6 +104,21 @@ class TenantServiceTest {
   void getRestrictedTenantData_emptyTenantIds_doesNotCallApi() {
     assertThat(tenantService.getRestrictedTenantData(Set.of())).isEmpty();
     assertThat(tenantControllerApi.tenantIdsCalls.get()).isZero();
+  }
+
+  @Test
+  void getRestrictedTenantData_batchOmitsTechnicalTenantIdBeforeApiCall() {
+    tenantService.getRestrictedTenantData(new LinkedHashSet<>(List.of(0L, TENANT_ID)));
+
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
+    assertThat(tenantControllerApi.lastTenantIds).containsExactly(TENANT_ID);
+  }
+
+  @Test
+  void getRestrictedTenantData_technicalTenantId_rejectsBeforeApiCall() {
+    assertThatThrownBy(() -> tenantService.getRestrictedTenantData(0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Concrete tenant id required");
     assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 

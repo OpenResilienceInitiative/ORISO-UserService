@@ -124,6 +124,21 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void updateTenantAdmin_Should_NotLookUpTechnicalTenant() {
+    UpdateTenantAdminDTO tenantAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(updateAdminService.updateTenantAdmin("platform-admin", tenantAdminDTO))
+        .thenReturn(platformAdmin);
+
+    AdminResponseDTO response =
+        tenantAdminUserService.updateTenantAdmin("platform-admin", tenantAdminDTO);
+
+    Mockito.verifyNoInteractions(tenantService);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("0");
+    assertThat(response.getEmbedded().getTenantSubdomain()).isNull();
+  }
+
+  @Test
   void findTenantAdmins_Should_ReturnAllAdminsForSameTenant() {
     // given
     Long tenantId = 42L;
@@ -232,6 +247,39 @@ class TenantAdminUserServiceTest {
     Assertions.assertFalse(tenantNameMapCaptor.getValue().containsKey(2L));
     Mockito.verify(tenantService).getRestrictedTenantData(Set.of(1L, 2L));
     Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(Mockito.anyLong());
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_NotLookUpTechnicalTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Admin.AdminBase platformAdminBase = adminBase("platform-admin", 0L);
+    Page<Admin.AdminBase> adminsPage = new PageImpl<>(List.of(platformAdminBase), pageRequest, 1);
+    Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
+        .thenReturn(adminsPage);
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(platformAdmin));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(0L);
+    ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
+    Mockito.verify(userServiceMapper)
+        .mapOfAdmin(
+            Mockito.eq(adminsPage),
+            Mockito.eq(List.of(platformAdmin)),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            tenantNameMapCaptor.capture(),
+            Mockito.any());
+    assertThat(tenantNameMapCaptor.getValue()).isEmpty();
   }
 
   private Admin tenantAdmin(String id, Long tenantId) {

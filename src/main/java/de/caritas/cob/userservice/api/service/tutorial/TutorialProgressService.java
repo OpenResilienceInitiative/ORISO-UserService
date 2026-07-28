@@ -56,41 +56,31 @@ public class TutorialProgressService {
   @Value("${tutorial.max-rows-per-user:50}")
   private int maxRowsPerUser = 50;
 
-  @Transactional
+  private final @NonNull TutorialProgressStore tutorialProgressStore;
+
   public TutorialProgressItem upsertOwnProgress(
       String userId, Long tenantId, UpsertTutorialProgressRequest request) {
     validate(request);
 
     var now = LocalDateTime.now();
-    var existing =
-        tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            userId, request.getSurface(), request.getTourId(), request.getTourVersion());
-    if (existing.isEmpty() && tutorialProgressRepository.countByUserId(userId) >= maxRowsPerUser) {
-      throw new BadRequestException("tutorial progress row limit reached for this user");
-    }
-    var progress =
-        existing.orElseGet(
-            () ->
-                TutorialProgress.builder()
-                    .userId(userId)
-                    .surface(request.getSurface())
-                    .tourId(request.getTourId())
-                    .tourVersion(request.getTourVersion())
-                    .createDate(now)
-                    .startedAt(now)
-                    .tenantId(tenantId)
-                    .build());
-
-    progress.setStatus(request.getStatus());
-    progress.setCurrentStepId(request.getCurrentStepId());
-    progress.setUpdateDate(now);
+    var desired =
+        TutorialProgress.builder()
+            .userId(userId)
+            .surface(request.getSurface())
+            .tourId(request.getTourId())
+            .tourVersion(request.getTourVersion())
+            .status(request.getStatus())
+            .currentStepId(request.getCurrentStepId())
+            .createDate(now)
+            .updateDate(now)
+            .startedAt(now)
+            .tenantId(tenantId)
+            .build();
     if (isTerminal(request.getStatus())) {
-      progress.setCompletedAt(now);
-    } else {
-      progress.setCompletedAt(null);
+      desired.setCompletedAt(now);
     }
 
-    return toItem(tutorialProgressRepository.save(progress));
+    return toItem(tutorialProgressStore.upsert(desired, maxRowsPerUser));
   }
 
   @Transactional(readOnly = true)
