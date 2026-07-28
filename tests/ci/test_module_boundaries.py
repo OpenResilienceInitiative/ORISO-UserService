@@ -135,6 +135,29 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "not expose the outbound-port package:\n" + "\n".join(offenders),
         )
 
+    def test_identity_boundary_has_no_unused_session_close_command(self):
+        sources = [
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakAuthClient.java",
+        ]
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if "closeSession(" in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            offenders,
+            "The unused identity session-close command must not remain on production surfaces:\n"
+            + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (
