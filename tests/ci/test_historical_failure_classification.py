@@ -112,10 +112,10 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
         self.assertEqual(required_suite["unitTests"], current["unit"])
         self.assertEqual(required_suite["integrationTests"], current["integration"])
         self.assertEqual(
-            "7255db9b562c208758e5f4a359708baaf3fc043e",
+            "800db59426fa6abad1ca93095d57ac682b1b3e3d",
             current["verifiedApplicationHead"],
         )
-        self.assertEqual(2, len(current["githubEvidence"]))
+        self.assertEqual(2, len(current["localEvidence"]))
         self.assertEqual(40, reconciliation["sourceDiff"]["deletedJUnitTestClasses"])
         self.assertEqual(29, reconciliation["sourceDiff"]["addedJUnitTestClasses"])
         self.assertEqual(
@@ -130,9 +130,9 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertEqual(3412, current.get("unitTests"))
+        self.assertEqual(3413, current.get("unitTests"))
         self.assertEqual(82, current["integrationReports"])
-        self.assertEqual(852, current["integrationTests"])
+        self.assertEqual(854, current["integrationTests"])
         self.assertEqual(0, current["failures"])
         self.assertEqual(0, current["errors"])
         self.assertEqual(9, current["skipped"])

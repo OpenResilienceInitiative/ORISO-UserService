@@ -196,13 +196,13 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "7255db9b562c208758e5f4a359708baaf3fc043e",
+      "verifiedApplicationHead": "800db59426fa6abad1ca93095d57ac682b1b3e3d",
       "unit": 3413,
       "integration": 854,
       "primaryTotal": 4267,
-      "githubEvidence": [
-        "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400295213/job/90413180351",
-        "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400298789/job/90413191373"
+      "localEvidence": [
+        "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
+        "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
       ]
     },
     "sinceCutoverDelta": {
