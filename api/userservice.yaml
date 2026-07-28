@@ -1653,6 +1653,32 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /liveproxy/send:
+    post:
+      tags:
+        - liveproxy-controller
+      summary: 'Deprecated compatibility tombstone; LiveService delivery has been removed'
+      description: 'This endpoint no longer forwards events and always returns 410 Gone.'
+      deprecated: true
+      operationId: sendLiveEvent
+      parameters:
+        - name: matrixRoomId
+          in: query
+          description: Legacy Matrix room ID parameter; ignored
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Legacy response retained for source compatibility during deprecation
+        400:
+          description: BAD REQUEST - required query parameter is missing
+        403:
+          description: FORBIDDEN - no/invalid role or authorization
+        410:
+          description: GONE - LiveService delivery has been permanently removed
+      security:
+        - Bearer: [ ]
   /users/chat-series/{seriesId}/occurrences:
     get:
       tags:

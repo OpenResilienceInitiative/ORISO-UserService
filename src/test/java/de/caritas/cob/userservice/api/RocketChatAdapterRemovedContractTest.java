@@ -174,7 +174,9 @@ class RocketChatAdapterRemovedContractTest {
 
     assertThat(Files.readString(Path.of("pom.xml")))
         .doesNotContain("liveservice-client-model", "services/liveservice.yaml");
-    assertThat(Files.readString(USER_SERVICE_API)).doesNotContain("/liveproxy/send");
+    assertThat(Files.readString(USER_SERVICE_API))
+        .contains("/liveproxy/send:", "deprecated: true", "410:")
+        .doesNotContain("Send a live notification event");
     assertThat(Files.readString(Path.of("src/main/resources/application.properties")))
         .doesNotContain("LIVE_SERVICE_API_URL", "live.service.api.url");
   }
