@@ -136,7 +136,7 @@ public class KeycloakTestConfig {
       public void updateEmail(String userId, String emailAddress) {}
 
       @Override
-      public void rollBackUser(String userId) {}
+      public void rollbackUser(String userId) {}
 
       @Override
       public void deleteUser(String userId) {}

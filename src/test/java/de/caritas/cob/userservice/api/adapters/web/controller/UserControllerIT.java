@@ -49,6 +49,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.*;
@@ -274,7 +275,10 @@ class UserControllerIT {
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(extraInterfaces = IdentityAccountRemover.class)
+  private IdentityClient identityClient;
+
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;

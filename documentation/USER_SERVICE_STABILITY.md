@@ -230,7 +230,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -246,6 +246,13 @@ returning. The appointment deletion repair stays behind `Organizing` and
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+
+Identity account removal now has explicit provider-call bounds. A normal
+removal resolves the target once and calls remove once. An unauthorized removal
+refreshes the admin session once and retries the complete lookup/remove
+operation at most once. Provider not-found handling remains idempotent,
+provisioning rollback remains best-effort and strict deletion sequencing is
+unchanged.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production

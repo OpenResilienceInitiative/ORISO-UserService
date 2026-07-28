@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -63,7 +64,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService implements IdentityClient, IdentityAccountRemover {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -330,7 +331,7 @@ public class KeycloakService implements IdentityClient {
               "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
               createdUserId,
               exception);
-          rollBackUser(createdUserId);
+          rollbackUser(createdUserId);
           throw new InternalServerErrorException(
               String.format(
                   "Could not persist mandatory keycloak user attributes for user %s",
@@ -772,7 +773,8 @@ public class KeycloakService implements IdentityClient {
    *
    * @param userId Keycloak user ID
    */
-  public void rollBackUser(String userId) {
+  @Override
+  public void rollbackUser(String userId) {
     try {
       deleteUser(userId);
       log.debug("User {} has been removed due to rollback", userId);
@@ -786,6 +788,7 @@ public class KeycloakService implements IdentityClient {
    *
    * @param userId the userId
    */
+  @Override
   public void deleteUser(String userId) {
     try {
       keycloakClient.getUsersResource().get(userId).remove();
