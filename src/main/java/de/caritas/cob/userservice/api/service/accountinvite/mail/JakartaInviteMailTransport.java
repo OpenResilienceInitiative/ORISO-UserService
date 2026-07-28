@@ -23,22 +23,9 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
   public InviteMailSendReceipt send(
       InviteSmtpSettings settings, String recipient, String subject, String htmlBody) {
     try {
-      Properties properties = new Properties();
-      properties.put("mail.smtp.auth", "true");
-      properties.put("mail.smtp.host", settings.host());
-      properties.put("mail.smtp.port", String.valueOf(settings.port()));
-      properties.put("mail.smtp.connectiontimeout", "10000");
-      properties.put("mail.smtp.timeout", "10000");
-      properties.put("mail.smtp.writetimeout", "10000");
-      if (settings.secure()) {
-        properties.put("mail.smtp.ssl.enable", "true");
-      } else {
-        properties.put("mail.smtp.starttls.enable", "true");
-      }
-
       Session session =
           Session.getInstance(
-              properties,
+              buildSessionProperties(settings),
               new Authenticator() {
                 @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
@@ -55,5 +42,30 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
     } catch (Exception exception) {
       throw new SmtpSendException("Account invite email could not be sent", exception);
     }
+  }
+
+  /**
+   * Builds the jakarta.mail session properties for the configured security mode. Hardening
+   * (ORISO-Admin#569 follow-up): in STARTTLS mode ({@code secure() == false}) the upgrade is
+   * mandatory — {@code mail.smtp.starttls.required} refuses servers (or men-in-the-middle) that do
+   * not offer STARTTLS instead of silently sending credentials in plaintext. In both modes the
+   * server certificate must match the configured host ({@code mail.smtp.ssl.checkserveridentity}).
+   */
+  static Properties buildSessionProperties(InviteSmtpSettings settings) {
+    Properties properties = new Properties();
+    properties.put("mail.smtp.auth", "true");
+    properties.put("mail.smtp.host", settings.host());
+    properties.put("mail.smtp.port", String.valueOf(settings.port()));
+    properties.put("mail.smtp.connectiontimeout", "10000");
+    properties.put("mail.smtp.timeout", "10000");
+    properties.put("mail.smtp.writetimeout", "10000");
+    properties.put("mail.smtp.ssl.checkserveridentity", "true");
+    if (settings.secure()) {
+      properties.put("mail.smtp.ssl.enable", "true");
+    } else {
+      properties.put("mail.smtp.starttls.enable", "true");
+      properties.put("mail.smtp.starttls.required", "true");
+    }
+    return properties;
   }
 }
