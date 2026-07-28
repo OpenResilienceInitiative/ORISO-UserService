@@ -197,18 +197,18 @@
     },
     "verifiedCurrent": {
       "verifiedApplicationHead": "7255db9b562c208758e5f4a359708baaf3fc043e",
-      "unit": 3412,
-      "integration": 852,
-      "primaryTotal": 4264,
+      "unit": 3413,
+      "integration": 854,
+      "primaryTotal": 4267,
       "githubEvidence": [
         "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400295213/job/90413180351",
         "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400298789/job/90413191373"
       ]
     },
     "sinceCutoverDelta": {
-      "unit": 39,
-      "integration": 12,
-      "primaryTotal": 51
+      "unit": 40,
+      "integration": 14,
+      "primaryTotal": 54
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -221,10 +221,10 @@
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "unitTests": 3412,
+    "unitTests": 3413,
     "unitSkipped": 0,
     "integrationReports": 82,
-    "integrationTests": 852,
+    "integrationTests": 854,
     "integrationSkipped": 9,
     "failures": 0,
     "errors": 0,
