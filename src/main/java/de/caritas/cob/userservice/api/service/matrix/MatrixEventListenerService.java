@@ -507,34 +507,40 @@ public class MatrixEventListenerService {
       log.info("🔔 Triggering direct-message notification for {} users", recipientIds.size());
 
       Long mappedSessionId = roomToSessionMap.get(roomId);
-      if (mappedSessionId != null) {
-        // Notify asynchronously so the Matrix sync loop is not blocked.
-        executorService.submit(
-            () -> {
-              try {
-                mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
-              } catch (Exception e) {
-                log.error("❌ Failed to send mobile push notification", e);
-              }
-              // The persisted feed entry is the source of truth for the notification timeline.
-              // Isolate the failure domains so a push failure cannot swallow the notification row.
-              try {
-                if (threadRootId != null && !threadRootId.isBlank()) {
-                  eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, privacyEnvelope);
-                } else {
-                  eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, privacyEnvelope);
-                }
-                if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
-                  consultantMessageStatService.recordMessageSent(
-                      senderDomainUserId, mappedSessionId);
-                }
-              } catch (Exception e) {
-                log.error("❌ Failed to create event notification from room", e);
-              }
-            });
+      if (mappedSessionId == null) {
+        log.warn(
+            "No session mapping for Matrix room {}; continuing notification delivery for {} users",
+            roomId,
+            recipientIds.size());
       }
+
+      // Notify asynchronously so the Matrix sync loop is not blocked.
+      executorService.submit(
+          () -> {
+            try {
+              mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+            } catch (Exception e) {
+              log.error("❌ Failed to send mobile push notification", e);
+            }
+            // The persisted feed entry is the source of truth for the notification timeline.
+            // Isolate the failure domains so a push failure cannot swallow the notification row.
+            try {
+              if (threadRootId != null && !threadRootId.isBlank()) {
+                eventNotificationService.createThreadReplyNotificationFromRoom(
+                    roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+              } else {
+                eventNotificationService.createMessageNotificationFromRoom(
+                    roomId, senderDomainUserId, privacyEnvelope);
+              }
+              if (mappedSessionId != null
+                  && senderDomainUserId != null
+                  && isConsultantMatrixUser(senderId)) {
+                consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
+              }
+            } catch (Exception e) {
+              log.error("❌ Failed to create event notification from room", e);
+            }
+          });
     }
   }
 

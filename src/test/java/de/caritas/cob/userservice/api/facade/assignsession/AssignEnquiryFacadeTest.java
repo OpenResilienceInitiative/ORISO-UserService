@@ -251,6 +251,8 @@ class AssignEnquiryFacadeTest {
     verify(sessionSupervisorFacade)
         .attachStandingSupervisorIfAssigned(
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------

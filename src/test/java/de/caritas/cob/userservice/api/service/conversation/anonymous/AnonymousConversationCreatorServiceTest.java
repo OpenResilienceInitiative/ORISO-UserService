@@ -3,10 +3,12 @@ package de.caritas.cob.userservice.api.service.conversation.anonymous;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -78,6 +80,37 @@ class AnonymousConversationCreatorServiceTest {
     verify(sessionService).saveSession(session);
     verify(eventNotificationService)
         .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
+  }
+
+  @Test
+  void keepsCreatedConversationWhenWaitingRoomNotificationPersistenceFails() {
+    var session = easyRandom.nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    session.setMainTopicId(11L);
+    var credentials = AnonymousUserCredentials.builder().userId(USER.getUserId()).build();
+    when(userService.getUser(credentials.getUserId())).thenReturn(Optional.of(USER));
+    when(sessionService.initializeSession(
+            any(User.class),
+            any(UserDTO.class),
+            anyBoolean(),
+            any(RegistrationType.class),
+            any(SessionStatus.class)))
+        .thenReturn(session);
+    when(topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId()))
+        .thenReturn(List.of("consultant-id"));
+    when(consultantAgencyService.getConsultantAgenciesByConsultantIds(List.of("consultant-id")))
+        .thenReturn(List.of());
+    doThrow(new IllegalStateException("notification database unavailable"))
+        .when(eventNotificationService)
+        .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
+
+    assertThatCode(() -> service.createAnonymousConversation(USER_DTO_SUCHT, credentials))
+        .doesNotThrowAnyException();
+
+    verify(sessionService).saveSession(session);
+    verify(eventNotificationService)
+        .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
+    verifyNoInteractions(rollbackFacade);
   }
 
   @Test

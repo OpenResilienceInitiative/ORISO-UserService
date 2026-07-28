@@ -1310,6 +1310,38 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void handleRoomMessage_shouldStillPushAndPersist_whenSessionMappingDisappears() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(34L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+
+    @SuppressWarnings("unchecked")
+    var roomToSessionMap =
+        (Map<String, Long>) ReflectionTestUtils.getField(service, "roomToSessionMap");
+    roomToSessionMap.remove(MATRIX_ROOM_ID);
+
+    var event = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-mapping-race");
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+
+    verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+    verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
+    assertThat(logAppender.list)
+        .anyMatch(
+            entry ->
+                entry.getLevel().toString().equals("WARN")
+                    && entry
+                        .getFormattedMessage()
+                        .contains("No session mapping for Matrix room " + MATRIX_ROOM_ID));
+  }
+
+  @Test
   void buildRecipientSet_shouldIgnoreParticipantsWithNullIds() {
     var user = mock(User.class);
     when(user.getUserId()).thenReturn(null);

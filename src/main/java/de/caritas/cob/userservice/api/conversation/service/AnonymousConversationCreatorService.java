@@ -22,11 +22,13 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user conversations (sessions). */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AnonymousConversationCreatorService {
 
   private final @NonNull UserService userService;
@@ -131,6 +133,10 @@ public class AnonymousConversationCreatorService {
 
     // WP-06 Slice 3: persist a `waiting_room.client.joined` timeline card for the eligible
     // consultants. Best-effort — must never break anonymous-conversation creation.
-    eventNotificationService.createWaitingRoomClientJoinedNotifications(session, consultantIds);
+    try {
+      eventNotificationService.createWaitingRoomClientJoinedNotifications(session, consultantIds);
+    } catch (Exception ex) {
+      log.warn("Could not persist waiting-room notifications for session {}", session.getId(), ex);
+    }
   }
 }
