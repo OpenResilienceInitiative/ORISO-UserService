@@ -77,6 +77,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -163,7 +164,8 @@ class UserControllerAuthorizationIT {
       extraInterfaces = {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
-        IdentityRoleLookup.class
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
 
@@ -224,27 +226,31 @@ class UserControllerAuthorizationIT {
     verifyNoInteractions(identityClient);
   }
 
+  private IdentityUsernameAvailability identityUsernameAvailability() {
+    return (IdentityUsernameAvailability) identityClient;
+  }
+
   @Test
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNotFound());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityUsernameAvailability()).isUsernameAvailable(username);
   }
 
   @Test
   void usernameAvailability_Should_StayPublic_WhenNoKeycloakAuthorization() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityUsernameAvailability()).isUsernameAvailable(username);
   }
 
   @Test

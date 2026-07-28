@@ -15,7 +15,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -36,7 +36,7 @@ class AnonymousUsernameRegistryTest {
   @InjectMocks private AnonymousUsernameRegistry anonymousUsernameRegistry;
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private UsernameTranscoder usernameTranscoder;
 
@@ -45,7 +45,7 @@ class AnonymousUsernameRegistryTest {
     setField(anonymousUsernameRegistry, "usernameTranscoder", usernameTranscoder);
     setField(anonymousUsernameRegistry, "usernamePrefix", "Ratsuchende_r ");
     // By default every candidate username is free in Keycloak; individual tests override this.
-    when(identityClient.isUsernameAvailable(anyString())).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable(anyString())).thenReturn(true);
   }
 
   @AfterEach
@@ -162,9 +162,9 @@ class AnonymousUsernameRegistryTest {
     when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
     when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
     // 3 and 5 are gone from the local DB but still exist in Keycloak -> must be skipped.
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
 
     anonymousUsernameRegistry.generateUniqueUsername();
 
