@@ -29,10 +29,13 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -70,18 +73,20 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
   @Autowired private DeactivateGroupChatService deactivationService;
   @Autowired private ChatRepository chatRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
 
   @BeforeEach
   void setUp() {
-    chatRepository.deleteAll();
+    deleteProofChat();
     consultantRepository.deleteById(CONSULTANT_ID);
     consultantRepository.save(createConsultant());
   }
 
   @AfterEach
   void cleanUp() {
-    chatRepository.deleteAll();
+    deleteProofChat();
     consultantRepository.deleteById(CONSULTANT_ID);
   }
 
@@ -180,9 +185,17 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
 
   private void run(
       DeactivateGroupChatScheduler scheduler, CountDownLatch ready, CountDownLatch start) {
-    ready.countDown();
-    await(start);
-    scheduler.performDeactivationWorkflow();
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              ready.countDown();
+              await(start);
+              scheduler.performDeactivationWorkflow();
+            });
+  }
+
+  private void deleteProofChat() {
+    jdbcTemplate.update("DELETE FROM chat WHERE matrix_room_id = ?", ROOM_ID);
   }
 
   private void await(CountDownLatch latch) {
