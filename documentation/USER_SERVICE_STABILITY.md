@@ -20,6 +20,24 @@ After repairing those clusters:
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
+The rows are not one additive total: the MariaDB and Redis rows are dedicated
+environment proofs for cases that belong to the integration inventory. The
+comparable primary current inventory is therefore 3,373 unit plus 840
+integration executions, or 4,213.
+
+The historical 4,707 figure is the raw failing discovery run, not the same test
+inventory with failures simply subtracted. After the original repair work, the
+last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
+or 4,722. The Matrix-only cutover then changed the executable product and test
+inventory to the current 4,213: 409 fewer unit and 100 fewer integration
+executions. The source diff for that same pre-cutover-to-current interval
+deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
+Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
+execution counts include parameterized and dynamic cases, class counts do not
+map one-to-one to the 509-execution net reduction. This is intentional scope
+removal plus replacement coverage, not unexplained test quarantine.
+
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
 CSRF token, which contradicts the service's security contract. No failing test
