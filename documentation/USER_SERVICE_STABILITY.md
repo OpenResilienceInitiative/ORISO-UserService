@@ -16,8 +16,8 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,801 | 0 | 0 | 7 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 941 | 0 | 0 | 3 | `./mvnw -Dskip.unit-tests=true clean integration-test` |
+| Unit | 3,374 | 0 | 0 | 4 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 842 | 0 | 0 | 3 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
@@ -27,7 +27,7 @@ CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 900 executed tests and
+suite, starts from a clean build, requires at least 830 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. The three environment-gated cases are not quarantined: Redis has
@@ -166,13 +166,40 @@ exception rolled back database cleanup, so the next scheduler run repeated the
 already completed external calls.
 
 The notification step is now best-effort: its runtime failure is logged without
-workflow identifiers, while completed deletion results remain committed. A
-regression integration test proves this transaction boundary. The technical
-mail context also no longer performs the TenantService lookup that caused the
-observed notification failure. On the repair branch, the unit suite reports
-3,801 tests with zero failures, zero errors and seven skips; the integration
-suite reports 941 tests with zero failures, zero errors and three skips. The
-focused supplier test and formatting gate also pass.
+workflow identifiers instead of escaping the transaction. The technical mail
+context also no longer performs the TenantService lookup that caused the
+observed notification failure, which removes the most frequent trigger.
+
+Measured on this branch after merging `pre-dev`: 3,374 unit executions with
+zero failures, zero errors and four skips, and 842 required integration
+executions across 78 reports with zero failures, zero errors and three skips.
+The focused supplier test and formatting gate also pass.
+
+#### Measured limit of this repair
+
+Catching the notification failure is not sufficient on its own when the
+workflow error originates inside the database delete. Reproduced locally in
+`DeleteUserAnonymousSchedulerIT`: with the preceding session deletes flushed
+and the user detached, `userRepository.delete` takes Hibernate's merge path and
+raises
+
+```
+org.hibernate.ObjectNotFoundException: No row with the given identifier exists
+  for entity [de.caritas.cob.userservice.api.model.Session with id ...]
+  at org.hibernate.type.EntityType.replace(EntityType.java:334)
+```
+
+which matches the PreDev stack. `DeleteDatabaseAskerAction` catches it and
+records a workflow error, the notification then fails and is caught here as
+intended — but Hibernate has already marked the transaction rollback-only, so
+the commit still fails with `UnexpectedRollbackException` and nothing is
+retained. Stubbing the repository to throw reproduces the shape of that failure
+but not its consequence, because only a genuine failure poisons the persistence
+context; the test therefore provokes the real exception.
+
+Making the deletion commit independently of that poisoned context requires its
+own transaction boundary and is tracked separately. Until then the hourly
+repeat loop is narrowed to the cases this branch removes, not closed.
 
 ## Chatty-call reductions
 
