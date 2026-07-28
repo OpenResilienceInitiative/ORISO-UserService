@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
@@ -36,7 +37,8 @@ public class ConsultantUpdateServiceBase {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class
+        IdentityUsernameAvailability.class,
+        IdentitySecondFactor.class
       })
   protected IdentityClient identityClient;
 

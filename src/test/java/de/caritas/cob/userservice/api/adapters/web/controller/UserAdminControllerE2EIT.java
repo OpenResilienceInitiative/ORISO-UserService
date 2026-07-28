@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
@@ -127,7 +128,8 @@ class UserAdminControllerE2EIT {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class
+        IdentityUsernameAvailability.class,
+        IdentitySecondFactor.class
       })
   IdentityClient identityClient;
 

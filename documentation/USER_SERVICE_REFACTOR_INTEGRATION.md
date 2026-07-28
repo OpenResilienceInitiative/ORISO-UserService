@@ -25,16 +25,22 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity email ownership | [#879](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/879) | Provider-neutral typed owner lookup replaces transport maps in application code |
 | Identity authentication | [#880](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/880) | Login, logout, and verification use a focused provider-neutral port |
 | Username availability | [#881](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/881) | Four current consumers use a focused availability port |
+| Identity second factor | [#882](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/882) | OTP and email verification use typed application values, bounded retries, and five stable low-cardinality operation tags |
 
 Every row is represented by a separate merge commit so the original PR head and
 its review history remain traceable.
+
+The #882 merge composes `IdentitySecondFactor` with the previously integrated
+authentication, email-owner, role-read, and username-availability interfaces in
+`KeycloakService`. Shared Spring test doubles implement all focused interfaces,
+and the combined architecture contract retains every earlier boundary while
+adding the typed OTP/email-verification and bounded-retry guarantees.
 
 ## Deliberately not integrated yet
 
 | State | PR | Reason |
 | --- | --- | --- |
-| Next isolated slice | [#882](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/882) | Green independently, but overlaps central identity, adapter, documentation, and Spring test contexts in the combined branch |
-| Review-ready after #882 decision | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Email mutation shares the same broad-client decomposition surface |
+| Next isolated slice | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Email mutation shares the same broad-client decomposition surface and must be composed with the focused ports now represented here |
 | Draft | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | Dead session-close removal remains draft even though its current CI is green |
 | Provider deployment gate | [#826](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/826) | Code is integrated for review, but PreDev shipment remains blocked until the TenantService batch endpoint is deployed and read back successfully |
 
@@ -47,10 +53,10 @@ the focused replay PRs.
 
 Executed on 2026-07-28 with Temurin JDK 21:
 
-- unit suite: 3,435 tests, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,446 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests, 0 failures, 0 errors,
   9 environment-gated skips;
-- CI and executable architecture contracts: 55 tests passed;
+- CI and executable architecture contracts: 56 tests passed;
 - OpenAPI contract gate: 8 tests passed;
 - package build and Spotless: passed;
 - `git diff --check`: passed.

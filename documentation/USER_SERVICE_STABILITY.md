@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-27
+Last verified: 2026-07-28
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -27,28 +27,31 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,373 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
+| Unit | 3,438 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 850 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,373 unit plus 840
-integration executions, or 4,213.
+comparable primary current inventory is therefore 3,438 unit plus 850
+integration executions, or 4,288.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,213: 409 fewer unit and 100 fewer integration
-executions. The source diff for that same pre-cutover-to-current interval
+inventory to a recorded 4,213: 409 fewer unit and 100 fewer integration
+executions. Subsequent stability and boundary work raised the current inventory
+to 4,288 without restoring removed legacy paths. The source diff for the
+pre-cutover-to-cutover interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 509-execution net reduction. This is intentional scope
-removal plus replacement coverage, not unexplained test quarantine.
+map one-to-one to the initially recorded 509-execution net reduction. This is
+intentional scope removal plus replacement coverage, not unexplained test
+quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -234,7 +237,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -284,6 +287,21 @@ external API, schema, configuration or failure policy. One availability check
 still performs exactly two adapter-internal Keycloak searches, for the decoded
 and encoded username. This slice improves ownership and testability; it does
 not claim a call reduction or deployed/runtime evidence.
+
+A dedicated second-factor boundary contract keeps OTP and email-verification
+operations out of the broad `IdentityClient` contract. Each of the five
+operations performs exactly one provider request on its normal path. An initial
+unauthorized response can trigger at most one token refresh and one repeated
+provider request, for a maximum of two attempts. Retry measurements use five
+fixed low-cardinality operation tags (`otp-fetch`, `otp-setup`, `otp-delete`,
+`email-verification-start` and `email-verification-finish`) and contain no
+username or other user data. The application passes the encoded username
+through the focused port; the Keycloak adapter owns provider-specific decoding,
+while the verified email mutation continues to use the decoded username.
+External APIs, schemas and configuration remain unchanged, and this refactor
+does not reduce the number of second-factor provider calls. These are
+source-and-local-test guarantees until the branch is merged, deployed and
+verified on PreDev.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production

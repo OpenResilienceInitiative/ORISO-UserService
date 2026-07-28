@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
@@ -83,7 +84,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
         IdentityAuthentication.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class
+        IdentityUsernameAvailability.class,
+        IdentitySecondFactor.class
       })
   private IdentityClient identityClient;
 
