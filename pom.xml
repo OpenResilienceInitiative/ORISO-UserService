@@ -986,6 +986,12 @@
 							<modelPackage>
 								${project.groupId}.${project.artifactId}.tenantservice.generated.web.model
 							</modelPackage>
+							<typeMappings>
+								<typeMapping>OffsetDateTime=LocalDateTime</typeMapping>
+							</typeMappings>
+							<importMappings>
+								<importMapping>java.time.OffsetDateTime=java.time.LocalDateTime</importMapping>
+							</importMappings>
 						</configuration>
 					</execution>
 					<execution>
@@ -1013,6 +1019,12 @@
 							<modelPackage>
 								${project.groupId}.${project.artifactId}.tenantadminservice.generated.web.model
 							</modelPackage>
+							<typeMappings>
+								<typeMapping>OffsetDateTime=LocalDateTime</typeMapping>
+							</typeMappings>
+							<importMappings>
+								<importMapping>java.time.OffsetDateTime=java.time.LocalDateTime</importMapping>
+							</importMappings>
 						</configuration>
 					</execution>
 					<execution>
