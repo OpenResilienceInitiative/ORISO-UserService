@@ -84,12 +84,16 @@ class KeycloakServiceLoggingTest {
   }
 
   @Test
-  void loginUser_ShouldRedactPassword_WhenRequestBodyIsRenderedForDebugLogging() {
+  void login_ShouldRedactPassword_WhenRequestBodyIsRenderedForDebugLogging() {
     var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setAccessToken("access-token");
+    loginResponse.setRefreshToken("refresh-token");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(new ResponseEntity<>(loginResponse, HttpStatus.OK));
 
-    assertThat(keycloakService.loginUser(USERNAME, PASSWORD)).isSameAs(loginResponse);
+    var identityLogin = keycloakService.login(USERNAME, PASSWORD);
+    assertThat(identityLogin.accessToken()).isEqualTo("access-token");
+    assertThat(identityLogin.refreshToken()).isEqualTo("refresh-token");
 
     var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate)
@@ -103,31 +107,31 @@ class KeycloakServiceLoggingTest {
   }
 
   @Test
-  void logoutUser_ShouldNotLogRefreshToken_WhenKeycloakLogoutThrowsException() {
+  void logout_ShouldNotLogRefreshToken_WhenKeycloakLogoutThrowsException() {
     when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
         .thenThrow(new RestClientException("keycloak unavailable"));
 
-    assertThat(keycloakService.logoutUser(REFRESH_TOKEN)).isFalse();
+    assertThat(keycloakService.logout(REFRESH_TOKEN)).isFalse();
 
     assertRefreshTokenWasNotLogged();
   }
 
   @Test
-  void logoutUser_ShouldNotLogRefreshToken_WhenKeycloakLogoutReturnsUnexpectedStatus() {
+  void logout_ShouldNotLogRefreshToken_WhenKeycloakLogoutReturnsUnexpectedStatus() {
     when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
         .thenReturn(new ResponseEntity<>(HttpStatus.BAD_REQUEST));
 
-    assertThat(keycloakService.logoutUser(REFRESH_TOKEN)).isFalse();
+    assertThat(keycloakService.logout(REFRESH_TOKEN)).isFalse();
 
     assertRefreshTokenWasNotLogged();
   }
 
   @Test
-  void logoutUser_ShouldRedactRefreshToken_WhenRequestBodyIsRenderedForDebugLogging() {
+  void logout_ShouldRedactRefreshToken_WhenRequestBodyIsRenderedForDebugLogging() {
     when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
         .thenReturn(new ResponseEntity<>(HttpStatus.NO_CONTENT));
 
-    assertThat(keycloakService.logoutUser(REFRESH_TOKEN)).isTrue();
+    assertThat(keycloakService.logout(REFRESH_TOKEN)).isTrue();
 
     var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
     verify(restTemplate).postForEntity(anyString(), requestCaptor.capture(), eq(Void.class));

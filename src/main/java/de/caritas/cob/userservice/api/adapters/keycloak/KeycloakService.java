@@ -24,8 +24,10 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -63,7 +65,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService implements IdentityAuthentication, IdentityClient {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -139,30 +141,23 @@ public class KeycloakService implements IdentityClient {
         || !userRepresentation.getAttributes().get(LOCALE).contains(locale);
   }
 
-  /**
-   * Performs a Keycloak login and returns the Keycloak {@link KeycloakLoginResponseDTO} on success.
-   *
-   * @param userName the username
-   * @param password the password
-   * @return {@link KeycloakLoginResponseDTO}
-   */
-  public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    return keycloakAuthClient.loginUser(userName, password);
+  @Override
+  public IdentityLogin login(final String userName, final String password) {
+    KeycloakLoginResponseDTO response = keycloakAuthClient.loginUser(userName, password);
+    return new IdentityLogin(
+        response.getAccessToken(),
+        response.getExpiresIn(),
+        response.getRefreshExpiresIn(),
+        response.getRefreshToken());
   }
 
   @Override
-  public boolean verifyIgnoringOtp(String username, String password) {
+  public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
     return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }
 
-  /**
-   * Performs a Keycloak logout. This only destroys the Keycloak session, the (offline) access token
-   * will still be valid until expiration date/time ends.
-   *
-   * @param refreshToken the refreshToken
-   * @return true if logout was successful
-   */
-  public boolean logoutUser(final String refreshToken) {
+  @Override
+  public boolean logout(final String refreshToken) {
     return keycloakAuthClient.logoutUser(refreshToken);
   }
 

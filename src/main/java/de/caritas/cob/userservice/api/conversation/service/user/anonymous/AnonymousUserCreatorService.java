@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
@@ -10,7 +9,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.LogService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class AnonymousUserCreatorService {
 
   private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull RollbackFacade rollbackFacade;
 
   /**
@@ -39,13 +41,13 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    KeycloakLoginResponseDTO identityLogin;
+    IdentityLogin identityLogin;
     try {
       var user =
           createUserFacade.updateIdentityAndCreateAccount(
               response.getUserId(), userDto, UserRole.USER);
       createUserFacade.provisionMatrixUser(user, userDto.getUsername());
-      identityLogin = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+      identityLogin = identityAuthentication.login(userDto.getUsername(), userDto.getPassword());
     } catch (BadRequestException | InternalServerErrorException e) {
       rollBackAnonymousUserAccount(response.getUserId());
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
@@ -53,10 +55,10 @@ public class AnonymousUserCreatorService {
 
     return AnonymousUserCredentials.builder()
         .userId(response.getUserId())
-        .accessToken(identityLogin.getAccessToken())
-        .expiresIn(identityLogin.getExpiresIn())
-        .refreshToken(identityLogin.getRefreshToken())
-        .refreshExpiresIn(identityLogin.getRefreshExpiresIn())
+        .accessToken(identityLogin.accessToken())
+        .expiresIn(identityLogin.expiresIn())
+        .refreshToken(identityLogin.refreshToken())
+        .refreshExpiresIn(identityLogin.refreshExpiresIn())
         .build();
   }
 
