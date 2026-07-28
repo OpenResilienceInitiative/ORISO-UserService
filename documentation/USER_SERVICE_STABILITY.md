@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-27
+Last verified: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -11,14 +11,44 @@ Spring Security assumptions, test-database replacement, Spring Boot 4 / Jackson
 3 migration gaps, incomplete external-service test doubles, stale chat migration
 expectations and two production regressions.
 
+The counted classification is machine-readable in
+[`user-service-historical-failure-classification.json`](user-service-historical-failure-classification.json)
+and protected by an executable CI contract. Its failure clusters sum exactly
+to 28: 19 obsolete security assertions, two Actuator contract mismatches, one
+Rocket.Chat configuration expectation, three session-locking test doubles and
+one case each for a Jackson request fixture, the public-consultant test double
+and a stale chat aggregate assertion. Its error clusters sum exactly to 704:
+637 replacement-H2 datasource failures, 22 Spring Plugin/HATEOAS ABI errors
+and 45 initial Spring context-threshold cascades. The artifact preserves the
+15-suite breakdown behind those 45 errors and does not invent a more specific
+original exception where the retained report did not contain one.
+
 After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,373 | 0 | 0 | 4 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,373 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+
+The rows are not one additive total: the MariaDB and Redis rows are dedicated
+environment proofs for cases that belong to the integration inventory. The
+comparable primary current inventory is therefore 3,373 unit plus 840
+integration executions, or 4,213.
+
+The historical 4,707 figure is the raw failing discovery run, not the same test
+inventory with failures simply subtracted. After the original repair work, the
+last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
+or 4,722. The Matrix-only cutover then changed the executable product and test
+inventory to the current 4,213: 409 fewer unit and 100 fewer integration
+executions. The source diff for that same pre-cutover-to-current interval
+deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
+Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
+execution counts include parameterized and dynamic cases, class counts do not
+map one-to-one to the 509-execution net reduction. This is intentional scope
+removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -29,11 +59,14 @@ is skipped or quarantined.
 suite, starts from a clean build, requires at least 830 executed tests and
 checks for critical E2E reports.
 The previous three-test required subset and the non-blocking legacy quarantine
-were removed. The current Matrix-only floor is 830 tests; the older 900-test
-floor included deleted Rocket.Chat-only tests. The two environment-gated cases
-are not quarantined: Redis and MariaDB have their own required
-service-container/fresh-database jobs on branch, pull-request and publish
-workflows.
+were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
+`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
+deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
+that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
+floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
+disabled or ignored tests. The two environment-gated cases are not quarantined:
+Redis and MariaDB have their own required service-container/fresh-database jobs
+on branch, pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
