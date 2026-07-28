@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
 import de.caritas.cob.userservice.tenantservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -78,6 +80,23 @@ class TenantServiceTest {
     assertThat(result).containsExactly(knownTenant);
     assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(1);
     assertThat(tenantControllerApi.lastTenantIds).containsExactlyInAnyOrder(TENANT_ID, 99L);
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
+  @Test
+  void getRestrictedTenantData_moreThanProviderLimit_partitionsIntoBoundedBatchCalls() {
+    var tenantIds = new LinkedHashSet<Long>();
+    for (long tenantId = 1; tenantId <= 201; tenantId++) {
+      tenantIds.add(tenantId);
+    }
+
+    assertThat(tenantService.getRestrictedTenantData(tenantIds)).isEmpty();
+
+    assertThat(tenantControllerApi.tenantIdsCalls.get()).isEqualTo(3);
+    assertThat(tenantControllerApi.tenantIdRequests)
+        .allSatisfy(request -> assertThat(request).hasSizeLessThanOrEqualTo(100));
+    assertThat(tenantControllerApi.tenantIdRequests.stream().flatMap(List::stream))
+        .containsExactlyElementsOf(tenantIds);
     assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 
@@ -279,6 +298,7 @@ class TenantServiceTest {
     RestrictedTenantDTO tenantIdResult;
     List<RestrictedTenantDTO> tenantIdsResult;
     List<Long> lastTenantIds;
+    final List<List<Long>> tenantIdRequests = new ArrayList<>();
     RuntimeException subdomainException;
     RuntimeException tenantIdException;
     final AtomicInteger subdomainCalls = new AtomicInteger();
@@ -296,6 +316,7 @@ class TenantServiceTest {
       subdomainCalls.set(0);
       tenantIdCalls.set(0);
       tenantIdsCalls.set(0);
+      tenantIdRequests.clear();
       subdomainLatch = null;
     }
 
@@ -324,6 +345,7 @@ class TenantServiceTest {
     public List<RestrictedTenantDTO> getRestrictedTenantDataByTenantIds(List<Long> tenantIds) {
       tenantIdsCalls.incrementAndGet();
       lastTenantIds = List.copyOf(tenantIds);
+      tenantIdRequests.add(lastTenantIds);
       return tenantIdsResult != null ? tenantIdsResult : List.of();
     }
 

@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.admin.service.tenant;
 
+import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -17,6 +19,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class TenantService {
+
+  private static final int MAX_TENANT_IDS_PER_BATCH = 100;
 
   private final @NonNull TenantServiceApiControllerFactory tenantServiceApiControllerFactory;
   private final @NonNull CacheManager cacheManager;
@@ -51,12 +55,13 @@ public class TenantService {
     }
 
     log.info("Calling tenant service to get tenant data for {} tenant ids", tenantIds.size());
-    var tenants =
-        tenantServiceApiControllerFactory
-            .createControllerApi()
-            .getRestrictedTenantDataByTenantIds(List.copyOf(tenantIds));
-    if (tenants == null) {
-      return List.of();
+    var tenantControllerApi = tenantServiceApiControllerFactory.createControllerApi();
+    var tenants = new ArrayList<RestrictedTenantDTO>();
+    for (var tenantIdBatch : Lists.partition(List.copyOf(tenantIds), MAX_TENANT_IDS_PER_BATCH)) {
+      var batchResult = tenantControllerApi.getRestrictedTenantDataByTenantIds(tenantIdBatch);
+      if (batchResult != null) {
+        tenants.addAll(batchResult);
+      }
     }
 
     var tenantCache =

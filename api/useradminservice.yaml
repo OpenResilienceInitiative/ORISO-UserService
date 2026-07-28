@@ -600,7 +600,6 @@ paths:
             type: integer
             default: 10
             minimum: 1
-            maximum: 100
         - name: field
           in: query
           description: field to sort by
@@ -937,7 +936,6 @@ paths:
               type: integer
               default: 10
               minimum: 1
-              maximum: 100
           - name: field
             in: query
             description: field to sort by

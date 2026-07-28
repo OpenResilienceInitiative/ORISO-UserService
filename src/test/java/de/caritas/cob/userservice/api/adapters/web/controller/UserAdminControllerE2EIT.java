@@ -649,12 +649,12 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
-  void searchTenantAdmin_Should_rejectPageSizesAboveTenantBatchLimit() throws Exception {
+  void searchTenantAdmin_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
     this.mockMvc
         .perform(
             get(
                 "/useradmin/tenantadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isOk());
   }
 
   @Test
@@ -738,12 +738,12 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void searchAgencyAdmins_Should_rejectPageSizesAboveTenantBatchLimit() throws Exception {
+  void searchAgencyAdmins_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
     this.mockMvc
         .perform(
             get(
                 "/useradmin/agencyadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isOk());
   }
 
   @Test
