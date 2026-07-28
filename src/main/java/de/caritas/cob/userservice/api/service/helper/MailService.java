@@ -28,9 +28,9 @@ public class MailService {
    * @return whether MailService accepted the request
    */
   public boolean sendEmailNotification(MailsDTO mailsDTO) {
-    MailsControllerApi controllerApi = mailServiceApiControllerFactory.createControllerApi();
-    addSecurityHeaders(controllerApi);
     try {
+      MailsControllerApi controllerApi = mailServiceApiControllerFactory.createControllerApi();
+      addSecurityHeaders(controllerApi);
       controllerApi.sendMails(mailsDTO);
       return true;
     } catch (Exception e) {

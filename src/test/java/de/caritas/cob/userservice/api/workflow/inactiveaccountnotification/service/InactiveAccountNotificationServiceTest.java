@@ -3,7 +3,9 @@ package de.caritas.cob.userservice.api.workflow.inactiveaccountnotification.serv
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -202,10 +204,31 @@ class InactiveAccountNotificationServiceTest {
     doThrow(new DataIntegrityViolationException("duplicate fingerprint"))
         .when(claimWriter)
         .claim(any());
+    when(claimWriter.isClaimed(anyString())).thenReturn(true);
 
     service.scanAndNotifyInactiveAccounts();
 
     verify(claimWriter).claim(any());
+    verify(claimWriter).isClaimed(anyString());
+    verify(mailService, never()).sendEmailNotification(any());
+  }
+
+  @Test
+  void scanAndNotifyInactiveAccounts_Should_propagateUnrelatedClaimIntegrityFailure() {
+    User user = new User("user-1", null, "user1", "u1@example.com", true);
+    user.setTenantId(1L);
+    LocalDateTime now = LocalDateTime.now();
+    when(userRepository.findAllByDeleteDateIsNull()).thenReturn(singletonList(user));
+    when(askerActivityCalculator.lastActivity(user)).thenReturn(Optional.of(now.minusDays(400)));
+    doThrow(new DataIntegrityViolationException("recipient email exceeds column length"))
+        .when(claimWriter)
+        .claim(any());
+
+    assertThatThrownBy(service::scanAndNotifyInactiveAccounts)
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("recipient email exceeds column length");
+
+    verify(claimWriter).isClaimed(anyString());
     verify(mailService, never()).sendEmailNotification(any());
   }
 

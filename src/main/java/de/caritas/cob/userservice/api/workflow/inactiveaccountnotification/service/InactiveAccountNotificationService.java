@@ -134,9 +134,12 @@ public class InactiveAccountNotificationService {
                     .createDate(now)
                     .tenantId(accountTenantId)
                     .build());
-      } catch (DataIntegrityViolationException duplicateClaim) {
-        log.debug("Inactive account notification {} already claimed", fingerprint);
-        continue;
+      } catch (DataIntegrityViolationException claimFailure) {
+        if (claimWriter.isClaimed(fingerprint)) {
+          log.debug("Inactive account notification {} already claimed", fingerprint);
+          continue;
+        }
+        throw claimFailure;
       }
       if (emailDispatchEnabled) {
         if (dispatchEmail(recipient, role, accountId, accountTenantId, lastActivityAt)) {

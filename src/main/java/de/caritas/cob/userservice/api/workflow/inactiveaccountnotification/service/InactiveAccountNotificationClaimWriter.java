@@ -20,14 +20,21 @@ public class InactiveAccountNotificationClaimWriter {
     return auditLogRepository.saveAndFlush(auditLog);
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+  public boolean isClaimed(String notificationFingerprint) {
+    return auditLogRepository.existsByNotificationFingerprint(notificationFingerprint);
+  }
+
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markEmailDispatched(Long auditLogId) {
-    auditLogRepository
-        .findById(auditLogId)
-        .ifPresent(
-            auditLog -> {
-              auditLog.setEmailDispatched(true);
-              auditLogRepository.saveAndFlush(auditLog);
-            });
+    InactiveAccountNotificationAuditLog auditLog =
+        auditLogRepository
+            .findById(auditLogId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Inactive account notification audit log not found: " + auditLogId));
+    auditLog.setEmailDispatched(true);
+    auditLogRepository.saveAndFlush(auditLog);
   }
 }
