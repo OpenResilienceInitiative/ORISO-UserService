@@ -45,8 +45,6 @@ public interface IdentityClient {
 
   List<UserRepresentation> findByUsername(String username);
 
-  void closeSession(String sessionId);
-
   void deactivateUser(String userId);
 
   UserRepresentation getById(String userId);

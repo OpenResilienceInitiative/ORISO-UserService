@@ -27,6 +27,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Username availability | [#881](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/881) | Four current consumers use a focused availability port |
 | Identity second factor | [#882](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/882) | OTP and email verification use typed application values, bounded retries, and five stable low-cardinality operation tags |
 | Identity email mutations | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Current-account and post-verification email writes use a focused output port with explicit no-op and provider-call bounds |
+| Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 
 Every row is represented by a separate merge commit so the original PR head and
 its review history remain traceable.
@@ -37,13 +38,13 @@ email-owner, role-read, and username-availability interfaces in
 `KeycloakService`. Shared Spring test doubles implement all focused interfaces,
 and the combined architecture contract retains every earlier boundary while
 adding typed OTP/email-verification, bounded retries, and explicit email-write
-call bounds.
+call bounds. The #886 merge removes the unused session-close command while
+preserving the active refresh-token logout flow.
 
 ## Deliberately not integrated yet
 
 | State | PR | Reason |
 | --- | --- | --- |
-| Next isolated slice | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | Dead session-close removal is independently green and should remain a separate traceable removal slice |
 | Provider deployment gate | [#826](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/826) | Code is integrated for review, but PreDev shipment remains blocked until the TenantService batch endpoint is deployed and read back successfully |
 
 The broad historical PRs [#753](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/753)
@@ -55,10 +56,10 @@ the focused replay PRs.
 
 Executed on 2026-07-28 with Temurin JDK 21:
 
-- unit suite: 3,447 tests, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,445 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests, 0 failures, 0 errors,
   9 environment-gated skips;
-- CI and executable architecture contracts: 57 tests and 2 subtests passed;
+- CI and executable architecture contracts: 58 tests and 2 subtests passed;
 - OpenAPI contract gate: 8 tests passed;
 - package build and Spotless: passed;
 - `git diff --check`: passed.

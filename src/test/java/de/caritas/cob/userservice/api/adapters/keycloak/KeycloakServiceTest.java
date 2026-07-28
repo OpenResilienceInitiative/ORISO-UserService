@@ -127,8 +127,7 @@ public class KeycloakServiceTest {
     givenAKeycloakLoginUrl();
     givenAKeycloakLogoutUrl();
     var realAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
     setField(realAuthClient, "keycloakClientId", "app");
     setField(keycloakService, "keycloakAuthClient", realAuthClient);
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
@@ -1157,16 +1156,6 @@ public class KeycloakServiceTest {
     boolean hasAuthority = this.keycloakService.userHasAuthority("user", AuthorityValue.USER_ADMIN);
 
     assertThat(hasAuthority, is(false));
-  }
-
-  @Test
-  public void closeSession_Should_deleteSession() {
-    RealmResource realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
-
-    this.keycloakService.closeSession("sessionId");
-
-    verify(realmResource, times(1)).deleteSession(anyString(), eq(false));
   }
 
   @Test
