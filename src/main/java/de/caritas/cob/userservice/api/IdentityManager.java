@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
@@ -66,10 +68,16 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean isEmailAvailableOrOwn(String username, String email) {
-    var user = identityClient.findUserByEmail(email);
+    var owner = identityEmailOwnerLookup.findByEmail(email);
+    if (owner.isEmpty()) {
+      return true;
+    }
 
-    return user.isEmpty()
-        || username.equals(user.get("encodedUsername"))
-        || usernameTranscoder.decodeUsername(username).equals(user.get("decodedUsername"));
+    var ownerUsername = owner.orElseThrow().username();
+    return ownerUsername != null
+        && (username.equals(ownerUsername)
+            || usernameTranscoder
+                .decodeUsername(username)
+                .equals(usernameTranscoder.decodeUsername(ownerUsername)));
   }
 }

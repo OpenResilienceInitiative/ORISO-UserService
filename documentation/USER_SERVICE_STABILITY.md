@@ -247,6 +247,15 @@ A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
 
+Email-ownership validation now uses the focused
+`IdentityEmailOwnerLookup` output port and the application-owned
+`IdentityEmailOwner` value. `IdentityManager` no longer interprets Keycloak map
+keys, while the Keycloak adapter retains exact-email matching and representation
+mapping. The external-call bound is unchanged: one email-ownership check makes
+exactly one identity-provider lookup. An unused email remains accepted; raw and
+encoded representations of the same username remain accepted; incomplete owner
+data is rejected safely.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
 source. The next safe sequence is the remaining identity create-user DTO
