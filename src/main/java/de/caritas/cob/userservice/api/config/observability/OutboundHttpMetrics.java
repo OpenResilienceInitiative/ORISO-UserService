@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.restclient.RestTemplateCustomizer;
@@ -59,6 +61,36 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
     restTemplate.setObservationConvention(OBSERVATION_CONVENTION);
     if (restTemplate.getInterceptors().stream().noneMatch(MetricsInterceptor.class::isInstance)) {
       restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+    }
+  }
+
+  /**
+   * Observes a Java HTTP client call whose transport result is delivered asynchronously.
+   *
+   * <p>Only caller-supplied, low-cardinality dependency and method values become tags. Exception
+   * messages, request URLs and identifiers are deliberately excluded.
+   */
+  public <T> CompletableFuture<T> observeAsyncCall(
+      String dependency, String method, long requestBytes, Callable<CompletableFuture<T>> call) {
+    var sample = Timer.start(meterRegistry);
+    var normalizedMethod = method.toLowerCase(Locale.ROOT);
+    if (requestBytes >= 0) {
+      recordPayload(dependency, "request", requestBytes);
+    }
+
+    try {
+      var result = call.call();
+      result.whenComplete(
+          (response, failure) ->
+              recordCall(
+                  sample, dependency, normalizedMethod, failure == null ? "2xx" : "async_error"));
+      return result;
+    } catch (Exception failure) {
+      if (failure instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      recordCall(sample, dependency, normalizedMethod, "client_error");
+      return CompletableFuture.failedFuture(failure);
     }
   }
 

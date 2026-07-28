@@ -6,6 +6,8 @@ import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
@@ -150,6 +152,75 @@ class OutboundHttpMetricsTest {
   }
 
   @Test
+  void shouldPreserveSuccessfulTransportResultWhenMetricRecordingFails() {
+    var metrics = new OutboundHttpMetrics(new FailingCounterMeterRegistry());
+    var transport = new CompletableFuture<String>();
+
+    var observed = metrics.observeAsyncCall("live-service", "post", 31, () -> transport);
+    transport.complete("accepted");
+
+    assertThat(observed.join()).isEqualTo("accepted");
+  }
+
+  @Test
+  void shouldNormalizeAsynchronousMethodTags() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+
+    metrics
+        .observeAsyncCall(
+            "live-service", "POST", 31, () -> CompletableFuture.completedFuture("accepted"))
+        .join();
+
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
+
+  @Test
+  void shouldNotRecordUnknownAsynchronousRequestSize() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+
+    metrics
+        .observeAsyncCall(
+            "live-service", "post", -1, () -> CompletableFuture.completedFuture("accepted"))
+        .join();
+
+    assertThat(
+            registry
+                .find(OutboundHttpMetrics.PAYLOAD)
+                .tags("dependency", "live-service", "direction", "request")
+                .summary())
+        .isNull();
+  }
+
+  @Test
+  void shouldRestoreInterruptWhenAsynchronousCallPreparationIsInterrupted() {
+    var metrics = new OutboundHttpMetrics(new SimpleMeterRegistry());
+
+    try {
+      var observed =
+          metrics.observeAsyncCall(
+              "live-service",
+              "post",
+              31,
+              () -> {
+                throw new InterruptedException("stop");
+              });
+
+      assertThatThrownBy(observed::join);
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
   void shouldBoundStandardClientMetricUrisWithoutLosingTemplates() {
     var request = org.mockito.Mockito.mock(ClientHttpRequest.class);
     org.mockito.Mockito.when(request.getMethod()).thenReturn(HttpMethod.GET);
@@ -216,5 +287,13 @@ class OutboundHttpMetricsTest {
         .findFirst()
         .orElseThrow()
         .getValue();
+  }
+
+  private static final class FailingCounterMeterRegistry extends SimpleMeterRegistry {
+
+    @Override
+    protected Counter newCounter(Meter.Id id) {
+      throw new IllegalStateException("registry unavailable");
+    }
   }
 }
