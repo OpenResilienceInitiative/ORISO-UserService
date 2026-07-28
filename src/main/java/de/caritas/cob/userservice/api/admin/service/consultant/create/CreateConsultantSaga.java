@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -61,6 +62,7 @@ public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
@@ -290,7 +292,7 @@ public class CreateConsultantSaga {
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      identityClient.updatePassword(keycloakUserId, password);
+      identityPasswordUpdater.updatePassword(keycloakUserId, password);
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
           buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));

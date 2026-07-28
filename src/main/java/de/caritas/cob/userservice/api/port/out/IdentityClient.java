@@ -55,8 +55,6 @@ public interface IdentityClient {
 
   void updateRole(final String userId, final String roleName);
 
-  void updatePassword(final String userId, final String password);
-
   String updateDummyEmail(final String userId, UserDTO user);
 
   void updateDummyEmail(String userId);

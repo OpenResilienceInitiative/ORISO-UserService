@@ -959,6 +959,8 @@ public class KeycloakServiceTest {
 
     this.keycloakService.updatePassword("userId", "password");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).resetPassword(any());
   }
 
