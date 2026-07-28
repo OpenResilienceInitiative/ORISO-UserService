@@ -57,7 +57,9 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
   @Override
   public void customize(RestTemplate restTemplate) {
     restTemplate.setObservationConvention(OBSERVATION_CONVENTION);
-    restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+    if (restTemplate.getInterceptors().stream().noneMatch(MetricsInterceptor.class::isInstance)) {
+      restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+    }
   }
 
   /** Records a deliberately scheduled retry in one of the service's bounded retry loops. */

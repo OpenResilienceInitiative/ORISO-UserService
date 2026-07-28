@@ -42,12 +42,16 @@ public class KeycloakConfig {
   private static final String TENANT_ID_CLAIM = "tenantId";
 
   @Bean("keycloakRestTemplate")
-  public RestTemplate keycloakRestTemplate(RestTemplateBuilder restTemplateBuilder) {
-    return restTemplateBuilder
-        .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
-        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
-        .build();
+  public RestTemplate keycloakRestTemplate(
+      RestTemplateBuilder restTemplateBuilder, OutboundHttpMetrics outboundHttpMetrics) {
+    var restTemplate =
+        restTemplateBuilder
+            .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
+            .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+            .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+            .build();
+    outboundHttpMetrics.customize(restTemplate);
+    return restTemplate;
   }
 
   @Bean

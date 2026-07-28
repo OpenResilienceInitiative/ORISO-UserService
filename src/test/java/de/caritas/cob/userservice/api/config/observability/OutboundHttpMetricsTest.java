@@ -110,15 +110,32 @@ class OutboundHttpMetricsTest {
   }
 
   @Test
+  void shouldRemovePathsQueriesAndFragmentsFromHighCardinalityClientUrls() {
+    var request = org.mockito.Mockito.mock(ClientHttpRequest.class);
+    org.mockito.Mockito.when(request.getMethod()).thenReturn(HttpMethod.GET);
+    org.mockito.Mockito.when(request.getURI())
+        .thenReturn(
+            URI.create(
+                "https://telemetry-user@matrix.example:8448/_matrix/client/r0/sync"
+                    + "?since=s10188_dynamic&access_token=redacted-fixture#fragment"));
+    var convention = new BoundedClientRequestObservationConvention();
+    var context = new ClientRequestObservationContext(request);
+
+    assertThat(httpUrl(convention, context)).isEqualTo("https://matrix.example:8448");
+  }
+
+  @Test
   void shouldInstallBoundedConventionOnEveryCustomizedRestTemplate() {
     var registry = new SimpleMeterRegistry();
     var metrics = new OutboundHttpMetrics(registry);
     var restTemplate = new RestTemplate();
 
     metrics.customize(restTemplate);
+    metrics.customize(restTemplate);
 
     assertThat(restTemplate.getObservationConvention())
         .isInstanceOf(BoundedClientRequestObservationConvention.class);
+    assertThat(restTemplate.getInterceptors()).hasSize(1);
   }
 
   private String uriTag(
@@ -126,6 +143,17 @@ class OutboundHttpMetricsTest {
       ClientRequestObservationContext context) {
     return StreamSupport.stream(convention.getLowCardinalityKeyValues(context).spliterator(), false)
         .filter(keyValue -> keyValue.getKey().equals("uri"))
+        .findFirst()
+        .orElseThrow()
+        .getValue();
+  }
+
+  private String httpUrl(
+      BoundedClientRequestObservationConvention convention,
+      ClientRequestObservationContext context) {
+    return StreamSupport.stream(
+            convention.getHighCardinalityKeyValues(context).spliterator(), false)
+        .filter(keyValue -> keyValue.getKey().equals("http.url"))
         .findFirst()
         .orElseThrow()
         .getValue();
