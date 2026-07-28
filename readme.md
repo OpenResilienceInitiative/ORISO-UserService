@@ -1,12 +1,13 @@
 # Online-Beratung UserService
 
-The UserService provides different functionalities from creating and updating user accounts and their sessions, providing session lists up to creating and editing Rocket.Chat groups.
+The UserService owns user and consultant accounts, enquiries, counselling
+sessions, session lists, and the application-side lifecycle of Matrix rooms.
 
 It most importantly covers the lifecycle of a consultation/session:
   - registration of new users/askers
   - handling and creation of enquiries
-  - creation of associated sessions and their Rocket.Chat group(s)
-  - assignment of consultants to sessions and the corresponding Rocket.Chat group(s)
+  - creation of associated sessions and encrypted Matrix rooms
+  - assignment of consultants and Matrix room memberships
 
 Furthermore it handles the different kinds of consultations:
   - single/direct 1:1 counseling

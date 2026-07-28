@@ -64,8 +64,7 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     // cannot. Without this guard a single enrichment error 500s the endpoint and the
     // frontend treats the anonymous feed as empty.
     try {
-      this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
-          sessions, pageableListRequest.getRcToken(), consultant);
+      this.consultantSessionEnricher.updateRequiredConsultantSessionValues(sessions);
     } catch (Exception e) {
       log.error(
           "Anonymous enquiry enrichment failed for consultant {} — returning {} un-enriched queue entries",

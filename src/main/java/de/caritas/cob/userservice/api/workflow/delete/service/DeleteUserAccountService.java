@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteRocketChatAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
@@ -22,7 +21,6 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteRocketChatConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -75,7 +73,6 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteMatrixAskerAction.class)
         .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
         .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
-        .addActionToExecute(DeleteRocketChatAskerAction.class)
         .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
         .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
         .addActionToExecute(DeleteDatabaseAskerAction.class)
@@ -104,7 +101,6 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteMatrixConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
         .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteRocketChatConsultantAction.class)
         .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
         .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)

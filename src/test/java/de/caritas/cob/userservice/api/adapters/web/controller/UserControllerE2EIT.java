@@ -1,8 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_SYSTEM_A;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_TECHNICAL_A;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
 import static java.util.Objects.nonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
@@ -17,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.endsWith;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -34,19 +30,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Maps;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.PresenceDTO.PresenceStatus;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MessageResponse;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MethodCall;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.MethodMessageWithParamList;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsGetDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsGetDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UpdateUser;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailToggle;
@@ -65,7 +48,6 @@ import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiController
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -79,6 +61,7 @@ import de.caritas.cob.userservice.api.model.OtpType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -114,6 +97,7 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
@@ -121,8 +105,10 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.admin.client.token.TokenManager;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -141,23 +127,33 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriTemplateHandler;
 
 @SpringBootTest
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
-@TestPropertySource(properties = "feature.topics.enabled=true")
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(
+    properties = {
+      "feature.topics.enabled=true",
+      "keycloak.realm=test",
+      "identity.openid-connect-url=http://localhost:8080/auth/realms/test/protocol/openid-connect",
+      "identity.otp-allowed-for-users=true",
+      "identity.otp-allowed-for-consultants=true"
+    })
+@Transactional
 class UserControllerE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
-  private static final Cookie RC_TOKEN_COOKIE =
-      new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
 
@@ -187,9 +183,9 @@ class UserControllerE2EIT {
 
   @Autowired private UserVerifier userVerifier;
 
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @Autowired private Messaging messenger;
 
-  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
   @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
@@ -203,10 +199,6 @@ class UserControllerE2EIT {
   @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
-
-  @MockitoBean
-  @Qualifier("rocketChatRestTemplate")
-  private RestTemplate rocketChatRestTemplate;
 
   @MockitoBean
   @Qualifier("topicControllerApiPrimary")
@@ -224,10 +216,6 @@ class UserControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
-  @Captor private ArgumentCaptor<HttpEntity<UpdateUser>> updateUserCaptor;
-
-  @Captor private ArgumentCaptor<HttpEntity<MethodCall>> methodCallCaptor;
-
   private User user;
   private Consultant consultant;
   private UpdateConsultantDTO updateConsultantDTO;
@@ -240,7 +228,6 @@ class UserControllerE2EIT {
   private UserAgency userAgency;
   private PasswordDTO passwordDto;
   private DeleteUserAccountDTO deleteUserAccountDto;
-  private UserInfoResponseDTO userInfoResponse;
   private UserResource userResource;
 
   @AfterEach
@@ -250,7 +237,10 @@ class UserControllerE2EIT {
       userRepository.save(user);
       user = null;
     }
-    consultant = null;
+    if (nonNull(consultant)) {
+      messenger.setAvailability(consultant.getId(), false);
+      consultant = null;
+    }
     updateConsultantDTO = null;
     consultantsToReset.forEach(
         consultantToReset -> {
@@ -279,13 +269,15 @@ class UserControllerE2EIT {
     videoChatConfig.setE2eEncryptionEnabled(false);
     passwordDto = null;
     deleteUserAccountDto = null;
-    userInfoResponse = null;
     identityConfig.setDisplayNameAllowedForConsultants(false);
     userResource = null;
   }
 
   @BeforeEach
   public void setUp() {
+    when(consultingTypeControllerApi.getApiClient())
+        .thenReturn(
+            new de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient(restTemplate));
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -302,13 +294,11 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(false);
     givenKeycloakRespondsOtpByAppHasBeenSetup(consultant.getUsername());
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatUserPresenceResponse(PresenceStatus.OFFLINE);
-
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
-    var displayName = usernameTranscoder.decodeUsername(userInfoResponse.getUser().getName());
+    var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
     var username = usernameTranscoder.decodeUsername(consultant.getUsername());
 
     mockMvc
@@ -410,8 +400,6 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("e2eEncryptionEnabled", is(false)))
         .andExpect(jsonPath("emailToggles", is(nullValue())))
         .andExpect(jsonPath("inTeamAgency", is(false)));
-
-    verifyRocketChatNeverGetsUserPresence();
   }
 
   @Test
@@ -420,13 +408,11 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(true);
     givenKeycloakRespondsOtpByEmailHasBeenSetup(consultant.getUsername());
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatUserPresenceResponse(PresenceStatus.ONLINE);
-
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
-    var displayName = usernameTranscoder.decodeUsername(userInfoResponse.getUser().getName());
+    var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
     var username = usernameTranscoder.decodeUsername(consultant.getUsername());
 
     mockMvc
@@ -528,8 +514,6 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("e2eEncryptionEnabled", is(false)))
         .andExpect(jsonPath("emailToggles", is(nullValue())))
         .andExpect(jsonPath("inTeamAgency", is(false)));
-
-    verifyRocketChatNeverGetsUserPresence();
   }
 
   @Test
@@ -606,9 +590,6 @@ class UserControllerE2EIT {
     givenABearerToken();
     givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
     givenConsultingTypeServiceResponse();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatSubscriptionsResponse();
-    givenAValidRocketChatRoomsResponse();
     givenAValidTopicServiceResponse();
 
     mockMvc
@@ -616,7 +597,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants?status=2&count=15&filter=all&offset=0")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("offset", is(0)))
@@ -638,9 +618,6 @@ class UserControllerE2EIT {
     givenABearerToken();
     givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
     givenConsultingTypeServiceResponse();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatSubscriptionsResponse();
-    givenAValidRocketChatRoomsResponse();
     givenAValidTopicServiceResponse();
 
     mockMvc
@@ -648,7 +625,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .param("offset", "-1")
                 .param("count", "1")
                 .param("status", "2")
@@ -664,9 +640,6 @@ class UserControllerE2EIT {
     givenABearerToken();
     givenAValidConsultantWithId("34c3x5b1-0677-4fd2-a7ea-56a71aefd099");
     givenConsultingTypeServiceResponse();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatSubscriptionsResponse();
-    givenAValidRocketChatRoomsResponse();
     givenAValidTopicServiceResponse();
 
     mockMvc
@@ -674,7 +647,6 @@ class UserControllerE2EIT {
             get("/users/sessions/consultants")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("rcToken", RC_TOKEN)
                 .param("offset", "0")
                 .param("count", "0")
                 .param("status", "2")
@@ -689,13 +661,11 @@ class UserControllerE2EIT {
       throws Exception {
     givenABearerToken();
     givenAValidConsultant();
+    givenConsultantHasDisplayName();
+    givenConsultantAvailability(false);
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
-    givenAValidRocketChatUserPresenceResponse(PresenceStatus.BUSY);
-
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
-    var displayName = usernameTranscoder.decodeUsername(userInfoResponse.getUser().getName());
+    var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
     var username = usernameTranscoder.decodeUsername(consultant.getUsername());
 
     mockMvc
@@ -737,7 +707,6 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("twoFactorAuth.qrCode", is(notNullValue())))
         .andExpect(jsonPath("twoFactorAuth.type", is(nullValue())))
         .andExpect(jsonPath("twoFactorAuth.isToEncourage", is(consultant.getEncourage2fa())))
-        .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("absent", is(consultant.isAbsent())))
         .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
@@ -827,13 +796,10 @@ class UserControllerE2EIT {
     givenABearerToken();
     givenAValidConsultant();
     givenConsultingTypeServiceResponse();
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
     givenEnabledE2EEncryption();
     givenDisplayNameAllowedForConsultants();
     givenConsultantIsNotToNotifyAboutNewEnquiries();
-    givenAValidRocketChatUserPresenceResponse(PresenceStatus.OFFLINE);
 
     mockMvc
         .perform(
@@ -858,13 +824,10 @@ class UserControllerE2EIT {
     givenABearerToken();
     givenAValidConsultant();
     givenConsultingTypeServiceResponse();
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
     givenEnabledE2EEncryption();
     givenDisplayNameAllowedForConsultants();
     givenConsultantIsNotToNotifyAboutNewFollowUps();
-    givenAValidRocketChatUserPresenceResponse(PresenceStatus.OFFLINE);
 
     mockMvc
         .perform(
@@ -892,7 +855,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -913,8 +875,6 @@ class UserControllerE2EIT {
     assertThat(savedUser.getNotificationsSettings())
         .isEqualTo(
             "{\"initialEnquiryNotificationEnabled\":true,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true}");
-
-    verifyRocketChatNeverSetsUserPresence();
   }
 
   @Test
@@ -922,16 +882,13 @@ class UserControllerE2EIT {
   void patchUserDataShouldSaveConsultantAndRespondWithNoContent() throws Exception {
     givenAValidConsultant();
     givenAFullPatchDto();
-    givenAValidRocketChatUpdateUserResponse();
     givenAValidKeycloakUpdateLocaleResponse(consultant.getId());
-    givenAValidRocketChatUserPresenceSetResponse();
     patchUserDTO.setEmailNotifications(partiallyActiveEmailNotifications());
 
     mockMvc
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -949,17 +906,6 @@ class UserControllerE2EIT {
     var locale = userRepCaptor.getValue().getAttributes().get("locale");
     assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
 
-    var urlSuffix = "/api/v1/users.update";
-    verify(rocketChatRestTemplate)
-        .postForEntity(endsWith(urlSuffix), updateUserCaptor.capture(), eq(Void.class));
-
-    var updateUser = updateUserCaptor.getValue().getBody();
-    assertNotNull(updateUser);
-    var user = updateUser.getData();
-    assertTrue(user.getName().startsWith("enc."));
-    assertTrue(user.getName().length() > 4);
-
-    verifyRocketChatSetsUserPresence();
     assertThat(savedConsultant.isNotificationsEnabled()).isTrue();
     assertThat(savedConsultant.getNotificationsSettings())
         .isEqualTo(
@@ -971,15 +917,12 @@ class UserControllerE2EIT {
   void patchUserDataShouldOverrideDefaultAndRespondWithNoContent() throws Exception {
     givenAValidConsultant();
     givenAFullPatchDto(false);
-    givenAValidRocketChatUpdateUserResponse();
     givenAValidKeycloakUpdateLocaleResponse(consultant.getId());
-    givenAValidRocketChatUserPresenceSetResponse();
 
     mockMvc
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -994,8 +937,6 @@ class UserControllerE2EIT {
     verify(userResource).update(userRepCaptor.capture());
     var locale = userRepCaptor.getValue().getAttributes().get("locale");
     assertEquals(patchUserDTO.getPreferredLanguage().toString(), locale.get(0));
-
-    verifyRocketChatSetsUserPresence();
   }
 
   @Test
@@ -1008,15 +949,12 @@ class UserControllerE2EIT {
     assertEquals("de", savedConsultant.getLanguageCode().toString());
 
     givenAFullPatchDto(false);
-    givenAValidRocketChatUpdateUserResponse();
     givenAValidKeycloakUpdateLocaleResponse(consultant.getId());
-    givenAValidRocketChatUserPresenceSetResponse();
 
     mockMvc
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -1039,7 +977,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchUserDTO))
@@ -1101,14 +1038,11 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
-
-    verifyRocketChatNeverSetsUserPresence();
   }
 
   @Test
@@ -1121,7 +1055,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(patchDtoJson)
@@ -1139,7 +1072,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDtoMap))
@@ -1157,7 +1089,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDtoMap))
@@ -1167,7 +1098,7 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
-  void patchUserDataShouldRespondWithNoContentOnEmptyEmailTogglesArray() throws Exception {
+  void patchUserDataShouldRespondWithBadRequestOnEmptyEmailTogglesArray() throws Exception {
     givenAValidConsultant();
 
     var patchDto = new HashMap<String, Object>(1);
@@ -1177,12 +1108,11 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isNoContent());
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -1196,7 +1126,6 @@ class UserControllerE2EIT {
         .perform(
             patch("/users/data")
                 .cookie(CSRF_COOKIE)
-                .cookie(RC_TOKEN_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto))
@@ -1370,40 +1299,10 @@ class UserControllerE2EIT {
   }
 
   @Test
-  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
-  void updateUserDataShouldSaveDefaultLanguageAndEmailEvenIfRocketChatIssueOccurs()
-      throws Exception {
-    givenAValidConsultant();
-    givenAMinimalUpdateConsultantDto(consultant.getEmail());
-    givenValidRocketChatTechUserResponse();
-    givenARocketChatUserInfoSyncSendMailIssueResponse();
-
-    mockMvc
-        .perform(
-            put("/users/data")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(updateConsultantDTO))
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk());
-
-    var optionalSavedConsultant = consultantRepository.findById(consultant.getId());
-    assertTrue(optionalSavedConsultant.isPresent());
-    var savedConsultant = optionalSavedConsultant.get();
-    var savedLanguages = savedConsultant.getLanguages();
-    assertEquals(1, savedLanguages.size());
-    assertEquals(LanguageCode.de, savedLanguages.iterator().next().getLanguageCode());
-    assertEquals(updateConsultantDTO.getEmail(), savedConsultant.getEmail());
-  }
-
-  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void updateUserDataShouldSaveDefaultLanguageAndEmailAndRespondWithOk() throws Exception {
     givenAValidConsultant();
     givenAMinimalUpdateConsultantDto(consultant.getEmail());
-    givenValidRocketChatTechUserResponse();
-    givenValidRocketChatUserInfoResponse();
 
     mockMvc
         .perform(
@@ -1429,8 +1328,6 @@ class UserControllerE2EIT {
   void updateUserDataShouldSaveGivenLanguagesAndRespondWithOk() throws Exception {
     givenAValidConsultant();
     givenAnUpdateConsultantDtoWithLanguages(consultant.getEmail());
-    givenValidRocketChatTechUserResponse();
-    givenValidRocketChatUserInfoResponse();
 
     mockMvc
         .perform(
@@ -1461,8 +1358,6 @@ class UserControllerE2EIT {
   void updateUserDataShouldCascadeLanguageDeletionAndRespondWithOk() throws Exception {
     givenAValidConsultantSpeaking(easyRandom.nextObject(LanguageCode.class));
     givenAnUpdateConsultantDtoWithLanguages(consultant.getEmail());
-    givenValidRocketChatTechUserResponse();
-    givenValidRocketChatUserInfoResponse();
 
     mockMvc
         .perform(
@@ -1495,8 +1390,6 @@ class UserControllerE2EIT {
     givenAMinimalUpdateConsultantDto(consultant.getEmail());
     updateConsultantDTO.setTermsAndConditionsConfirmation(true);
     updateConsultantDTO.setDataPrivacyConfirmation(true);
-    givenValidRocketChatTechUserResponse();
-    givenValidRocketChatUserInfoResponse();
 
     mockMvc
         .perform(
@@ -1684,8 +1577,6 @@ class UserControllerE2EIT {
             post("/users/askers/session/new")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header("RCToken", "token")
-                .header("RCUserId", "userId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(userDTO)))
         .andExpect(status().isCreated());
@@ -1693,6 +1584,7 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   void sendReassignmentNotificationShouldSendEmailAndRespondWithOk() throws Exception {
     var apiClientMock = mock(de.caritas.cob.userservice.mailservice.generated.ApiClient.class);
     when(mailsControllerApi.getApiClient()).thenReturn(apiClientMock);
@@ -1702,19 +1594,24 @@ class UserControllerE2EIT {
     var assignemtNotification =
         new ReassignmentNotificationDTO()
             .toConsultantId(UUID.randomUUID())
-            .rcGroupId(session.getGroupId());
+            .matrixRoomId(session.getMatrixRoomId());
 
-    mockMvc
-        .perform(
-            post("/users/mails/reassignment")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(assignemtNotification))
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isOk());
+    try {
+      mockMvc
+          .perform(
+              post("/users/mails/reassignment")
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(assignemtNotification))
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isOk());
 
-    Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+      Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+    } finally {
+      sessionRepository.deleteById(session.getId());
+      userRepository.deleteById(session.getUser().getUserId());
+    }
   }
 
   private Session givenAExistingSession() {
@@ -1825,7 +1722,9 @@ class UserControllerE2EIT {
   }
 
   private void givenKeycloakRespondsOtpByAppHasBeenSetup(String username) {
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     var otpInfo = new OtpInfoDTO();
     otpInfo.setOtpSetup(true);
@@ -1837,7 +1736,9 @@ class UserControllerE2EIT {
   }
 
   private void givenKeycloakRespondsOtpByEmailHasBeenSetup(String username) {
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     var otpInfo = new OtpInfoDTO();
     otpInfo.setOtpSetup(true);
@@ -1856,53 +1757,13 @@ class UserControllerE2EIT {
     otpInfo.setOtpSecret(RandomStringUtils.randomAlphabetic(32));
     otpInfo.setOtpSecretQrCode(RandomStringUtils.randomAlphabetic(64));
 
-    var urlSuffix = "/auth/realms/test/otp-config/fetch-otp-setup-info/" + username;
+    var urlSuffix =
+        "/auth/realms/test/otp-config/fetch-otp-setup-info/"
+            + usernameTranscoder.decodeUsername(username);
 
     when(keycloakRestTemplate.exchange(
             endsWith(urlSuffix), eq(HttpMethod.GET), any(HttpEntity.class), eq(OtpInfoDTO.class)))
         .thenReturn(ResponseEntity.ok(otpInfo));
-  }
-
-  private void givenAValidRocketChatInfoUserResponse() {
-    givenAValidRocketChatInfoUserResponse(consultant);
-  }
-
-  private void givenAValidRocketChatInfoUserResponse(Consultant consultant) {
-    userInfoResponse = new UserInfoResponseDTO();
-    userInfoResponse.setSuccess(true);
-
-    var chatUser = easyRandom.nextObject(RocketChatUserDTO.class);
-    chatUser.setId(consultant.getRocketChatId());
-    chatUser.setUsername(consultant.getUsername());
-    chatUser.setName(usernameTranscoder.encodeUsername("Consultant Max"));
-    userInfoResponse.setUser(chatUser);
-
-    var urlSuffix = "/api/v1/users.info?userId=" + consultant.getRocketChatId();
-    when(rocketChatRestTemplate.exchange(
-            endsWith(urlSuffix), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(UserInfoResponseDTO.class)))
-        .thenReturn(ResponseEntity.ok(userInfoResponse));
-  }
-
-  private void givenAValidRocketChatUserPresenceResponse(PresenceStatus presenceStatus) {
-    var urlSuffix = "/api/v1/users.getPresence?userId=" + consultant.getRocketChatId();
-    var userPresence = easyRandom.nextObject(PresenceDTO.class);
-    userPresence.setSuccess(true);
-    userPresence.setPresence(presenceStatus);
-
-    when(rocketChatRestTemplate.exchange(
-            endsWith(urlSuffix), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(PresenceDTO.class)))
-        .thenReturn(ResponseEntity.ok(userPresence));
-  }
-
-  private void givenAValidRocketChatRoomsResponse() {
-    var roomsGetDTO = new RoomsGetDTO();
-    roomsGetDTO.setUpdate(new RoomsUpdateDTO[] {});
-    when(restTemplate.exchange(
-            Mockito.anyString(), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(RoomsGetDTO.class)))
-        .thenReturn(ResponseEntity.ok(roomsGetDTO));
   }
 
   private void givenAValidTopicServiceResponse() {
@@ -1928,41 +1789,6 @@ class UserControllerE2EIT {
         .thenReturn(Lists.newArrayList(firstTopic, secondTopic));
   }
 
-  private void givenAValidRocketChatSubscriptionsResponse() {
-    var subscriptionsGetDTO = new SubscriptionsGetDTO();
-    subscriptionsGetDTO.setUpdate(new SubscriptionsUpdateDTO[] {});
-    when(rocketChatRestTemplate.exchange(
-            Mockito.anyString(), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(SubscriptionsGetDTO.class)))
-        .thenReturn(ResponseEntity.ok(subscriptionsGetDTO));
-
-    when(restTemplate.exchange(
-            Mockito.anyString(), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(SubscriptionsGetDTO.class)))
-        .thenReturn(ResponseEntity.ok(subscriptionsGetDTO));
-  }
-
-  private void givenAValidRocketChatUpdateUserResponse() {
-    var urlSuffix = "/api/v1/users.update";
-    var updateUserResponse = easyRandom.nextObject(Void.class);
-
-    when(rocketChatRestTemplate.postForEntity(
-            endsWith(urlSuffix), any(HttpEntity.class), eq(Void.class)))
-        .thenReturn(ResponseEntity.ok(updateUserResponse));
-  }
-
-  private void givenAValidRocketChatUserPresenceSetResponse() {
-    var setUserPresenceResponse = new MessageResponse();
-    setUserPresenceResponse.setSuccess(true);
-    setUserPresenceResponse.setMessage("{\\\"msg\\\":\\\"result\\\",\\\"id\\\":\\\"42\\\"}");
-
-    var urlSuffix = "/method.call/UserPresence";
-
-    when(rocketChatRestTemplate.postForEntity(
-            endsWith(urlSuffix), any(HttpEntity.class), eq(MessageResponse.class)))
-        .thenReturn(ResponseEntity.ok(setUserPresenceResponse));
-  }
-
   @NonNull
   private String givenAValidEmail() {
     return RandomStringUtils.randomAlphabetic(8)
@@ -1985,6 +1811,15 @@ class UserControllerE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+  }
+
+  private void givenConsultantHasDisplayName() {
+    consultant.setDisplayName(consultant.getUsername());
+    consultant = consultantRepository.save(consultant);
+  }
+
+  private void givenConsultantAvailability(boolean available) {
+    messenger.setAvailability(consultant.getId(), available);
   }
 
   @SuppressWarnings("SameParameterValue")
@@ -2197,90 +2032,11 @@ class UserControllerE2EIT {
     updateConsultantDTO.languages(languages);
   }
 
-  private void givenAValidRocketChatSystemUser() throws RocketChatUserNotInitializedException {
-    when(rocketChatCredentialsProvider.getSystemUserSneaky()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
-    when(rocketChatCredentialsProvider.getSystemUser()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
-  }
-
-  private void givenValidRocketChatTechUserResponse() throws RocketChatUserNotInitializedException {
-    when(rocketChatCredentialsProvider.getTechnicalUser()).thenReturn(RC_CREDENTIALS_TECHNICAL_A);
-  }
-
-  private void givenValidRocketChatUserInfoResponse() {
-    var body = new UserInfoResponseDTO();
-    body.setSuccess(true);
-    if (nonNull(user)) {
-      body.setUser(new RocketChatUserDTO("", user.getUsername(), null, null));
-    }
-    var userInfoResponseDTO = ResponseEntity.ok(body);
-    when(restTemplate.exchange(anyString(), any(), any(), eq(UserInfoResponseDTO.class)))
-        .thenReturn(userInfoResponseDTO);
-    when(restTemplate.exchange(
-            anyString(), any(), any(), eq(UserInfoResponseDTO.class), anyString()))
-        .thenReturn(userInfoResponseDTO);
-  }
-
-  private void givenARocketChatUserInfoSyncSendMailIssueResponse() throws JsonProcessingException {
-    var responseMap =
-        Map.of(
-            "success",
-            false,
-            "error",
-            "Error trying to send email: Cannot read property '_syncSendMail' of null");
-    var errorBody = objectMapper.writeValueAsString(responseMap).getBytes();
-    var statusText = HttpStatus.BAD_REQUEST.getReasonPhrase();
-    var syncSendMailIssue =
-        new HttpClientErrorException(HttpStatus.BAD_REQUEST, statusText, errorBody, null);
-
-    var okBody = new UserInfoResponseDTO();
-    okBody.setSuccess(true);
-    if (nonNull(user)) {
-      okBody.setUser(new RocketChatUserDTO("", user.getUsername(), null, null));
-    }
-    var userInfoResponseDTO = ResponseEntity.ok(okBody);
-
-    when(restTemplate.exchange(anyString(), any(), any(), eq(UserInfoResponseDTO.class)))
-        .thenThrow(syncSendMailIssue)
-        .thenReturn(userInfoResponseDTO);
-  }
-
   private void givenEnabledE2EEncryption() {
     videoChatConfig.setE2eEncryptionEnabled(true);
   }
 
   private void givenDisplayNameAllowedForConsultants() {
     identityConfig.setDisplayNameAllowedForConsultants(true);
-  }
-
-  private void verifyRocketChatSetsUserPresence() throws JsonProcessingException {
-    var urlSuffix = "/api/v1/method.call/UserPresence";
-    verify(rocketChatRestTemplate)
-        .postForEntity(endsWith(urlSuffix), methodCallCaptor.capture(), eq(MessageResponse.class));
-
-    var methodCall = methodCallCaptor.getValue().getBody();
-    assertNotNull(methodCall);
-    var stringifiedMessage = methodCall.getMessage();
-    var message = objectMapper.readValue(stringifiedMessage, MethodMessageWithParamList.class);
-    assertEquals(1, message.getParams().size());
-    var expectedStatus = patchUserDTO.getAvailable() ? "online" : "busy";
-    assertEquals(expectedStatus, message.getParams().get(0));
-    assertEquals("UserPresence:setDefaultStatus", message.getMethod());
-    assertEquals("method", message.getMsg());
-    var chatUserIds = methodCallCaptor.getValue().getHeaders().get("X-User-Id");
-    assertNotNull(chatUserIds);
-    assertEquals(1, chatUserIds.size());
-    assertEquals(consultant.getRocketChatId(), chatUserIds.get(0));
-  }
-
-  private void verifyRocketChatNeverSetsUserPresence() {
-    var urlSuffix = "/api/v1/method.call/UserPresence";
-    verify(rocketChatRestTemplate, never())
-        .postForEntity(endsWith(urlSuffix), any(HttpEntity.class), eq(MessageResponse.class));
-  }
-
-  private void verifyRocketChatNeverGetsUserPresence() {
-    var urlSuffix = "users.getPresence";
-    verify(rocketChatRestTemplate, never())
-        .postForEntity(contains(urlSuffix), any(HttpEntity.class), eq(MessageResponse.class));
   }
 }

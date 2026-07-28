@@ -15,7 +15,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_TOPIC
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_V2;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.INACTIVE_CHAT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static java.util.Collections.singletonList;
 import static org.hamcrest.CoreMatchers.instanceOf;
@@ -144,7 +144,7 @@ class ChatServiceTest {
         .chatInterval(ACTIVE_CHAT.getChatInterval())
         .active(ACTIVE_CHAT.isActive())
         .maxParticipants(ACTIVE_CHAT.getMaxParticipants())
-        .groupId(ACTIVE_CHAT.getGroupId())
+        .matrixRoomId(ACTIVE_CHAT.getMatrixRoomId())
         .chatOwner(ACTIVE_CHAT.getChatOwner())
         .chatUsers(ACTIVE_CHAT.getChatUsers())
         .chatAgencies(Set.of(new ChatAgency(null, LOCAL_CHAT_AGENCY_ID)))
@@ -211,7 +211,7 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getDuration(), resultList.get(0).getChat().getDuration());
     assertEquals(ACTIVE_CHAT.isRepetitive(), resultList.get(0).getChat().isRepetitive());
     assertEquals(ACTIVE_CHAT.isActive(), resultList.get(0).getChat().isActive());
-    assertEquals(ACTIVE_CHAT.getGroupId(), resultList.get(0).getChat().getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), resultList.get(0).getChat().getMatrixRoomId());
     assertEquals(ACTIVE_CHAT.getRepeatCount(), resultList.get(0).getChat().getRepeatCount());
     assertEquals(
         ACTIVE_CHAT.getCurrentOccurrenceIndex(),
@@ -221,7 +221,7 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getTimezone(), resultList.get(0).getChat().getTimezone());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
-    assertEquals(CONSULTANT.getRocketChatId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
   }
 
   @Test
@@ -327,12 +327,13 @@ class ChatServiceTest {
     assertEquals(CHAT_V2.getDuration(), resultUserSessionResponseDTO.getChat().getDuration());
     assertEquals(CHAT_V2.isRepetitive(), resultUserSessionResponseDTO.getChat().isRepetitive());
     assertEquals(CHAT_V2.isActive(), resultUserSessionResponseDTO.getChat().isActive());
-    assertEquals(CHAT_V2.getGroupId(), resultUserSessionResponseDTO.getChat().getGroupId());
+    assertEquals(
+        CHAT_V2.getMatrixRoomId(), resultUserSessionResponseDTO.getChat().getMatrixRoomId());
 
     assertNotNull(resultUserSessionResponseDTO.getChat().getModerators());
     assertEquals(1, resultUserSessionResponseDTO.getChat().getModerators().length);
     assertEquals(
-        CONSULTANT.getRocketChatId(), resultUserSessionResponseDTO.getChat().getModerators()[0]);
+        CONSULTANT.getMatrixUserId(), resultUserSessionResponseDTO.getChat().getModerators()[0]);
     assertEquals(1, resultUserSessionResponseDTO.getChat().getAssignedAgencies().size());
     assertEquals(
         "agency name",
@@ -372,10 +373,10 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getDuration(), resultList.get(0).getChat().getDuration());
     assertEquals(ACTIVE_CHAT.isRepetitive(), resultList.get(0).getChat().isRepetitive());
     assertEquals(ACTIVE_CHAT.isActive(), resultList.get(0).getChat().isActive());
-    assertEquals(ACTIVE_CHAT.getGroupId(), resultList.get(0).getChat().getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), resultList.get(0).getChat().getMatrixRoomId());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
-    assertEquals(CONSULTANT.getRocketChatId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
   }
 
   @Test
@@ -416,9 +417,9 @@ class ChatServiceTest {
 
   @Test
   void getChatByGroupId_Should_ReturnChatObject() {
-    when(chatRepository.findByGroupId(RC_GROUP_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    when(chatRepository.findByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
 
-    Optional<Chat> result = chatService.getChatByGroupId(RC_GROUP_ID);
+    Optional<Chat> result = chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID);
 
     assertThat(result, instanceOf(Optional.class));
     assertTrue(result.isPresent());
@@ -738,11 +739,11 @@ class ChatServiceTest {
 
   @Test
   void getChatSessionsByGroupIds_Should_returnUserSessionsForGivenGroupIds() {
-    when(chatRepository.findByGroupIds(Set.of(RC_GROUP_ID)))
+    when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
 
     List<UserSessionResponseDTO> result =
-        chatService.getChatSessionsByGroupIds(Set.of(RC_GROUP_ID));
+        chatService.getChatSessionsByRoomIds(Set.of(MATRIX_ROOM_ID));
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
@@ -750,11 +751,11 @@ class ChatServiceTest {
 
   @Test
   void getChatSessionsForConsultantByGroupIds_Should_returnConsultantSessionsForGivenGroupIds() {
-    when(chatRepository.findByGroupIds(Set.of(RC_GROUP_ID)))
+    when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
 
     List<ConsultantSessionResponseDTO> result =
-        chatService.getChatSessionsForConsultantByGroupIds(Set.of(RC_GROUP_ID));
+        chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID));
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());

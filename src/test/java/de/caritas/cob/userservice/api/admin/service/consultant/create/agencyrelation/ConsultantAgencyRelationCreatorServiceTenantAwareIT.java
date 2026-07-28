@@ -6,8 +6,6 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
@@ -15,7 +13,6 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -50,13 +47,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional(propagation = Propagation.NEVER)
@@ -80,8 +76,6 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @MockitoBean private IdentityClient identityClient;
 
-  @MockitoBean private RocketChatFacade rocketChatFacade;
-
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
   @BeforeEach
@@ -95,11 +89,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
   }
 
   @Test
-  void
-      createNewConsultantAgency_Should_addConsultantToEnquiriesRocketChatGroups_When_ParamsAreValidAndMultitenancyEnabled() {
-
-    ReflectionTestUtils.setField(consultantAgencyRelationCreatorService, "rocketChatEnabled", true);
-
+  void createNewConsultantAgency_ShouldPersistRelationWithTenant_WhenMultitenancyEnabled() {
     Consultant consultant = createConsultantWithoutAgencyAndSession();
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
@@ -112,7 +102,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    agencyDTO.setTenantId(1L);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -124,15 +116,12 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
 
-    verify(rocketChatFacade, timeout(10000))
-        .addUserToRocketChatGroup(
-            consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId());
-
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 
     assertThat(result, notNullValue());
     assertThat(result, hasSize(1));
+    assertEquals(ConsultantAgencyStatus.CREATED, result.getFirst().getStatus());
     assertEquals(1, enquirySessionWithoutConsultant.getTenantId());
 
     List<ConsultantAgency> agenciesForConsultant =
@@ -143,8 +132,6 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
   @Test
   void
       createNewConsultantAgency_ShouldFinalizePersistedRelation_WhenMatrixOnlyAndMultitenancyEnabled() {
-    ReflectionTestUtils.setField(
-        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
     TenantContext.setCurrentTenant(0L);
     Consultant consultant = createConsultantWithoutAgencyAndSession();
     consultant.setTenantId(83L);
@@ -154,8 +141,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
     when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
-    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
 
@@ -183,7 +171,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
     consultant.setConsultantTopics(null);
-    consultant.setRocketChatId("RocketChatId");
+    // Required legacy model field; this slice removes its behavior, the schema cleanup follows.
+    consultant.setMatrixUserId("legacy-id");
     consultant.setDeleteDate(null);
     Set<Language> language = new HashSet<>();
     Language lang = new Language();

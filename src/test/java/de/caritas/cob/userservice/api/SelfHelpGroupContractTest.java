@@ -53,7 +53,7 @@ class SelfHelpGroupContractTest {
     assertThat(changelog).contains("UPDATE group_chat_participant");
     assertThat(changelog.indexOf("UPDATE group_chat_participant"))
         .isLessThan(changelog.indexOf("addForeignKeyConstraint"));
-    assertThat(changelog).contains("participant_role", "consultant_id_owner", "rc_group_id");
+    assertThat(changelog).contains("participant_role", "consultant_id_owner");
   }
 
   @Test

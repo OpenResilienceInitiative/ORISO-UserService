@@ -10,12 +10,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.util.Optional;
@@ -27,23 +25,21 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
 
 /**
  * Matrix-only integration coverage for the agency pre-assignment (holding) room provisioning path —
  * the room-creation / invite / membership orchestration that runs when an enquiry is created with
- * {@code rocket-chat.enabled=false} and the session does not yet have a Matrix room.
+ * no existing Matrix room.
  *
  * <p>This class-under-test had ZERO test coverage. It is the enquiry-time room provisioner reached
  * via {@code CreateEnquiryMessageFacade.ensureMatrixRoomForEnquiry(...)}. These tests assert the
  * production orchestration deterministically (Mockito, no live Synapse): the agency service account
  * logs in, a room is created, the enquiry user is invited AND joins (membership), and the room id
- * is persisted on the session. No Rocket.Chat interaction is possible here — the service does not
- * depend on RocketChatService at all, which is itself the RC-off contract for this slice.
+ * is persisted on the session.
  *
  * <p>Complements PR #300 (which proved branch selection at the chat/adapter level and explicitly
  * deferred driving the enquiry room-provisioning path end-to-end). Test Quality Audit 2026-07-04 —
- * RC teardown phase 2 + C2.
+ * Matrix room provisioning phase 2 + C2.
  */
 @ExtendWith(MockitoExtension.class)
 class AgencyPreAssignmentRoomServiceTest {
@@ -59,7 +55,7 @@ class AgencyPreAssignmentRoomServiceTest {
   private static final String NEW_ROOM_ID = "!newRoom:oriso.org";
 
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
-  @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private SessionService sessionService;
 
   @InjectMocks private AgencyPreAssignmentRoomService underTest;
@@ -89,12 +85,10 @@ class AgencyPreAssignmentRoomServiceTest {
   private void stubHappyPathUntilRoomCreation() throws MatrixCreateRoomException {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
+    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
         .thenReturn(AGENCY_TOKEN);
-    var body = new MatrixCreateRoomResponseDTO();
-    body.setRoomId(NEW_ROOM_ID);
-    when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
-        .thenReturn(ResponseEntity.ok(body));
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenReturn(NEW_ROOM_ID);
   }
 
   @Test
@@ -102,20 +96,18 @@ class AgencyPreAssignmentRoomServiceTest {
       "ensureHoldingRoom provisions the room end-to-end: create -> invite -> join -> persist")
   void ensureHoldingRoom_provisionsRoomInviteMembershipAndPersists() throws Exception {
     stubHappyPathUntilRoomCreation();
-    when(matrixSynapseService.inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN))
-        .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
-    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
-    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     underTest.ensureHoldingRoom(session, user);
 
     // agency service account authenticated with the local part of its matrix id
-    verify(matrixSynapseService).loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD);
+    verify(sessionRoomGateway).loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD);
 
     // room created with the agency token
     ArgumentCaptor<String> nameCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> aliasCaptor = ArgumentCaptor.forClass(String.class);
-    verify(matrixSynapseService)
+    verify(sessionRoomGateway)
         .createRoom(nameCaptor.capture(), aliasCaptor.capture(), eq(AGENCY_TOKEN));
     org.junit.jupiter.api.Assertions.assertTrue(
         nameCaptor.getValue().contains(String.valueOf(SESSION_ID)));
@@ -123,9 +115,9 @@ class AgencyPreAssignmentRoomServiceTest {
         aliasCaptor.getValue().startsWith("agency_hold_" + SESSION_ID));
 
     // user invited to the new room and membership established via join
-    verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    verify(matrixSynapseService).loginAsUserAccessToken(USER_MATRIX_ID);
-    verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    verify(sessionRoomGateway).loginAsUser(USER_MATRIX_ID);
+    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
 
     // room id persisted on the session
     verify(sessionService).saveSession(session);
@@ -139,7 +131,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verifyNoInteractions(matrixCredentialClient, matrixSynapseService, sessionService);
+    verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
     assertEquals("!existing:oriso.org", session.getMatrixRoomId());
   }
 
@@ -150,7 +142,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verifyNoInteractions(matrixCredentialClient, matrixSynapseService, sessionService);
+    verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -161,7 +153,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verifyNoInteractions(matrixCredentialClient, matrixSynapseService, sessionService);
+    verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -172,7 +164,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verifyNoInteractions(matrixSynapseService, sessionService);
+    verifyNoInteractions(sessionRoomGateway, sessionService);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -186,7 +178,7 @@ class AgencyPreAssignmentRoomServiceTest {
 
     underTest.ensureHoldingRoom(session, user);
 
-    verifyNoInteractions(matrixSynapseService, sessionService);
+    verifyNoInteractions(sessionRoomGateway, sessionService);
     assertNull(session.getMatrixRoomId());
   }
 
@@ -195,7 +187,7 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_doesNotPersist_whenAgencyLoginFails() {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
+    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
         .thenReturn("  ");
 
     underTest.ensureHoldingRoom(session, user);
@@ -209,16 +201,14 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_doesNotPersist_whenCreateRoomReturnsEmptyBody() throws Exception {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
+    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
         .thenReturn(AGENCY_TOKEN);
-    var emptyBody = new MatrixCreateRoomResponseDTO();
-    emptyBody.setRoomId("  ");
-    when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
-        .thenReturn(ResponseEntity.ok(emptyBody));
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+        .thenReturn("  ");
 
     underTest.ensureHoldingRoom(session, user);
 
-    verify(matrixSynapseService, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+    verify(sessionRoomGateway, never()).inviteUser(anyString(), anyString(), anyString());
     verify(sessionService, never()).saveSession(any());
     assertNull(session.getMatrixRoomId());
   }
@@ -228,9 +218,9 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_swallowsCreateRoomException() throws Exception {
     when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
         .thenReturn(Optional.of(validCredentials()));
-    when(matrixSynapseService.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
+    when(sessionRoomGateway.loginUser(AGENCY_MATRIX_LOCALPART, AGENCY_MATRIX_PASSWORD))
         .thenReturn(AGENCY_TOKEN);
-    when(matrixSynapseService.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
+    when(sessionRoomGateway.createRoom(anyString(), anyString(), eq(AGENCY_TOKEN)))
         .thenThrow(new MatrixCreateRoomException("boom"));
 
     underTest.ensureHoldingRoom(session, user);
@@ -245,6 +235,6 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.ensureHoldingRoom(null, user);
     underTest.ensureHoldingRoom(session, null);
 
-    verifyNoInteractions(matrixCredentialClient, matrixSynapseService, sessionService);
+    verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
   }
 }

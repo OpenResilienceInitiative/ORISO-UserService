@@ -39,7 +39,7 @@ public class UserChatDTO {
       String lastMessage,
       Long messageDate,
       boolean messagesRead,
-      String groupId,
+      String matrixRoomId,
       SessionAttachmentDTO attachment,
       boolean subscribed,
       String[] moderators,
@@ -59,7 +59,7 @@ public class UserChatDTO {
     this.lastMessage = lastMessage;
     this.messageDate = messageDate;
     this.messagesRead = messagesRead;
-    this.groupId = groupId;
+    this.matrixRoomId = matrixRoomId;
     this.attachment = attachment;
     this.subscribed = subscribed;
     this.moderators = moderators;
@@ -106,8 +106,8 @@ public class UserChatDTO {
   @ApiModelProperty(example = "false", position = 10)
   private boolean messagesRead;
 
-  @ApiModelProperty(example = "xGklslk2JJKK", position = 11)
-  private String groupId;
+  @ApiModelProperty(example = "!aBcDeF123:matrix.example", position = 11)
+  private String matrixRoomId;
 
   @ApiModelProperty(position = 12)
   private SessionAttachmentDTO attachment;

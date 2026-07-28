@@ -41,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional
 public class ConsultantAgencyAdminUserServiceIT {
 
@@ -55,7 +55,8 @@ public class ConsultantAgencyAdminUserServiceIT {
 
   @MockitoBean private AgencyAdminService agencyAdminService;
 
-  @MockitoBean private RemoveConsultantFromRocketChatService removeConsultantFromRocketChatService;
+  @MockitoBean
+  private RemoveConsultantFromSessionRoomsService removeConsultantFromSessionRoomsService;
 
   @Test
   public void
@@ -154,7 +155,7 @@ public class ConsultantAgencyAdminUserServiceIT {
 
     assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
     assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromRocketChatService, times(1))
+    verify(this.removeConsultantFromSessionRoomsService, times(1))
         .removeConsultantFromSessions(any());
   }
 

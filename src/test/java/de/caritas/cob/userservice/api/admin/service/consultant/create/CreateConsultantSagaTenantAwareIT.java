@@ -6,7 +6,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
@@ -17,12 +16,10 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -44,12 +41,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
 public class CreateConsultantSagaTenantAwareIT {
 
-  private static final String DUMMY_RC_ID = "rcUserId";
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAILADDRESS = "valid@emailaddress.de";
   private static final long TENANT_ID = 1;
@@ -59,8 +55,6 @@ public class CreateConsultantSagaTenantAwareIT {
   @Autowired private ConsultantRepository consultantRepository;
 
   @MockitoBean private TenantAdminService tenantAdminService;
-
-  @MockitoBean private RocketChatService rocketChatService;
 
   @MockitoBean private KeycloakService keycloakService;
 
@@ -92,8 +86,7 @@ public class CreateConsultantSagaTenantAwareIT {
 
   @Test
   public void
-      createNewConsultant_Should_countLicensesPerTenant_When_consultantsExistInOtherTenants()
-          throws RocketChatLoginException {
+      createNewConsultant_Should_countLicensesPerTenant_When_consultantsExistInOtherTenants() {
     // given: a tenant admin acts inside tenant 1, while two consultants already exist in a
     // different tenant. Tenant 1 allows 2 consultants and currently has none, so creation must
     // succeed even though the global consultant count already reaches the limit.
@@ -101,8 +94,6 @@ public class CreateConsultantSagaTenantAwareIT {
     createConsultantForTenant("otherTenantUser1", 2L);
     createConsultantForTenant("otherTenantUser2", 2L);
 
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn(DUMMY_RC_ID);
     when(keycloakService.createKeycloakUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
     var tenant =
@@ -131,12 +122,9 @@ public class CreateConsultantSagaTenantAwareIT {
 
   @Test
   public void
-      createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled()
-          throws RocketChatLoginException {
+      createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given
     TenantContext.setCurrentTenant(1L);
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn(DUMMY_RC_ID);
     when(keycloakService.createKeycloakUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
     var tenant =
@@ -176,7 +164,7 @@ public class CreateConsultantSagaTenantAwareIT {
     consultant.setAppointments(null);
     consultant.setTenantId(tenantId);
     consultant.setId(username);
-    consultant.setRocketChatId(username);
+    consultant.setMatrixUserId(username);
     consultant.setUsername(username);
     consultant.setFirstName(username);
     consultant.setLastName(username);

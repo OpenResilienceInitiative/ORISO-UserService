@@ -49,7 +49,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class ConsultantAdminFacadeIT {
 
   @Autowired private ConsultantAdminFacade consultantAdminFacade;
@@ -243,7 +243,7 @@ class ConsultantAdminFacadeIT {
     newConsultant.setWalkThroughEnabled(false);
     newConsultant.setFirstName("firstName");
     newConsultant.setEmail("email@email.com");
-    newConsultant.setRocketChatId("rocketChatId");
+    newConsultant.setMatrixUserId("@consultant:matrix.example");
     newConsultant.setEncourage2fa(false);
     newConsultant.setUsername("username");
     newConsultant.setId(id);

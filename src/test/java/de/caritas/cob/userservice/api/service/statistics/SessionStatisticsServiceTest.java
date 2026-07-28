@@ -33,13 +33,13 @@ class SessionStatisticsServiceTest {
 
   @Test
   void retrieveSession_Should_ReturnDTO_When_SessionFoundById() {
-    var session = buildSession(42L, "rc-group-1");
+    var session = buildSession(42L, "!room-1:matrix.example");
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(session));
 
     SessionStatisticsResultDTO result = service.retrieveSession(42L, null);
 
     assertThat(result.getId()).isEqualTo(42L);
-    assertThat(result.getRcGroupId()).isEqualTo("rc-group-1");
+    assertThat(result.getMatrixRoomId()).isEqualTo("!room-1:matrix.example");
     assertThat(result.getAgencyId()).isEqualTo(10L);
     assertThat(result.getConsultingType()).isEqualTo(1);
     assertThat(result.getIsTeamSession()).isTrue();
@@ -61,7 +61,7 @@ class SessionStatisticsServiceTest {
     var session =
         Session.builder()
             .id(5L)
-            .groupId("rc-5")
+            .matrixRoomId("rc-5")
             .agencyId(10L)
             .consultingTypeId(2)
             .teamSession(false)
@@ -87,22 +87,22 @@ class SessionStatisticsServiceTest {
         .isInstanceOf(NotFoundException.class);
   }
 
-  // ─── retrieveSession via rcGroupId ───────────────────────────────────────
+  // ─── retrieveSession via matrixRoomId ───────────────────────────────────────
 
   @Test
-  void retrieveSession_Should_ReturnDTO_When_SessionFoundByRcGroupId() {
+  void retrieveSession_Should_ReturnDTO_When_SessionFoundByMatrixRoomId() {
     var session = buildSession(3L, "rc-abc");
-    when(sessionRepository.findByGroupId("rc-abc")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("rc-abc")).thenReturn(Optional.of(session));
 
     SessionStatisticsResultDTO result = service.retrieveSession(null, "rc-abc");
 
     assertThat(result.getId()).isEqualTo(3L);
-    assertThat(result.getRcGroupId()).isEqualTo("rc-abc");
+    assertThat(result.getMatrixRoomId()).isEqualTo("rc-abc");
   }
 
   @Test
-  void retrieveSession_Should_ThrowNotFoundException_When_RcGroupIdNotFound() {
-    when(sessionRepository.findByGroupId("missing")).thenReturn(Optional.empty());
+  void retrieveSession_Should_ThrowNotFoundException_When_MatrixRoomIdNotFound() {
+    when(sessionRepository.findByMatrixRoomId("missing")).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.retrieveSession(null, "missing"))
         .isInstanceOf(NotFoundException.class);
@@ -123,7 +123,7 @@ class SessionStatisticsServiceTest {
     var session =
         Session.builder()
             .id(1L)
-            .groupId("rc-null-dates")
+            .matrixRoomId("rc-null-dates")
             .agencyId(5L)
             .consultingTypeId(0)
             .teamSession(false)
@@ -158,7 +158,7 @@ class SessionStatisticsServiceTest {
   private Session buildSession(Long id, String groupId) {
     return Session.builder()
         .id(id)
-        .groupId(groupId)
+        .matrixRoomId(groupId)
         .agencyId(10L)
         .consultingTypeId(1)
         .teamSession(true)

@@ -14,6 +14,9 @@ import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import jakarta.persistence.EntityManager;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -26,7 +29,7 @@ import org.springframework.test.context.TestPropertySource;
 
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class SessionRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
@@ -43,7 +46,9 @@ class SessionRepositoryIT {
 
   @AfterEach
   public void reset() {
-    underTest.delete(session);
+    if (session != null) {
+      underTest.delete(session);
+    }
     session = null;
     user = null;
   }
@@ -85,32 +90,61 @@ class SessionRepositoryIT {
         underTest.findById(persistedSession.getId()).orElseThrow().getConversationType());
   }
 
+  @Test
+  void findLowestConsultingTypeIdsByAgencyIdsShouldGroupAndSelectMinimum() {
+    givenAUser();
+    var sessions =
+        List.of(
+            validSession(10L, 4), validSession(10L, 2), validSession(20L, 7), validSession(30L, 9));
+    underTest.saveAll(sessions);
+    entityManager.flush();
+
+    try {
+      var consultingTypesByAgency =
+          underTest.findLowestConsultingTypeIdsByAgencyIds(Set.of(10L, 20L)).stream()
+              .collect(
+                  Collectors.toMap(
+                      SessionRepository.AgencyConsultingTypeProjection::getAgencyId,
+                      SessionRepository.AgencyConsultingTypeProjection::getConsultingTypeId));
+
+      assertEquals(Map.of(10L, 2, 20L, 7), consultingTypesByAgency);
+    } finally {
+      underTest.deleteAll(sessions);
+    }
+  }
+
   private void givenValidSession() {
-    session = new Session();
-    session.setUser(user);
-    session.setConsultingTypeId(1);
-    session.setRegistrationType(easyRandom.nextObject(RegistrationType.class));
-    session.setPostcode(RandomStringUtils.randomNumeric(5));
-    session.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
-    session.setStatus(easyRandom.nextObject(SessionStatus.class));
-    session.setIsConsultantDirectlySet(false);
-    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session = validSession(null, 1);
+  }
+
+  private Session validSession(Long agencyId, int consultingTypeId) {
+    var validSession = new Session();
+    validSession.setUser(user);
+    validSession.setAgencyId(agencyId);
+    validSession.setConsultingTypeId(consultingTypeId);
+    validSession.setRegistrationType(easyRandom.nextObject(RegistrationType.class));
+    validSession.setPostcode(RandomStringUtils.randomNumeric(5));
+    validSession.setLanguageCode(easyRandom.nextObject(LanguageCode.class));
+    validSession.setStatus(easyRandom.nextObject(SessionStatus.class));
+    validSession.setIsConsultantDirectlySet(false);
+    validSession.setConversationType(ConversationType.AGENCY_COUNSELLING);
 
     var sessionData1 =
         new SessionData(
-            session,
+            validSession,
             SessionDataType.REGISTRATION,
             RandomStringUtils.randomAlphanumeric(1, 255),
             RandomStringUtils.randomAlphanumeric(1, 255));
 
     var sessionData2 =
         new SessionData(
-            session,
+            validSession,
             SessionDataType.REGISTRATION,
             RandomStringUtils.randomAlphanumeric(1, 255),
             RandomStringUtils.randomAlphanumeric(1, 255));
 
-    session.setSessionData(List.of(sessionData1, sessionData2));
+    validSession.setSessionData(List.of(sessionData1, sessionData2));
+    return validSession;
   }
 
   private void givenAUser() {

@@ -20,7 +20,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
               + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
               + "c.conversation_type, "
-              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, "
+              + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
               + "c.group_chat_rules_translations FROM chat c JOIN chat_agency ca ON c"
               + ".id = ca.chat_id JOIN user_agency ua ON ca.agency_id = ua.agency_id AND ua.user_id = :user_id",
@@ -33,7 +33,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
               + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
               + "c.conversation_type, "
-              + "c.consultant_id_owner, c.rc_group_id, c.matrix_room_id, c.update_date, c.create_date, "
+              + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
               + "c.group_chat_rules_translations FROM chat c "
               + "JOIN user_chat uc ON c.id = uc.chat_id AND uc.user_id = :user_id",
@@ -44,11 +44,11 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
       "select distinct c from Chat c join fetch c.chatAgencies ca where ca.agencyId in :agency_ids")
   List<Chat> findByAgencyIds(@Param(value = "agency_ids") Set<Long> agencyIds);
 
-  Optional<Chat> findByGroupId(String groupId);
+  Optional<Chat> findByMatrixRoomId(String matrixRoomId);
 
   @Query(
-      "select distinct c from Chat c left join fetch c.chatAgencies where c.groupId in :group_ids")
-  List<Chat> findByGroupIds(@Param(value = "group_ids") Set<String> groupIds);
+      "select distinct c from Chat c left join fetch c.chatAgencies where c.matrixRoomId in :room_ids")
+  List<Chat> findByMatrixRoomIdIn(@Param(value = "room_ids") Set<String> matrixRoomIds);
 
   @Query("select distinct c from Chat c left join fetch c.chatAgencies where c.id in :chat_ids")
   List<Chat> findByIdsWithChatAgencies(@Param(value = "chat_ids") Set<Long> chatIds);

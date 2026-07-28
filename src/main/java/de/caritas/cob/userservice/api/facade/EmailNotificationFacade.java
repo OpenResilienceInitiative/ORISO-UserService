@@ -5,20 +5,14 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupMembersException;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
@@ -26,7 +20,6 @@ import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSu
 import de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewEnquiryEmailSupplier;
-import de.caritas.cob.userservice.api.service.emailsupplier.NewMessageEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.ReassignmentConfirmationEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.ReassignmentRequestEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
@@ -39,7 +32,6 @@ import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,17 +49,9 @@ public class EmailNotificationFacade {
   @Value("${app.base.url}")
   private String applicationBaseUrl;
 
-  @Value("${rocket.systemuser.id}")
-  private String rocketChatSystemUserId;
-
   private final @NonNull MailService mailService;
-  private final @NonNull de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService
-      doNotDisturbService;
   private final @NonNull SessionService sessionService;
-  private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull RocketChatService messageClient;
-  private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull NewEnquiryEmailSupplier newEnquiryEmailSupplier;
   private final @NonNull NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
@@ -128,8 +112,7 @@ public class EmailNotificationFacade {
     }
   }
 
-  private void sendMailTasksToMailService(EmailSupplier mailsToSend)
-      throws RocketChatGetGroupMembersException {
+  private void sendMailTasksToMailService(EmailSupplier mailsToSend) {
     List<MailDTO> generatedMails = mailsToSend.generateEmails();
     if (isNotEmpty(generatedMails)) {
       MailsDTO mailsDTO = new MailsDTO().mails(generatedMails);
@@ -138,56 +121,6 @@ public class EmailNotificationFacade {
           mailsToSend.getClass());
       mailService.sendEmailNotification(mailsDTO);
     }
-  }
-
-  /**
-   * Sends email notifications according to the corresponding consultant(s) or asker when a new
-   * message was written.
-   *
-   * @param rcGroupId the rocket chat group id
-   * @param roles roles to decide the regarding recipients
-   * @param userId the user id of initiating user
-   */
-  @Async
-  @Transactional
-  public void sendNewMessageNotification(
-      String rcGroupId, Set<String> roles, String userId, TenantData tenantData) {
-    TenantContext.setCurrentTenantData(tenantData);
-    try {
-      Session session = sessionService.getSessionByGroupIdAndUser(rcGroupId, userId, roles);
-      EmailSupplier newMessageMails =
-          NewMessageEmailSupplier.builder()
-              .session(session)
-              .rcGroupId(rcGroupId)
-              .roles(roles)
-              .userId(userId)
-              .consultantAgencyService(consultantAgencyService)
-              .consultingTypeManager(consultingTypeManager)
-              .consultantService(consultantService)
-              .applicationBaseUrl(applicationBaseUrl)
-              .emailDummySuffix(identityClientConfig.getEmailDummySuffix())
-              .tenantTemplateSupplier(tenantTemplateSupplier)
-              .multiTenancyEnabled(multiTenancyEnabled)
-              .messageClient(messageClient)
-              .releaseToggleService(releaseToggleService)
-              .doNotDisturbService(doNotDisturbService)
-              .build();
-      sendMailTasksToMailService(newMessageMails);
-
-    } catch (NotFoundException | ForbiddenException | BadRequestException getSessionException) {
-      log.warn(
-          "EmailNotificationFacade warning: Failed to get session for new message notification with Rocket.Chat group ID {} and user ID {}.",
-          rcGroupId,
-          userId,
-          getSessionException);
-    } catch (Exception ex) {
-      log.error(
-          "EmailNotificationFacade warning: Failed to send new message notification with Rocket.Chat group ID {} and user ID {}.",
-          rcGroupId,
-          userId,
-          ex);
-    }
-    TenantContext.clear();
   }
 
   /**
@@ -221,37 +154,40 @@ public class EmailNotificationFacade {
 
   @Async
   @Transactional
-  public void sendReassignRequestNotification(String rcGroupId, TenantData tenantData) {
+  public void sendReassignRequestNotification(String matrixRoomId, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
-    var session = sessionService.getSessionByGroupId(rcGroupId);
-    var user = session.getUser();
+    try {
+      var session = sessionService.getSessionByMatrixRoomId(matrixRoomId);
+      var user = session.getUser();
 
-    if (!shouldSendReassignmentNotificationForAdviceSeeker(user)) {
-      log.info(
-          "Not sending email notification about reassignment because adviceseeker has this disabled this toggle.");
-      return;
-    }
-
-    if (hasUserValidEmailAddress(user)) {
-      var reassignmentRequestEmailSupplier =
-          ReassignmentRequestEmailSupplier.builder()
-              .receiverEmailAddress(user.getEmail())
-              .receiverLanguageCode(user.getLanguageCode())
-              .receiverUsername(user.getUsername())
-              .receiverDialect(user.getDialect())
-              .tenantTemplateSupplier(tenantTemplateSupplier)
-              .applicationBaseUrl(applicationBaseUrl)
-              .multiTenancyEnabled(multiTenancyEnabled)
-              .build();
-      try {
-        sendMailTasksToMailService(reassignmentRequestEmailSupplier);
-      } catch (Exception exception) {
-        log.error(
-            "EmailNotificationFacade error: Failed to send reassign request notification",
-            exception);
+      if (!shouldSendReassignmentNotificationForAdviceSeeker(user)) {
+        log.info(
+            "Not sending email notification about reassignment because adviceseeker has this disabled this toggle.");
+        return;
       }
+
+      if (hasUserValidEmailAddress(user)) {
+        var reassignmentRequestEmailSupplier =
+            ReassignmentRequestEmailSupplier.builder()
+                .receiverEmailAddress(user.getEmail())
+                .receiverLanguageCode(user.getLanguageCode())
+                .receiverUsername(user.getUsername())
+                .receiverDialect(user.getDialect())
+                .tenantTemplateSupplier(tenantTemplateSupplier)
+                .applicationBaseUrl(applicationBaseUrl)
+                .multiTenancyEnabled(multiTenancyEnabled)
+                .build();
+        try {
+          sendMailTasksToMailService(reassignmentRequestEmailSupplier);
+        } catch (Exception exception) {
+          log.error(
+              "EmailNotificationFacade error: Failed to send reassign request notification",
+              exception);
+        }
+      }
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
   }
 
   private boolean shouldSendReassignmentNotificationForAdviceSeeker(User user) {

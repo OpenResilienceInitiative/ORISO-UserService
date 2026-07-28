@@ -41,10 +41,6 @@ import org.springframework.test.web.servlet.MockMvc;
       "keycloak.config.admin-username=admin",
       "keycloak.config.admin-password=secret",
       "identity.openid-connect-url=https://auth.testing/realms/testing/protocol/openid-connect",
-      "rocket.technical.username=technical",
-      "rocket.technical.password=secret",
-      "rocket-chat.base-url=https://testing.com/api/v1",
-      "rocket-chat.mongo-url=mongodb://localhost:27017/testing",
       "consulting.type.service.api.url=https://consulting-type.testing/service",
       "tenant.service.api.url=https://tenant.testing/service",
       "matrix.apiUrl=https://matrix.testing",
@@ -52,7 +48,7 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @ActiveProfiles("testing")
 class InactiveAccountAuditLogsControllerAuthorizationIT {
 

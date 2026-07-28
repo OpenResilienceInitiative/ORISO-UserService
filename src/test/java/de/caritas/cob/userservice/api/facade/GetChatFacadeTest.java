@@ -93,7 +93,7 @@ public class GetChatFacadeTest {
 
     assertThat(result, instanceOf(ChatInfoResponseDTO.class));
     assertEquals(ACTIVE_CHAT.getId(), result.getId());
-    assertEquals(ACTIVE_CHAT.getGroupId(), result.getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(true, result.getActive());
 
     verify(chatService, times(1)).getChat(ACTIVE_CHAT.getId());
@@ -109,7 +109,7 @@ public class GetChatFacadeTest {
 
     assertThat(result, instanceOf(ChatInfoResponseDTO.class));
     assertEquals(ACTIVE_CHAT.getId(), result.getId());
-    assertEquals(ACTIVE_CHAT.getGroupId(), result.getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(true, result.getActive());
 
     verify(chatService, times(1)).getChat(ACTIVE_CHAT.getId());

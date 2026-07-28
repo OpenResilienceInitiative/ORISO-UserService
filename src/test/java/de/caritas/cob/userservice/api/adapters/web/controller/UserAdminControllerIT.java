@@ -42,7 +42,6 @@ import java.util.ArrayList;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.hateoas.autoconfigure.HypermediaAutoConfiguration;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -58,15 +57,15 @@ import org.springframework.test.web.servlet.MockMvc;
     value = UserAdminController.class,
     excludeAutoConfiguration = HypermediaAutoConfiguration.class)
 @AutoConfigureMockMvc(addFilters = false)
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserAdminControllerIT {
 
   protected static final String ROOT_PATH = "/useradmin";
   protected static final String SESSION_PATH = ROOT_PATH + "/sessions";
   protected static final String REPORT_PATH = ROOT_PATH + "/report";
   protected static final String FILTERED_CONSULTANTS_PATH = ROOT_PATH + "/consultants";
-  protected static final String CONSULTANT_PATH = ROOT_PATH + "/consultants/";
-  protected static final String DELETE_CONSULTANT_PATH = CONSULTANT_PATH + "1234";
+  protected static final String CONSULTANT_PATH = ROOT_PATH + "/consultants";
+  protected static final String DELETE_CONSULTANT_PATH = CONSULTANT_PATH + "/1234";
   protected static final String DELETE_ASKER_PATH = ROOT_PATH + "/askers/1234";
   protected static final String CONSULTANT_AGENCIES_PATH = ROOT_PATH + "/consultants/%s/agencies";
   protected static final String CONSULTANT_AGENCY_PATH = ROOT_PATH + "/consultants/%s/agencies";
@@ -74,13 +73,13 @@ class UserAdminControllerIT {
   protected static final String DELETE_CONSULTANT_AGENCY_PATH =
       ROOT_PATH + "/consultants/%s" + "/agencies/%s";
   protected static final String AGENCY_ADMIN_COLLECTION_PATH = ROOT_PATH + "/agencyadmins";
-  protected static final String AGENCY_ADMIN_PATH = ROOT_PATH + "/agencyadmins/";
+  protected static final String AGENCY_ADMIN_PATH = ROOT_PATH + "/agencyadmins";
 
-  protected static final String ADMIN_DATA_PATH = ROOT_PATH + "/data/";
+  protected static final String ADMIN_DATA_PATH = ROOT_PATH + "/data";
 
   protected static final String TENANT_ADMIN_PATH_WITHOUT_SLASH = ROOT_PATH + "/tenantadmins";
-  protected static final String TENANT_ADMIN_PATH = TENANT_ADMIN_PATH_WITHOUT_SLASH + "/";
-  protected static final String DELETE_AGENCY_ADMIN_PATH = AGENCY_ADMIN_PATH + "%s";
+  protected static final String TENANT_ADMIN_PATH = TENANT_ADMIN_PATH_WITHOUT_SLASH;
+  protected static final String DELETE_AGENCY_ADMIN_PATH = AGENCY_ADMIN_PATH + "/%s";
   protected static final String AGENCIES_OF_ADMIN_PATH = ROOT_PATH + "/agencyadmins/%s/agencies";
   protected static final String DELETE_ADMIN_AGENCY_PATH = AGENCIES_OF_ADMIN_PATH + "/%s";
 
@@ -121,8 +120,6 @@ class UserAdminControllerIT {
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean private UserIdentitiesService userIdentitiesService;
-
-  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()
@@ -193,7 +190,7 @@ class UserAdminControllerIT {
 
   @Test
   void getConsultant_Should_returnOk_When_requiredConsultantIdParamIsGiven() throws Exception {
-    this.mvc.perform(get(CONSULTANT_PATH + "consultantId")).andExpect(status().isOk());
+    this.mvc.perform(get(CONSULTANT_PATH + "/consultantId")).andExpect(status().isOk());
 
     verify(this.consultantAdminFacade, times(1)).findConsultant("consultantId");
   }
@@ -202,7 +199,7 @@ class UserAdminControllerIT {
   void getConsultant_Should_returnNoContent_When_requiredConsultantDoesNotExist() throws Exception {
     when(this.consultantAdminFacade.findConsultant(any())).thenThrow(new NoContentException(""));
 
-    this.mvc.perform(get(CONSULTANT_PATH + "consultantId")).andExpect(status().isNoContent());
+    this.mvc.perform(get(CONSULTANT_PATH + "/consultantId")).andExpect(status().isNoContent());
   }
 
   @Test
@@ -235,7 +232,7 @@ class UserAdminControllerIT {
 
     this.mvc
         .perform(
-            put(CONSULTANT_PATH + "consultantId")
+            put(CONSULTANT_PATH + "/consultantId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateConsultantDTO)))
         .andExpect(status().isOk());
@@ -246,7 +243,7 @@ class UserAdminControllerIT {
   @Test
   void updateConsultant_Should_returnBadRequest_When_requiredParamsAreMissing() throws Exception {
     this.mvc
-        .perform(put(CONSULTANT_PATH + "consultantId").contentType(MediaType.APPLICATION_JSON))
+        .perform(put(CONSULTANT_PATH + "/consultantId").contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
   }
 
@@ -351,7 +348,7 @@ class UserAdminControllerIT {
         .perform(delete(DELETE_CONSULTANT_PATH).contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion("1234", null);
+    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion("1234", false);
   }
 
   @Test
@@ -410,7 +407,7 @@ class UserAdminControllerIT {
     String adminId = "adminId";
 
     // when
-    this.mvc.perform(get(AGENCY_ADMIN_PATH + adminId)).andExpect(status().isOk());
+    this.mvc.perform(get(AGENCY_ADMIN_PATH + "/" + adminId)).andExpect(status().isOk());
 
     // then
     verify(this.adminUserFacade, times(1)).findAgencyAdmin(adminId);
@@ -424,7 +421,7 @@ class UserAdminControllerIT {
 
     // when
     this.mvc
-        .perform(get(CONSULTANT_PATH + "consultantId"))
+        .perform(get(CONSULTANT_PATH + "/consultantId"))
 
         // then
         .andExpect(status().isNoContent());
@@ -487,7 +484,7 @@ class UserAdminControllerIT {
     // when
     this.mvc
         .perform(
-            put(AGENCY_ADMIN_PATH + "adminId")
+            put(AGENCY_ADMIN_PATH + "/adminId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAgencyAdminDTO)))
         .andExpect(status().isOk());
@@ -506,7 +503,7 @@ class UserAdminControllerIT {
     // when
     this.mvc
         .perform(
-            put(TENANT_ADMIN_PATH + "adminId")
+            put(TENANT_ADMIN_PATH + "/adminId")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAgencyAdminDTO)))
         .andExpect(status().isOk());
@@ -520,7 +517,7 @@ class UserAdminControllerIT {
     // given
     // when
     this.mvc
-        .perform(put(AGENCY_ADMIN_PATH + "adminId").contentType(MediaType.APPLICATION_JSON))
+        .perform(put(AGENCY_ADMIN_PATH + "/adminId").contentType(MediaType.APPLICATION_JSON))
         // then
         .andExpect(status().isBadRequest());
   }

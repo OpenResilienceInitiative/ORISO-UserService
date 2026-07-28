@@ -4,9 +4,9 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
@@ -49,7 +50,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class RegisteredEnquiryConversationListProviderIT {
 
   @Autowired
@@ -121,7 +122,7 @@ public class RegisteredEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }
@@ -154,8 +155,11 @@ public class RegisteredEnquiryConversationListProviderIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(REGISTERED);
           session.setConsultant(null);
           session.setUser(user);
@@ -167,6 +171,9 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setConsultingTypeId(random.nextInt(127));
           session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
+          session.setUpdateDate(orderedDate);
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);

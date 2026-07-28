@@ -40,7 +40,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 @DataJpaTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class ConsultantRepositoryIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
@@ -440,40 +440,6 @@ class ConsultantRepositoryIT {
     assertEquals(allMatching, consultantPage.getTotalElements());
   }
 
-  @Test
-  void findAllByAgencyIdsShouldFindChatIds() {
-    var agencyId1 = givenANewAgencyId();
-    givenConsultantsWithAgencyId(2, agencyId1);
-    var agencyId2 = givenANewAgencyId();
-    givenConsultantsWithAgencyId(3, agencyId2);
-    var agencyId3 = givenANewAgencyId();
-    givenConsultantsWithAgencyId(4, agencyId3);
-    var agencyIds = Set.of(agencyId1, agencyId2);
-
-    var cChatIds = underTest.findAllByAgencyIds(agencyIds);
-
-    var cAgencies = consultantAgencyRepository.findByAgencyIdInAndDeleteDateIsNull(agencyIds);
-    assertEquals(cAgencies.size(), cChatIds.size());
-    cAgencies.forEach(
-        cAgency -> assertTrue(cChatIds.contains(cAgency.getConsultant().getRocketChatId())));
-  }
-
-  @Test
-  void findAllByAgencyIdsShouldIgnoreConsultantAgenciesMarkedForDeletion() {
-    var agencyId1 = givenANewAgencyId();
-    givenConsultantsWithAgencyId(2, agencyId1);
-    var cAgencies = consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId1);
-    cAgencies.forEach(
-        cAgency -> {
-          cAgency.setDeleteDate(LocalDateTime.now());
-          consultantAgencyRepository.save(cAgency);
-        });
-
-    var consultantChatIds = underTest.findAllByAgencyIds(Set.of(agencyId1));
-
-    assertEquals(0, consultantChatIds.size());
-  }
-
   private void givenConsultantsMatchingFirstName(
       @PositiveOrZero int count, @NotBlank String infix) {
     while (count-- > 0) {
@@ -482,7 +448,7 @@ class ConsultantRepositoryIT {
       BeanUtils.copyProperties(dbConsultant, consultant);
       consultant.setId(UUID.randomUUID().toString());
       consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-      consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+      consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
       consultant.setFirstName(aStringWithInfix(infix));
       consultant.setLastName(aStringWithoutInfix(infix));
       consultant.setEmail(aValidEmailWithoutInfix(infix));
@@ -499,7 +465,7 @@ class ConsultantRepositoryIT {
       BeanUtils.copyProperties(dbConsultant, consultant);
       consultant.setId(UUID.randomUUID().toString());
       consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-      consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+      consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
       consultant.setFirstName(aStringWithoutInfix(infix));
       consultant.setLastName(aStringWithInfix(infix));
       consultant.setEmail(aValidEmailWithoutInfix(infix));
@@ -560,7 +526,7 @@ class ConsultantRepositoryIT {
     BeanUtils.copyProperties(dbConsultant, consultant);
     consultant.setId(UUID.randomUUID().toString());
     consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-    consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
     consultant.setFirstName(aStringWithoutInfix(infix));
     consultant.setLastName(aStringWithoutInfix(infix));
     consultant.setEmail(aValidEmailWithInfix(infix));
@@ -574,7 +540,7 @@ class ConsultantRepositoryIT {
       BeanUtils.copyProperties(dbConsultant, consultant);
       consultant.setId(UUID.randomUUID().toString());
       consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-      consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+      consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
       consultant.setFirstName(aStringWithoutInfix(infix));
       consultant.setLastName(aStringWithoutInfix(infix));
       consultant.setEmail(aValidEmailWithoutInfix(infix));
@@ -591,7 +557,7 @@ class ConsultantRepositoryIT {
     consultant.setId(UUID.randomUUID().toString());
     consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
     consultant.setEmail(aValidEmail());
-    consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
     underTest.save(consultant);
 
     var appointment = easyRandom.nextObject(Appointment.class);

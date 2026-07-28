@@ -8,7 +8,6 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -18,8 +17,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
@@ -41,14 +38,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class GrantConsultantIdentityServiceTest {
 
   private static final String ADMIN_ID = "admin-uuid-1";
   private static final String ADMIN_USERNAME = "adminUsername";
-  private static final String ADMIN_RC_ID = "existingRcUserId";
   private static final String MATRIX_USER_ID = "@adminUsername:matrix";
 
   @InjectMocks private GrantConsultantIdentityService grantConsultantIdentityService;
@@ -56,7 +51,6 @@ class GrantConsultantIdentityServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
-  @Mock private RocketChatService rocketChatService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
@@ -81,16 +75,13 @@ class GrantConsultantIdentityServiceTest {
         .firstName("First")
         .lastName("Last")
         .email("admin@example.com")
-        .rcUserId(ADMIN_RC_ID)
         .tenantId(1L)
         .build();
   }
 
   private void stubHappyMatrix() throws Exception {
-    var matrixResponse = new MatrixCreateUserResponseDTO();
-    matrixResponse.setUserId(MATRIX_USER_ID);
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(matrixResponse));
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenReturn(MATRIX_USER_ID);
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
   }
 
@@ -165,6 +156,7 @@ class GrantConsultantIdentityServiceTest {
     // no column default and reject NULL (found on the local clean-slate stack).
     assertThat(saved.getCreateDate(), notNullValue());
     assertThat(saved.getUpdateDate(), notNullValue());
+    assertThat(saved.getMatrixUserId(), is(MATRIX_USER_ID));
 
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
@@ -209,32 +201,13 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
-  void reuseAdminRcUserId_When_present() throws Exception {
-    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
-    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
-    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
-    stubHappyMatrix();
-    when(consultantService.saveConsultant(any(Consultant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
-
-    verify(rocketChatService, never()).getUserID(anyString(), anyString(), anyBoolean());
-
-    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
-    verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getRocketChatId(), is(ADMIN_RC_ID));
-  }
-
-  @Test
   void continueDespiteMatrixFailure() throws Exception {
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
     when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
     when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
         .thenThrow(new RuntimeException("matrix down"));
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -317,59 +290,13 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
-  void createRocketChatUser_When_adminHasNoRcUserId() throws Exception {
-    Admin admin = validAdmin();
-    admin.setRcUserId(null);
-    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
-    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
-    stubHappyMatrix();
-    when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn("new-rc-id");
-    when(consultantService.saveConsultant(any(Consultant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
-
-    verify(rocketChatService).getUserID(anyString(), anyString(), anyBoolean());
-    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
-    verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getRocketChatId(), is("new-rc-id"));
-  }
-
-  @Test
-  void useDummyRocketChatId_When_rocketChatCreationFails() throws Exception {
-    Admin admin = validAdmin();
-    admin.setRcUserId(null);
-    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
-    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
-    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
-    stubHappyMatrix();
-    when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenThrow(new RuntimeException("rocket chat down"));
-    when(consultantService.saveConsultant(any(Consultant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
-
-    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
-    verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getRocketChatId(), is("dummy-rc"));
-  }
-
-  @Test
   void continueWithoutMatrixUserId_When_matrixResponseMissingUserId() throws Exception {
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
     when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
     when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
     when(userHelper.getRandomPassword()).thenReturn("randomPw");
-    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(new MatrixCreateUserResponseDTO()));
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString())).thenReturn(null);
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 

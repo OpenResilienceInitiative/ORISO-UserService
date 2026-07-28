@@ -30,13 +30,13 @@ class LiveProxyControllerTest {
 
   @Test
   void sendLiveEvent_validGroupId_delegatesAndReturnsOk() {
-    // Business reason: live event dispatch must forward exactly the requested Rocket.Chat group id.
-    var response = controller.sendLiveEvent("rc-group-1");
+    // Business reason: live event dispatch must forward exactly the requested Matrix room id.
+    var response = controller.sendLiveEvent("!room-1:matrix.example");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(String.class);
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(captor.capture());
-    assertEquals("rc-group-1", captor.getValue());
+    assertEquals("!room-1:matrix.example", captor.getValue());
   }
 
   @Test
@@ -45,9 +45,10 @@ class LiveProxyControllerTest {
     // service.
     doThrow(new IllegalStateException("delivery failed"))
         .when(liveEventNotificationService)
-        .sendLiveDirectMessageEventToUsers("rc-group-2");
+        .sendLiveDirectMessageEventToUsers("!room-2:matrix.example");
 
-    assertThrows(IllegalStateException.class, () -> controller.sendLiveEvent("rc-group-2"));
+    assertThrows(
+        IllegalStateException.class, () -> controller.sendLiveEvent("!room-2:matrix.example"));
   }
 
   @Test

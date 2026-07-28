@@ -11,7 +11,6 @@ public class LogService {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(LogService.class);
 
-  public static final String ROCKET_CHAT_ERROR_TEXT = "Rocket.Chat Error: ";
   public static final String DB_ERROR_TEXT = "Database error: ";
   public static final String FORBIDDEN_WARNING_TEXT = "Forbidden: ";
   public static final String ASSIGN_SESSION_FACADE_WARNING_TEXT = "AssignSessionFacade warning: ";
@@ -57,15 +56,6 @@ public class LogService {
         getStackTrace(exception),
         exception.getMessage(),
         nonNull(exception.getCause()) ? getStackTrace(exception.getCause()) : "No Cause");
-  }
-
-  /**
-   * Rocket.Chat error.
-   *
-   * @param ex the exception
-   */
-  public static void logRocketChatError(Exception ex) {
-    LOGGER.error("{}{}{}", ROCKET_CHAT_ERROR_TEXT, ex.getMessage(), getStackTrace(ex));
   }
 
   /**

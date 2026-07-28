@@ -8,7 +8,6 @@ import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.*;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.*;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -16,8 +15,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsernameJsonDeserializer;
@@ -47,6 +44,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.manager.consultingtype.registration.mandatoryfields.MandatoryFields;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -68,15 +66,12 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import jakarta.servlet.http.Cookie;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.hibernate.service.spi.ServiceException;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -116,15 +111,12 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 class UserControllerIT {
 
-  private static final Cookie RC_TOKEN_COOKIE =
-      new Cookie("rc_token", RandomStringUtils.randomAlphanumeric(43));
-
   private final String VALID_ENQUIRY_MESSAGE_BODY = "{\"message\": \"" + MESSAGE + "\"}";
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Consultant TEAM_CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")
@@ -151,8 +143,8 @@ class UserControllerIT {
           .consultingType(0)
           .status(2)
           .postcode(POSTCODE)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(MESSAGE_DATE)
           .isTeamSession(IS_NO_TEAM_SESSION);
   private final AgencyDTO AGENCY_DTO =
@@ -184,7 +176,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.IN_PROGRESS)
           .createDate(nowInUtc())
@@ -200,7 +192,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.NEW)
           .createDate(nowInUtc())
@@ -217,7 +209,7 @@ class UserControllerIT {
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.IN_PROGRESS)
           .createDate(nowInUtc())
@@ -278,10 +270,6 @@ class UserControllerIT {
 
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
 
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private AskerImportService askerImportService;
-
   @MockitoBean private SessionListFacade sessionListFacade;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
@@ -297,13 +285,10 @@ class UserControllerIT {
   @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
-  @MockitoBean private RocketChatService rocketChatService;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
   @MockitoBean private CreateUserFacade createUserFacade;
-
-  @MockitoBean KeycloakConfigResolver resolver;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -423,6 +408,36 @@ class UserControllerIT {
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void consumeMagicLinkShouldPreservePublicSnakeCaseSessionContract() throws Exception {
+    when(magicLinkLoginService.consumeMagicLink("one-time-token"))
+        .thenReturn(
+            Optional.of(
+                new IdentitySession(
+                    "access-token",
+                    300,
+                    600,
+                    "refresh-token",
+                    "Bearer",
+                    "session-state",
+                    "openid profile")));
+
+    mvc.perform(
+            post("/users/magic-link/consume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"one-time-token\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.access_token").value("access-token"))
+        .andExpect(jsonPath("$.expires_in").value(300))
+        .andExpect(jsonPath("$.refresh_expires_in").value(600))
+        .andExpect(jsonPath("$.refresh_token").value("refresh-token"))
+        .andExpect(jsonPath("$.token_type").value("Bearer"))
+        .andExpect(jsonPath("$.session_state").value("session-state"))
+        .andExpect(jsonPath("$.scope").value("openid profile"))
+        .andExpect(jsonPath("$.accessToken").doesNotExist())
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
   }
 
   @Test
@@ -661,8 +676,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_USER)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY_WITH_INVALID_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -679,8 +692,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_USER)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY_WITOUT_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -693,8 +704,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_USER_REQUEST_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -705,8 +714,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_PostcodeIsInvalid() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITH_INVALID_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -717,8 +724,6 @@ class UserControllerIT {
   void registerNewConsultingType_Should_ReturnBadRequest_When_PostcodeIsMissing() throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_POSTCODE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -732,8 +737,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_AGENCY_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -745,31 +748,7 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(INVALID_NEW_REGISTRATION_BODY_WITHOUT_CONSULTING_TYPE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-  }
-
-  @Test
-  void registerNewConsultingType_Should_ReturnBadRequest_When_RcUserIdIsMissing() throws Exception {
-    mvc.perform(
-            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .content(VALID_NEW_REGISTRATION_BODY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-  }
-
-  @Test
-  void registerNewConsultingType_Should_ReturnBadRequest_When_RcTokenIsMissing() throws Exception {
-    mvc.perform(
-            post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -781,15 +760,13 @@ class UserControllerIT {
 
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
     when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(RocketChatCredentials.class), Mockito.any()))
+            any(), any(), Mockito.<List<NewSessionValidationConstraint>>any()))
         .thenReturn(new NewRegistrationResponseDto().sessionId(1L).status(HttpStatus.CREATED));
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -800,14 +777,13 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenNoConsultantInDbFound() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant())
         .thenThrow(new InternalServerErrorException(""));
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
@@ -816,30 +792,27 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionNotFoundInDb() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.empty());
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.empty());
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
   }
 
   @Test
-  void acceptEnquiry_Should_ReturnInternalServerError_WhenSessionHasNoRocketChatGroupId()
-      throws Exception {
+  void acceptEnquiry_Should_ReturnSuccess_WhenSessionHasNoMatrixRoomId() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID))
+    when(sessionService.getSessionForUpdate(SESSION_ID))
         .thenReturn(Optional.of(TEAM_SESSION_WITHOUT_GROUP_ID));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
@@ -848,13 +821,12 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnSuccess_WhenAcceptEnquiryIsSuccessfull() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
@@ -863,7 +835,7 @@ class UserControllerIT {
   @Test
   void acceptEnquiry_Should_ReturnConflict_WhenEnquiryIsAlreadyAssigned() throws Exception {
 
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
+    when(sessionService.getSessionForUpdate(SESSION_ID)).thenReturn(Optional.of(TEAM_SESSION));
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
     doThrow(new ConflictException(""))
@@ -872,7 +844,6 @@ class UserControllerIT {
 
     mvc.perform(
             put(PATH_ACCEPT_ENQUIRY + SESSION_ID)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CONFLICT.value()));
@@ -889,8 +860,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, "xxx")
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, "xxx")
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -908,8 +877,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -920,27 +887,21 @@ class UserControllerIT {
   void createEnquiryMessage_Should_ReturnCreated_WhenMessageWasCreated() throws Exception {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
-    var expectedRCCredentials =
-        RocketChatCredentials.builder()
-            .rocketChatToken(RC_TOKEN)
-            .rocketChatUserId(RC_USER_ID)
-            .build();
-    var expectedEnquiryData =
-        new EnquiryData(USER, SESSION_ID, MESSAGE, null, expectedRCCredentials);
+    var expectedEnquiryData = new EnquiryData(USER, SESSION_ID, MESSAGE, null);
     when(createEnquiryMessageFacade.createEnquiryMessage(expectedEnquiryData))
         .thenReturn(
-            new CreateEnquiryMessageResponseDTO().rcGroupId(RC_GROUP_ID).sessionId(SESSION_ID));
+            new CreateEnquiryMessageResponseDTO()
+                .matrixRoomId(MATRIX_ROOM_ID)
+                .sessionId(SESSION_ID));
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.CREATED.value()))
         .andExpect(jsonPath("$.sessionId", is(SESSION_ID.intValue())))
-        .andExpect(jsonPath("$.rcGroupId", is(RC_GROUP_ID)));
+        .andExpect(jsonPath("$.matrixRoomId", is(MATRIX_ROOM_ID)));
   }
 
   @Test
@@ -954,8 +915,6 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_CREATE_ENQUIRY_MESSAGE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, "xxx")
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, "xxx")
                 .content(VALID_ENQUIRY_MESSAGE_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
@@ -974,7 +933,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     var displayName = RandomStringUtils.randomAlphanumeric(16);
@@ -983,16 +942,14 @@ class UserControllerIT {
     when(accountManager.findConsultantByUsername(anyString())).thenReturn(Optional.of(map));
 
     response.getSessions().get(0).getConsultant().setDisplayName(displayName);
-    var sessionsJson = objectMapper.writeValueAsString(response);
-
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("sessions[0].consultant.displayName", is(displayName)))
-        .andExpect(content().json(sessionsJson));
+        .andExpect(jsonPath("sessions[0].session.id", is(SESSION_ID.intValue())))
+        .andExpect(jsonPath("sessions[0].agency.id", is(AGENCY_ID.intValue())));
 
     verify(userAccountService, atLeastOnce()).retrieveValidatedUser();
   }
@@ -1008,13 +965,11 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
 
-    verify(sessionListFacade, times(0))
-        .retrieveSortedSessionsForAuthenticatedUser(Mockito.any(), Mockito.any());
+    verify(sessionListFacade, times(0)).retrieveSortedSessionsForAuthenticatedUser(Mockito.any());
   }
 
   @Test
@@ -1027,19 +982,18 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_USER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
   }
 
   @Test
-  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenRcTokenHeaderIsMissing()
+  void getSessionsForAuthenticatedUser_Should_ReturnNoContent_WhenNoSessionsExist()
       throws Exception {
     List<UserSessionResponseDTO> session = new ArrayList<>();
     UserSessionListResponseDTO response = new UserSessionListResponseDTO().sessions(session);
@@ -1047,7 +1001,7 @@ class UserControllerIT {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
 
-    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString(), Mockito.any()))
+    when(sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(anyString()))
         .thenReturn(response);
 
     mvc.perform(
@@ -1087,7 +1041,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_STATUS)
-                .header(RC_USER_ID_HEADER_PARAMETER_NAME, RC_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1096,39 +1049,12 @@ class UserControllerIT {
   }
 
   @Test
-  void
-      getSessionsForAuthenticatedConsultant_Should_ReturnUnauthorized_WhenUnauthorizedExceptionIsRaised()
-          throws Exception {
-    var runtimeException = new RuntimeException("Rocket.Chat unavailable");
-    var unauthorizedException = new RocketChatUnauthorizedException("userId", runtimeException);
-    when(userAccountService.retrieveValidatedConsultant()).thenThrow(unauthorizedException);
-
-    mvc.perform(
-            get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isUnauthorized());
-
-    var stackTrace = ExceptionUtils.getStackTrace(unauthorizedException);
-    assertTrue(
-        stackTrace.contains(
-            "Could not get Rocket.Chat subscriptions for user ID userId: Token is not active (401 Unauthorized)"));
-    assertTrue(
-        stackTrace.startsWith(
-            "de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException:"));
-  }
-
-  @Test
-  void getSessionsForAuthenticatedConsultant_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
-      throws Exception {
+  void getSessionsForAuthenticatedConsultant_Should_Succeed() throws Exception {
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
-
-    verifyNoMoreInteractions(authenticatedUser, sessionService);
+        .andExpect(status().isNoContent());
   }
 
   @Test
@@ -1142,7 +1068,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -1157,7 +1082,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is2xxSuccessful());
@@ -1173,7 +1097,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1189,7 +1112,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1201,7 +1123,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1214,7 +1135,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1226,7 +1146,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1239,7 +1158,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1254,7 +1172,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_INVALID_FILTER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1276,7 +1193,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
   }
@@ -1292,7 +1208,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
   }
@@ -1306,7 +1221,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1320,7 +1234,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1334,7 +1247,6 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
@@ -1348,21 +1260,19 @@ class UserControllerIT {
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
-                .cookie(RC_TOKEN_COOKIE)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.OK.value()));
   }
 
   /** Method: getTeamSessionsForAuthenticatedConsultant (role: consultant) */
   @Test
-  void getTeamSessionsForAuthenticatedConsultant_Should_ReturnBadRequest_WhenHeaderParamIsMissing()
+  void getTeamSessionsForAuthenticatedConsultant_Should_ReturnNoContent_WhenNoSessionsExist()
       throws Exception {
-
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNoContent());
   }
 
   @Test
@@ -1376,7 +1286,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -1393,7 +1302,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden());
@@ -1409,7 +1317,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
@@ -1425,7 +1332,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is2xxSuccessful());
@@ -1436,7 +1342,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1448,7 +1353,6 @@ class UserControllerIT {
           throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_OFFSET)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1459,7 +1363,6 @@ class UserControllerIT {
       throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITHOUT_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1471,7 +1374,6 @@ class UserControllerIT {
           throws Exception {
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_NEGATIVE_COUNT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());
@@ -1486,28 +1388,9 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_TEAM_SESSIONS_FOR_AUTHENTICATED_CONSULTANT_WITH_INVALID_FILTER)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
-  }
-
-  /** sendNewMessageNotification() */
-  @Test
-  void
-      sendNewMessageNotification_Should_CallEmailNotificationFacadeAndReturn2xxSuccessful_WhenCalled()
-          throws Exception {
-    var validNewMessageRequestBody = "{\"rcGroupId\": \"" + RC_GROUP_ID + "\"}";
-    mvc.perform(
-            post(PATH_SEND_NEW_MESSAGE_NOTIFICATION)
-                .content(validNewMessageRequestBody)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is2xxSuccessful());
-
-    verify(emailNotificationFacade, atLeastOnce())
-        .sendNewMessageNotification(
-            RC_GROUP_ID, authenticatedUser.getRoles(), authenticatedUser.getUserId(), null);
   }
 
   /** Method: getConsultants (authority: VIEW_AGENCY_CONSULTANTS) */
@@ -1617,6 +1500,7 @@ class UserControllerIT {
   void assignSession_Should_ReturnInternalServerErrorAndLogError_WhenConsultantIsNotFoundInDb()
       throws Exception {
 
+    when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
     when(userAccountService.retrieveValidatedConsultantById(anyString()))
         .thenThrow(new InternalServerErrorException(""));
 
@@ -1628,8 +1512,7 @@ class UserControllerIT {
   }
 
   @Test
-  void assignSession_Should_ReturnInternalServerErrorAndLogError_WhenSessionIsNotFoundInDb()
-      throws Exception {
+  void assignSession_Should_ReturnNotFound_WhenSessionIsNotFoundInDb() throws Exception {
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(TEAM_CONSULTANT);
     when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.empty());
@@ -1638,7 +1521,7 @@ class UserControllerIT {
             put(PATH_PUT_ASSIGN_SESSION)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.INTERNAL_SERVER_ERROR.value()));
+        .andExpect(status().is(HttpStatus.NOT_FOUND.value()));
   }
 
   @Test
@@ -1828,7 +1711,6 @@ class UserControllerIT {
         .andExpect(status().isBadRequest());
 
     verifyNoMoreInteractions(chatService);
-    verifyNoMoreInteractions(rocketChatService);
     verifyNoMoreInteractions(startChatFacade);
     verifyNoMoreInteractions(chatPermissionVerifier);
   }
@@ -1910,7 +1792,7 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(assignChatFacade).assignChat(RC_GROUP_ID, authenticatedUser);
+    verify(assignChatFacade).assignChat(MATRIX_ROOM_ID, authenticatedUser);
   }
 
   /** Method: joinChat */
@@ -2004,7 +1886,6 @@ class UserControllerIT {
     verifyNoMoreInteractions(userAccountService);
     verifyNoMoreInteractions(chatPermissionVerifier);
     verifyNoMoreInteractions(userHelper);
-    verifyNoMoreInteractions(rocketChatService);
   }
 
   @Test
@@ -2051,7 +1932,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSION_FOR_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
@@ -2069,7 +1949,6 @@ class UserControllerIT {
 
     mvc.perform(
             get(PATH_GET_SESSION_FOR_CONSULTANT)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
@@ -2082,7 +1961,7 @@ class UserControllerIT {
     mvc.perform(
             put(PATH_PUT_UPDATE_EMAIL)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("email")
+                .content(objectMapper.writeValueAsString("email"))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
@@ -2334,48 +2213,12 @@ class UserControllerIT {
 
   @Test
   void getConsultantPublicData_Should_returnOk_When_consultantIdIsGiven() throws Exception {
-    givenAValidConsultant();
+    var consultant = givenAValidConsultant();
 
     mvc.perform(get(PATH_GET_PUBLIC_CONSULTANT_DATA).contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(consultantAgencyService)
-        .getOnlineAgenciesOfConsultant("65c1095e-b977-493a-a34f-064b729d1d6c");
-  }
-
-  @Test
-  void updateE2eInChats_Should_returnAccepted_When_adviceSeekerWithoutInitializedSessionIsGiven()
-      throws Exception {
-    givenAdviceSeekerWithoutInitializedSession(false);
-
-    mvc.perform(
-            put("/users/chat/e2e")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new E2eKeyDTO()
-                                .publicKey(
-                                    "zYnD6llaxxtN2Hnc2njpd3iMW4vwrCxUXXJfi1knTsYIlIbHCsDkUMRnuw38ydaKufuzHXsCjdfYWYSJObduz5rOrRiwZTmxWujcUkrJlTg9ON50gnWbtRro3yrGX9IgoIrGfNmPTSeTasCchJ-S5z6V7OPdRthxQSoqtBtVt4XJD2lbl-fU_c4nzWZ47Gk8kes6kHMdpXtmbVROGbKAH5MVEc6XqW1-FJDVcVVE9ZoQZiPe3slnuJLMgGstnzvDlwwcRetc_9dbQf_QRFZ-_3e_QA3tOnguBnu6naLciffAHET70b-YE1n6IN_zMPL5eC1ses_tFd8CTG3p7Dvo5w"))))
-        .andExpect(status().isAccepted());
-  }
-
-  @Test
-  void
-      updateE2eInChats_Should_returnServerError_When_adviceSeekerWithoutInitializedSessionShouldHaveBeenInitialized()
-          throws Exception {
-    givenAdviceSeekerWithoutInitializedSession(true);
-
-    mvc.perform(
-            put("/users/chat/e2e")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    new ObjectMapper()
-                        .writeValueAsString(
-                            new E2eKeyDTO()
-                                .publicKey(
-                                    "zYnD6llaxxtN2Hnc2njpd3iMW4vwrCxUXXJfi1knTsYIlIbHCsDkUMRnuw38ydaKufuzHXsCjdfYWYSJObduz5rOrRiwZTmxWujcUkrJlTg9ON50gnWbtRro3yrGX9IgoIrGfNmPTSeTasCchJ-S5z6V7OPdRthxQSoqtBtVt4XJD2lbl-fU_c4nzWZ47Gk8kes6kHMdpXtmbVROGbKAH5MVEc6XqW1-FJDVcVVE9ZoQZiPe3slnuJLMgGstnzvDlwwcRetc_9dbQf_QRFZ-_3e_QA3tOnguBnu6naLciffAHET70b-YE1n6IN_zMPL5eC1ses_tFd8CTG3p7Dvo5w"))))
-        .andExpect(status().isInternalServerError());
+    verify(consultantAgencyService).getOnlineAgenciesOfConsultant(consultant.getId());
   }
 
   @Test
@@ -2391,16 +2234,13 @@ class UserControllerIT {
     when(createNewSessionFacade.initializeNewSession(
             Mockito.any(UserRegistrationDTO.class),
             Mockito.any(),
-            Mockito.any(RocketChatCredentials.class),
-            Mockito.any()))
+            Mockito.<List<NewSessionValidationConstraint>>any()))
         .thenReturn(new NewRegistrationResponseDto().status(HttpStatus.CREATED));
 
     // when
     var result =
         mvc.perform(
                 post("/users/askers/session/new")
-                    .header("RCToken", "token")
-                    .header("RCUserId", "userId")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(new ObjectMapper().writeValueAsString(newRegistrationDto)))
             .andExpect(status().isCreated())
@@ -2408,16 +2248,6 @@ class UserControllerIT {
 
     // then
     assertEquals(HttpStatus.CREATED.value(), result.getResponse().getStatus());
-  }
-
-  private void givenAdviceSeekerWithoutInitializedSession(boolean wasUpdated) {
-    var user = new User();
-    user.setCreateDate(nowInUtc());
-    var updateDate = wasUpdated ? nowInUtc().plusDays(1) : user.getCreateDate();
-    user.setUpdateDate(updateDate);
-    when(userAccountService.retrieveValidatedUser()).thenReturn(user);
-    when(accountManager.findAdviceSeeker(any())).thenReturn(Optional.of(new HashMap<>()));
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {
@@ -2452,6 +2282,8 @@ class UserControllerIT {
     var consultant = easyRandom.nextObject(Consultant.class);
     consultant.setEmail(givenAValidEmail());
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    when(consultantPublicSlugService.resolveActiveConsultant(any()))
+        .thenReturn(Optional.of(consultant));
 
     return consultant;
   }

@@ -27,7 +27,6 @@ import de.caritas.cob.userservice.api.port.out.AppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import jakarta.servlet.http.Cookie;
-import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -39,7 +38,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentMatchers;
 import org.mockito.MockitoAnnotations;
 import org.springframework.amqp.core.Message;
@@ -54,21 +52,16 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.request.ServletWebRequest;
-import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
-import org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver;
-import org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod;
 
 @SpringBootTest
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class AppointmentControllerE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final Integer BOOKING_ID = 1;
 
   private MockMvc mockMvc;
@@ -85,8 +78,6 @@ class AppointmentControllerE2EIT {
 
   @MockitoBean private Clock clock;
 
-  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
-
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   private Appointment appointment;
@@ -102,31 +93,9 @@ class AppointmentControllerE2EIT {
     MockitoAnnotations.initMocks(this);
     this.mockMvc =
         MockMvcBuilders.standaloneSetup(appointmentController)
-            .setHandlerExceptionResolvers(withExceptionControllerAdvice())
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
             .build();
     objectMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
-  }
-
-  private ExceptionHandlerExceptionResolver withExceptionControllerAdvice() {
-    final ExceptionHandlerExceptionResolver exceptionResolver =
-        new ExceptionHandlerExceptionResolver() {
-          @Override
-          protected ServletInvocableHandlerMethod getExceptionHandlerMethod(
-              final HandlerMethod handlerMethod,
-              final Exception exception,
-              final ServletWebRequest webRequest) {
-            Method method =
-                new ExceptionHandlerMethodResolver(ApiResponseEntityExceptionHandler.class)
-                    .resolveMethod(exception);
-            if (method != null) {
-              return new ServletInvocableHandlerMethod(
-                  new ApiResponseEntityExceptionHandler(), method);
-            }
-            return super.getExceptionHandlerMethod(handlerMethod, exception, webRequest);
-          }
-        };
-    exceptionResolver.afterPropertiesSet();
-    return exceptionResolver;
   }
 
   @AfterEach

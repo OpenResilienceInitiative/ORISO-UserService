@@ -15,13 +15,13 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.0.1</version>
+		<version>4.0.7</version>
 		<relativePath /> <!-- lookup parent from repository -->
 	</parent>
 
 	<properties> <!-- upper version is used to add the new features with the new versions of Java and spring boot, basic code changes are already made and as new features arrive they will use the upper version -->
 		<java.upper.version>21</java.upper.version>
-		<springboot.upper.version>4.0.1</springboot.upper.version>
+		<springboot.upper.version>4.0.7</springboot.upper.version>
 		<spring.upper.version>7.0.x</spring.upper.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -30,12 +30,11 @@
 		<maven.compiler.target>21</maven.compiler.target>
 		<skip.unit-tests>false</skip.unit-tests>
 		<skip.integration-tests>false</skip.integration-tests>
-		<keycloak.version>17.0.0</keycloak.version>
-		<!-- Admin client decoupled from the deprecated keycloak.version adapter:
-		     server is Keycloak 26.x; the 17.0.0 admin client 401s against it (create-user). -->
+		<!-- Server is Keycloak 26.x; the deprecated 17.x spring adapters were removed
+		     (unused since the resource-server migration, flagged by the image CVE gate). -->
 		<keycloak-admin-client.version>26.0.4</keycloak-admin-client.version>
 		<springfox.version>2.9.2</springfox.version>
-		<spring-plugin-core.version>2.0.0.RELEASE</spring-plugin-core.version>
+		<spring-plugin-core.version>4.0.0</spring-plugin-core.version>
 		<openapi.generator.maven.version>7.17.0</openapi.generator.maven.version>
 		<adapters.web.generated.path>
 			${project.groupId}.${project.artifactId}.generated.api.adapters.web
@@ -45,14 +44,16 @@
 		</adapters.web.dto.path>
 		<log4j.version>2.25.4</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
 		<commons-text.version>1.10.0</commons-text.version>
-		<commons-validator.version>1.7</commons-validator.version>
+		<commons-validator.version>1.10.1</commons-validator.version>
 		<liquibase-maven-plugin.version>4.8.0</liquibase-maven-plugin.version>
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
-		<json-smart.version>2.4.7</json-smart.version>
+		<json-smart.version>2.6.0</json-smart.version>
+		<!-- Spring Boot 4.0.7 still manages Netty 4.2.15; 4.2.16 fixes CVE-2026-59901,
+		     CVE-2026-55831, CVE-2026-55833 and CVE-2026-56745 (image CVE gate). -->
+		<netty.version>4.2.16.Final</netty.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
-		<ehcache.version>2.10.9.2</ehcache.version>
-		<testcontainers.version>1.17.6</testcontainers.version>
+		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 
@@ -225,16 +226,6 @@
 		<!-- Keycloak dependencies -->
 		<dependency>
 			<groupId>org.keycloak</groupId>
-			<artifactId>keycloak-spring-security-adapter</artifactId>
-			<version>${keycloak.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.keycloak</groupId>
-			<artifactId>keycloak-spring-boot-starter</artifactId>
-			<version>${keycloak.version}</version>
-		</dependency>
-		<dependency>
-			<groupId>org.keycloak</groupId>
 			<artifactId>keycloak-admin-client</artifactId>
 			<version>${keycloak-admin-client.version}</version>
 		</dependency>
@@ -289,11 +280,6 @@
 		    <artifactId>commons-codec</artifactId>
 		</dependency>
 
-		<dependency>
-			<groupId>org.liquibase</groupId>
-			<artifactId>liquibase-maven-plugin</artifactId>
-			<version>${liquibase-maven-plugin.version}</version>
-		</dependency>
 		<dependency>
 			<groupId>org.liquibase</groupId>
 			<artifactId>liquibase-core</artifactId>
@@ -355,15 +341,8 @@
 		</dependency>
 
 		<dependency>
-			<groupId>net.sf.ehcache</groupId>
-			<artifactId>ehcache</artifactId>
-			<version>${ehcache.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>com.fasterxml.jackson.core</groupId>
-					<artifactId>jackson-databind</artifactId>
-				</exclusion>
-			</exclusions>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework</groupId>
@@ -374,7 +353,7 @@
 		<dependency>
 			<groupId>com.google.firebase</groupId>
 			<artifactId>firebase-admin</artifactId>
-			<version>8.1.0</version>
+			<version>9.10.0</version>
 		</dependency>
 
 		<!-- Test scope dependencies -->
@@ -411,15 +390,9 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-test</artifactId>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-security-test</artifactId>
 			<scope>test</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>org.springframework.security</groupId>
-					<artifactId>spring-security-core</artifactId>
-				</exclusion>
-			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.mockito</groupId>
@@ -495,12 +468,6 @@
 			<groupId>net.sourceforge.plantuml</groupId>
 			<artifactId>plantuml</artifactId>
 			<version>1.2026.0</version>
-		</dependency>
-
-		<!-- MongoDB dependencies -->
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-mongodb</artifactId>
 		</dependency>
 
 		<dependency>
@@ -937,33 +904,6 @@
 							</apiPackage>
 							<modelPackage>
 								${project.groupId}.${project.artifactId}.agencyserivce.generated.web.model
-							</modelPackage>
-						</configuration>
-					</execution>
-					<!-- Generate client API for MessageService -->
-					<execution>
-						<id>messageservice-client-model</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>generate</goal>
-						</goals>
-						<configuration>
-								<configOptions>
-									<sourceFolder>/</sourceFolder>
-									<useJakartaEe>true</useJakartaEe>
-									<useSpringBoot3>true</useSpringBoot3>
-									<library>resttemplate</library>
-									<dateLibrary>java8</dateLibrary>
-								</configOptions>
-							<inputSpec>${project.basedir}/services/messageservice.yaml</inputSpec>
-							<generatorName>java</generatorName>
-							<generateApis>true</generateApis>
-							<generateApiTests>false</generateApiTests>
-							<generateModelTests>false</generateModelTests>
-							<apiPackage>${project.groupId}.${project.artifactId}.messageservice.generated.web
-							</apiPackage>
-							<modelPackage>
-								${project.groupId}.${project.artifactId}.messageservice.generated.web.model
 							</modelPackage>
 						</configuration>
 					</execution>

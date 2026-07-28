@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
@@ -18,15 +17,17 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,8 +45,10 @@ class PasswordResetServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private AdminRepository adminRepository;
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityClient identityClient;
   @Mock private RestTemplate restTemplate;
+  @Mock private OneTimeTokenStore oneTimeTokenStore;
+  @Mock private ApplicationSettingsService applicationSettingsService;
 
   @InjectMocks private PasswordResetService passwordResetService;
 
@@ -137,6 +140,8 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
@@ -166,6 +171,8 @@ class PasswordResetServiceTest {
             "admin@example.com", "admin@example.com"))
         .thenReturn(Optional.of(admin));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset(
         "admin@example.com", "en", PasswordResetApplication.ADMIN);
@@ -217,6 +224,8 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
     when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "xx-unknown");
 
@@ -257,7 +266,7 @@ class PasswordResetServiceTest {
   @Test
   void confirmPasswordReset_Should_ReturnFalse_When_TokenIsBlank() {
     assertThat(passwordResetService.confirmPasswordReset("  ", "NewPassw0rd!")).isFalse();
-    verify(keycloakService, never()).updatePassword(anyString(), anyString());
+    verify(identityClient, never()).updatePassword(anyString(), anyString());
   }
 
   @Test
@@ -272,74 +281,141 @@ class PasswordResetServiceTest {
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ReturnTrue_And_UpdatePassword_When_TokenValid() {
-    ConcurrentHashMap<String, Object> tokens = injectToken("valid-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "valid-token")).thenReturn(Optional.of(claim));
 
     boolean result = passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
 
     assertThat(result).isTrue();
-    verify(keycloakService).updatePassword("user-keycloak-id", "NewPassw0rd!");
-    // Token must be single-use.
-    assertThat(tokens).doesNotContainKey("valid-token");
+    verify(identityClient).updatePassword("user-keycloak-id", "NewPassw0rd!");
+    verify(oneTimeTokenStore).claim("password-reset", "valid-token");
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_KeepToken_When_KeycloakRejectsPasswordPolicy() {
     // Definitive policy rejection: Keycloak did NOT apply the password, so the token must
     // survive for a retry with a different password using the same emailed link.
-    ConcurrentHashMap<String, Object> tokens = injectToken("retry-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "retry-token")).thenReturn(Optional.of(claim));
     doThrow(
             new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
-        .when(keycloakService)
+        .when(identityClient)
         .updatePassword("user-keycloak-id", "weak");
 
     assertThatThrownBy(() -> passwordResetService.confirmPasswordReset("retry-token", "weak"))
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
-    assertThat(tokens).containsKey("retry-token");
+    verify(oneTimeTokenStore).restore("password-reset", "retry-token", claim, true);
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ConsumeToken_When_UpdateFailsIndeterminately() {
     // A generic failure can occur AFTER Keycloak applied the password — the outcome is unknown,
     // so the token must stay consumed; restoring it could allow a second password change with an
     // already-used link.
-    ConcurrentHashMap<String, Object> tokens = injectToken("indeterminate-token", 900);
+    OneTimeTokenStore.TokenClaim claim = validClaim();
+    when(oneTimeTokenStore.claim("password-reset", "indeterminate-token"))
+        .thenReturn(Optional.of(claim));
     doThrow(new RuntimeException("connection reset"))
-        .when(keycloakService)
+        .when(identityClient)
         .updatePassword("user-keycloak-id", "NewPassw0rd!");
 
     assertThatThrownBy(
             () -> passwordResetService.confirmPasswordReset("indeterminate-token", "NewPassw0rd!"))
         .isInstanceOf(RuntimeException.class);
 
-    assertThat(tokens).doesNotContainKey("indeterminate-token");
+    verify(oneTimeTokenStore, never())
+        .restore("password-reset", "indeterminate-token", claim, true);
   }
 
   @Test
-  @SuppressWarnings("unchecked")
   void confirmPasswordReset_Should_ReturnFalse_When_TokenExpired() {
-    injectToken("expired-token", -60);
+    when(oneTimeTokenStore.claim("password-reset", "expired-token")).thenReturn(Optional.empty());
 
     boolean result = passwordResetService.confirmPasswordReset("expired-token", "NewPassw0rd!");
 
     assertThat(result).isFalse();
-    verify(keycloakService, never()).updatePassword(anyString(), anyString());
+    verify(identityClient, never()).updatePassword(anyString(), anyString());
   }
 
   @Test
-  @SuppressWarnings("unchecked")
-  void confirmPasswordReset_Should_CleanupExpiredTokens_Before_Lookup() {
-    ConcurrentHashMap<String, Object> tokens = injectToken("stale-token", -60);
-    assertThat(tokens).containsKey("stale-token");
+  void confirmPasswordReset_Should_FailClosed_When_TokenStoreUnavailable() {
+    when(oneTimeTokenStore.claim("password-reset", "token"))
+        .thenThrow(new IllegalStateException("redis unavailable"));
 
-    passwordResetService.confirmPasswordReset("any-other-token", "NewPassw0rd!");
+    assertThat(passwordResetService.confirmPasswordReset("token", "NewPassw0rd!")).isFalse();
+    verify(identityClient, never()).updatePassword(anyString(), anyString());
+  }
 
-    assertThat(tokens).doesNotContainKey("stale-token");
+  // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
+  // CTS-C01 credential-leak fix. Credentials must therefore come from the authenticated source.
+  @Test
+  void
+      requestPasswordReset_Should_SendMail_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).hasSize(1);
+    assertThat(sentMails.get(0).recipient()).isEqualTo("real@example.com");
+  }
+
+  @Test
+  void requestPasswordReset_Should_NotSendMail_When_AuthenticatedCredentialsAreUnavailable() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).isEmpty();
+  }
+
+  // Password reset is unauthenticated and dispatched off the request thread, so no user token
+  // exists and the super-admin-guarded credentials endpoint is unreachable. Operator-provided
+  // SMTP credentials (env SMTP_USER / SMTP_PASSWORD) must therefore be enough on their own.
+  @Test
+  void requestPasswordReset_Should_SendMail_When_CredentialsComeFromOperatorConfiguration() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpUsername", "env-user");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpPassword", "env-pass");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).hasSize(1);
+    verify(applicationSettingsService, never()).getGlobalSmtpCredentials();
+  }
+
+  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
+    return Map.of(
+        "globalFeatureSystemNotificationEmailsEnabled",
+        true,
+        "globalSmtpEnabled",
+        true,
+        "globalSmtpHost",
+        "smtp.invalid",
+        "globalSmtpPort",
+        587,
+        "globalSmtpFrom",
+        "noreply@example.com");
+  }
+
+  private ApplicationSettingsSmtpCredentialsDTO smtpCredentials(String username, String password) {
+    return new ApplicationSettingsSmtpCredentialsDTO()
+        .globalSmtpUsername(username)
+        .globalSmtpPassword(password);
   }
 
   private User validUser() {
@@ -351,34 +427,10 @@ class PasswordResetServiceTest {
   }
 
   private Map<String, Object> validSmtpSettings() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled", true,
-        "globalSmtpEnabled", true,
-        "globalSmtpHost", "smtp.invalid",
-        "globalSmtpPort", 587,
-        "globalSmtpUsername", "user",
-        "globalSmtpPassword", "pass",
-        "globalSmtpFrom", "noreply@example.com");
+    return publicSmtpSettingsWithoutCredentials();
   }
 
-  @SuppressWarnings("unchecked")
-  private ConcurrentHashMap<String, Object> injectToken(String token, long offsetSeconds) {
-    ConcurrentHashMap<String, Object> tokens =
-        (ConcurrentHashMap<String, Object>)
-            ReflectionTestUtils.getField(passwordResetService, "resetTokens");
-    for (Class<?> cls : PasswordResetService.class.getDeclaredClasses()) {
-      if (cls.getSimpleName().equals("ResetTokenEntry")) {
-        try {
-          cls.getDeclaredConstructors()[0].setAccessible(true);
-          Object entry =
-              cls.getDeclaredConstructors()[0].newInstance(
-                  "user-keycloak-id", Instant.now().plusSeconds(offsetSeconds));
-          tokens.put(token, entry);
-        } catch (Exception e) {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-    return tokens;
+  private OneTimeTokenStore.TokenClaim validClaim() {
+    return new OneTimeTokenStore.TokenClaim("user-keycloak-id", Instant.now().plusSeconds(900));
   }
 }

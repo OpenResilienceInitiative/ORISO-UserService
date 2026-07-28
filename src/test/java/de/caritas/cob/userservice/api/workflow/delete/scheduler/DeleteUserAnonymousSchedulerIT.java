@@ -3,11 +3,15 @@ package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_AIDS;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -16,7 +20,6 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
-import de.caritas.cob.userservice.api.testConfig.RocketChatTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
@@ -28,18 +31,15 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
-// RC teardown phase 2: this scheduler IT never exercises Rocket.Chat (it only imports
-// RocketChatTestConfig for context and never calls it), so it runs in the production Matrix-only
-// mode (rocket-chat.enabled=false → DisabledRocketChatService is the active bean).
-@TestPropertySource(properties = {"spring.profiles.active=testing", "rocket-chat.enabled=false"})
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@TestPropertySource(properties = "spring.profiles.active=testing")
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({
   KeycloakTestConfig.class,
-  RocketChatTestConfig.class,
   ApiControllerTestConfig.class,
   ConsultingTypeManagerTestConfig.class
 })
@@ -60,10 +60,17 @@ class DeleteUserAnonymousSchedulerIT {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
+  @MockitoBean MatrixSynapseService matrixSynapseService;
+
   private Session currentSession;
 
   @BeforeEach
-  public void setup() {
+  public void setup() throws MatrixCreateUserException {
+    var matrixUserResponse = new MatrixCreateUserResponseDTO();
+    matrixUserResponse.setUserId("@anonymous:matrix.test");
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(matrixUserResponse));
+    when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(

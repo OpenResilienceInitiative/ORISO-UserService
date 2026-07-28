@@ -74,7 +74,7 @@ class AppointmentControllerTest {
         .thenReturn(Optional.of(consultant));
     when(sessionService.getSession(44L)).thenReturn(Optional.of(session));
 
-    var response = controller.createEnquiryAppointment(44L, dto, "token-1", "rc-1");
+    var response = controller.createEnquiryAppointment(44L, dto);
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     assertEquals(responseDto, response.getBody());
@@ -97,7 +97,7 @@ class AppointmentControllerTest {
 
     assertThrows(
         java.util.NoSuchElementException.class,
-        () -> controller.createEnquiryAppointment(45L, dto, "token-1", "rc-1"));
+        () -> controller.createEnquiryAppointment(45L, dto));
   }
 
   @Test
@@ -116,12 +116,12 @@ class AppointmentControllerTest {
 
     assertThrows(
         java.util.NoSuchElementException.class,
-        () -> controller.createEnquiryAppointment(46L, dto, "token-1", "rc-1"));
+        () -> controller.createEnquiryAppointment(46L, dto));
   }
 
   @Test
-  void createEnquiryAppointment_optionalRocketChatHeadersAbsent_stillDelegatesWithoutThrow() {
-    // Business reason: clients without Rocket.Chat headers must still create enquiry appointments.
+  void createEnquiryAppointment_withExistingSession_delegatesWithoutThrow() {
+    // Business reason: an appointment request for an existing session must be delegated.
     var dto = org.mockito.Mockito.mock(EnquiryAppointmentDTO.class);
     var responseDto = org.mockito.Mockito.mock(CreateEnquiryMessageResponseDTO.class);
     var consultant = org.mockito.Mockito.mock(Consultant.class);
@@ -136,7 +136,7 @@ class AppointmentControllerTest {
         .thenReturn(Optional.of(consultant));
     when(sessionService.getSession(47L)).thenReturn(Optional.of(session));
 
-    var response = controller.createEnquiryAppointment(47L, dto, null, null);
+    var response = controller.createEnquiryAppointment(47L, dto);
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     verify(createEnquiryMessageFacade).createEnquiryMessage(any(EnquiryData.class));

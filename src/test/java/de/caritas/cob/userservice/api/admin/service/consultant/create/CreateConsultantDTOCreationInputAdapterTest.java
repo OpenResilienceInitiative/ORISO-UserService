@@ -39,6 +39,7 @@ class CreateConsultantDTOCreationInputAdapterTest {
     assertThat(input.getLastName(), is("Last"));
     assertThat(input.getEmail(), is("consultant@example.com"));
     assertThat(input.getPassword(), is(PASSWORD));
+    assertThat(input.shouldGeneratePassword(), is(false));
     assertThat(input.isAbsent(), is(true));
     assertThat(input.getAbsenceMessage(), is("Away"));
     assertThat(input.isTeamConsultant(), is(false));

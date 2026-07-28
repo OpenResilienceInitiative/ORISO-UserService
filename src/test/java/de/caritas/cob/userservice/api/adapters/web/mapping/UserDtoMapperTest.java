@@ -52,6 +52,11 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void mapOf_Should_ReturnEmpty_When_GeneratedPatchDtoContainsOnlyDefaultEmptyCollections() {
+    assertThat(mapper.mapOf(new PatchUserDTO(), authenticatedUser)).isEmpty();
+  }
+
+  @Test
   void userDataOf_Should_markIsActive_When_otpIsSetupWithAppType() {
     var userData = new UserDataResponseDTO();
     userData.setUserRoles(Set.of(UserRole.USER.getValue()));
@@ -122,16 +127,6 @@ class UserDtoMapperTest {
   @Test
   void displayNameOf_Should_returnNull_When_keyAbsent() {
     assertThat(mapper.displayNameOf(Map.of())).isNull();
-  }
-
-  @Test
-  void chatUserIdOf_Should_returnValue_When_keyPresent() {
-    assertThat(mapper.chatUserIdOf(Map.of("chatUserId", "rc-1"))).isEqualTo("rc-1");
-  }
-
-  @Test
-  void chatUserIdOf_Should_returnNull_When_keyAbsent() {
-    assertThat(mapper.chatUserIdOf(Map.of())).isNull();
   }
 
   @Test

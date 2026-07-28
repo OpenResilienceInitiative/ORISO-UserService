@@ -146,7 +146,7 @@ class SessionServiceAccessTest {
   private Consultant consultant(String consultantId) {
     return Consultant.builder()
         .id(consultantId)
-        .rocketChatId("rc-" + consultantId)
+        .matrixUserId("rc-" + consultantId)
         .username("consultant-" + consultantId)
         .firstName("first")
         .lastName("last")

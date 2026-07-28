@@ -1,19 +1,15 @@
 package de.caritas.cob.userservice.api.service.sessionlist;
 
-import static java.util.Objects.nonNull;
-
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
-import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
-import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
-import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,14 +20,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+/**
+ * Builds asker session lists from database state and actual Matrix room membership.
+ *
+ * <p>Encrypted message previews and read state are owned by the frontend Matrix client.
+ */
 @RequiredArgsConstructor
 @Service
 public class UserSessionListService {
 
   private final @NonNull SessionService sessionService;
   private final @NonNull ChatService chatService;
-  private final @NonNull RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
-  private final @NonNull SessionListAnalyser sessionListAnalyser;
+  private final @NonNull MatrixRoomMembershipProvider matrixRoomMembershipProvider;
 
   @Value("${feature.topics.enabled}")
   private boolean featureTopicsEnabled;
@@ -39,20 +39,11 @@ public class UserSessionListService {
   @Autowired(required = false)
   private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  /**
-   * Returns a list of {@link UserSessionResponseDTO} for the specified user ID.
-   *
-   * @param userId Keycloak/MariaDB user ID
-   * @param rocketChatCredentials the rocket chat credentials
-   * @return {@link UserSessionResponseDTO}
-   */
-  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUser(
-      String userId, RocketChatCredentials rocketChatCredentials) {
+  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUser(String userId) {
+    var sessions = sessionService.getSessionsForUserId(userId);
+    var chats = chatService.getChatsForUserId(userId);
 
-    List<UserSessionResponseDTO> sessions = sessionService.getSessionsForUserId(userId);
-    List<UserSessionResponseDTO> chats = chatService.getChatsForUserId(userId);
-
-    var mergedSessions = mergeUserSessionsAndChats(sessions, chats, rocketChatCredentials);
+    var mergedSessions = mergeUserSessionsAndChats(userId, sessions, chats);
     if (featureTopicsEnabled) {
       enrichSessionsWithTopics(mergedSessions);
     }
@@ -66,72 +57,44 @@ public class UserSessionListService {
         .forEach(sessionTopicEnrichmentService::enrichSessionWithTopicData);
   }
 
-  /**
-   * Returns a list of {@link UserSessionResponseDTO} for given user ID and rocket chat group IDs
-   *
-   * @param userId the ID of an user
-   * @param rcGroupIds the rocket chat group IDs
-   * @param rocketChatCredentials the credentials for accessing rocket chat
-   * @param roles the roles of given user
-   * @return {@link UserSessionResponseDTO}
-   */
-  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndGroupIds(
-      String userId,
-      List<String> rcGroupIds,
-      RocketChatCredentials rocketChatCredentials,
-      Set<String> roles) {
-
-    var groupIds = new HashSet<>(rcGroupIds);
-    var chats = filterChatsVisibleToUser(userId, chatService.getChatSessionsByGroupIds(groupIds));
-    var chatGroupIds =
+  public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndRoomIds(
+      String userId, List<String> roomIds, Set<String> roles) {
+    var matrixRoomIds = new HashSet<>(roomIds);
+    var chats =
+        filterChatsVisibleToUser(userId, chatService.getChatSessionsByRoomIds(matrixRoomIds));
+    var chatMatrixRoomIds =
         chats.stream()
             .map(UserSessionResponseDTO::getChat)
             .filter(java.util.Objects::nonNull)
-            .map(UserChatDTO::getGroupId)
+            .map(UserChatDTO::getMatrixRoomId)
             .filter(java.util.Objects::nonNull)
             .collect(Collectors.toSet());
-    groupIds.removeAll(chatGroupIds);
+    matrixRoomIds.removeAll(chatMatrixRoomIds);
     var sessions =
-        groupIds.isEmpty()
+        matrixRoomIds.isEmpty()
             ? List.<UserSessionResponseDTO>of()
-            : sessionService.getSessionsByUserAndGroupIds(userId, groupIds, roles);
+            : sessionService.getSessionsByUserAndRoomIds(userId, matrixRoomIds, roles);
 
-    return mergeUserSessionsAndChats(sessions, chats, rocketChatCredentials);
+    return mergeUserSessionsAndChats(userId, sessions, chats);
   }
 
-  /**
-   * Returns a list of {@link UserSessionResponseDTO} for given user ID and session IDs.
-   *
-   * @param userId the ID of an user
-   * @param sessionIds the session IDs
-   * @param rocketChatCredentials the credentials for accessing rocket chat
-   * @param roles the roles of given user
-   * @return {@link UserSessionResponseDTO}
-   */
   public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndSessionIds(
-      String userId,
-      List<Long> sessionIds,
-      RocketChatCredentials rocketChatCredentials,
-      Set<String> roles) {
-
+      String userId, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
     var sessions = sessionService.getSessionsByUserAndSessionIds(userId, uniqueSessionIds, roles);
-    var groupIds =
+    var matrixRoomIds =
         sessions.stream()
-            .map(sessionResponse -> sessionResponse.getSession().getGroupId())
+            .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsByGroupIds(groupIds);
-    return mergeUserSessionsAndChats(sessions, chats, rocketChatCredentials);
+    var chats = chatService.getChatSessionsByRoomIds(matrixRoomIds);
+    return mergeUserSessionsAndChats(userId, sessions, chats);
   }
 
   public List<UserSessionResponseDTO> retrieveChatsForUserAndChatIds(
-      String userId, List<Long> chatIds, RocketChatCredentials rocketChatCredentials) {
+      String userId, List<Long> chatIds) {
     var uniqueChatIds = new HashSet<>(chatIds);
     var chats = filterChatsVisibleToUser(userId, chatService.getChatSessionsByIds(uniqueChatIds));
-    var rocketChatRoomInformation =
-        rocketChatRoomInformationProvider.retrieveRocketChatInformation(rocketChatCredentials);
-    return updateUserChatValues(
-        chats, rocketChatRoomInformation, rocketChatCredentials.getRocketChatUserId());
+    return updateUserChatValues(chats, matrixRoomMembershipProvider.joinedRoomsForAccount(userId));
   }
 
   private List<UserSessionResponseDTO> filterChatsVisibleToUser(
@@ -157,95 +120,41 @@ public class UserSessionListService {
   }
 
   private List<UserSessionResponseDTO> mergeUserSessionsAndChats(
-      List<UserSessionResponseDTO> sessions,
-      List<UserSessionResponseDTO> chats,
-      RocketChatCredentials rocketChatCredentials) {
-
-    var rocketChatRoomInformation =
-        rocketChatRoomInformationProvider.retrieveRocketChatInformation(rocketChatCredentials);
-
-    List<UserSessionResponseDTO> allSessions = new ArrayList<>();
-    allSessions.addAll(
-        updateUserSessionValues(
-            sessions, rocketChatRoomInformation, rocketChatCredentials.getRocketChatUserId()));
-    allSessions.addAll(
-        updateUserChatValues(
-            chats, rocketChatRoomInformation, rocketChatCredentials.getRocketChatUserId()));
-
+      String userId, List<UserSessionResponseDTO> sessions, List<UserSessionResponseDTO> chats) {
+    var joinedRoomIds = matrixRoomMembershipProvider.joinedRoomsForAccount(userId);
+    var allSessions = new ArrayList<UserSessionResponseDTO>();
+    allSessions.addAll(updateUserSessionValues(sessions));
+    allSessions.addAll(updateUserChatValues(chats, joinedRoomIds));
     return allSessions;
   }
 
   private List<UserSessionResponseDTO> updateUserSessionValues(
-      List<UserSessionResponseDTO> sessions,
-      RocketChatRoomInformation rocketChatRoomInformation,
-      String rcUserId) {
-
-    return sessions.stream()
-        .map(
-            sessionDTO ->
-                updateRequiredUserSessionValues(rocketChatRoomInformation, rcUserId, sessionDTO))
-        .collect(Collectors.toList());
-  }
-
-  private UserSessionResponseDTO updateRequiredUserSessionValues(
-      RocketChatRoomInformation rocketChatRoomInformation,
-      String rcUserId,
-      UserSessionResponseDTO userSessionDTO) {
-
-    SessionDTO session = userSessionDTO.getSession();
-    String groupId = session.getGroupId();
-
-    session.setMessagesRead(
-        sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), groupId));
-    var messageUpdater = new AvailableLastMessageUpdater(this.sessionListAnalyser);
-    messageUpdater.updateSessionWithAvailableLastMessage(
-        userSessionDTO.getSession(),
-        userSessionDTO::setLatestMessage,
-        rocketChatRoomInformation,
-        rcUserId);
-    return userSessionDTO;
+      List<UserSessionResponseDTO> sessions) {
+    sessions.forEach(
+        sessionResponse -> {
+          var session = sessionResponse.getSession();
+          session.setMessagesRead(true);
+          if (sessionResponse.getLatestMessage() == null
+              && session.getMessageDate() != null
+              && session.getMessageDate() > 0) {
+            sessionResponse.setLatestMessage(new Date(session.getMessageDate() * 1000));
+          }
+        });
+    return sessions;
   }
 
   private List<UserSessionResponseDTO> updateUserChatValues(
-      List<UserSessionResponseDTO> chats,
-      RocketChatRoomInformation rocketChatRoomInformation,
-      String rcUserId) {
-
-    return chats.stream()
-        .map(chat -> updateRequiredUserChatValues(rocketChatRoomInformation, rcUserId, chat))
-        .collect(Collectors.toList());
-  }
-
-  private UserSessionResponseDTO updateRequiredUserChatValues(
-      RocketChatRoomInformation rocketChatRoomInformation,
-      String rcUserId,
-      UserSessionResponseDTO sessionResponse) {
-    UserChatDTO chat = sessionResponse.getChat();
-    String groupId = chat.getGroupId();
-
-    chat.setSubscribed(
-        isRocketChatRoomSubscribedByUser(rocketChatRoomInformation.getUserRooms(), groupId));
-    chat.setMessagesRead(
-        sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), groupId));
-    updateUserChatValuesForAvailableLastMessage(
-        rocketChatRoomInformation, rcUserId, sessionResponse, chat);
-    return sessionResponse;
-  }
-
-  private void updateUserChatValuesForAvailableLastMessage(
-      RocketChatRoomInformation rocketChatRoomInformation,
-      String rcUserId,
-      UserSessionResponseDTO sessionResponse,
-      UserChatDTO chat) {
-    new AvailableLastMessageUpdater(sessionListAnalyser)
-        .updateChatWithAvailableLastMessage(
-            chat, sessionResponse::setLatestMessage, rocketChatRoomInformation, rcUserId);
-  }
-
-  private boolean isRocketChatRoomSubscribedByUser(List<String> userRoomsList, String groupId) {
-    return nonNull(userRoomsList) && userRoomsList.contains(groupId);
+      List<UserSessionResponseDTO> chats, Set<String> joinedRoomIds) {
+    chats.forEach(
+        sessionResponse -> {
+          var chat = sessionResponse.getChat();
+          chat.setSubscribed(joinedRoomIds.contains(chat.getMatrixRoomId()));
+          chat.setMessagesRead(true);
+          if (sessionResponse.getLatestMessage() == null && chat.getStartDateWithTime() != null) {
+            sessionResponse.setLatestMessage(Timestamp.valueOf(chat.getStartDateWithTime()));
+          }
+        });
+    return chats;
   }
 
   void setSessionTopicEnrichmentService(

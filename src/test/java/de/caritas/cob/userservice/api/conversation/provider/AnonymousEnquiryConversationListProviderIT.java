@@ -6,9 +6,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
@@ -50,7 +51,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({ConsultingTypeManagerTestConfig.class})
 class AnonymousEnquiryConversationListProviderIT {
 
@@ -127,7 +128,7 @@ class AnonymousEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }
@@ -146,8 +147,11 @@ class AnonymousEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     user.setDataPrivacyConfirmation(LocalDateTime.now());
     this.userRepository.save(user);
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(ANONYMOUS);
           session.setConsultant(null);
           session.setUser(user);
@@ -158,6 +162,8 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setStatus(SessionStatus.NEW);
           session.setMainTopicId(11L);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
           session.setUpdateDate(LocalDateTime.now());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);

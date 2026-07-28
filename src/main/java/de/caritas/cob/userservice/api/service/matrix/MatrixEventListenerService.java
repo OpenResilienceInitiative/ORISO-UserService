@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -10,6 +11,8 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
@@ -17,6 +20,8 @@ import java.util.concurrent.*;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,6 +43,9 @@ public class MatrixEventListenerService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
 
+  private OutboundHttpMetrics outboundHttpMetrics;
+  private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
 
@@ -56,6 +64,19 @@ public class MatrixEventListenerService {
   // Flag to control sync loop
   private volatile boolean running = false;
 
+  @Value("${matrix.event-listener.enabled:true}")
+  private boolean eventListenerEnabled = true;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
+
+  @Autowired(required = false)
+  void setObservationRegistry(ObservationRegistry observationRegistry) {
+    this.observationRegistry = observationRegistry;
+  }
+
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
   static final long INITIAL_BACKOFF_MS = 5_000L;
   static final long MAX_BACKOFF_MS = 60_000L;
@@ -69,6 +90,10 @@ public class MatrixEventListenerService {
 
   @PostConstruct
   public void initialize() {
+    if (!eventListenerEnabled) {
+      log.info("Matrix event listener is disabled");
+      return;
+    }
     log.info("🔷 Initializing Matrix Event Listener Service...");
     executorService = Executors.newFixedThreadPool(2);
 
@@ -146,12 +171,9 @@ public class MatrixEventListenerService {
 
     while (running) {
       try {
-        // Perform Matrix sync (long-polling with 30-second timeout)
-        Map<String, Object> syncResult = performMatrixSync();
+        MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
-        if (syncResult != null) {
-          // Process events from sync result
-          processMatrixSyncEvents(syncResult);
+        if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
           // Successful sync: reset the error backoff and failure counter.
           errorBackoffMs = INITIAL_BACKOFF_MS;
           consecutiveSyncFailures = 0;
@@ -159,6 +181,7 @@ public class MatrixEventListenerService {
           // performMatrixSync swallows exceptions and returns null; treat as a soft failure so an
           // auth problem eventually forces a token re-bootstrap instead of spinning forever.
           consecutiveSyncFailures++;
+          recordRetry("sync");
           if (consecutiveSyncFailures >= SYNC_FAILURES_BEFORE_REBOOTSTRAP) {
             log.warn(
                 "⚠️ {} consecutive Matrix sync failures - re-acquiring admin token",
@@ -188,6 +211,7 @@ public class MatrixEventListenerService {
         break;
       } catch (Exception e) {
         log.error("❌ Error in Matrix sync loop", e);
+        recordRetry("sync-loop");
         try {
           // Exponential backoff before retrying on error (5s→10s→…→60s cap).
           sleep(errorBackoffMs);
@@ -200,6 +224,40 @@ public class MatrixEventListenerService {
     }
 
     log.info("🔷 Matrix sync loop stopped");
+  }
+
+  /**
+   * Observes one Matrix long poll and all event processing it triggers as one background operation.
+   * The result attribute is deliberately bounded; Matrix tokens, cursors, room identifiers and URL
+   * values must never become observation attributes.
+   */
+  private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    Observation observation =
+        Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
+    String result = "exception";
+
+    try (Observation.Scope ignored = observation.openScope()) {
+      Map<String, Object> syncResult = performMatrixSync();
+      if (syncResult == null) {
+        result = "soft_failure";
+        return MatrixSyncCycleResult.SOFT_FAILURE;
+      }
+
+      processMatrixSyncEvents(syncResult);
+      result = "success";
+      return MatrixSyncCycleResult.SUCCESS;
+    } catch (RuntimeException | Error exception) {
+      observation.error(exception);
+      throw exception;
+    } finally {
+      observation.lowCardinalityKeyValue("result", result);
+      observation.stop();
+    }
+  }
+
+  private enum MatrixSyncCycleResult {
+    SUCCESS,
+    SOFT_FAILURE
   }
 
   /**
@@ -225,6 +283,7 @@ public class MatrixEventListenerService {
         log.error("❌ Error getting admin token - retrying in {}ms", backoffMs, e);
       }
 
+      recordRetry("admin-token");
       try {
         sleep(backoffMs);
       } catch (InterruptedException ie) {
@@ -234,6 +293,12 @@ public class MatrixEventListenerService {
       backoffMs = nextBackoffMillis(backoffMs);
     }
     return false;
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("matrix", operation);
+    }
   }
 
   /**
@@ -459,10 +524,10 @@ public class MatrixEventListenerService {
               try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, threadRootId, privacyEnvelope);
                 } else {
                   eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, privacyEnvelope);
                 }
                 if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
                   consultantMessageStatService.recordMessageSent(

@@ -38,8 +38,7 @@ class ConversationListResolverTest {
     whenConversationListProviderReturnsAnonymousResponseSessions(
         List.of(mock(ConsultantSessionResponseDTO.class)));
 
-    var responseDTO =
-        this.conversationListResolver.resolveConversations(0, 1, ANONYMOUS_ENQUIRY, "");
+    var responseDTO = this.conversationListResolver.resolveConversations(0, 1, ANONYMOUS_ENQUIRY);
 
     assertThat(responseDTO, is(consultantSessionListResponseDTO));
   }
@@ -62,7 +61,7 @@ class ConversationListResolverTest {
     assertThrows(
         NoContentException.class,
         () -> {
-          this.conversationListResolver.resolveConversations(0, 1, ANONYMOUS_ENQUIRY, "");
+          this.conversationListResolver.resolveConversations(0, 1, ANONYMOUS_ENQUIRY);
         });
   }
 }

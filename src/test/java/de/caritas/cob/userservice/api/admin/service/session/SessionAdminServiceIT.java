@@ -18,7 +18,7 @@ import org.springframework.test.context.TestPropertySource;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class SessionAdminServiceIT {
 
   @Autowired private SessionAdminService sessionAdminService;

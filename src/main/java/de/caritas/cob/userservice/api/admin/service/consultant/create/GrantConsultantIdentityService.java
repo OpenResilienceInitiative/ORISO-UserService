@@ -5,11 +5,8 @@ import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils.serializeToJsonString;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
@@ -30,6 +27,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.Set;
 import lombok.NonNull;
@@ -62,8 +60,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
@@ -108,9 +105,8 @@ public class GrantConsultantIdentityService {
     assignKeycloakRoles(adminId, dto);
 
     String matrixUserId = createMatrixAccount(admin);
-    String rocketChatUserId = resolveRocketChatUserId(admin);
 
-    var consultant = buildConsultant(admin, encodedUsername, dto, rocketChatUserId, matrixUserId);
+    var consultant = buildConsultant(admin, encodedUsername, dto, matrixUserId);
     saveConsultantOrRollback(adminId, dto, consultant);
 
     try {
@@ -137,13 +133,13 @@ public class GrantConsultantIdentityService {
   private String createMatrixAccount(de.caritas.cob.userservice.api.model.Admin admin) {
     try {
       var matrixPassword = userHelper.getRandomPassword();
-      var matrixResponse =
-          matrixSynapseService.createUser(
+      var matrixUserId =
+          matrixUserClient.createUserId(
               admin.getUsername(),
               matrixPassword,
               admin.getFirstName() + " " + admin.getLastName());
-      if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-        return matrixResponse.getBody().getUserId();
+      if (matrixUserId != null) {
+        return matrixUserId;
       }
       log.warn(
           "Matrix user creation response missing user_id while granting consultant identity to admin {}",
@@ -158,28 +154,6 @@ public class GrantConsultantIdentityService {
   }
 
   /**
-   * Mirrors {@code CreateConsultantSaga}: reuse the admin's existing Rocket.Chat id when present;
-   * otherwise best-effort create, falling back to a dummy id on failure.
-   */
-  private String resolveRocketChatUserId(de.caritas.cob.userservice.api.model.Admin admin) {
-    if (isNotBlank(admin.getRcUserId())) {
-      return admin.getRcUserId();
-    }
-    try {
-      return rocketChatService.getUserID(
-          usernameTranscoder.encodeUsername(admin.getUsername()),
-          userHelper.getRandomPassword(),
-          true);
-    } catch (Exception e) {
-      log.warn(
-          "Unable to create Rocket.Chat user while granting consultant identity to admin {}. Using dummy id. Error: {}",
-          admin.getId(),
-          e.getMessage());
-      return "dummy-rc";
-    }
-  }
-
-  /**
    * Builds the {@link Consultant} entity by mirroring {@code CreateConsultantSaga.buildConsultant}
    * — only the fields that method sets are set here. The consultant shares the admin's Keycloak id
    * and copies username/firstName/lastName/email/tenantId from the {@code Admin}.
@@ -188,7 +162,6 @@ public class GrantConsultantIdentityService {
       de.caritas.cob.userservice.api.model.Admin admin,
       String encodedUsername,
       GrantConsultantIdentityDTO dto,
-      String rocketChatUserId,
       String matrixUserId) {
 
     var now = nowInUtc();
@@ -204,7 +177,6 @@ public class GrantConsultantIdentityService {
             .absent(dto.isAbsent())
             .absenceMessage(dto.getAbsenceMessage())
             .teamConsultant(false)
-            .rocketChatId(rocketChatUserId)
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
             .magicLinkLoginEnabled(false)

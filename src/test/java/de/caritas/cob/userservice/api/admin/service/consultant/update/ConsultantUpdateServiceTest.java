@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
@@ -49,8 +48,6 @@ public class ConsultantUpdateServiceTest {
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
-
-  @Mock private RocketChatService rocketChatService;
 
   @Mock private AppointmentService appointmentService;
 

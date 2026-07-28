@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -166,7 +165,6 @@ class AccountManagerTest {
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AuthenticatedUser authenticatedUser;
   @Mock AppointmentService appointmentService;
-  @Mock MessageClient messageClient;
   @Mock PatchConsultantSaga patchConsultantSaga;
 
   // findConsultant
@@ -180,15 +178,16 @@ class AccountManagerTest {
   }
 
   @Test
-  void findConsultant_Should_ReturnMappedConsultant_When_Found() {
+  void findConsultant_Should_ReturnMappedConsultantFromOwnedData_When_Found() {
     var consultant = new Consultant();
     consultant.setId("id-1");
+    consultant.setMatrixUserId("stale-legacy-id");
     Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("id-1"))
         .thenReturn(Optional.of(consultant));
-    Mockito.when(userServiceMapper.mapOf(Mockito.any(Consultant.class), Mockito.anyMap()))
-        .thenReturn(Map.of("id", "id-1"));
+    Mockito.when(userServiceMapper.mapOf(consultant, Map.of())).thenReturn(Map.of("id", "id-1"));
 
-    assertThat(accountManager.findConsultant("id-1")).isPresent();
+    assertThat(accountManager.findConsultant("id-1")).contains(Map.of("id", "id-1"));
+    Mockito.verify(userServiceMapper).mapOf(consultant, Map.of());
   }
 
   // findConsultantByUsername
@@ -289,23 +288,23 @@ class AccountManagerTest {
     assertThat(accountManager.findAdviceSeeker("u-1")).isPresent();
   }
 
-  // findAdviceSeekerByChatUserId
+  // findAdviceSeekerByMatrixUserId
 
   @Test
-  void findAdviceSeekerByChatUserId_Should_ReturnUser_When_Found() {
+  void findAdviceSeekerByMatrixUserId_Should_ReturnUser_When_Found() {
     var user = new User("u-1", null, "username", "email@test.com", false);
-    Mockito.when(userRepository.findByRcUserIdAndDeleteDateIsNull("rc-1"))
+    Mockito.when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("rc-1"))
         .thenReturn(Optional.of(user));
 
-    assertThat(accountManager.findAdviceSeekerByChatUserId("rc-1")).contains(user);
+    assertThat(accountManager.findAdviceSeekerByMatrixUserId("rc-1")).contains(user);
   }
 
   @Test
-  void findAdviceSeekerByChatUserId_Should_ReturnEmpty_When_NotFound() {
-    Mockito.when(userRepository.findByRcUserIdAndDeleteDateIsNull("rc-999"))
+  void findAdviceSeekerByMatrixUserId_Should_ReturnEmpty_When_NotFound() {
+    Mockito.when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("rc-999"))
         .thenReturn(Optional.empty());
 
-    assertThat(accountManager.findAdviceSeekerByChatUserId("rc-999")).isEmpty();
+    assertThat(accountManager.findAdviceSeekerByMatrixUserId("rc-999")).isEmpty();
   }
 
   // patchUser

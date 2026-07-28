@@ -9,7 +9,6 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -18,21 +17,16 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
@@ -43,7 +37,6 @@ import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportReco
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
@@ -67,7 +60,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 class CreateConsultantSagaTest {
 
   private static final String KEYCLOAK_USER_ID = "keycloak-user-id";
-  private static final String ROCKET_CHAT_USER_ID = "rocket-chat-user-id";
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAIL = "valid@emailaddress.de";
   private static final String VALID_PASSWORD = "ValidPass1!";
@@ -76,7 +68,6 @@ class CreateConsultantSagaTest {
 
   @Mock private IdentityClient identityClient;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
-  @Mock private RocketChatService rocketChatService;
   @Mock private ConsultantService consultantService;
   @Mock private UserHelper userHelper;
 
@@ -95,7 +86,6 @@ class CreateConsultantSagaTest {
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AppointmentService appointmentService;
-  @Mock private SessionService sessionService;
 
   @BeforeEach
   void setUp() {
@@ -172,8 +162,6 @@ class CreateConsultantSagaTest {
   @Test
   void createNewConsultant_Should_RollBackIdentityWhenAgencyAssignmentFails() throws Exception {
     stubKeycloakUserCreation();
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn(ROCKET_CHAT_USER_ID);
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     CreateConsultantDTO dto = validCreateConsultantDto();
@@ -185,7 +173,6 @@ class CreateConsultantSagaTest {
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
-    verify(sessionService, never()).getRegisteredEnquiriesForConsultant(any());
   }
 
   @Test
@@ -256,7 +243,6 @@ class CreateConsultantSagaTest {
         DistributedTransactionException.class,
         () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
 
-    verify(rocketChatService, never()).getUserID(anyString(), anyString(), anyBoolean());
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
   }
 
@@ -264,8 +250,6 @@ class CreateConsultantSagaTest {
   void createNewConsultant_Should_throwDistributedTransaction_When_saveConsultantFails()
       throws Exception {
     stubKeycloakUserCreation();
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn(ROCKET_CHAT_USER_ID);
     doThrow(new RuntimeException("db down")).when(consultantService).saveConsultant(any());
 
     assertThrows(
@@ -276,20 +260,17 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_useDummyRocketChatId_When_rocketChatCreationFails()
-      throws Exception {
-    stubKeycloakUserCreation();
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenThrow(new RuntimeException("rocket chat down"));
-    when(consultantService.saveConsultant(any(Consultant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+  void
+      createNewConsultant_Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable()
+          throws Exception {
+    stubHappyPath();
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getRocketChatId(), is("dummy-rc"));
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
   }
 
   @Test
@@ -305,50 +286,18 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_throwBadRequest_When_importRecordHasNoPassword() {
+  void createNewConsultant_Should_generatePassword_When_importRecordHasNoPassword()
+      throws Exception {
     ImportRecord importRecord = validImportRecord();
-    stubKeycloakUserCreation();
-
-    assertThrows(
-        BadRequestException.class,
-        () ->
-            createConsultantSaga.createNewConsultant(
-                importRecord, CollectionHelper.asSet(CONSULTANT.getValue())));
-  }
-
-  @Test
-  void createNewConsultant_Should_assignSessions_When_enquiriesExist() throws Exception {
     stubHappyPath();
-    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
-        .thenReturn(
-            Lists.newArrayList(
-                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-1"))));
-    when(sessionService.getArchivedSessionsForConsultant(any()))
-        .thenReturn(
-            Lists.newArrayList(
-                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-2"))));
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
 
-    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
-    verify(rocketChatService).addUserToGroup(ROCKET_CHAT_USER_ID, "group-1");
-    verify(rocketChatService).addUserToGroup(ROCKET_CHAT_USER_ID, "group-2");
-  }
-
-  @Test
-  void createNewConsultant_Should_continue_When_addUserToGroupFails() throws Exception {
-    stubHappyPath();
-    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
-        .thenReturn(
-            Lists.newArrayList(
-                new ConsultantSessionResponseDTO().session(new SessionDTO().groupId("group-1"))));
-    when(sessionService.getArchivedSessionsForConsultant(any())).thenReturn(Lists.newArrayList());
-    doThrow(new RocketChatAddUserToGroupException("add failed"))
-        .when(rocketChatService)
-        .addUserToGroup(anyString(), anyString());
-
-    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
-
-    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    assertThat(consultant, notNullValue());
+    verify(identityClient).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 
   @Test
@@ -440,13 +389,8 @@ class CreateConsultantSagaTest {
 
   private void stubHappyPath() throws Exception {
     stubKeycloakUserCreation();
-    when(rocketChatService.getUserID(anyString(), anyString(), anyBoolean()))
-        .thenReturn(ROCKET_CHAT_USER_ID);
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(sessionService.getRegisteredEnquiriesForConsultant(any()))
-        .thenReturn(Lists.newArrayList());
-    when(sessionService.getArchivedSessionsForConsultant(any())).thenReturn(Lists.newArrayList());
   }
 
   private void stubKeycloakUserCreation() {

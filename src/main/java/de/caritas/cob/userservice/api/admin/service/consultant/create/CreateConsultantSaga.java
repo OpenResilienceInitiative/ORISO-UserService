@@ -12,10 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
@@ -32,18 +29,17 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.nio.charset.StandardCharsets;
@@ -57,9 +53,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Creator class to generate new {@link Consultant} instances in database, keycloak and rocket chat.
- */
+/** Creates consultants in the identity provider, Matrix and the application database. */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -67,13 +61,12 @@ public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -90,8 +83,6 @@ public class CreateConsultantSaga {
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AppointmentService appointmentService;
-
-  private final @NonNull SessionService sessionService;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -123,8 +114,8 @@ public class CreateConsultantSaga {
   }
 
   /**
-   * Creates a new {@link Consultant} by {@link CreateConsultantDTO} in database, keycloak and
-   * rocket chat, and optionally in the appointment service (calcom), provided the appointment
+   * Creates a new {@link Consultant} by {@link CreateConsultantDTO} in the database, identity
+   * provider and Matrix, and optionally in the appointment service, provided the appointment
    * feature is enabled.
    *
    * @param createConsultantDTO the input used for creation
@@ -165,7 +156,6 @@ public class CreateConsultantSaga {
                       TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK,
                       TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK,
                       TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK,
-                      TransactionalStep.CREATE_ACCOUNT_IN_ROCKETCHAT,
                       TransactionalStep.CREATE_CONSULTANT_IN_MARIADB))
               .failedStep(TransactionalStep.CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE)
               .build());
@@ -200,7 +190,7 @@ public class CreateConsultantSaga {
   }
 
   /**
-   * Creates a new {@link Consultant} by {@link ImportRecord} in database, keycloak and rocket chat.
+   * Creates a new {@link Consultant} by {@link ImportRecord}.
    *
    * @param importRecord the input record from csv used by the importer service
    * @param roles the roles to add to given {@link Consultant}
@@ -222,12 +212,16 @@ public class CreateConsultantSaga {
 
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
-    // Use password from DTO (required field)
     String password = consultantCreationInput.getPassword();
-    if (password == null || password.isEmpty()) {
+    if ((password == null || password.isEmpty())
+        && consultantCreationInput.shouldGeneratePassword()) {
+      password = userHelper.getRandomPassword();
+      log.info("Using generated password for consultant import");
+    } else if (password == null || password.isEmpty()) {
       throw new BadRequestException("Password is required for consultant creation");
+    } else {
+      log.info("Using provided password for consultant creation");
     }
-    log.info("Using provided password for consultant creation");
     updateKeycloakPasswordOrRollback(consultantCreationInput, keycloakUserId, password);
     updateKeyloakRolesOrRollback(roles, keycloakUserId, consultantCreationInput);
 
@@ -239,16 +233,15 @@ public class CreateConsultantSaga {
         String matrixPassword = userHelper.getRandomPassword();
         log.info(
             "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
-        var matrixResponse =
-            matrixSynapseService.createUser(
+        matrixUserId =
+            matrixUserClient.createUserId(
                 plainCreds.getUsername(),
                 matrixPassword,
                 consultantCreationInput.getFirstName()
                     + " "
                     + consultantCreationInput.getLastName());
 
-        if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-          matrixUserId = matrixResponse.getBody().getUserId();
+        if (matrixUserId != null) {
           log.info(
               "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
               plainCreds.getUsername(),
@@ -269,15 +262,10 @@ public class CreateConsultantSaga {
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
 
-    String rocketChatUserId =
-        createRocketChatUserOrRollback(consultantCreationInput, keycloakUserId, password);
-
     var consultant =
-        createConsultantInMariaDBOrRollback(
-            consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
+        createConsultantInMariaDBOrRollback(consultantCreationInput, keycloakUserId, matrixUserId);
 
     assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
-    tryAssignConsultantToExistingSessions(consultant);
     return consultant;
   }
 
@@ -299,46 +287,20 @@ public class CreateConsultantSaga {
     }
   }
 
-  private void tryAssignConsultantToExistingSessions(Consultant consultant) {
-    // This is not transactional on purpose.
-    // If the consultant could not be added to all existing enquiries, he can still work, without
-    // access to the enquiry, that can be picked up by another consultant from the team.
-    var registeredEnquiries = sessionService.getRegisteredEnquiriesForConsultant(consultant);
-    tryAssignConsultantToRocketchatGroup(consultant, registeredEnquiries);
-    var archivedEnquiries = sessionService.getArchivedSessionsForConsultant(consultant);
-    tryAssignConsultantToRocketchatGroup(consultant, archivedEnquiries);
-  }
-
-  private void tryAssignConsultantToRocketchatGroup(
-      Consultant consultant, List<ConsultantSessionResponseDTO> enquiries) {
-    enquiries.forEach(
-        session -> {
-          try {
-            rocketChatService.addUserToGroup(
-                consultant.getRocketChatId(), session.getSession().getGroupId());
-          } catch (RocketChatAddUserToGroupException e) {
-            log.error(
-                "Unable to add user with id {} to group with id {}",
-                consultant.getRocketChatId(),
-                session.getSession().getGroupId());
-          }
-        });
-  }
-
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
       identityClient.updatePassword(keycloakUserId, password);
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
-          buildConsultantDataWithUnknownRocketChatId(consultantCreationInput, keycloakUserId));
+          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
       throw e;
     } catch (Exception e) {
       log.error(
           "Unable to update password or roles for user with encoded username {}",
           consultantCreationInput.getEncodedUsername());
       rollbackCreateNewConsultant(
-          buildConsultantDataWithUnknownRocketChatId(consultantCreationInput, keycloakUserId));
+          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
       throw new DistributedTransactionException(
           e,
           DistributedTransactionInfo.builder()
@@ -359,7 +321,7 @@ public class CreateConsultantSaga {
           "Unable to update roles for user with keycloak id {}. Initiating user rollback.",
           keycloakUserId);
       rollbackCreateNewConsultant(
-          buildConsultantDataWithUnknownRocketChatId(consultantCreationInput, keycloakUserId));
+          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
       throw new DistributedTransactionException(
           e,
           DistributedTransactionInfo.builder()
@@ -374,17 +336,13 @@ public class CreateConsultantSaga {
   }
 
   private Consultant createConsultantInMariaDBOrRollback(
-      ConsultantCreationInput consultantCreationInput,
-      String keycloakUserId,
-      String rocketChatUserId,
-      String matrixUserId) {
-    Consultant consultant =
-        buildConsultant(consultantCreationInput, keycloakUserId, rocketChatUserId, matrixUserId);
+      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String matrixUserId) {
+    Consultant consultant = buildConsultant(consultantCreationInput, keycloakUserId, matrixUserId);
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
       log.error(
-          "Unable to create consultant with encoded username {} in database. Rolling back keycloak and rocketchat user creation",
+          "Unable to create consultant with encoded username {} in database. Rolling back identity creation",
           consultantCreationInput.getEncodedUsername());
       rollbackCreateNewConsultant(consultant);
 
@@ -396,8 +354,7 @@ public class CreateConsultantSaga {
                   newArrayList(
                       TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK,
                       TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK,
-                      TransactionalStep.CREATE_ACCOUNT_IN_ROCKETCHAT))
+                      TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK))
               .failedStep(TransactionalStep.CREATE_CONSULTANT_IN_MARIADB)
               .build());
     }
@@ -450,27 +407,11 @@ public class CreateConsultantSaga {
     return response.getUserId();
   }
 
-  private String createRocketChatUserOrRollback(
-      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
-    try {
-      return this.rocketChatService.getUserID(
-          consultantCreationInput.getEncodedUsername(), password, true);
-    } catch (Exception e) {
-      log.warn(
-          "Unable to create user with encoded username {} in rocketchat. Using dummy RocketChat ID. Error: {}",
-          consultantCreationInput.getEncodedUsername(),
-          e.getMessage());
-      // Return a dummy RocketChat ID instead of failing the entire transaction
-      return "dummy-rc";
-    }
-  }
-
-  private static Consultant buildConsultantDataWithUnknownRocketChatId(
+  private static Consultant buildConsultantDataForRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId) {
     return Consultant.builder()
         .id(keycloakUserId)
         .tenantId(consultantCreationInput.getTenantId())
-        .rocketChatId("unknown")
         .username(consultantCreationInput.getEncodedUsername())
         .firstName(consultantCreationInput.getFirstName())
         .lastName(consultantCreationInput.getLastName())
@@ -480,10 +421,7 @@ public class CreateConsultantSaga {
   }
 
   private Consultant buildConsultant(
-      ConsultantCreationInput consultantCreationInput,
-      String keycloakUserId,
-      String rocketChatUserId,
-      String matrixUserId) {
+      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String matrixUserId) {
 
     var consultant =
         Consultant.builder()
@@ -496,7 +434,6 @@ public class CreateConsultantSaga {
             .absent(isTrue(consultantCreationInput.isAbsent()))
             .absenceMessage(consultantCreationInput.getAbsenceMessage())
             .teamConsultant(consultantCreationInput.isTeamConsultant())
-            .rocketChatId(rocketChatUserId)
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
             .magicLinkLoginEnabled(false)
@@ -507,8 +444,7 @@ public class CreateConsultantSaga {
             .createDate(consultantCreationInput.getCreateDate())
             .updateDate(consultantCreationInput.getUpdateDate())
             .tenantId(consultantCreationInput.getTenantId())
-            .status(
-                ConsultantStatus.CREATED) // MATRIX MIGRATION: Set to CREATED (RocketChat optional)
+            .status(ConsultantStatus.CREATED)
             .walkThroughEnabled(true)
             .languageCode(LanguageCode.de)
             .notificationsEnabled(true)

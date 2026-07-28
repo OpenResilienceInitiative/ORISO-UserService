@@ -4,5 +4,5 @@ import java.util.List;
 
 interface UserIdsProvider {
 
-  List<String> collectUserIds(String rcGroupId);
+  List<String> collectUserIds(String matrixRoomId);
 }

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -17,7 +16,6 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -53,8 +51,6 @@ public class AccountManager implements AccountManaging {
   private final UserRepository userRepository;
 
   private final UserServiceMapper userServiceMapper;
-
-  private final MessageClient messageClient;
 
   private final UsernameTranscoder usernameTranscoder;
 
@@ -232,8 +228,8 @@ public class AccountManager implements AccountManaging {
   }
 
   @Override
-  public Optional<User> findAdviceSeekerByChatUserId(String chatUserId) {
-    return userRepository.findByRcUserIdAndDeleteDateIsNull(chatUserId);
+  public Optional<User> findAdviceSeekerByMatrixUserId(String matrixUserId) {
+    return userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {
@@ -249,25 +245,7 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> findByDbConsultant(Consultant dbConsultant) {
-    var userMap = new HashMap<String, Object>();
-
-    // Skip RocketChat integration for now due to configuration issues
-    log.warn(
-        "Skipping RocketChat integration for consultant {} due to configuration issues",
-        dbConsultant.getId());
-    userMap.putAll(userServiceMapper.mapOf(dbConsultant, new HashMap<>()));
-
-    return userMap;
-  }
-
-  private Runnable throwPersistenceConflict(String dbUserId, String chatUserId) {
-    var message =
-        String.format(
-            "User (%s) found in database but not in Rocket.Chat (%s)", dbUserId, chatUserId);
-
-    return () -> {
-      throw new InternalServerErrorException(message);
-    };
+    return userServiceMapper.mapOf(dbConsultant, Map.of());
   }
 
   /**

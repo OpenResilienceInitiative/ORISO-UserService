@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -32,14 +31,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({ConsultingTypeManagerTestConfig.class})
 public class SessionArchiveServiceIT {
 
   @Autowired SessionArchiveService sessionArchiveService;
   @Autowired SessionRepository sessionRepository;
   @MockitoBean AuthenticatedUser authenticatedUser;
-  @MockitoBean RocketChatService rocketChatService;
 
   @Test
   public void archiveSession_Should_ChangeStatusOfSession_WhenConsultantHasPermission() {
