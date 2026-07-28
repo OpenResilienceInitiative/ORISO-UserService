@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.restclient.RestTemplateCustomizer;
 import org.springframework.http.HttpRequest;
@@ -58,7 +59,9 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
   @Override
   public void customize(RestTemplate restTemplate) {
     restTemplate.setObservationConvention(OBSERVATION_CONVENTION);
-    restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+    if (restTemplate.getInterceptors().stream().noneMatch(MetricsInterceptor.class::isInstance)) {
+      restTemplate.getInterceptors().add(new MetricsInterceptor(this));
+    }
   }
 
   /**
@@ -70,15 +73,23 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
   public <T> CompletableFuture<T> observeAsyncCall(
       String dependency, String method, long requestBytes, Callable<CompletableFuture<T>> call) {
     var sample = Timer.start(meterRegistry);
-    recordPayload(dependency, "request", requestBytes);
+    var normalizedMethod = method.toLowerCase(Locale.ROOT);
+    if (requestBytes >= 0) {
+      recordPayload(dependency, "request", requestBytes);
+    }
 
     try {
-      return call.call()
-          .whenComplete(
-              (response, failure) ->
-                  recordCall(sample, dependency, method, failure == null ? "2xx" : "async_error"));
+      var result = call.call();
+      result.whenComplete(
+          (response, failure) ->
+              recordCall(
+                  sample, dependency, normalizedMethod, failure == null ? "2xx" : "async_error"));
+      return result;
     } catch (Exception failure) {
-      recordCall(sample, dependency, method, "client_error");
+      if (failure instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      recordCall(sample, dependency, normalizedMethod, "client_error");
       return CompletableFuture.failedFuture(failure);
     }
   }
@@ -91,6 +102,20 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         .tag("operation", operation)
         .register(meterRegistry)
         .increment();
+  }
+
+  /**
+   * Starts one measured attempt for an outbound transport that does not use {@link RestTemplate}.
+   *
+   * <p>The caller supplies only fixed, low-cardinality dependency and method names. Request paths,
+   * identifiers and exception text are deliberately not part of this interface.
+   */
+  public OutboundAttempt startAttempt(String dependency, String method, long requestBytes) {
+    var attempt =
+        new OutboundAttempt(
+            Timer.start(meterRegistry), dependency, method.toLowerCase(Locale.ROOT));
+    attempt.recordRequestPayload(requestBytes);
+    return attempt;
   }
 
   private void recordCall(Timer.Sample sample, String dependency, String method, String outcome) {
@@ -114,6 +139,42 @@ public class OutboundHttpMetrics implements RestTemplateCustomizer {
         .tags("dependency", dependency, "direction", direction)
         .register(meterRegistry)
         .record(bytes);
+  }
+
+  public final class OutboundAttempt {
+
+    private final AtomicBoolean completed = new AtomicBoolean();
+    private final AtomicBoolean requestPayloadRecorded = new AtomicBoolean();
+    private final Timer.Sample sample;
+    private final String dependency;
+    private final String method;
+
+    private OutboundAttempt(Timer.Sample sample, String dependency, String method) {
+      this.sample = sample;
+      this.dependency = dependency;
+      this.method = method;
+    }
+
+    public void recordRequestPayload(long requestBytes) {
+      if (requestBytes >= 0 && requestPayloadRecorded.compareAndSet(false, true)) {
+        recordPayload(dependency, "request", requestBytes);
+      }
+    }
+
+    public void complete(int status, long responseBytes) {
+      if (completed.compareAndSet(false, true)) {
+        recordCall(sample, dependency, method, status / 100 + "xx");
+        if (responseBytes >= 0) {
+          recordPayload(dependency, "response", responseBytes);
+        }
+      }
+    }
+
+    public void fail() {
+      if (completed.compareAndSet(false, true)) {
+        recordCall(sample, dependency, method, "io_error");
+      }
+    }
   }
 
   private record MetricsInterceptor(OutboundHttpMetrics metrics)
