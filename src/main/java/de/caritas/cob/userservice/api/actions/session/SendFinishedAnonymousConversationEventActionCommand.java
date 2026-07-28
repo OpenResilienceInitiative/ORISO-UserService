@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.actions.session;
 
-import static de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum.IN_PROGRESS;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum.NEW;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase.IN_PROGRESS;
+import static de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase.NEW;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.isNull;
@@ -12,8 +12,8 @@ import static org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace;
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -83,7 +83,7 @@ public class SendFinishedAnonymousConversationEventActionCommand implements Acti
     }
   }
 
-  private FinishConversationPhaseEnum forSession(Session session) {
+  private FinishConversationPhase forSession(Session session) {
     return isNull(session.getConsultant()) ? NEW : IN_PROGRESS;
   }
 }

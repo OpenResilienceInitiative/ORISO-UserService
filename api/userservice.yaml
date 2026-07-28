@@ -1307,7 +1307,7 @@ paths:
       parameters:
         - name: matrixRoomId
           in: path
-          description: Matrix room ID of the chat; numeric database IDs are not accepted
+          description: Matrix room ID or stable numeric series ID used by V2 invite links
           required: true
           schema:
             type: string

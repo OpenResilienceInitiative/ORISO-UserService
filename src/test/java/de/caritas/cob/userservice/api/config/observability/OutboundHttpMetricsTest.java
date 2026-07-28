@@ -1,12 +1,14 @@
 package de.caritas.cob.userservice.api.config.observability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -88,6 +90,63 @@ class OutboundHttpMetricsTest {
                 .counter()
                 .count())
         .isEqualTo(1);
+  }
+
+  @Test
+  void shouldMeasureAsynchronousJavaHttpCallsWhenTheyComplete() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+    var transport = new CompletableFuture<String>();
+
+    var observed = metrics.observeAsyncCall("live-service", "post", 123, () -> transport);
+    transport.complete("accepted");
+
+    assertThat(observed.join()).isEqualTo("accepted");
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.LATENCY)
+                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .timer()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.PAYLOAD)
+                .tags("dependency", "live-service", "direction", "request")
+                .summary()
+                .totalAmount())
+        .isEqualTo(123);
+  }
+
+  @Test
+  void shouldMeasureAsynchronousJavaHttpFailuresWithoutSensitiveTags() {
+    var registry = new SimpleMeterRegistry();
+    var metrics = new OutboundHttpMetrics(registry);
+    var transport = new CompletableFuture<String>();
+
+    var observed = metrics.observeAsyncCall("live-service", "post", 31, () -> transport);
+    transport.completeExceptionally(new IllegalStateException("room-secret"));
+
+    assertThatThrownBy(observed::join);
+    assertThat(
+            registry
+                .get(OutboundHttpMetrics.CALLS)
+                .tags("dependency", "live-service", "method", "post", "outcome", "async_error")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(registry.getMeters())
+        .allSatisfy(
+            meter ->
+                assertThat(meter.getId().getTags().toString())
+                    .doesNotContain("room-secret", "room", "event", "user"));
   }
 
   @Test

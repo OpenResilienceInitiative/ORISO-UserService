@@ -174,6 +174,7 @@ whole codebase as modular:
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import Matrix/Rocket.Chat adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix/Rocket.Chat DTOs, credentials, configuration and legacy removal/rollback policy. Both protected application packages have executable import boundaries. | The session-list slice still exposes Rocket.Chat credentials and last-message transport DTOs. |
+| Live events | Callers use `LiveEventGateway` and transport-neutral events. One long-lived adapter owns generated DTO mapping, client reuse, timeouts, asynchronous failure handling and metrics. An executable import boundary prevents generated LiveService types from leaking back into callers. | Runtime metric readback still requires the branch image on PreDev. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
@@ -182,7 +183,8 @@ adapters. It also prevents the Identity/Profile packages and the Admin module
 from importing their protected concrete chat adapters. The assignment boundary
 also forbids the legacy admin Rocket.Chat operation implementation, so rollback
 policy cannot leak back into orchestration. The appointment deletion repair
-stays behind `Organizing` and `AppointmentRepository`.
+stays behind `Organizing` and `AppointmentRepository`. Live-event callers are
+also prevented from importing the generated LiveService transport.
 
 `tests/ci/test_keycloak_transport_boundary.py` keeps RESTEasy construction,
 timeouts, pooling and the concrete-engine compatibility workaround local to the
