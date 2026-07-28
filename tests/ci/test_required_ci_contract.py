@@ -91,6 +91,8 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("LIQUIBASE_IT_DB_URL", reusable)
         self.assertIn("DatabaseChangelogDriftIT", reusable)
         self.assertIn("AdminStatisticsRepositoryMariaDbIT", reusable)
+        self.assertIn("OrganizerMariaDbReplicaIT", reusable)
+        self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (

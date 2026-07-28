@@ -77,11 +77,35 @@ Paths, query values, IDs and exception text are never custom metric tags.
 Spring Boot's standard `http.client.requests` remains available as an
 independent cross-check, but now uses a bounded observation convention:
 untemplated URLs are grouped as `uri=untemplated`, and URI templates retain
-only their query-free path template.
-The Java `HttpClient` used by LiveService and Keycloak's own admin-client
-transport are not covered by the payload interceptor; their higher-level retry
-paths are covered by the explicit retry counter. This is a known measurement
-boundary, not an implied zero.
+only their query-free path template. High-cardinality `http.url` trace
+attributes retain only the dependency origin (scheme, host and explicit port),
+never a path, query, fragment or user-info value. Every UserService-owned
+`RestTemplate`, including the Matrix long-poll and Keycloak extension clients,
+installs this convention explicitly and idempotently instead of relying only on
+Spring Boot builder auto-configuration.
+
+A read-only PreDev query against the currently deployed pod exposed why this
+additional guarantee is necessary: 27 Matrix client spans produced 26 distinct
+raw URI values because sync cursors remained in query strings, and historical
+Keycloak traces contained dynamic test-identity path segments. No raw values
+are copied into this record. This is current-runtime evidence, not proof of this
+branch being deployed. After merge and rollout, the aggregate-only verification
+query must show zero raw-query URI classes and origin-only `http.url` values.
+The Java `HttpClient` used by LiveService is not covered by the payload
+interceptor; its higher-level retry paths are covered by the explicit retry
+counter. This remains a known measurement boundary, not an implied zero.
+
+Keycloak's own RESTEasy admin-client transport is covered separately by
+`KeycloakAdminClientTransport`. It preserves one pooled singleton client (50
+connections), bounds connect and connection-checkout waits at three seconds and
+read waits at ten seconds, and publishes the same low-cardinality call, latency
+and known payload measurements as the Spring HTTP clients. Apache's hidden
+transport retries are disabled, so one measured transport attempt equals one
+actual HTTP attempt; bounded application retries remain explicit through
+`userservice.outbound.retries`. The behavioral transport regression proves a
+slow response timeout, pool-exhaustion timeout, one failed HTTP attempt instead
+of Apache's previous four attempts, and eight concurrent admin reads sharing
+one token acquisition.
 
 Current `pre-dev` has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.
