@@ -69,9 +69,6 @@ public class User implements TenantAware, NotificationsAware {
   @NonNull
   private String email;
 
-  @Column(name = "rc_user_id")
-  private String rcUserId;
-
   @Column(name = "matrix_user_id")
   private String matrixUserId;
 

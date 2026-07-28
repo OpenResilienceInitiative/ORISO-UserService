@@ -2,7 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
-import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ROCKET_CHAT;
+import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,7 +67,7 @@ public class WorkflowErrorMailServiceTest {
         asList(
             DeletionWorkflowError.builder()
                 .deletionSourceType(ASKER)
-                .deletionTargetType(ROCKET_CHAT)
+                .deletionTargetType(MATRIX)
                 .timestamp(nowInUtc())
                 .reason("reason")
                 .identifier("id")

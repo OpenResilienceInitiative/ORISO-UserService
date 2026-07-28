@@ -4,15 +4,12 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_DTO
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID_LIST;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.agencyserivce.generated.ApiClient;
@@ -20,7 +17,6 @@ import de.caritas.cob.userservice.agencyserivce.generated.web.AgencyControllerAp
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.AgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -35,7 +31,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockedConstruction;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -227,22 +222,15 @@ class AgencyServiceTest {
   }
 
   @Test
-  void getAgenciesByConsultingType_Should_throwInternalServerErrorException_When_mappingFails() {
+  void getAgenciesByConsultingType_Should_ignoreProviderOnlyFields() {
     HttpHeaders headers = new HttpHeaders();
     when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
     when(agencyControllerApi.getAgenciesByConsultingType(1))
-        .thenReturn(List.of(new AgencyResponseDTO()));
+        .thenReturn(List.of(new AgencyResponseDTO().agencySpecificPrivacy("provider-owned")));
 
-    try (MockedConstruction<ObjectMapper> ignored =
-        mockConstruction(
-            ObjectMapper.class,
-            (mock, context) ->
-                when(mock.writeValueAsString(any()))
-                    .thenThrow(new JsonProcessingException("mapping failed") {}))) {
-      assertThatThrownBy(() -> agencyService.getAgenciesByConsultingType(1))
-          .isInstanceOf(InternalServerErrorException.class)
-          .hasMessageContaining("does not match");
-    }
+    List<AgencyDTO> result = agencyService.getAgenciesByConsultingType(1);
+
+    assertThat(result).singleElement().isNotNull();
   }
 
   private void stubAgencyLookup(List<AgencyResponseDTO> agencyResponseDTOS) {

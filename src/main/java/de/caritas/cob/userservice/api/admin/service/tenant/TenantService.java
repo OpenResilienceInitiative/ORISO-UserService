@@ -21,7 +21,7 @@ public class TenantService {
     log.info("Calling tenant service to get tenant data for subdomain {}", subdomain);
     return tenantServiceApiControllerFactory
         .createControllerApi()
-        .getRestrictedTenantDataBySubdomain(subdomain);
+        .getRestrictedTenantDataBySubdomain(subdomain, null);
   }
 
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "#tenantId")

@@ -4,7 +4,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.CreateEnquiryMessageFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -24,7 +23,6 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user conversations (sessions). */
@@ -32,13 +30,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class AnonymousConversationCreatorService {
 
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
-
   private final @NonNull UserService userService;
   private final @NonNull SessionService sessionService;
   private final @NonNull RollbackFacade rollbackFacade;
-  private final @NonNull CreateEnquiryMessageFacade createEnquiryMessageFacade;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull LiveEventNotificationService liveEventNotificationService;
@@ -46,7 +40,8 @@ public class AnonymousConversationCreatorService {
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
   /**
-   * Creates a new anonymous waiting session and a Rocket.Chat room when that transport is enabled.
+   * Creates a new anonymous waiting session. Its Matrix room is provisioned by the assignment
+   * workflow.
    *
    * @param userDTO {@link UserDTO}
    * @param credentials {@link AnonymousUserCredentials}
@@ -65,12 +60,6 @@ public class AnonymousConversationCreatorService {
               user, userDTO, false, RegistrationType.ANONYMOUS, SessionStatus.NEW);
       session.setConversationType(ConversationType.LIVE_CHAT);
       consultantAgencies = obtainConsultants(session);
-      if (rocketChatEnabled) {
-        String rcGroupId =
-            createEnquiryMessageFacade.createRocketChatRoomAndAddUsers(
-                session, consultantAgencies, credentials.getRocketChatCredentials());
-        session.setGroupId(rcGroupId);
-      }
       sessionService.saveSession(session);
 
     } catch (Exception ex) {
@@ -99,8 +88,7 @@ public class AnonymousConversationCreatorService {
   private List<ConsultantAgency> obtainConsultants(Session session) {
     if (session.getMainTopicId() != null) {
       List<String> topicConsultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(
-              session.getMainTopicId(), session.getConsultingTypeId());
+          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
       if (!topicConsultantIds.isEmpty()) {
         return consultantAgencyService.getConsultantAgenciesByConsultantIds(topicConsultantIds);
       }
@@ -131,8 +119,7 @@ public class AnonymousConversationCreatorService {
       Session session, List<ConsultantAgency> consultantAgencies) {
     List<String> consultantIds =
         session.getMainTopicId() != null
-            ? topicConsultantRoutingService.findEligibleConsultantIds(
-                session.getMainTopicId(), session.getConsultingTypeId())
+            ? topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId())
             : consultantAgencies.stream()
                 .map(agency -> agency.getConsultant().getId())
                 .collect(Collectors.toList());

@@ -298,7 +298,7 @@ class SessionSupervisorControllerTest {
   private Consultant consultant(String id, String username) {
     return Consultant.builder()
         .id(id)
-        .rocketChatId("rc-" + id)
+        .matrixUserId("rc-" + id)
         .username(username)
         .firstName("First")
         .lastName("Last")

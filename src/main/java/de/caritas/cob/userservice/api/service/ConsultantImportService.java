@@ -235,7 +235,7 @@ public class ConsultantImportService {
           logMessage = "Roles: " + String.join(",", roles);
           writeToImportLog(logMessage);
 
-          logMessage = "RocketChat-ID: " + consultant.getRocketChatId();
+          logMessage = "Matrix-ID: " + consultant.getMatrixUserId();
           writeToImportLog(logMessage);
         }
 

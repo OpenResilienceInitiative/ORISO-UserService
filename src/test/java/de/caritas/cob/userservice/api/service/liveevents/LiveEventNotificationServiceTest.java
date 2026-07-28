@@ -65,19 +65,20 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
-  public void sendLiveDirectMessageEventToUsers_Should_callFactoryAndLiveApi_When_rcGroupIdIsValid()
-      throws ApiException {
+  public void
+      sendLiveDirectMessageEventToUsers_Should_callFactoryAndLiveApi_When_matrixRoomIdIsValid()
+          throws ApiException {
     when(this.bySessionProvider.collectUserIds(any())).thenReturn(asList("1", "2"));
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(bySessionProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(bySessionProvider);
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("valid");
 
-    verify(userIdsProviderFactory, times(1)).byRocketChatGroup("valid");
+    verify(userIdsProviderFactory, times(1)).forMatrixRoom("valid");
     verify(liveControllerApi, times(1)).sendLiveEvent(MESSAGE.userIds(asList("1", "2")));
   }
 
   @Test
-  public void sendLiveDirectMessageEventToUsers_Should_doNothing_When_rcGroupIdIsEmpty() {
+  public void sendLiveDirectMessageEventToUsers_Should_doNothing_When_matrixRoomIdIsEmpty() {
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("");
 
     verifyNoInteractions(userIdsProviderFactory);
@@ -86,7 +87,7 @@ public class LiveEventNotificationServiceTest {
   }
 
   @Test
-  public void sendLiveDirectMessageEventToUsers_Should_doNothing_When_rcGroupIdIsNull() {
+  public void sendLiveDirectMessageEventToUsers_Should_doNothing_When_matrixRoomIdIsNull() {
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers(null);
 
     verifyNoInteractions(userIdsProviderFactory);
@@ -96,7 +97,7 @@ public class LiveEventNotificationServiceTest {
   @Test
   public void sendLiveDirectMessageEventToUsers_Should_logError_When_apiCallFails()
       throws ApiException {
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(bySessionProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(bySessionProvider);
     when(this.bySessionProvider.collectUserIds(any())).thenReturn(singletonList("test"));
     doThrow(new ApiException("")).when(this.liveControllerApi).sendLiveEvent(any());
 
@@ -131,7 +132,7 @@ public class LiveEventNotificationServiceTest {
       throws ApiException {
     List<String> userIds = asList("id1", "id2", "id3", "id4");
     when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
     when(this.authenticatedUser.getUserId()).thenReturn("id2");
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
@@ -148,7 +149,7 @@ public class LiveEventNotificationServiceTest {
     // everyone — without an initiator there is nobody to exclude).
     List<String> userIds = asList("id1", "id2");
     when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
     when(this.authenticatedUser.getUserId())
         .thenThrow(new IllegalStateException("No thread-bound request found"));
 
@@ -159,7 +160,7 @@ public class LiveEventNotificationServiceTest {
 
   @Test
   public void sendLiveDirectMessageEventToUsers_Should_sendNothing_When_noIdsAreProvided() {
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");
 
@@ -172,7 +173,7 @@ public class LiveEventNotificationServiceTest {
           throws ApiException {
     List<String> userIds = asList("id1", "id2", "id3", "id4");
     when(this.byChatProvider.collectUserIds(any())).thenReturn(userIds);
-    when(this.userIdsProviderFactory.byRocketChatGroup(any())).thenReturn(this.byChatProvider);
+    when(this.userIdsProviderFactory.forMatrixRoom(any())).thenReturn(this.byChatProvider);
     when(this.authenticatedUser.getUserId()).thenReturn("another");
 
     this.liveEventNotificationService.sendLiveDirectMessageEventToUsers("group id");

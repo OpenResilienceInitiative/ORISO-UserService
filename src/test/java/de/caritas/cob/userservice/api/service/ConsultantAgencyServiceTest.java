@@ -44,12 +44,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantAgencyServiceTest {
 
   private final String CONSULTANT_ID = "1b71cc46-650d-42bb-8299-f8e3f6d7249a";
-  private final String CONSULTANT_ROCKETCHAT_ID = "xN3Mobksn3xdp7gEk";
+  private final String CONSULTANT_MATRIX_USER_ID = "@consultant:matrix.example";
   private final Long AGENCY_ID = 1L;
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(CONSULTANT_ROCKETCHAT_ID)
+          .matrixUserId(CONSULTANT_MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")

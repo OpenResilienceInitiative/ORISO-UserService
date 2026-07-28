@@ -4,9 +4,8 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -14,20 +13,17 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.actions.ActionCommandMockProvider;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteUserException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteRocketChatAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteRocketChatConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -118,35 +114,21 @@ public class DeleteUserAccountServiceTest {
   }
 
   @Test
-  public void deleteUserAccounts_Should_sendErrorMails_When_someActionsFail()
-      throws RocketChatDeleteUserException {
-    Consultant consultant = new Consultant();
-    consultant.setRocketChatId("rc consultant id");
-    when(this.consultantRepository.findAllByDeleteDateNotNull())
-        .thenReturn(singletonList(consultant));
+  public void deleteUserAccounts_Should_sendErrorMails_When_someActionsFail() {
     User user = new User();
-    user.setRcUserId("rc user id");
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
     when(this.deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
     when(this.deletionLifecycleService.isReadyForHardDelete(user)).thenReturn(true);
-    when(this.deletionLifecycleService.normalizeConsultantLifecycle(consultant))
-        .thenReturn(consultant);
-    when(this.deletionLifecycleService.isReadyForHardDelete(consultant)).thenReturn(true);
-    RocketChatService rocketChatService = mock(RocketChatService.class);
-    DeleteRocketChatAskerAction deleteRocketChatAskerAction =
-        new DeleteRocketChatAskerAction(rocketChatService);
-    this.commandMockProvider.setCustomClassForAction(
-        DeleteRocketChatAskerAction.class, deleteRocketChatAskerAction);
-    DeleteRocketChatConsultantAction deleteRocketChatConsultantAction =
-        new DeleteRocketChatConsultantAction(rocketChatService);
-    this.commandMockProvider.setCustomClassForAction(
-        DeleteRocketChatConsultantAction.class, deleteRocketChatConsultantAction);
-    when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
-        .thenReturn(
-            this.commandMockProvider.getActionContainer(ConsultantDeletionWorkflowDTO.class));
     when(this.actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class))
         .thenReturn(this.commandMockProvider.getActionContainer(AskerDeletionWorkflowDTO.class));
-    doThrow(new RuntimeException()).when(rocketChatService).deleteUser(any());
+    doAnswer(
+            invocation -> {
+              AskerDeletionWorkflowDTO workflow = invocation.getArgument(0);
+              workflow.getDeletionWorkflowErrors().add(DeletionWorkflowError.builder().build());
+              return null;
+            })
+        .when(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class))
+        .execute(any());
 
     this.deleteUserAccountService.deleteUserAccounts();
 

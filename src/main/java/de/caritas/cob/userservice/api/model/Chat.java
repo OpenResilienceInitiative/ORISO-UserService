@@ -124,9 +124,6 @@ public class Chat {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private Integer maxParticipants;
 
-  @Column(name = "rc_group_id")
-  private String groupId;
-
   @Column(name = "matrix_room_id")
   private String matrixRoomId;
 

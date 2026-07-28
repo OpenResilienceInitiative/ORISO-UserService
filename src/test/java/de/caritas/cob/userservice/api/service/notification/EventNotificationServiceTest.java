@@ -70,7 +70,7 @@ class EventNotificationServiceTest {
     when(session.getMainTopicId()).thenReturn(5L);
     when(session.getConsultingTypeId()).thenReturn(1);
     when(session.getMatrixRoomId()).thenReturn(null);
-    when(session.getGroupId()).thenReturn("rc-group-1");
+    when(session.getMatrixRoomId()).thenReturn("!room-1:matrix.example");
     return session;
   }
 
@@ -95,7 +95,8 @@ class EventNotificationServiceTest {
     assertEquals("A new client request is waiting.", first.getText());
     assertEquals(Long.valueOf(100L), first.getSourceSessionId());
     assertEquals(Long.valueOf(7L), first.getTenantId());
-    assertEquals("/sessions/consultant/sessionView/rc-group-1/100", first.getActionPath());
+    assertEquals(
+        "/sessions/consultant/sessionView/!room-1:matrix.example/100", first.getActionPath());
     assertEquals("consultant-a", first.getRecipientUserId());
     assertEquals("consultant-b", saved.get(1).getRecipientUserId());
 
@@ -156,7 +157,8 @@ class EventNotificationServiceTest {
     assertEquals(EventNotificationService.CATEGORY_SYSTEM, first.getCategory());
     assertEquals("consultant-a", first.getRecipientUserId());
     assertEquals(Long.valueOf(100L), first.getSourceSessionId());
-    assertEquals("/sessions/consultant/sessionView/rc-group-1/100", first.getActionPath());
+    assertEquals(
+        "/sessions/consultant/sessionView/!room-1:matrix.example/100", first.getActionPath());
     assertEquals("consultant-b", eventCaptor.getAllValues().get(1).getRecipientUserId());
 
     JsonNode params = objectMapper.readTree(first.getParams());
@@ -307,7 +309,8 @@ class EventNotificationServiceTest {
     EventNotification saved = eventCaptor.getValue();
     assertEquals("supervisor.assigned", saved.getEventType());
     assertEquals("consultant-x", saved.getRecipientUserId());
-    assertEquals("/sessions/consultant/sessionView/rc-group-1/100", saved.getActionPath());
+    assertEquals(
+        "/sessions/consultant/sessionView/!room-1:matrix.example/100", saved.getActionPath());
     JsonNode params = objectMapper.readTree(saved.getParams());
     assertEquals(100L, params.get("sessionId").asLong());
   }
@@ -394,10 +397,11 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "someone-else", "secret message body", false);
+        "!room-1:matrix.example", "someone-else", "secret message body");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     EventNotification saved = eventCaptor.getValue();
@@ -413,31 +417,31 @@ class EventNotificationServiceTest {
 
   @Test
   void createMessageNotificationFromRoom_doesNothingForNullRoomId() {
-    eventNotificationService.createMessageNotificationFromRoom(null, "sender", "msg", false);
+    eventNotificationService.createMessageNotificationFromRoom(null, "sender", "msg");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createMessageNotificationFromRoom_doesNothingForBlankRoomId() {
-    eventNotificationService.createMessageNotificationFromRoom("  ", "sender", "msg", false);
+    eventNotificationService.createMessageNotificationFromRoom("  ", "sender", "msg");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createMessageNotificationFromRoom_doesNothingWhenSessionNotFound() {
-    when(sessionRepository.findByGroupId("unknown-room")).thenReturn(Optional.empty());
-    eventNotificationService.createMessageNotificationFromRoom(
-        "unknown-room", "sender", "msg", false);
+    when(sessionRepository.findByMatrixRoomId("unknown-room")).thenReturn(Optional.empty());
+    eventNotificationService.createMessageNotificationFromRoom("unknown-room", "sender", "msg");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createMessageNotificationFromRoom_filtersSystemNotificationMessages() {
     Session session = sessionMock();
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "[SYSTEM_NOTIFICATION] room created", false);
+        "!room-1:matrix.example", "sender", "[SYSTEM_NOTIFICATION] room created");
 
     verify(eventNotificationRepository, never()).save(any());
   }
@@ -451,10 +455,9 @@ class EventNotificationServiceTest {
     when(sessionRepository.findByMatrixRoomId("!matrix-room-id")).thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!matrix-room-id", "sender", "hello", true);
+        "!matrix-room-id", "sender", "hello");
 
     verify(sessionRepository).findByMatrixRoomId("!matrix-room-id");
-    verify(sessionRepository, never()).findByGroupId(any());
     verify(eventNotificationRepository).save(any());
   }
 
@@ -464,11 +467,12 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", null, true);
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "hello", false);
+        "!room-1:matrix.example", "sender", "hello");
 
     verify(eventNotificationRepository, never()).save(any());
   }
@@ -481,10 +485,11 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "msg", false);
+        "!room-1:matrix.example", "sender", "msg");
 
     verify(eventNotificationRepository).save(any());
   }
@@ -498,11 +503,12 @@ class EventNotificationServiceTest {
     Consultant consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("consultant-1");
     when(session.getConsultant()).thenReturn(consultant);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     // sender is the user — consultant should receive notification, not user
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "asker-1", "hello", false);
+        "!room-1:matrix.example", "asker-1", "hello");
 
     verify(eventNotificationRepository, times(1)).save(eventCaptor.capture());
     assertEquals("consultant-1", eventCaptor.getValue().getRecipientUserId());
@@ -515,46 +521,50 @@ class EventNotificationServiceTest {
   @Test
   void createThreadReplyNotificationFromRoom_doesNothingForBlankRoomId() {
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "  ", "sender", "reply", "thread-1", false);
+        "  ", "sender", "reply", "thread-1");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createThreadReplyNotificationFromRoom_doesNothingWhenSessionNotFound() {
-    when(sessionRepository.findByGroupId("missing-room")).thenReturn(Optional.empty());
+    when(sessionRepository.findByMatrixRoomId("missing-room")).thenReturn(Optional.empty());
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "missing-room", "sender", "reply", "thread-1", false);
+        "missing-room", "sender", "reply", "thread-1");
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createThreadReplyNotificationFromRoom_suppressesWhenUserActiveInSameThread() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", "thread-root-1", true);
+    eventNotificationService.updateActiveView(
+        "asker-1", "!room-1:matrix.example", "thread-root-1", true);
 
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", "reply", "thread-root-1", false);
+        "!room-1:matrix.example", "sender", "reply", "thread-root-1");
 
     verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
   void createThreadReplyNotificationFromRoom_doesNotSuppressWhenThreadRootIdMismatch() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", "thread-root-1", true);
+    eventNotificationService.updateActiveView(
+        "asker-1", "!room-1:matrix.example", "thread-root-1", true);
 
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", "reply", "different-thread", false);
+        "!room-1:matrix.example", "sender", "reply", "different-thread");
 
     verify(eventNotificationRepository).save(any());
   }
@@ -665,10 +675,11 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "msg", false);
+        "!room-1:matrix.example", "sender", "msg");
 
     // Notification must still be delivered — blank userId never registered any suppression
     verify(eventNotificationRepository).save(any());
@@ -676,34 +687,36 @@ class EventNotificationServiceTest {
 
   @Test
   void updateActiveView_removesViewWhenActiveFalse() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", null, true);
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", null, false);
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, false);
 
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "msg", false);
+        "!room-1:matrix.example", "sender", "msg");
 
     verify(eventNotificationRepository).save(any());
   }
 
   @Test
   void updateActiveView_removesViewWhenRoomIdIsBlankEvenIfActiveTrue() {
-    eventNotificationService.updateActiveView("asker-1", "rc-group-1", null, true);
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
     eventNotificationService.updateActiveView("asker-1", "  ", null, true);
 
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "msg", false);
+        "!room-1:matrix.example", "sender", "msg");
 
     verify(eventNotificationRepository).save(any());
   }
@@ -755,10 +768,11 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "someone-else", "hi", false);
+        "!room-1:matrix.example", "someone-else", "hi");
 
     verify(liveEventNotificationService).sendEventNotificationCreatedEventToUser("asker-1");
   }
@@ -840,13 +854,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "secret body", false);
+        "!room-1:matrix.example", "sender", "secret body");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -862,13 +877,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "secret body", false);
+        "!room-1:matrix.example", "sender", "secret body");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -883,13 +899,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "hello there", false);
+        "!room-1:matrix.example", "sender", "hello there");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("hello there");
@@ -903,13 +920,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", "hello", false);
+        "!room-1:matrix.example", "sender", "hello");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     // IllegalArgumentException on valueOf → falls back to NONE, which omits the preview
@@ -927,10 +945,11 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender-id", "msg", false, false, "Alice Consultant");
+        "!room-1:matrix.example", "sender-id", "msg", false, "Alice Consultant");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getParams()).contains("Alice Consultant");
@@ -942,14 +961,15 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     Consultant consultant = mock(Consultant.class);
     when(consultant.getDisplayName()).thenReturn("Bob Smith");
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant-sender"))
         .thenReturn(Optional.of(consultant));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "consultant-sender", "msg", false);
+        "!room-1:matrix.example", "consultant-sender", "msg");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getParams()).contains("Bob Smith");
@@ -961,7 +981,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     User senderUser = mock(User.class);
     when(senderUser.getUsername()).thenReturn("carol-user");
     when(consultantRepository.findByIdAndDeleteDateIsNull("user-sender"))
@@ -970,7 +991,7 @@ class EventNotificationServiceTest {
         .thenReturn(Optional.of(senderUser));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "user-sender", "msg", false);
+        "!room-1:matrix.example", "user-sender", "msg");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getParams()).contains("carol-user");
@@ -982,13 +1003,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("unknown")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("unknown")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("unknown")).thenReturn(Optional.empty());
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "unknown", "msg", false);
+        "!room-1:matrix.example", "unknown", "msg");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getParams()).contains("Someone");
@@ -1058,13 +1080,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", "secret reply", "thread-1", false);
+        "!room-1:matrix.example", "sender", "secret reply", "thread-1");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1080,13 +1103,20 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", "my reply text", "thread-1", false, false, null, "parent message");
+        "!room-1:matrix.example",
+        "sender",
+        "my reply text",
+        "thread-1",
+        false,
+        null,
+        "parent message");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1101,13 +1131,14 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", null, "thread-1", false, false, null, null);
+        "!room-1:matrix.example", "sender", null, "thread-1", false, null, null);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1125,7 +1156,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1133,7 +1165,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope envelope =
         PrivacyEnvelope.builder().messageId("msg-1").contentClass("IMAGE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", false, envelope);
+        "!room-1:matrix.example", "sender", envelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getEventType()).isEqualTo("message.new");
@@ -1145,7 +1177,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1153,7 +1186,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope envelope =
         PrivacyEnvelope.builder().messageId("msg-2").contentClass("FILE").build();
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "rc-group-1", "sender", "thread-root-1", false, envelope);
+        "!room-1:matrix.example", "sender", "thread-root-1", envelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getEventType()).isEqualTo("thread.reply.new");
@@ -1170,7 +1203,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1178,7 +1212,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope imageEnvelope =
         PrivacyEnvelope.builder().messageId("m1").contentClass("IMAGE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", null, false, false, null, imageEnvelope);
+        "!room-1:matrix.example", "sender", null, false, null, imageEnvelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("image");
@@ -1191,7 +1225,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1199,7 +1234,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope fileEnvelope =
         PrivacyEnvelope.builder().messageId("m2").contentClass("FILE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", null, false, false, null, fileEnvelope);
+        "!room-1:matrix.example", "sender", null, false, null, fileEnvelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("file");
@@ -1212,7 +1247,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1220,7 +1256,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope audioEnvelope =
         PrivacyEnvelope.builder().messageId("m3").contentClass("AUDIO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", null, false, false, null, audioEnvelope);
+        "!room-1:matrix.example", "sender", null, false, null, audioEnvelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("audio message");
@@ -1233,7 +1269,8 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
@@ -1241,7 +1278,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope videoEnvelope =
         PrivacyEnvelope.builder().messageId("m4").contentClass("VIDEO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", null, false, false, null, videoEnvelope);
+        "!room-1:matrix.example", "sender", null, false, null, videoEnvelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("video message");
@@ -1258,14 +1295,15 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     String longMessage = "A".repeat(150);
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", longMessage, false);
+        "!room-1:matrix.example", "sender", longMessage);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1284,14 +1322,15 @@ class EventNotificationServiceTest {
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByGroupId("rc-group-1")).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     PrivacyEnvelope envelope = PrivacyEnvelope.builder().messageId("evt-123").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "rc-group-1", "sender", null, false, false, null, envelope);
+        "!room-1:matrix.example", "sender", null, false, null, envelope);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();

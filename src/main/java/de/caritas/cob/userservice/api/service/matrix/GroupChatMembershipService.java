@@ -17,17 +17,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * Answers "who is (still) in this group chat?" from the Matrix room state.
+ * Answers "who is still in this group chat?" from the Matrix room state.
  *
- * <p>Replaces the former Rocket.Chat member query in the leave-chat path: with Rocket.Chat disabled
- * (the default since ADR-004), {@code getStandardMembersOfGroup} always returns an empty list,
- * which made every single leave look like "the last member left" and deleted the chat for everyone.
- *
- * <p>The Matrix room membership (Synapse admin API) is the source of truth here because it is the
- * only membership record that is reliably maintained in the Matrix-only world: consultants join the
- * room on chat creation, askers join through their Matrix clients. The database relations are
- * write-only snapshots ({@code group_chat_participant} records creation-time invitees only, {@code
- * user_chat} was never cleaned up on leave) and would under-count, risking wrong deletion.
+ * <p>The Matrix room membership (Synapse admin API) is the source of truth because it is the only
+ * membership record that is reliably maintained in the Matrix-only world: consultants join the room
+ * on chat creation, askers join through their Matrix clients. The database relations are write-only
+ * snapshots ({@code group_chat_participant} records creation-time invitees only, {@code user_chat}
+ * was never cleaned up on leave) and would under-count, risking wrong deletion.
  *
  * <p>All decisions fail safe: when the room state cannot be determined, the chat is treated as
  * still having members, so it is never deleted on uncertainty.
@@ -120,8 +116,7 @@ public class GroupChatMembershipService {
    * Best-effort removal of a member from a Matrix room, using the member's own admin-minted access
    * token to leave the room. Failures are logged but never thrown, so the caller's flow continues.
    *
-   * <p>This is the Matrix-native replacement for a Rocket.Chat "remove user from group": leaving is
-   * idempotent (already-gone counts as success) and needs no moderator token.
+   * <p>Leaving is idempotent (already-gone counts as success) and needs no moderator token.
    *
    * @param matrixRoomId the Matrix room ID, may be blank
    * @param memberMatrixUserId the full Matrix user ID to remove, may be blank
@@ -274,8 +269,7 @@ public class GroupChatMembershipService {
   }
 
   /**
-   * Resolves the Matrix room ID of a group chat, preferring the dedicated {@code matrixRoomId}
-   * column and falling back to {@code groupId} when that already holds a Matrix room ID.
+   * Resolves the Matrix room ID of a group chat.
    *
    * @param chat the group chat, may be null
    * @return the Matrix room ID, or {@code null} when the chat has no Matrix room
@@ -284,15 +278,11 @@ public class GroupChatMembershipService {
     if (chat == null) {
       return null;
     }
-    if (!isBlank(chat.getMatrixRoomId())) {
-      return chat.getMatrixRoomId();
-    }
-    return MatrixIds.isRoomId(chat.getGroupId()) ? chat.getGroupId() : null;
+    return MatrixIds.isRoomId(chat.getMatrixRoomId()) ? chat.getMatrixRoomId() : null;
   }
 
   /**
-   * Resolves the Matrix room ID of a session, preferring the dedicated {@code matrixRoomId} column
-   * and falling back to {@code groupId} when that already holds a Matrix room ID.
+   * Resolves the Matrix room ID of a session.
    *
    * @param session the session, may be null
    * @return the Matrix room ID, or {@code null} when the session has no Matrix room
@@ -301,9 +291,6 @@ public class GroupChatMembershipService {
     if (session == null) {
       return null;
     }
-    if (!isBlank(session.getMatrixRoomId())) {
-      return session.getMatrixRoomId();
-    }
-    return MatrixIds.isRoomId(session.getGroupId()) ? session.getGroupId() : null;
+    return MatrixIds.isRoomId(session.getMatrixRoomId()) ? session.getMatrixRoomId() : null;
   }
 }

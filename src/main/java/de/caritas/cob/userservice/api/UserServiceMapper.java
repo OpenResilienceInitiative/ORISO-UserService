@@ -66,7 +66,7 @@ public class UserServiceMapper {
     map.put("email", user.getEmail());
     map.put("encourage2fa", user.getEncourage2fa());
     map.put("magicLinkLoginEnabled", user.getMagicLinkLoginEnabled());
-    map.put("chatUserId", user.getRcUserId());
+    map.put("matrixUserId", user.getMatrixUserId());
     map.put("preferredLanguage", user.getLanguageCode().toString());
 
     return map;
@@ -85,7 +85,7 @@ public class UserServiceMapper {
         "notifyNewChatMessageFromAdviceSeeker",
         consultant.getNotifyNewChatMessageFromAdviceSeeker());
     map.put("walkThroughEnabled", consultant.getWalkThroughEnabled());
-    map.put("chatUserId", consultant.getRocketChatId());
+    map.put("matrixUserId", consultant.getMatrixUserId());
     map.put("preferredLanguage", consultant.getLanguageCode().toString());
     map.put("publicSlug", consultant.getPublicSlug());
     map.put("pendingPublicSlug", consultant.getPendingPublicSlug());
@@ -367,8 +367,8 @@ public class UserServiceMapper {
 
     var session = optionalSession.get();
     var map = new ArrayMap<String, Object>();
-    if (nonNull(session.getGroupId())) {
-      map.put("chatId", session.getGroupId());
+    if (nonNull(session.getMatrixRoomId())) {
+      map.put("chatId", session.getMatrixRoomId());
     }
     map.put("adviceSeekerId", session.getUser().getUserId());
     map.put("status", session.getStatus().toString());
@@ -394,17 +394,6 @@ public class UserServiceMapper {
   private boolean isDeletionConsistent(
       Consultant consultant, ConsultantAgencyBase consultantAgency) {
     return !(isNull(consultant.getDeleteDate()) && nonNull(consultantAgency.getDeleteDate()));
-  }
-
-  @SuppressWarnings("unchecked")
-  public List<String> bannedUsernamesOfMap(Map<String, Object> chatMetaInfoMap) {
-    return (List<String>) chatMetaInfoMap.get("mutedUsers");
-  }
-
-  public Optional<String> e2eKeyOf(Map<String, String> chatMap) {
-    return chatMap.containsKey("e2eKey") && chatMap.get("e2eKey").matches("tmp\\..{12,}")
-        ? Optional.of(chatMap.get("e2eKey"))
-        : Optional.empty();
   }
 
   public String roomIdOf(Map<String, String> chatMap) {
@@ -588,13 +577,5 @@ public class UserServiceMapper {
         .map(ConsultantAgencyBase::getAgencyId)
         .distinct()
         .collect(Collectors.toList());
-  }
-
-  public List<String> chatUserIdOf(List<Map<String, String>> groupMembers) {
-    return groupMembers.stream().map(map -> map.get("chatUserId")).collect(Collectors.toList());
-  }
-
-  public String statusOf(boolean available) {
-    return available ? "online" : "busy";
   }
 }

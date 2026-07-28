@@ -25,7 +25,6 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
-import de.caritas.cob.userservice.api.testConfig.RocketChatTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.workflow.delete.service.WorkflowErrorMailService;
 import java.time.LocalDateTime;
@@ -45,14 +44,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 @SpringBootTest
-// RC teardown phase 2: this scheduler IT never exercises Rocket.Chat (it only imports
-// RocketChatTestConfig for context and never calls it), so it runs in the production Matrix-only
-// mode (rocket-chat.enabled=false → DisabledRocketChatService is the active bean).
-@TestPropertySource(properties = {"spring.profiles.active=testing", "rocket-chat.enabled=false"})
+@TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({
   KeycloakTestConfig.class,
-  RocketChatTestConfig.class,
   ApiControllerTestConfig.class,
   ConsultingTypeManagerTestConfig.class
 })

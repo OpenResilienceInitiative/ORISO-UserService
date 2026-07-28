@@ -295,7 +295,7 @@ class MatrixSyncControllerTest {
   private Consultant consultant() {
     return Consultant.builder()
         .id(CONSULTANT_ID)
-        .rocketChatId("rc-consultant")
+        .matrixUserId("rc-consultant")
         .username("consultant")
         .firstName("Consultant")
         .lastName("User")

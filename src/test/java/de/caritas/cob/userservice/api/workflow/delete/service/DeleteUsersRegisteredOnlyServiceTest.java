@@ -9,10 +9,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetUserIdException;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.time.LocalDateTime;
@@ -35,10 +32,6 @@ public class DeleteUsersRegisteredOnlyServiceTest {
   @Mock private DeleteUserAccountService deleteUserAccountService;
 
   @Mock private WorkflowErrorMailService workflowErrorMailService;
-
-  @Mock
-  @SuppressWarnings("unused")
-  private RocketChatService rocketChatService;
 
   @Test
   public void
@@ -114,45 +107,5 @@ public class DeleteUsersRegisteredOnlyServiceTest {
     verify(userRepository)
         .findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(dateToCheck);
     assertTrue(dateToCheck.isAfter(CustomLocalDateTime.nowInUtc()));
-  }
-
-  @Test
-  public void deleteUserAccountsTimeSensitive_Should_PerformDeletionEvenIfRocketChatUserNotFound()
-      throws RocketChatGetUserIdException {
-    // given
-    User user = mock(User.class);
-    when(user.getUsername()).thenReturn("username1");
-    when(userRepository.findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(
-            Mockito.any()))
-        .thenReturn(Collections.singletonList(user));
-    when(rocketChatService.getRocketChatUserIdByUsername(user.getUsername()))
-        .thenThrow(RocketChatGetUserIdException.class);
-
-    // when
-    deleteUsersRegisteredOnlyService.deleteUserAccountsTimeSensitive();
-
-    // then
-    verify(deleteUserAccountService).performUserDeletion(user);
-    verify(workflowErrorMailService, never()).buildAndSendErrorMail(Mockito.any());
-  }
-
-  @Test
-  public void deleteUserAccountsTimeInsensitive_Should_PerformDeletionEvenIfRocketChatUserNotFound()
-      throws RocketChatGetUserIdException {
-    // given
-    User user = mock(User.class);
-    when(user.getUsername()).thenReturn("username1");
-    when(userRepository.findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(
-            Mockito.any()))
-        .thenReturn(Collections.singletonList(user));
-    when(rocketChatService.getRocketChatUserIdByUsername(user.getUsername()))
-        .thenThrow(RocketChatGetUserIdException.class);
-
-    // when
-    deleteUsersRegisteredOnlyService.deleteUserAccountsTimeInsensitive();
-
-    // then
-    verify(deleteUserAccountService).performUserDeletion(user);
-    verify(workflowErrorMailService, never()).buildAndSendErrorMail(Mockito.any());
   }
 }

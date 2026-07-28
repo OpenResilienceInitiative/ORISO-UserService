@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.actions.chat;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +18,8 @@ import org.springframework.stereotype.Service;
  * workflow already uses, so there is one room teardown mechanism in the codebase.
  *
  * <p>The shutdown is best-effort: the database deletion of the chat is the source of truth, so a
- * failing Matrix call is logged but never fails the stop/delete operation. Legacy chats without a
- * Matrix room id are skipped silently.
+ * failing Matrix call is logged but never fails the stop/delete operation. Historical records
+ * without a Matrix room id are skipped because there is no remote room to shut down.
  */
 @Slf4j
 @Service
@@ -36,9 +35,6 @@ public class MatrixChatShutdownService {
    */
   public void shutdownRoom(Chat chat) {
     var matrixRoomId = chat.getMatrixRoomId();
-    if (isBlank(matrixRoomId) && MatrixIds.isRoomId(chat.getGroupId())) {
-      matrixRoomId = chat.getGroupId();
-    }
     if (isBlank(matrixRoomId)) {
       log.debug("Chat {} has no Matrix room id; skipping Matrix room shutdown", chat.getId());
       return;

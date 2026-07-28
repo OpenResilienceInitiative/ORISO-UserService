@@ -28,16 +28,17 @@ public class RelevantUserAccountIdsBySessionProviderTest {
 
   @Test
   public void collectUserIds_Should_returnEmptyList_When_sessionDoesNotExist() {
-    List<String> userIds = this.bySessionProvider.collectUserIds("rcGroupId");
+    List<String> userIds = this.bySessionProvider.collectUserIds("matrixRoomId");
 
     assertThat(userIds, hasSize(0));
   }
 
   @Test
   public void collectUserIds_Should_returnAllUserIds_When_consultantIsAuthenticatedUser() {
-    when(sessionRepository.findByGroupId(any())).thenReturn(buildSessionWithUserAndConsultant());
+    when(sessionRepository.findByMatrixRoomId(any()))
+        .thenReturn(buildSessionWithUserAndConsultant());
 
-    List<String> userIds = this.bySessionProvider.collectUserIds("rcGroupId");
+    List<String> userIds = this.bySessionProvider.collectUserIds("matrixRoomId");
 
     assertThat(userIds, hasSize(2));
     assertThat(userIds.get(0), is("user"));
@@ -64,9 +65,10 @@ public class RelevantUserAccountIdsBySessionProviderTest {
 
   @Test
   public void collectUserIds_Should_returnAllUserIds_When_userIsAuthenticatedUser() {
-    when(sessionRepository.findByGroupId(any())).thenReturn(buildSessionWithUserAndConsultant());
+    when(sessionRepository.findByMatrixRoomId(any()))
+        .thenReturn(buildSessionWithUserAndConsultant());
 
-    List<String> userIds = this.bySessionProvider.collectUserIds("rcGroupId");
+    List<String> userIds = this.bySessionProvider.collectUserIds("matrixRoomId");
 
     assertThat(userIds, hasSize(2));
     assertThat(userIds.get(0), is("user"));
@@ -75,9 +77,10 @@ public class RelevantUserAccountIdsBySessionProviderTest {
 
   @Test
   public void collectUserIds_Should_returnAllUserIds_When_authenticatedUserIsOther() {
-    when(sessionRepository.findByGroupId(any())).thenReturn(buildSessionWithUserAndConsultant());
+    when(sessionRepository.findByMatrixRoomId(any()))
+        .thenReturn(buildSessionWithUserAndConsultant());
 
-    List<String> userIds = this.bySessionProvider.collectUserIds("rcGroupId");
+    List<String> userIds = this.bySessionProvider.collectUserIds("matrixRoomId");
 
     assertThat(userIds, hasSize(2));
     assertThat(userIds.get(0), is("user"));
