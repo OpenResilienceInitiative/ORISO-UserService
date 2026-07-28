@@ -11,6 +11,17 @@ import org.springframework.data.repository.query.Param;
 
 public interface TutorialProgressRepository extends CrudRepository<TutorialProgress, Long> {
 
+  @Query(
+      value = "SELECT GET_LOCK(SHA2(CONCAT('tutorial-progress:', :userId), 256), :timeoutSeconds)",
+      nativeQuery = true)
+  Integer acquireUserProgressLock(
+      @Param("userId") String userId, @Param("timeoutSeconds") int timeoutSeconds);
+
+  @Query(
+      value = "SELECT RELEASE_LOCK(SHA2(CONCAT('tutorial-progress:', :userId), 256))",
+      nativeQuery = true)
+  Integer releaseUserProgressLock(@Param("userId") String userId);
+
   Optional<TutorialProgress> findByUserIdAndSurfaceAndTourIdAndTourVersion(
       String userId, String surface, String tourId, Integer tourVersion);
 

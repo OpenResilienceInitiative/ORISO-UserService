@@ -18,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -138,6 +139,65 @@ class TutorialProgressServiceMariaDbReplicaIT {
     assertThatThrownBy(() -> store.upsert(progress(2, "in_progress"), 1))
         .isInstanceOf(BadRequestException.class)
         .hasMessageContaining("row limit");
+    store.upsert(progress(2, "in_progress"), 2);
+
+    assertThat(tutorialProgressRepository.findByUserIdAndSurface(USER_ID, SURFACE)).hasSize(2);
+  }
+
+  @Test
+  void concurrentNewScopesForOneUserNeverExceedTheRowCap() throws Exception {
+    var firstCountReached = new CountDownLatch(1);
+    var releaseFirstCount = new CountDownLatch(1);
+    var secondCountReached = new CountDownLatch(1);
+    var callersReady = new CountDownLatch(2);
+    var startCallers = new CountDownLatch(1);
+    var countCalls = new AtomicInteger();
+    var repository =
+        repositoryPausingFirstCount(
+            countCalls, firstCountReached, releaseFirstCount, secondCountReached);
+    var firstStore = new TutorialProgressStore(repository, transactionManager);
+    var secondStore = new TutorialProgressStore(repository, transactionManager);
+    var executor = Executors.newFixedThreadPool(2);
+    Future<Throwable> first;
+    Future<Throwable> second;
+    boolean secondReachedCount;
+
+    try {
+      first =
+          executor.submit(
+              () ->
+                  upsertFailure(
+                      firstStore, progress(1, "in_progress"), callersReady, startCallers));
+      second =
+          executor.submit(
+              () ->
+                  upsertFailure(
+                      secondStore, progress(2, "in_progress"), callersReady, startCallers));
+
+      assertThat(callersReady.await(5, TimeUnit.SECONDS)).isTrue();
+      startCallers.countDown();
+      assertThat(firstCountReached.await(5, TimeUnit.SECONDS)).isTrue();
+      secondReachedCount = secondCountReached.await(500, TimeUnit.MILLISECONDS);
+    } finally {
+      startCallers.countDown();
+      releaseFirstCount.countDown();
+    }
+
+    try {
+      var firstFailure = first.get(10, TimeUnit.SECONDS);
+      var secondFailure = second.get(10, TimeUnit.SECONDS);
+      assertThat(secondReachedCount)
+          .as("a second scope must wait until the first user-scoped write finishes")
+          .isFalse();
+      assertThat((firstFailure == null ? 1 : 0) + (secondFailure == null ? 1 : 0)).isEqualTo(1);
+      assertThat(
+              firstFailure instanceof BadRequestException
+                  || secondFailure instanceof BadRequestException)
+          .isTrue();
+    } finally {
+      executor.shutdownNow();
+    }
+
     assertThat(tutorialProgressRepository.findByUserIdAndSurface(USER_ID, SURFACE)).hasSize(1);
   }
 
@@ -163,6 +223,46 @@ class TutorialProgressServiceMariaDbReplicaIT {
         .when(adapter)
         .findByUserIdAndSurfaceAndTourIdAndTourVersion(USER_ID, SURFACE, TOUR_ID, TOUR_VERSION);
     return adapter;
+  }
+
+  private TutorialProgressRepository repositoryPausingFirstCount(
+      AtomicInteger countCalls,
+      CountDownLatch firstCountReached,
+      CountDownLatch releaseFirstCount,
+      CountDownLatch secondCountReached) {
+    TutorialProgressRepository adapter =
+        mock(
+            TutorialProgressRepository.class,
+            withSettings()
+                .defaultAnswer(AdditionalAnswers.delegatesTo(tutorialProgressRepository)));
+    doAnswer(
+            invocation -> {
+              if (countCalls.incrementAndGet() == 1) {
+                firstCountReached.countDown();
+                await(releaseFirstCount);
+              } else {
+                secondCountReached.countDown();
+              }
+              return tutorialProgressRepository.countByUserId(invocation.getArgument(0));
+            })
+        .when(adapter)
+        .countByUserId(USER_ID);
+    return adapter;
+  }
+
+  private Throwable upsertFailure(
+      TutorialProgressStore store,
+      TutorialProgress desired,
+      CountDownLatch callersReady,
+      CountDownLatch startCallers) {
+    callersReady.countDown();
+    await(startCallers);
+    try {
+      store.upsert(desired, 1);
+      return null;
+    } catch (Throwable exception) {
+      return exception;
+    }
   }
 
   private UpsertTutorialProgressRequest request(String currentStepId) {
