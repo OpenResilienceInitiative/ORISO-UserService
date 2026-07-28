@@ -11,6 +11,18 @@ Spring Security assumptions, test-database replacement, Spring Boot 4 / Jackson
 3 migration gaps, incomplete external-service test doubles, stale chat migration
 expectations and two production regressions.
 
+The counted classification is machine-readable in
+[`user-service-historical-failure-classification.json`](user-service-historical-failure-classification.json)
+and protected by an executable CI contract. Its failure clusters sum exactly
+to 28: 19 obsolete security assertions, two Actuator contract mismatches, one
+Rocket.Chat configuration expectation, three session-locking test doubles and
+one case each for a Jackson request fixture, the public-consultant test double
+and a stale chat aggregate assertion. Its error clusters sum exactly to 704:
+637 replacement-H2 datasource failures, 22 Spring Plugin/HATEOAS ABI errors
+and 45 initial Spring context-threshold cascades. The artifact preserves the
+15-suite breakdown behind those 45 errors and does not invent a more specific
+original exception where the retained report did not contain one.
+
 After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
