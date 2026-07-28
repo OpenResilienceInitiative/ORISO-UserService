@@ -72,8 +72,7 @@ public class AccountInviteController {
 
     if (safe.templateId != null) {
       InviteSendResult result =
-          accountInviteService.sendInvite(
-              new SendInviteCommand(invite.getId(), safe.templateId, safe.acceptBaseUrl));
+          accountInviteService.sendInvite(new SendInviteCommand(invite.getId(), safe.templateId));
       return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
     }
 
@@ -122,8 +121,7 @@ public class AccountInviteController {
       @PathVariable Long inviteId, @RequestBody SendInviteRequestDTO request) {
     SendInviteRequestDTO safe = request == null ? new SendInviteRequestDTO() : request;
     InviteSendResult result =
-        accountInviteService.sendInvite(
-            new SendInviteCommand(inviteId, safe.templateId, safe.acceptBaseUrl));
+        accountInviteService.sendInvite(new SendInviteCommand(inviteId, safe.templateId));
     return ResponseEntity.ok(AccountInviteResponseDTO.from(result));
   }
 
@@ -133,8 +131,7 @@ public class AccountInviteController {
       @PathVariable Long inviteId, @RequestBody SendInviteRequestDTO request) {
     SendInviteRequestDTO safe = request == null ? new SendInviteRequestDTO() : request;
     InviteSendResult result =
-        accountInviteService.resendInvite(
-            new SendInviteCommand(inviteId, safe.templateId, safe.acceptBaseUrl));
+        accountInviteService.resendInvite(new SendInviteCommand(inviteId, safe.templateId));
     return ResponseEntity.ok(AccountInviteResponseDTO.from(result));
   }
 
@@ -256,6 +253,11 @@ public class AccountInviteController {
     public Long departmentId;
     public Long expiresInDays;
     public Long templateId;
+
+    /**
+     * Ignored since TEN-INV-U6 (#890): the accept link target is decided server-side from the
+     * invite's role and configuration. Kept only for wire compatibility with older clients.
+     */
     public String acceptBaseUrl;
 
     /**
@@ -269,6 +271,11 @@ public class AccountInviteController {
 
   public static class SendInviteRequestDTO {
     public Long templateId;
+
+    /**
+     * Ignored since TEN-INV-U6 (#890): the accept link target is decided server-side from the
+     * invite's role and configuration. Kept only for wire compatibility with older clients.
+     */
     public String acceptBaseUrl;
   }
 

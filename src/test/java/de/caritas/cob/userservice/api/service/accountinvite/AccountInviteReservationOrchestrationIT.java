@@ -64,6 +64,15 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
 
+  // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.
+  @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService
+      inviteMailDispatchService;
+
+  @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+
   /** In-memory stand-in for the TenantService reservation ledger (U1). */
   private final Set<Long> tenantIdLedger = ConcurrentHashMap.newKeySet();
 

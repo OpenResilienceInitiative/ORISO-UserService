@@ -59,6 +59,31 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
+  void handleSmtpSendFailure_returnsBadGatewayWithMachineReadableReason() {
+    // TEN-INV-U6 (#890): a failed SMTP handover must never look like success to any client.
+    var ex = new de.caritas.cob.userservice.api.exception.SmtpSendException("handover failed");
+    var response = handler.handleSmtpSendFailure(ex, request);
+
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("SMTP_SEND_FAILED", body.get("reason"));
+  }
+
+  @Test
+  void handleAccountInviteLinkGone_returnsGoneWithDistinctReason() {
+    // TEN-INV-U6 (#890): consumed/revoked/expired links surface a distinct machine-readable code.
+    var ex =
+        new de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException(
+            de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException.Reason
+                .CONSUMED);
+    var response = handler.handleAccountInviteLinkGone(ex, request);
+
+    assertEquals(HttpStatus.GONE, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("CONSUMED", body.get("reason"));
+  }
+
+  @Test
   void handleJPAConstraintViolationException_usernameConflict_returnsConflictReason() {
     // Business reason: duplicate usernames must return machine-readable conflict reasons.
     var ex = new ConstraintViolationException("duplicate username", null, null);
