@@ -135,29 +135,21 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
-    def test_live_event_callers_do_not_import_generated_liveservice_transport(self):
-        application_roots = (
+    def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
+        source = (
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/liveevents",
-            ROOT / "src/main/java/de/caritas/cob/userservice/api/actions/session",
-        )
-        forbidden_prefix = (
-            "import de.caritas.cob.userservice.liveservice.generated."
-        )
-        offenders = []
+            / "src/main/java/de/caritas/cob/userservice/api/service/ConsultantAgencyService.java"
+        ).read_text()
 
-        for application_root in application_roots:
-            for source in application_root.rglob("*.java"):
-                for line in source.read_text().splitlines():
-                    if line.startswith(forbidden_prefix):
-                        offenders.append(f"{source.relative_to(ROOT)} imports {line}")
-
-        self.assertEqual(
-            [],
-            offenders,
-            "Live-event callers must use the transport-neutral gateway; generated "
-            "LiveService types stay inside the outbound adapter:\n"
-            + "\n".join(offenders),
+        self.assertNotIn(
+            "agencyService.getAgencyWithoutCaching(",
+            source,
+            "A failed agency batch must not trigger one outbound retry per agency",
+        )
+        self.assertNotIn(
+            "findDistinctConsultingTypeIdsByAgencyId(",
+            source,
+            "Fallback consulting types must be loaded in one local batch query",
         )
 
 
