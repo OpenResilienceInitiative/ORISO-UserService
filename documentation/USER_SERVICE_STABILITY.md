@@ -149,10 +149,21 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- The seeded load proof carries no Rocket.Chat configuration or dependency.
-  The current production source is Matrix-only.
+- Rocket.Chat is a complete removal target, never a fallback. Until its legacy
+  code is deleted, the default `rocket-chat.enabled=false` prevents account and
+  availability reads from calling it and prevents creation of its MongoDB
+  client or credential job. Matrix remains the sole intended chat transport;
+  Jitsi is likewise not part of the target call stack.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
+- When the consultant-agency batch read is empty or fails, the local fallback
+  performs no per-agency AgencyService retries and loads the lowest known
+  consulting type for all agency IDs in one grouped session query. For `N`
+  agencies, this changes the failure path from `1 + N` outbound calls plus `N`
+  local queries to one outbound batch call plus one local query while
+  preserving IDs, topic assignments and configured fallback values. This is
+  local code/test evidence until the branch is merged, deployed and measured
+  on PreDev.
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
@@ -164,6 +175,11 @@ model.
 
 ## Internal module boundaries
 
+The target is Matrix-only. Rocket.Chat references below describe legacy code
+that remains to be deleted; they are not an approved fallback or target
+adapter. Video calling belongs to the ORISO-controlled Element Call/MatrixRTC
+fork with LiveKit, without Jitsi.
+
 The intended dependency direction is:
 
 ```mermaid
@@ -172,7 +188,7 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
+  ADAPTERS[Matrix, Keycloak, repositories, generated clients and legacy adapters]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
