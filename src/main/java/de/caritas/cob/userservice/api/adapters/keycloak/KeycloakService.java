@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -36,6 +37,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -63,7 +65,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService implements IdentityClient, IdentityEmailAddressUpdater {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -171,14 +173,16 @@ public class KeycloakService implements IdentityClient {
    *
    * @param emailAddress the email address to set
    */
-  public void changeEmailAddress(String emailAddress) {
+  @Override
+  public void updateCurrentUserEmail(String emailAddress) {
     this.userAccountInputValidator.validateEmailAddress(emailAddress);
     String userId = this.authenticatedUser.getUserId();
-    updateEmail(userId, emailAddress);
+    updateEmail(userId, emailAddress.toLowerCase(Locale.ROOT));
   }
 
-  public void changeEmailAddress(String username, String emailAddress) {
-    var lowerEmailAddress = emailAddress.toLowerCase();
+  @Override
+  public void updateEmailByUsername(String username, String emailAddress) {
+    var lowerEmailAddress = emailAddress.toLowerCase(Locale.ROOT);
     var usersResource = keycloakClient.getUsersResource();
     var userRepresentation = usersResource.search(username).get(0);
     if (!lowerEmailAddress.equals(userRepresentation.getEmail())) {
@@ -187,7 +191,8 @@ public class KeycloakService implements IdentityClient {
     }
   }
 
-  public void deleteEmailAddress() {
+  @Override
+  public void deleteCurrentUserEmail() {
     updateDummyEmail(authenticatedUser.getUserId());
   }
 
@@ -734,18 +739,23 @@ public class KeycloakService implements IdentityClient {
   public void updateUserData(
       final String userId, UserDTO userDTO, String firstName, String lastName) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource, userDTO.getEmail());
+    verifyEmail(userResource.toRepresentation(), userDTO.getEmail());
     userResource.update(getUserRepresentation(userDTO, firstName, lastName));
   }
 
-  private void verifyEmail(UserResource userResource, String email) {
-    if (hasEmailAddressChanged(userResource, email) && isEmailNotAvailable(email)) {
+  private void verifyEmail(UserRepresentation userRepresentation, String email) {
+    if (hasEmailAddressChanged(userRepresentation, email)) {
+      verifyEmailAvailable(email);
+    }
+  }
+
+  private void verifyEmailAvailable(String email) {
+    if (isEmailNotAvailable(email)) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
-  private boolean hasEmailAddressChanged(UserResource userResource, String email) {
-    UserRepresentation userRepresentation = userResource.toRepresentation();
+  private boolean hasEmailAddressChanged(UserRepresentation userRepresentation, String email) {
     if (userRepresentation != null && userRepresentation.getEmail() != null) {
       return !userRepresentation.getEmail().equals(email);
     } else {
@@ -759,10 +769,13 @@ public class KeycloakService implements IdentityClient {
    * @param userId Keycloak user ID
    * @param emailAddress the email address to set
    */
-  public void updateEmail(String userId, String emailAddress) {
+  private void updateEmail(String userId, String emailAddress) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource, emailAddress);
     UserRepresentation representation = userResource.toRepresentation();
+    if (!hasEmailAddressChanged(representation, emailAddress)) {
+      return;
+    }
+    verifyEmailAvailable(emailAddress);
     representation.setEmail(emailAddress);
     userResource.update(representation);
   }

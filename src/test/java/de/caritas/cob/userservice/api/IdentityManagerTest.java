@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +23,7 @@ class IdentityManagerTest {
   private static final String EMAIL = "consultant@example.org";
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
@@ -37,7 +39,7 @@ class IdentityManagerTest {
         .isEqualTo(validationResult);
 
     verify(identityClient).finishEmailVerification(encodedUsername, "123456");
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
   }
 
   @Test
@@ -48,7 +50,7 @@ class IdentityManagerTest {
 
     identityManager.validateOneTimePassword(RAW_USERNAME, "123456");
 
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
   }
 
   @Test

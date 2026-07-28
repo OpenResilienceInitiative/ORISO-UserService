@@ -135,6 +135,81 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "not expose the outbound-port package:\n" + "\n".join(offenders),
         )
 
+    def test_email_mutation_consumers_use_a_focused_identity_email_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityEmailAddressUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Account email mutations need a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out."
+            "IdentityEmailAddressUpdater;"
+        )
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        ).read_text()
+        user_account_service = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/user/"
+            "UserAccountService.java"
+        ).read_text()
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        keycloak_adapter = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+
+        for source in (identity_manager, user_account_service, keycloak_adapter):
+            self.assertIn(
+                focused_import,
+                source,
+                "Every email-mutation participant must use the focused output port",
+            )
+        self.assertNotIn(
+            "identityClient.changeEmailAddress(",
+            identity_manager + user_account_service,
+            "Application email changes must not use the broad identity client",
+        )
+        self.assertNotIn(
+            "identityClient.deleteEmailAddress(",
+            user_account_service,
+            "Application email deletion must not use the broad identity client",
+        )
+        for method in ("changeEmailAddress(", "deleteEmailAddress(", "updateEmail("):
+            self.assertNotIn(
+                method,
+                identity_client,
+                "The broad identity command client must not own email mutations",
+            )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityEmailAddressUpdater" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused email port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

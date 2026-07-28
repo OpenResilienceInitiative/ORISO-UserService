@@ -81,9 +81,15 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void changeEmailAddress(String emailAddress) {
-        log.debug("KeycloakService.changeEmailAddress called");
+      public void updateCurrentUserEmail(String emailAddress) {
+        log.debug("KeycloakService.updateCurrentUserEmail called");
       }
+
+      @Override
+      public void deleteCurrentUserEmail() {}
+
+      @Override
+      public void updateEmailByUsername(String username, String emailAddress) {}
 
       @Override
       public KeycloakCreateUserResponseDTO createKeycloakUser(UserDTO user) {
@@ -131,9 +137,6 @@ public class KeycloakTestConfig {
       @Override
       public void updateUserData(
           String userId, UserDTO userDTO, String firstName, String lastName) {}
-
-      @Override
-      public void updateEmail(String userId, String emailAddress) {}
 
       @Override
       public void rollBackUser(String userId) {}

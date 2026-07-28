@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
@@ -33,7 +35,8 @@ public class IdentityManager implements IdentityManaging {
     var validationResult = identityClient.finishEmailVerification(username, code);
     if (validationResult.get("created").equals("true")) {
       var email = validationResult.get("email");
-      identityClient.changeEmailAddress(usernameTranscoder.decodeUsername(username), email);
+      identityEmailAddressUpdater.updateEmailByUsername(
+          usernameTranscoder.decodeUsername(username), email);
     }
 
     return validationResult;

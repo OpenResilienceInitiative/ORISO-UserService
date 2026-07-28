@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
@@ -37,6 +38,7 @@ public class UserAccountService {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final @NonNull UserHelper userHelper;
 
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -130,7 +132,8 @@ public class UserAccountService {
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
     optionalEmail.ifPresentOrElse(
-        identityClient::changeEmailAddress, identityClient::deleteEmailAddress);
+        identityEmailAddressUpdater::updateCurrentUserEmail,
+        identityEmailAddressUpdater::deleteCurrentUserEmail);
 
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
