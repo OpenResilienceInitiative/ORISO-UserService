@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -75,6 +76,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
   @MockitoBean private AgencyService agencyService;
 
   @MockitoBean private IdentityClient identityClient;
+  @MockitoBean private IdentityProfileUpdater identityProfileUpdater;
 
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
 

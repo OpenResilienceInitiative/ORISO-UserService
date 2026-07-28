@@ -198,6 +198,15 @@ repair. Those require the branch image to be deployed and queried again.
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
+- Admin and consultant profile mutations use the focused
+  `IdentityProfileUpdater` with exactly five provider-neutral values: username,
+  email, tenant ID, first name and last name. Every mutation resolves the target
+  once and reads its current representation once. An unchanged email performs
+  no availability search and one update; a changed available email performs one
+  availability search and one update; a changed unavailable email performs one
+  availability search, preserves the conflict response and performs no update.
+  The adapter applies no automatic retry, so provider failures retain their
+  existing propagation behavior.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -230,7 +239,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral value; the broad identity command client no longer accepts web-layer profile DTOs. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -246,6 +255,9 @@ returning. The appointment deletion repair stays behind `Organizing` and
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+The profile-write contract keeps web and Keycloak transport types out of the
+focused value, requires both active application writers and shared Spring mocks
+to use the port, and removes profile writes from the broad identity client.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production

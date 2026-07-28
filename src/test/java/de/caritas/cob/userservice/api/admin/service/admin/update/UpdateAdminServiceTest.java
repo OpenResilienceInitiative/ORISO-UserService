@@ -14,13 +14,13 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,11 +32,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class UpdateAdminServiceTest {
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityProfileUpdater identityProfileUpdater;
   @Mock private UserAccountInputValidator userAccountInputValidator;
   @Mock private AdminRepository adminRepository;
   @Mock private RetrieveAdminService retrieveAdminService;
-  @Captor private ArgumentCaptor<UserDTO> userDTOCaptor;
+  @Captor private ArgumentCaptor<IdentityProfileUpdate> profileUpdateCaptor;
 
   private UpdateAdminService updateAdminService;
 
@@ -44,7 +44,10 @@ class UpdateAdminServiceTest {
   void setUp() {
     updateAdminService =
         new UpdateAdminService(
-            identityClient, userAccountInputValidator, adminRepository, retrieveAdminService);
+            identityProfileUpdater,
+            userAccountInputValidator,
+            adminRepository,
+            retrieveAdminService);
   }
 
   @Test
@@ -61,7 +64,7 @@ class UpdateAdminServiceTest {
             () -> updateAdminService.updateAgencyAdmin("adminId", null));
 
     assertEquals("Admin has tenant id 0", exception.getMessage());
-    verify(identityClient, never()).updateUserData(any(), any(), any(), any());
+    verify(identityProfileUpdater, never()).updateProfile(any(), any());
     verify(adminRepository, never()).save(any());
   }
 
@@ -77,8 +80,8 @@ class UpdateAdminServiceTest {
     updateAdminService.updateAgencyAdmin("adminId", updateAgencyAdminDTO);
 
     // then
-    verify(identityClient).updateUserData(any(), userDTOCaptor.capture(), any(), any());
-    assertNull(userDTOCaptor.getValue().getTenantId());
+    verify(identityProfileUpdater).updateProfile(any(), profileUpdateCaptor.capture());
+    assertNull(profileUpdateCaptor.getValue().tenantId());
     verify(adminRepository).save(admin);
   }
 
@@ -94,8 +97,8 @@ class UpdateAdminServiceTest {
     updateAdminService.updateAgencyAdmin("adminId", updateAgencyAdminDTO);
 
     // then
-    verify(identityClient).updateUserData(any(), userDTOCaptor.capture(), any(), any());
-    assertEquals(2, userDTOCaptor.getValue().getTenantId());
+    verify(identityProfileUpdater).updateProfile(any(), profileUpdateCaptor.capture());
+    assertEquals(2, profileUpdateCaptor.getValue().tenantId());
     verify(adminRepository).save(admin);
   }
 
@@ -118,10 +121,10 @@ class UpdateAdminServiceTest {
     updateAdminService.updateTenantAdmin("adminId", updateTenantAdminDTO);
 
     // then
-    verify(identityClient)
-        .updateUserData(
-            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
-    assertEquals(5L, userDTOCaptor.getValue().getTenantId());
+    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    assertEquals(5L, profileUpdateCaptor.getValue().tenantId());
+    assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
+    assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
     verify(admin).setTenantId(5L);
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
@@ -143,7 +146,7 @@ class UpdateAdminServiceTest {
             () -> updateAdminService.patchAgencyAdmin("adminId", mock(PatchAdminDTO.class)));
 
     assertEquals("Admin has tenant id 0", exception.getMessage());
-    verify(identityClient, never()).updateUserData(any(), any(), any(), any());
+    verify(identityProfileUpdater, never()).updateProfile(any(), any());
     verify(adminRepository, never()).save(any());
   }
 
@@ -162,10 +165,10 @@ class UpdateAdminServiceTest {
     updateAdminService.patchAgencyAdmin("adminId", patchAdminDTO);
 
     // then
-    verify(identityClient)
-        .updateUserData(
-            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
-    assertEquals(3, userDTOCaptor.getValue().getTenantId());
+    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    assertEquals(3, profileUpdateCaptor.getValue().tenantId());
+    assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
+    assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
     verify(admin).setEmail("mail@example.com");
@@ -187,10 +190,10 @@ class UpdateAdminServiceTest {
     updateAdminService.patchTenantAdmin("adminId", patchAdminDTO);
 
     // then
-    verify(identityClient)
-        .updateUserData(
-            eq(admin.getId()), userDTOCaptor.capture(), eq("Firstname"), eq("Lastname"));
-    assertEquals(7, userDTOCaptor.getValue().getTenantId());
+    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    assertEquals(7, profileUpdateCaptor.getValue().tenantId());
+    assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
+    assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
     verify(admin).setEmail("mail@example.com");
