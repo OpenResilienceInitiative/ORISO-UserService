@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -53,7 +52,6 @@ public class UserAccountServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private KeycloakService keycloakService;
-  @Mock private RocketChatService rocketChatService;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
 
@@ -184,7 +182,7 @@ public class UserAccountServiceTest {
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakRocketChatAndConsultantRepository_When_authenticatedUserIsConsultant() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndConsultantRepository_When_authenticatedUserIsConsultant() {
     Consultant consultant = EASY_RANDOM.nextObject(Consultant.class);
     when(this.authenticatedUser.getUserId()).thenReturn("consultant");
     when(this.consultantService.getConsultant("consultant")).thenReturn(Optional.of(consultant));
@@ -192,11 +190,8 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
 
     verify(keycloakService).changeEmailAddress("newMail");
-    verify(this.rocketChatService, times(1))
-        .updateUserEmail(consultant.getRocketChatId(), "newMail");
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
-    verifyNoMoreInteractions(this.rocketChatService);
     verify(this.userService, times(2)).getUser(any());
     verifyNoMoreInteractions(this.userService);
     verifyNoInteractions(userHelper);
@@ -204,7 +199,7 @@ public class UserAccountServiceTest {
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakRocketChatAndUserRepository_When_authenticatedUserIsUser() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     User user = EASY_RANDOM.nextObject(User.class);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
@@ -213,11 +208,9 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(keycloakService).changeEmailAddress(newMail);
-    verify(this.rocketChatService, times(1)).updateUserEmail(user.getRcUserId(), newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
-    verifyNoMoreInteractions(this.rocketChatService);
     verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
@@ -225,9 +218,9 @@ public class UserAccountServiceTest {
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakUserRepositoryButNotInRocketChat_When_authenticatedUserIsUserWithoutRocketChatUserId() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
-    user.setRcUserId(null);
+    user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
@@ -235,11 +228,9 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(keycloakService).changeEmailAddress(newMail);
-    verify(this.rocketChatService, never()).updateUserEmail(user.getRcUserId(), newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
-    verifyNoMoreInteractions(this.rocketChatService);
     verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
@@ -247,7 +238,7 @@ public class UserAccountServiceTest {
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakRocketChatAndConsultantRepository_When_authenticatedUserIsConsultant() {
+      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndConsultantRepository_When_authenticatedUserIsConsultant() {
     var consultant = EASY_RANDOM.nextObject(Consultant.class);
     var consultantId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
@@ -259,17 +250,15 @@ public class UserAccountServiceTest {
 
     verify(keycloakService).deleteEmailAddress();
     verify(keycloakService, never()).changeEmailAddress(anyString());
-    verify(rocketChatService).updateUserEmail(consultant.getRocketChatId(), dummyEmail);
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
-    verifyNoMoreInteractions(rocketChatService);
     verify(userService, times(2)).getUser(any());
     verifyNoMoreInteractions(userService);
   }
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakRocketChatAndUserRepository_When_authenticatedUserIsUser() {
+      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     var user = EASY_RANDOM.nextObject(User.class);
     var userId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
@@ -283,12 +272,10 @@ public class UserAccountServiceTest {
 
     verify(keycloakService).deleteEmailAddress();
     verify(keycloakService, never()).changeEmailAddress(anyString());
-    verify(rocketChatService).updateUserEmail(user.getRcUserId(), dummyEmail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);
-    verifyNoMoreInteractions(rocketChatService);
     verify(consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(consultantService);
   }
@@ -369,20 +356,6 @@ public class UserAccountServiceTest {
     when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(consultant));
 
     assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
-  }
-
-  @Test
-  public void updateConsultantEmail_Should_ContinueWithSave_When_RocketChatThrowsException() {
-    Consultant consultant = EASY_RANDOM.nextObject(Consultant.class);
-    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
-    when(consultantService.getConsultant("consultant-id")).thenReturn(Optional.of(consultant));
-    Mockito.doThrow(new RuntimeException("RC down"))
-        .when(rocketChatService)
-        .updateUserEmail(any(), any());
-
-    accountProvider.changeUserAccountEmailAddress(Optional.of("new@email.com"));
-
-    verify(consultantService).saveConsultant(consultant);
   }
 
   @Test

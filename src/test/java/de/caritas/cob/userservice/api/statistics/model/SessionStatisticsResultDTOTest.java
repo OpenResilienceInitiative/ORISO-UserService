@@ -12,7 +12,7 @@ class SessionStatisticsResultDTOTest {
   void fluentSetters_Should_ReturnSameInstance() {
     SessionStatisticsResultDTO dto = new SessionStatisticsResultDTO();
     assertThat(dto.id(1L)).isSameAs(dto);
-    assertThat(dto.rcGroupId("rc1")).isSameAs(dto);
+    assertThat(dto.matrixRoomId("rc1")).isSameAs(dto);
     assertThat(dto.consultingType(2)).isSameAs(dto);
     assertThat(dto.agencyId(3L)).isSameAs(dto);
     assertThat(dto.isTeamSession(true)).isSameAs(dto);
@@ -26,7 +26,7 @@ class SessionStatisticsResultDTOTest {
     SessionStatisticsResultDTO dto =
         new SessionStatisticsResultDTO()
             .id(94L)
-            .rcGroupId("y77uzd")
+            .matrixRoomId("y77uzd")
             .consultingType(1)
             .agencyId(5L)
             .isTeamSession(false)
@@ -35,7 +35,7 @@ class SessionStatisticsResultDTOTest {
             .createDate("2026-05-01");
 
     assertThat(dto.getId()).isEqualTo(94L);
-    assertThat(dto.getRcGroupId()).isEqualTo("y77uzd");
+    assertThat(dto.getMatrixRoomId()).isEqualTo("y77uzd");
     assertThat(dto.getConsultingType()).isEqualTo(1);
     assertThat(dto.getAgencyId()).isEqualTo(5L);
     assertThat(dto.getIsTeamSession()).isFalse();
@@ -48,7 +48,7 @@ class SessionStatisticsResultDTOTest {
   void setters_Should_StoreValues() {
     SessionStatisticsResultDTO dto = new SessionStatisticsResultDTO();
     dto.setId(10L);
-    dto.setRcGroupId("rc");
+    dto.setMatrixRoomId("rc");
     dto.setConsultingType(3);
     dto.setAgencyId(7L);
     dto.setIsTeamSession(true);
@@ -57,7 +57,7 @@ class SessionStatisticsResultDTOTest {
     dto.setCreateDate("2026-01-02");
 
     assertThat(dto.getId()).isEqualTo(10L);
-    assertThat(dto.getRcGroupId()).isEqualTo("rc");
+    assertThat(dto.getMatrixRoomId()).isEqualTo("rc");
     assertThat(dto.getConsultingType()).isEqualTo(3);
     assertThat(dto.getAgencyId()).isEqualTo(7L);
     assertThat(dto.getIsTeamSession()).isTrue();
@@ -98,10 +98,10 @@ class SessionStatisticsResultDTOTest {
   }
 
   @Test
-  void equals_Should_ReturnFalse_When_RcGroupIdDiffers() {
+  void equals_Should_ReturnFalse_When_MatrixRoomIdDiffers() {
     SessionStatisticsResultDTO a = buildFull();
     SessionStatisticsResultDTO b = buildFull();
-    b.setRcGroupId("other");
+    b.setMatrixRoomId("other");
     assertThat(a).isNotEqualTo(b);
   }
 
@@ -197,7 +197,7 @@ class SessionStatisticsResultDTOTest {
   private SessionStatisticsResultDTO buildFull() {
     return new SessionStatisticsResultDTO()
         .id(94L)
-        .rcGroupId("y77uzd")
+        .matrixRoomId("y77uzd")
         .consultingType(1)
         .agencyId(5L)
         .isTeamSession(true)

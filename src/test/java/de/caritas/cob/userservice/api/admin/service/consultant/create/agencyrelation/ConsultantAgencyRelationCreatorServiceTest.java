@@ -25,7 +25,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO;
 import java.util.LinkedHashMap;
@@ -33,14 +32,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 public class ConsultantAgencyRelationCreatorServiceTest {
@@ -58,17 +55,12 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock private IdentityClient identityClient;
 
-  @Mock private RocketChatAsyncHelper rocketChatAsyncHelper;
+  @Mock private ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
 
   @Mock private ConsultingTypeManager consultingTypeManager;
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
-
-  @AfterEach
-  void tearDown() {
-    TenantContext.clear();
-  }
 
   @Test
   public void
@@ -77,7 +69,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
@@ -103,7 +95,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
         .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(anyString(), any(), any());
@@ -121,18 +113,14 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   }
 
   @Test
-  public void
-      completeConsultantAgencyAssigment_Should_finalizeSynchronously_When_rocketChatDisabled() {
-    ReflectionTestUtils.setField(
-        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
-
+  public void completeConsultantAgencyAssigment_Should_finalizeRelationSynchronously() {
     var consultant = new Consultant();
     consultant.setStatus(ConsultantStatus.CREATED);
     var agencyDTO = new AgencyDTO().id(2L).teamAgency(false);
 
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -141,18 +129,14 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
         input, LogService::logInfo);
 
-    // Matrix-only path: status is finalized synchronously in the caller's transaction, not via the
-    // Rocket.Chat async assignment.
-    verify(rocketChatAsyncHelper).finalizeConsultantAgencyRelation(consultant, agencyDTO);
-    verify(rocketChatAsyncHelper, never()).addConsultantToSessions(any(), any(), any(), any());
+    verify(consultantAgencyRelationFinalizer)
+        .finalizeConsultantAgencyRelation(consultant, agencyDTO);
     assertThat(consultant.getStatus()).isEqualTo(ConsultantStatus.IN_PROGRESS);
     verify(consultantRepository).save(consultant);
   }
 
   @Test
   void createNewConsultantAgency_Should_finalizeThePersistedRelationWithoutRequeryingIt() {
-    ReflectionTestUtils.setField(
-        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
     var consultant = new Consultant();
     consultant.setId("consultant Id");
     consultant.setTenantId(83L);
@@ -160,7 +144,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(280L)).thenReturn(agency);
+    when(agencyService.getAgency(280L)).thenReturn(agency);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
     when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
@@ -171,7 +155,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     var persistedRelation = ArgumentCaptor.forClass(ConsultantAgency.class);
     verify(consultantAgencyService).saveConsultantAgency(persistedRelation.capture());
-    verify(rocketChatAsyncHelper)
+    verify(consultantAgencyRelationFinalizer)
         .finalizeConsultantAgencyRelation(consultant, persistedRelation.getValue());
   }
 
@@ -192,7 +176,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   public void createNewConsultantAgency_Should_throwBadRequest_When_agencyDoesNotExist() {
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(99L)).thenReturn(null);
+    when(agencyService.getAgency(99L)).thenReturn(null);
 
     assertThrows(
         BadRequestException.class,
@@ -214,8 +198,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(newAgency);
-    when(agencyService.getAgencyWithoutCaching(3L)).thenReturn(existingAgency);
+    when(agencyService.getAgency(2L)).thenReturn(newAgency);
+    when(agencyService.getAgency(3L)).thenReturn(existingAgency);
     when(consultingTypeManager.isConsultantBoundedToAgency(2)).thenReturn(true);
 
     assertThrows(
@@ -248,7 +232,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     when(identityClient.userHasRole("consultant Id", "consultant")).thenReturn(true);
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(1L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(1L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class));
 
@@ -259,40 +243,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   }
 
   @Test
-  public void completeConsultantAgencyAssigment_Should_useAsyncRocketChat_When_rocketChatEnabled() {
-    ReflectionTestUtils.setField(consultantAgencyRelationCreatorService, "rocketChatEnabled", true);
-    TenantContext.setCurrentTenant(4L);
-
-    var consultant = new Consultant();
-    consultant.setId("consultant Id");
-    consultant.setStatus(ConsultantStatus.CREATED);
-    var agencyDTO = new AgencyDTO().id(2L).teamAgency(false);
-
-    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
-        .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
-
-    var input =
-        new CreateConsultantAgencyDTOInputAdapter(
-            "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
-
-    consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
-        input, LogService::logInfo);
-
-    verify(rocketChatAsyncHelper)
-        .addConsultantToSessions(eq(consultant), eq(agencyDTO), any(), eq(4L));
-    verify(rocketChatAsyncHelper, never())
-        .finalizeConsultantAgencyRelation(any(Consultant.class), any(AgencyDTO.class));
-    verify(rocketChatAsyncHelper, never())
-        .finalizeConsultantAgencyRelation(any(Consultant.class), any(ConsultantAgency.class));
-  }
-
-  @Test
   public void
       completeConsultantAgencyAssigment_Should_markTeamConsultant_When_teamAgencyAssigned() {
-    ReflectionTestUtils.setField(
-        consultantAgencyRelationCreatorService, "rocketChatEnabled", false);
-
     var consultant = new Consultant();
     consultant.setId("consultant Id");
     consultant.setStatus(ConsultantStatus.CREATED);
@@ -301,7 +253,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -323,7 +275,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
 

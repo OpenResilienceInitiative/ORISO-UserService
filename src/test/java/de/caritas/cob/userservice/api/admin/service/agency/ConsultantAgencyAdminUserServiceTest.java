@@ -44,7 +44,7 @@ public class ConsultantAgencyAdminUserServiceTest {
 
   @Mock private SessionRepository sessionRepository;
 
-  @Mock private RemoveConsultantFromRocketChatService removeFromRocketChatService;
+  @Mock private RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
 
   @Mock private AgencyService agencyService;
 
@@ -92,7 +92,7 @@ public class ConsultantAgencyAdminUserServiceTest {
     this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
 
     verify(this.sessionRepository, times(1)).save(any());
-    verify(this.removeFromRocketChatService, times(1)).removeConsultantFromSessions(any());
+    verify(this.removeFromSessionRoomsService, times(1)).removeConsultantFromSessions(any());
   }
 
   @Test

@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
@@ -146,8 +147,11 @@ class AnonymousEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     user.setDataPrivacyConfirmation(LocalDateTime.now());
     this.userRepository.save(user);
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(ANONYMOUS);
           session.setConsultant(null);
           session.setUser(user);
@@ -158,6 +162,8 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setStatus(SessionStatus.NEW);
           session.setMainTopicId(11L);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
           session.setUpdateDate(LocalDateTime.now());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);

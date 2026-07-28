@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -81,34 +80,6 @@ class UserServiceMapperTest {
             "{\"initialEnquiryNotificationEnabled\":false,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true}");
   }
 
-  @Test
-  void e2eKeyOfShouldMapIfKeyExists() {
-    var map = Map.of("e2eKey", "tmp." + RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isPresent();
-    assertThat(map).containsEntry("e2eKey", e2eKey.get());
-  }
-
-  @Test
-  void e2eKeyOfShouldNotMapIfKeyFormatIsWrong() {
-    var map = Map.of("e2eKey", RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isNotPresent();
-  }
-
-  @Test
-  void e2eKeyOfShouldNotMapIfKeyDoesNotExist() {
-    var map = Map.of("notE2eKey", RandomStringUtils.randomAlphanumeric(16));
-
-    var e2eKey = userServiceMapper.e2eKeyOf(map);
-
-    assertThat(e2eKey).isNotPresent();
-  }
-
   // ── mapOf(Appointment) ────────────────────────────────────────────────────
 
   @Test
@@ -141,7 +112,7 @@ class UserServiceMapperTest {
     user.setEmail("user@example.com");
     user.setEncourage2fa(true);
     user.setMagicLinkLoginEnabled(false);
-    user.setRcUserId("rc-u-1");
+    user.setMatrixUserId("@u-1:matrix.example");
     user.setLanguageCode(LanguageCode.de);
 
     Map<String, Object> result = userServiceMapper.mapOf(user);
@@ -150,7 +121,7 @@ class UserServiceMapperTest {
     assertThat(result.get("username")).isEqualTo("testuser");
     assertThat(result.get("email")).isEqualTo("user@example.com");
     assertThat(result.get("encourage2fa")).isEqualTo(true);
-    assertThat(result.get("chatUserId")).isEqualTo("rc-u-1");
+    assertThat(result.get("matrixUserId")).isEqualTo("@u-1:matrix.example");
     assertThat(result.get("preferredLanguage")).isEqualTo("de");
   }
 
@@ -170,7 +141,7 @@ class UserServiceMapperTest {
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(false);
     consultant.setWalkThroughEnabled(true);
-    consultant.setRocketChatId("rc-c-1");
+    consultant.setMatrixUserId("rc-c-1");
     consultant.setLanguageCode(LanguageCode.en);
     consultant.setDisplayName("Default Name");
 
@@ -215,7 +186,7 @@ class UserServiceMapperTest {
 
     Session session = new Session();
     session.setUser(user);
-    session.setGroupId("rc-group-1");
+    session.setMatrixRoomId("!room-1:matrix.example");
     session.setStatus(SessionStatus.NEW);
     session.setConsultingTypeId(1);
     session.setAgencyId(10L);
@@ -224,7 +195,7 @@ class UserServiceMapperTest {
 
     Map<String, Object> result = userServiceMapper.mapOf(Optional.of(session)).orElseThrow();
 
-    assertThat(result.get("chatId")).isEqualTo("rc-group-1");
+    assertThat(result.get("chatId")).isEqualTo("!room-1:matrix.example");
     assertThat(result.get("adviceSeekerId")).isEqualTo("u-1");
     assertThat(result.get("agencyId")).isEqualTo(10L);
     assertThat(result.get("mainTopicId")).isEqualTo(5L);
@@ -237,7 +208,7 @@ class UserServiceMapperTest {
 
     Session session = new Session();
     session.setUser(user);
-    session.setGroupId(null);
+    session.setMatrixRoomId(null);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setConsultingTypeId(2);
     session.setRegistrationType(RegistrationType.ANONYMOUS);
@@ -245,35 +216,6 @@ class UserServiceMapperTest {
     Map<String, Object> result = userServiceMapper.mapOf(Optional.of(session)).orElseThrow();
 
     assertThat(result.containsKey("chatId")).isFalse();
-  }
-
-  // ── statusOf ──────────────────────────────────────────────────────────────
-
-  @Test
-  void statusOf_Should_ReturnOnline_When_Available() {
-    assertThat(userServiceMapper.statusOf(true)).isEqualTo("online");
-  }
-
-  @Test
-  void statusOf_Should_ReturnBusy_When_NotAvailable() {
-    assertThat(userServiceMapper.statusOf(false)).isEqualTo("busy");
-  }
-
-  // ── bannedUsernamesOfMap / chatUserIdOf ───────────────────────────────────
-
-  @Test
-  void bannedUsernamesOfMap_Should_ReturnMutedUsers() {
-    Map<String, Object> map = Map.of("mutedUsers", List.of("user1", "user2"));
-
-    assertThat(userServiceMapper.bannedUsernamesOfMap(map)).containsExactly("user1", "user2");
-  }
-
-  @Test
-  void chatUserIdOf_Should_ExtractChatUserIds() {
-    List<Map<String, String>> members =
-        List.of(Map.of("chatUserId", "u1"), Map.of("chatUserId", "u2"));
-
-    assertThat(userServiceMapper.chatUserIdOf(members)).containsExactly("u1", "u2");
   }
 
   // ── encodedDisplayNameOf / displayNameOf ──────────────────────────────────

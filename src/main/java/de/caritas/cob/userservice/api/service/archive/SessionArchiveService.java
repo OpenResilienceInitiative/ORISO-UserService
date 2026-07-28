@@ -1,13 +1,9 @@
 package de.caritas.cob.userservice.api.service.archive;
 
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
-
 import de.caritas.cob.userservice.api.AccountManager;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -29,7 +25,6 @@ public class SessionArchiveService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull RocketChatService rocketChatService;
   private final @NonNull SessionArchiveValidator sessionArchiveValidator;
   private final @NonNull AccountManager accountManager;
   private final @NonNull StatisticsService statisticsService;
@@ -43,10 +38,7 @@ public class SessionArchiveService {
 
     Session session = retrieveSession(sessionId);
     changeSessionStatus(
-        sessionId,
-        SessionStatus.IN_ARCHIVE,
-        sessionArchiveValidator::isValidForArchiving,
-        rocketChatService::setRoomReadOnly);
+        sessionId, SessionStatus.IN_ARCHIVE, sessionArchiveValidator::isValidForArchiving);
     fireArchiveOrDeleteSessionEvent(session);
   }
 
@@ -68,22 +60,16 @@ public class SessionArchiveService {
    */
   public void dearchiveSession(Long sessionId) {
     changeSessionStatus(
-        sessionId,
-        SessionStatus.IN_PROGRESS,
-        sessionArchiveValidator::isValidForDearchiving,
-        rocketChatService::setRoomWriteable);
+        sessionId, SessionStatus.IN_PROGRESS, sessionArchiveValidator::isValidForDearchiving);
   }
 
   private void changeSessionStatus(
-      Long sessionId,
-      SessionStatus sessionStatusTo,
-      Consumer<Session> sessionValidateMethod,
-      ThrowingConsumer<String, RocketChatUserNotInitializedException> rcUpdateRoomStateMethod) {
+      Long sessionId, SessionStatus sessionStatusTo, Consumer<Session> sessionValidateMethod) {
 
     Session session = retrieveSession(sessionId);
     checkPermission(session);
     sessionValidateMethod.accept(session);
-    executeArchiving(sessionStatusTo, rcUpdateRoomStateMethod, session);
+    executeArchiving(sessionStatusTo, session);
   }
 
   public void checkPermission(Session session) {
@@ -107,29 +93,16 @@ public class SessionArchiveService {
         .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
   }
 
-  private void executeArchiving(
-      SessionStatus sessionStatusTo,
-      ThrowingConsumer<String, RocketChatUserNotInitializedException> rcUpdateRoomStateMethod,
-      Session session) {
+  private void executeArchiving(SessionStatus sessionStatusTo, Session session) {
     try {
-      setRocketChatRoomState(session.getGroupId(), rcUpdateRoomStateMethod);
       session.setStatus(sessionStatusTo);
       sessionRepository.save(session);
-    } catch (InternalServerErrorException | RocketChatUserNotInitializedException ex) {
+    } catch (InternalServerErrorException ex) {
       throw new InternalServerErrorException(
           String.format(
               "Could not archive/dearchive session %s for user %s",
               session.getId(), authenticatedUser.getUserId()),
           ex);
-    }
-  }
-
-  private void setRocketChatRoomState(
-      String rcRoomId,
-      ThrowingConsumer<String, RocketChatUserNotInitializedException> rcUpdateRoomStateMethod)
-      throws RocketChatUserNotInitializedException {
-    if (isNotBlank(rcRoomId)) {
-      rcUpdateRoomStateMethod.accept(rcRoomId);
     }
   }
 }

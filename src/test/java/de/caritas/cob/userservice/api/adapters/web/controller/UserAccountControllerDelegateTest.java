@@ -15,7 +15,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
@@ -49,7 +48,6 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import jakarta.ws.rs.InternalServerErrorException;
-import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -262,42 +260,6 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(emailNotifications);
-  }
-
-  @Test
-  void updateE2eInChatsShouldReturnAcceptedForUninitializedAdviceSeekerWithoutChatUserId() {
-    var userMap = Map.<String, Object>of("id", USER_ID);
-    var adviceSeeker = new User();
-    var timestamp = LocalDateTime.now();
-    adviceSeeker.setCreateDate(timestamp);
-    adviceSeeker.setUpdateDate(timestamp);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.isConsultant()).thenReturn(false);
-    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
-    when(accountManager.findAdviceSeeker(USER_ID)).thenReturn(Optional.of(userMap));
-    when(userDtoMapper.chatUserIdOf(userMap)).thenReturn(null);
-    when(userAccountProvider.retrieveValidatedUser()).thenReturn(adviceSeeker);
-
-    var response = delegate.updateE2eInChats(new E2eKeyDTO().publicKey("public-key"));
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
-    verify(messenger, never())
-        .updateE2eKeys(
-            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
-  }
-
-  @Test
-  void updateE2eInChatsShouldThrowWhenMessengerRejectsKeyUpdate() {
-    var consultantMap = Map.<String, Object>of("id", USER_ID);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(authenticatedUser.isConsultant()).thenReturn(true);
-    when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.of(consultantMap));
-    when(userDtoMapper.chatUserIdOf(consultantMap)).thenReturn("chat-user-id");
-    when(messenger.updateE2eKeys("chat-user-id", "public-key")).thenReturn(false);
-
-    assertThatThrownBy(() -> delegate.updateE2eInChats(new E2eKeyDTO().publicKey("public-key")))
-        .isInstanceOf(InternalServerErrorException.class);
   }
 
   @Test
@@ -594,8 +556,7 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void patchUser_messengerExceptionSwallowed_doesNotThrow() {
-    // Chat unavailability during migration must not fail profile updates.
+  void patchUser_availabilityStoreFailureIsPropagated() {
     var patchUserDTO = new PatchUserDTO();
     patchUserDTO.setAvailable(false);
     var patchMap = Map.<String, Object>of("available", false);
@@ -605,11 +566,13 @@ class UserAccountControllerDelegateTest {
     when(accountManager.patchUser(patchMap)).thenReturn(Optional.of(patchMap));
     when(userDtoMapper.preferredLanguageOf(patchUserDTO)).thenReturn(Optional.empty());
     when(userDtoMapper.availableOf(patchUserDTO)).thenReturn(Optional.of(false));
-    doThrow(new RuntimeException("chat down")).when(messenger).setAvailability(USER_ID, false);
+    doThrow(new RuntimeException("availability store down"))
+        .when(messenger)
+        .setAvailability(USER_ID, false);
 
-    var response = delegate.patchUser(patchUserDTO);
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    assertThatThrownBy(() -> delegate.patchUser(patchUserDTO))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("availability store down");
   }
 
   @Test
@@ -698,36 +661,6 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     verify(decryptionService, never()).updateMasterKey(anyString());
-  }
-
-  @Test
-  void updateE2eInChats_consultantHappyPath_delegatesToMessenger() {
-    // Consultants with a chat user id propagate E2E keys to all chats.
-    var consultantMap = Map.<String, Object>of("id", USER_ID);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.isConsultant()).thenReturn(true);
-    when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.of(consultantMap));
-    when(userDtoMapper.chatUserIdOf(consultantMap)).thenReturn("chat-user-id");
-    when(messenger.updateE2eKeys("chat-user-id", "public-key")).thenReturn(true);
-
-    var response = delegate.updateE2eInChats(new E2eKeyDTO().publicKey("public-key"));
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
-    verify(messenger).updateE2eKeys("chat-user-id", "public-key");
-  }
-
-  @Test
-  void updateE2eInChats_nullChatUserIdForConsultant_throwsInternalServerErrorException() {
-    // Consultants without a chat identity cannot update E2E keys.
-    var consultantMap = Map.<String, Object>of("id", USER_ID);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(authenticatedUser.isConsultant()).thenReturn(true);
-    when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.of(consultantMap));
-    when(userDtoMapper.chatUserIdOf(consultantMap)).thenReturn(null);
-
-    assertThatThrownBy(() -> delegate.updateE2eInChats(new E2eKeyDTO().publicKey("public-key")))
-        .isInstanceOf(InternalServerErrorException.class);
   }
 
   @Test

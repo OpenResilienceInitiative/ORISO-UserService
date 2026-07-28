@@ -75,7 +75,7 @@ class UserHelperTest {
   }
 
   @Test
-  void getDummyEmail_Should_ReturnRcUserIdWithDummyEmailSuffix() {
+  void getDummyEmail_Should_ReturnUserIdWithDummyEmailSuffix() {
     assertEquals(USER_ID + FIELD_VALUE_EMAIL_DUMMY_SUFFIX, userHelper.getDummyEmail(USER_ID));
   }
 

@@ -19,17 +19,15 @@ public class AssignChatFacade {
   private final UserService userService;
 
   /**
-   * Assign a chat to the authenticatedUser. <br>
-   * The chat is resolved using the RocketChat groupId.
+   * Assign a chat to the authenticated user.
    *
-   * <p>In this assignment process is no further validation, because everyone is allowed to be added
-   * to this chat.
+   * <p>No additional validation is required because everyone is allowed to join this chat.
    *
-   * @param groupId the rocket chat group id
-   * @param authenticatedUser that authenticated user
+   * @param matrixRoomId Matrix room ID
+   * @param authenticatedUser authenticated user
    */
-  public void assignChat(String groupId, AuthenticatedUser authenticatedUser) {
-    Chat chat = getChat(groupId);
+  public void assignChat(String matrixRoomId, AuthenticatedUser authenticatedUser) {
+    Chat chat = getChat(matrixRoomId);
     assignChat(chat, authenticatedUser);
   }
 
@@ -48,10 +46,11 @@ public class AssignChatFacade {
     chatService.saveUserChatRelation(UserChat.builder().user(user).chat(chat).build());
   }
 
-  private Chat getChat(String groupId) {
+  private Chat getChat(String matrixRoomId) {
     return chatService
-        .getChatByGroupId(groupId)
-        .orElseThrow(() -> new NotFoundException("Chat with group id %s not found", groupId));
+        .getChatByMatrixRoomId(matrixRoomId)
+        .orElseThrow(
+            () -> new NotFoundException("Chat with Matrix room ID %s not found", matrixRoomId));
   }
 
   private User getUser(AuthenticatedUser authenticatedUser) {

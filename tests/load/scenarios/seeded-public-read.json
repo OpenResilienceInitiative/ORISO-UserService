@@ -1,0 +1,35 @@
+{
+  "description": "Deterministic mixed public-read workload over the testing profile's seeded consultant and agency-relation data.",
+  "requests": [
+    {
+      "name": "consultant-profile-addiction",
+      "path": "/users/consultants/473f7c4b-f011-4fc2-847c-ceb636a5b399",
+      "weight": 4
+    },
+    {
+      "name": "consultant-profile-peer",
+      "path": "/users/consultants/45816eb6-984b-411f-a818-996cd16e1f2a",
+      "weight": 3
+    },
+    {
+      "name": "consultant-profile-parenting-team",
+      "path": "/users/consultants/330dd0a4-6728-453e-a6b7-3aa181cf0c72",
+      "weight": 2
+    },
+    {
+      "name": "agency-languages-primary",
+      "path": "/users/consultants/languages?agencyId=1",
+      "weight": 2
+    },
+    {
+      "name": "agency-languages-multi",
+      "path": "/users/consultants/languages?agencyId=121",
+      "weight": 2
+    },
+    {
+      "name": "liveness-control",
+      "path": "/actuator/health/liveness",
+      "weight": 1
+    }
+  ]
+}

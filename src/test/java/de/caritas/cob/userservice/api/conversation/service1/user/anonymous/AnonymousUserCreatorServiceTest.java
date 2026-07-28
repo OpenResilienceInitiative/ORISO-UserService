@@ -1,220 +1,103 @@
 package de.caritas.cob.userservice.api.conversation.service1.user.anonymous;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.StandardResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
-import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.service.user.UserService;
-import java.util.Optional;
-import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.BeforeEach;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class AnonymousUserCreatorServiceTest {
 
   @InjectMocks private AnonymousUserCreatorService anonymousUserCreatorService;
-  @Mock private KeycloakService keycloakService;
-
-  @Mock
-  @SuppressWarnings("unused")
-  private CreateUserFacade createUserFacade;
-
-  @Mock private RocketChatService rocketChatService;
+  @Mock private CreateUserFacade createUserFacade;
+  @Mock private IdentityClient identityClient;
   @Mock private RollbackFacade rollbackFacade;
-  @Mock private UserService userService;
-  @Mock private UserHelper userHelper;
-
-  EasyRandom easyRandom = new EasyRandom();
-
-  @BeforeEach
-  void enableRocketChatForLegacyTests() {
-    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", true);
-  }
 
   @Test
-  void createAnonymousUser_Should_ReturnKeycloakCredentials_When_RocketChatIsDisabled() {
-    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
-    User user = mock(User.class);
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
-    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
+  void createAnonymousUserCreatesIdentityAccountAndMatrixUser() {
+    var createdIdentity = new KeycloakCreateUserResponseDTO();
+    createdIdentity.setUserId("user-id");
+    var identityLogin = new KeycloakLoginResponseDTO();
+    identityLogin.setAccessToken("access-token");
+    identityLogin.setExpiresIn(300);
+    identityLogin.setRefreshToken("refresh-token");
+    identityLogin.setRefreshExpiresIn(600);
+    var user = new User();
+
+    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
+    when(identityClient.loginUser(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
+        .thenReturn(identityLogin);
 
-    AnonymousUserCredentials credentials =
-        anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
+    var credentials = anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
 
-    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
-    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
-    assertThat(credentials.getRocketChatCredentials(), is((Object) null));
+    assertThat(credentials.getUserId()).isEqualTo("user-id");
+    assertThat(credentials.getAccessToken()).isEqualTo("access-token");
+    assertThat(credentials.getExpiresIn()).isEqualTo(300);
+    assertThat(credentials.getRefreshToken()).isEqualTo("refresh-token");
+    assertThat(credentials.getRefreshExpiresIn()).isEqualTo(600);
     verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
-    verifyNoInteractions(rocketChatService);
-    verifyNoInteractions(userService);
+    verifyNoInteractions(rollbackFacade);
   }
 
   @Test
-  void
-      createAnonymousUser_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_KeycloakLoginFails() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          KeycloakCreateUserResponseDTO responseDTO =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-          when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-          when(keycloakService.loginUser(anyString(), anyString()))
-              .thenThrow(new BadRequestException(ERROR));
+  void createAnonymousUserRollsBackWhenMatrixProvisioningFails() {
+    var createdIdentity = new KeycloakCreateUserResponseDTO();
+    createdIdentity.setUserId("user-id");
+    var user = new User();
 
-          anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
-
-          verifyNoInteractions(rollbackFacade);
-          verifyNoInteractions(rocketChatService);
-        });
-  }
-
-  @Test
-  void createAnonymousUser_Should_RollBack_When_MatrixProvisioningFails() {
-    ReflectionTestUtils.setField(anonymousUserCreatorService, "rocketChatEnabled", false);
-    User user = mock(User.class);
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
+    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     doThrow(new InternalServerErrorException("Matrix provisioning failed"))
         .when(createUserFacade)
         .provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
 
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT));
+    assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))
+        .isInstanceOf(InternalServerErrorException.class);
 
     verify(rollbackFacade).rollBackUserAccount(any());
-    verifyNoInteractions(rocketChatService);
+    verify(identityClient, never()).loginUser(anyString(), anyString());
   }
 
   @Test
-  void
-      createAnonymousUser_Should_ThrowInternalServerErrorExceptionAndPerformRollback_When_RocketChatLoginFails()
-          throws RocketChatLoginException {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          KeycloakCreateUserResponseDTO responseDTO =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-          when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-          when(keycloakService.loginUser(anyString(), anyString()))
-              .thenReturn(easyRandom.nextObject(KeycloakLoginResponseDTO.class));
-          when(userHelper.getDummyEmail(anyString())).thenReturn("user-id@beratungcaritas.de");
-          when(rocketChatService.createUser(anyString(), anyString(), anyString()))
-              .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
-          when(rocketChatService.loginWithPassword(
-                  USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
-              .thenThrow(new RocketChatLoginException("Rocket.Chat login failed"));
-          when(rocketChatService.loginUserFirstTime(
-                  USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
-              .thenThrow(new RocketChatLoginException("Rocket.Chat login failed"));
+  void createAnonymousUserRollsBackWhenIdentityLoginFails() {
+    var createdIdentity = new KeycloakCreateUserResponseDTO();
+    createdIdentity.setUserId("user-id");
+    var user = new User();
 
-          anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
+    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
+        .thenReturn(user);
+    when(identityClient.loginUser(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
+        .thenThrow(new BadRequestException("login failed"));
 
-          verifyNoInteractions(rollbackFacade);
-          verifyNoInteractions(rocketChatService);
-        });
-  }
+    assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))
+        .isInstanceOf(InternalServerErrorException.class);
 
-  @Test
-  void createAnonymousUser_Should_ReturnAnonymousUserCredentials() throws RocketChatLoginException {
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
-    LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
-    ResponseEntity<LoginResponseDTO> responseEntity =
-        new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
-    when(rocketChatService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
-    when(rocketChatService.loginWithPassword(
-            USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
-        .thenReturn(responseEntity);
-    when(userService.getUser(any())).thenReturn(Optional.of(mock(User.class)));
-    when(userHelper.getDummyEmail(anyString())).thenReturn("user-id@beratungcaritas.de");
-
-    AnonymousUserCredentials credentials =
-        anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
-
-    assertThat(credentials, instanceOf(AnonymousUserCredentials.class));
-    assertThat(credentials.getExpiresIn(), is(keycloakLoginResponseDTO.getExpiresIn()));
-    assertThat(
-        credentials.getRefreshExpiresIn(), is(keycloakLoginResponseDTO.getRefreshExpiresIn()));
-    assertThat(credentials.getAccessToken(), is(keycloakLoginResponseDTO.getAccessToken()));
-    assertThat(credentials.getRefreshToken(), is(keycloakLoginResponseDTO.getRefreshToken()));
-    verifyNoInteractions(rollbackFacade);
-    verify(rocketChatService, times(1)).createUser(anyString(), anyString(), anyString());
-    verify(userService, times(1)).updateRocketChatIdInDatabase(any(), any());
-  }
-
-  @Test
-  void
-      createAnonymousUser_Should_throwInternalServerError_When_userToUpdateRocketChatIdDoesNotExist()
-          throws RocketChatLoginException {
-    KeycloakCreateUserResponseDTO responseDTO =
-        easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-    when(keycloakService.createKeycloakUser(any())).thenReturn(responseDTO);
-    KeycloakLoginResponseDTO keycloakLoginResponseDTO =
-        easyRandom.nextObject(KeycloakLoginResponseDTO.class);
-    when(keycloakService.loginUser(anyString(), anyString())).thenReturn(keycloakLoginResponseDTO);
-    LoginResponseDTO loginResponseDTO = easyRandom.nextObject(LoginResponseDTO.class);
-    ResponseEntity<LoginResponseDTO> responseEntity =
-        new ResponseEntity<>(loginResponseDTO, HttpStatus.OK);
-    when(rocketChatService.createUser(anyString(), anyString(), anyString()))
-        .thenReturn(ResponseEntity.ok(new StandardResponseDTO(true, null)));
-    when(rocketChatService.loginWithPassword(
-            USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
-        .thenReturn(responseEntity);
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT));
+    verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
+    verify(rollbackFacade).rollBackUserAccount(any());
   }
 }

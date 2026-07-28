@@ -37,22 +37,6 @@ public class ConfigurationValidator {
   @Value("${identity.technical-user.password:}")
   private String identityTechnicalPassword;
 
-  /** ADR-004: Rocket.Chat settings are only required when the integration is enabled. */
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
-
-  @Value("${rocket-chat.base-url:}")
-  private String rocketChatBaseUrl;
-
-  @Value("${rocket-chat.mongo-url:}")
-  private String rocketChatMongoUrl;
-
-  @Value("${rocket.technical.username:}")
-  private String rocketTechnicalUsername;
-
-  @Value("${rocket.technical.password:}")
-  private String rocketTechnicalPassword;
-
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
 
@@ -92,22 +76,6 @@ public class ConfigurationValidator {
     }
     if (isEmpty(identityTechnicalPassword)) {
       missingConfigs.add("identity.technical-user.password (IDENTITY_TECHNICAL_USER_PASSWORD)");
-    }
-    // ADR-004: with rocket-chat.enabled=false (the default) the service is Matrix-only and no
-    // Rocket.Chat configuration is required.
-    if (rocketChatEnabled) {
-      if (isEmpty(rocketChatBaseUrl)) {
-        missingConfigs.add("rocket-chat.base-url (ROCKET_CHAT_BASE_URL)");
-      }
-      if (isEmpty(rocketChatMongoUrl)) {
-        missingConfigs.add("rocket-chat.mongo-url (ROCKET_CHAT_MONGO_URL)");
-      }
-      if (isEmpty(rocketTechnicalUsername)) {
-        missingConfigs.add("rocket.technical.username (ROCKET_TECHNICAL_USERNAME)");
-      }
-      if (isEmpty(rocketTechnicalPassword)) {
-        missingConfigs.add("rocket.technical.password (ROCKET_TECHNICAL_PASSWORD)");
-      }
     }
     if (isEmpty(consultingTypeServiceApiUrl)) {
       missingConfigs.add("consulting.type.service.api.url (CONSULTING_TYPE_SERVICE_API_URL)");

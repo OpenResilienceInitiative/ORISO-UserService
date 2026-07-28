@@ -53,17 +53,6 @@ paths:
         - user-controller
       summary: 'Register a new session for an existing asker [Authorization: Role: user]'
       operationId: registerNewSession
-      parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       requestBody:
         content:
           'application/json':
@@ -97,17 +86,6 @@ paths:
         - user-controller
       summary: 'Register a new consulting type for an existing asker [Authorization: Role: user]'
       operationId: registerNewConsultingType
-      parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       requestBody:
         content:
           'application/json':
@@ -149,16 +127,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       requestBody:
         content:
           'application/json':
@@ -234,11 +202,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       responses:
         200:
           description: OK - successful operation
@@ -264,12 +227,6 @@ paths:
         user. Note: Either a session or a chat object is provided. [Authorization:
         Role: user, anonymous]'
       operationId: getSessionsForAuthenticatedUser
-      parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
       responses:
         200:
           description: OK - successful operation
@@ -293,16 +250,11 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns sessions for given chat room IDs (legacy Rocket.Chat-era naming).
-      [Authorization: Role: user, consultant]'
-      operationId: getSessionsForGroupIds
+      summary: 'Returns sessions for given Matrix room IDs.
+        [Authorization: Role: user, consultant]'
+      operationId: getSessionsForRoomIds
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: rcGroupIds[]
+        - name: roomIds[]
           in: query
           required: true
           schema:
@@ -335,14 +287,9 @@ paths:
       tags:
         - user-controller
       summary: 'Returns the session for given ID.
-      [Authorization: Role: user, consultant]'
+        [Authorization: Role: user, consultant]'
       operationId: getSessionForId
       parameters:
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
         - name: sessionId
           in: path
           description: Session Id
@@ -357,43 +304,6 @@ paths:
             'application/json':
               schema:
                 $ref: '#/components/schemas/GroupSessionListResponseDTO'
-        204:
-          description: NO CONTENT - no sessions for given session ID
-        400:
-          description: BAD REQUEST - invalid/incomplete request
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-
-  /users/sessions/rocketChatGroupId:
-    get:
-      tags:
-        - user-controller
-      summary: 'Returns the session for given consultant id and user id.'
-      operationId: getRocketChatGroupId
-      parameters:
-        - name: consultantId
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: askerId
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        200:
-          description: OK - successful operation
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/RocketChatGroupIdDTO'
         204:
           description: NO CONTENT - no sessions for given session ID
         400:
@@ -554,7 +464,7 @@ paths:
       tags:
         - user-controller
       summary: 'Sets or updates the email, first and lastname of authorized consultant account
-      [Authorization:  Role: consultant]'
+        [Authorization:  Role: consultant]'
       operationId: updateConsultantData
       requestBody:
         content:
@@ -745,11 +655,6 @@ paths:
         or a chat object is provided. [Authorization: Role: consultant]'
       operationId: getSessionsForAuthenticatedConsultant
       parameters:
-        - name: RCToken
-          in: header
-          required: true
-          schema:
-            type: string
         - name: status
           in: query
           description: Session status type
@@ -809,41 +714,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/askers/import:
-    post:
-      tags:
-        - user-controller
-      summary: 'Imports a list of askers from a file [Authorization: Role: technical]'
-      operationId: importAskers
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token (tech user)
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/askersWithoutSession/import:
-    post:
-      tags:
-        - user-controller
-      summary: 'Imports a list of askers without a session from a file [Authorization:
-        Role: technical]'
-      operationId: importAskersWithoutSession
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token (tech user)
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /users/sessions/teams:
     get:
       tags:
@@ -853,11 +723,6 @@ paths:
         [Authorization: Role: consultant]'
       operationId: getTeamSessionsForAuthenticatedConsultant
       parameters:
-        - name: RCToken
-          in: header
-          required: true
-          schema:
-            type: string
         - name: offset
           in: query
           description: Number of items where to start in the query (0 = first item)
@@ -891,32 +756,6 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/mails/messages/new:
-    post:
-      tags:
-        - user-controller
-      summary: 'Sends a notification e-mail that a new message/answer has been written
-        [Authorization: Role: user, consultant]'
-      operationId: sendNewMessageNotification
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/NewMessageNotificationDTO'
-        required: true
-      responses:
-        200:
-          description: successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - invalid token
-        409:
-          description: CONFLICT - no user e-mail address in db given
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1102,6 +941,8 @@ paths:
             agency of session is not assigned to consultant
         409:
           description: CONFLICT - session is already assigned to this consultant
+        404:
+          description: NOT FOUND - session does not exist
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1230,36 +1071,6 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/chat/e2e:
-    put:
-      tags:
-        - user-controller
-      summary: 'Updates E2E keys in all user''s chats [authorities: consultant or user]'
-      operationId: updateE2eInChats
-      requestBody:
-        content:
-          'application/json':
-            schema:
-              $ref: '#/components/schemas/E2eKeyDTO'
-        required: true
-      responses:
-        202:
-          description: 'ACCEPTED - request processed but update not executed. This status is being
-          returned if a new registered advice seeker wants to update e2e in chats. The therfore
-          required user chat id for rocket chat is being initialized as soon as the enquiry
-          message has been written!'
-        204:
-          description: NO CONTENT - successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request resp. provided password is wrong
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
   /users/chat/new:
     post:
       tags:
@@ -1359,7 +1170,7 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/{chatUserId}/chat/{chatId}/ban:
+  /users/{matrixUserId}/chat/{chatId}/ban:
     post:
       tags:
         - user-controller
@@ -1367,19 +1178,12 @@ paths:
         [Authorization: Role: consultant with authority UPDATE_CHAT]'
       operationId: banFromChat
       parameters:
-        - name: rcToken
-          in: header
-          required: true
-          schema:
-            type: string
-        - name: chatUserId
+        - name: matrixUserId
           in: path
           required: true
-          example: Dd2WYSdFXP4No7bW6
+          example: "@user:matrix.example"
           schema:
             type: string
-            minLength: 17
-            maxLength: 17
         - name: chatId
           in: path
           required: true
@@ -1494,16 +1298,16 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
-  /users/chat/{groupId}/assign:
+  /users/chat/{matrixRoomId}/assign:
     put:
       tags:
         - user-controller
       summary: 'Assign the user to the given chat [Authorization: Role: consultant or user]'
       operationId: assignChat
       parameters:
-        - name: groupId
+        - name: matrixRoomId
           in: path
-          description: the chat room id (legacy Rocket.Chat-era naming; Matrix room ID in Matrix mode)
+          description: Matrix room ID or stable numeric series ID used by V2 invite links
           required: true
           schema:
             type: string
@@ -1656,14 +1460,9 @@ paths:
       tags:
         - user-controller
       summary: 'Returns the chat for given ID.
-      [Authorization: Role: user, consultant]'
+        [Authorization: Role: user, consultant]'
       operationId: getChatById
       parameters:
-        - name: RCToken
-          in: header
-          required: true
-          schema:
-            type: string
         - name: chatId
           in: path
           description: Chat Id
@@ -1861,9 +1660,9 @@ paths:
       summary: 'Send a live notification event'
       operationId: sendLiveEvent
       parameters:
-        - name: rcGroupId
+        - name: matrixRoomId
           in: query
-          description: Chat room ID (legacy Rocket.Chat-era parameter name; Matrix room ID in Matrix mode)
+          description: Matrix room ID
           required: true
           schema:
             type: string
@@ -2272,18 +2071,14 @@ components:
           example: 79098
         language:
           $ref: '#/components/schemas/LanguageCode'
-        groupId:
-          type: string
-          example: xGklslk2JJKK
-          description: Chat room ID (legacy Rocket.Chat-era field; carries the Matrix room ID since the Matrix migration)
         matrixRoomId:
           type: string
           example: "!aBcDeF123:91.99.219.182"
           description: Matrix Synapse room ID
-        askerRcId:
+        askerMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Asker chat ID (legacy Rocket.Chat-era field)
+          example: "@asker:matrix.example"
+          description: Matrix user ID of the asker
         e2eLastMessage:
           $ref: '#/components/schemas/LastMessageDTO'
         lastMessage:
@@ -2361,7 +2156,7 @@ components:
       required:
         - eventType
         - initiatorUserName
-        - initiatorRcUserId
+        - initiatorMatrixUserId
       properties:
         eventType:
           type: string
@@ -2370,11 +2165,9 @@ components:
         initiatorUserName:
           type: string
           example: "consultant23"
-        rcUserId:
+        initiatorMatrixUserId:
           type: string
-        initiatorRcUserId:
-          type: string
-          example: "ag89h3tjkerg94t"
+          example: "@consultant23:matrix.example"
 
     MessageType:
       type: string
@@ -2423,26 +2216,26 @@ components:
           minLength: 1
           maxLength: 5
           example: 79098
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
-          description: Chat room ID (legacy Rocket.Chat-era field; carries the Matrix room ID since the Matrix migration)
+          example: "!aBcDeF123:matrix.example"
+          description: Matrix room ID
         consultantId:
           type: string
           example: 926b9777-4eef-443d-925a-4aa534797bd7
           description: keycloak id of assigned consultant
-        consultantRcId:
+        consultantMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Chat ID of assigned consultant (legacy Rocket.Chat-era field)
+          example: "@consultant:matrix.example"
+          description: Matrix user ID of assigned consultant
         askerId:
           type: string
           example: 926b9777-4eef-443d-925a-4aa534797bd7
           description: asker keycloak id
-        askerRcId:
+        askerMatrixUserId:
           type: string
-          example: 8ertjlasdKJA
-          description: Asker chat ID (legacy Rocket.Chat-era field)
+          example: "@asker:matrix.example"
+          description: Matrix user ID of the asker
         askerUserName:
           type: string
           example: asker123
@@ -2482,7 +2275,7 @@ components:
         - repetitive
         - active
         - consultingType
-        - groupId
+        - matrixRoomId
       properties:
         id:
           type: integer
@@ -2547,9 +2340,9 @@ components:
         messagesRead:
           type: boolean
           example: false
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
+          example: "!aBcDeF123:matrix.example"
         attachment:
           $ref: '#/components/schemas/SessionAttachmentDTO'
         subscribed:
@@ -2707,9 +2500,9 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         t:
           type: string
 
@@ -2807,7 +2600,7 @@ components:
           type: boolean
           example: true
           description: "Is true if consultant has at least one consulting type containing
-          anonymous conversations active"
+            anonymous conversations active"
         hasArchive:
           type: boolean
           example: true
@@ -2937,7 +2730,7 @@ components:
           pa, pi, pl, ps, pt, qu, rm, rn, ro, ru, rw, sa, sc, sd, se, sg, si, sk, sl, sm, sn,
           so, sq, sr, ss, st, su, sv, sw, ta, te, tg, th, ti, tk, tl, tn, to, tr, ts, tt, tw,
           ty, ug, uk, ur, uz, ve, vi, vo, wa, wo, xh, yi, yo, za, zh, zu
-      ]
+        ]
 
     LanguageResponseDTO:
       type: object
@@ -3119,7 +2912,7 @@ components:
     CreateChatResponseDTO:
       type: object
       required:
-        - groupId
+        - matrixRoomId
       properties:
         createdAt:
           type: string
@@ -3128,24 +2921,24 @@ components:
         creatorDisplayName:
           type: string
           example: Max M.
-        groupId:
+        matrixRoomId:
           type: string
-          example: WCET6GWir78pNMyyD
+          example: "!aBcDeF123:matrix.example"
 
     ChatInfoResponseDTO:
       type: object
       required:
         - id
-        - groupId
+        - matrixRoomId
         - active
       properties:
         id:
           type: integer
           format: int64
           example: 153918
-        groupId:
+        matrixRoomId:
           type: string
-          example: xGklslk2JJKK
+          example: "!aBcDeF123:matrix.example"
         active:
           type: boolean
           example: false
@@ -3179,24 +2972,14 @@ components:
         userId:
           type: string
 
-    E2eKeyDTO:
-      type: object
-      required:
-        - publicKey
-      properties:
-        publicKey:
-          type: string
-          minLength: 342
-          maxLength: 342
-
     UpdateChatResponseDTO:
       type: object
       required:
-        - groupId
+        - matrixRoomId
       properties:
-        groupId:
+        matrixRoomId:
           type: string
-          example: WCET6GWir78pNMyyD
+          example: "!aBcDeF123:matrix.example"
 
     NewRegistrationDto:
       type: object
@@ -3251,7 +3034,7 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
         status:
           $ref: "#/components/schemas/HttpStatus"
@@ -3269,24 +3052,15 @@ components:
           type: string
           example: "sdj8wnFNASj324!ksldf9"
 
-    NewMessageNotificationDTO:
-      type: object
-      required:
-        - rcGroupId
-      properties:
-        rcGroupId:
-          type: string
-          example: fR2Rz7dmWmHdXE8uz
-
     ReassignmentNotificationDTO:
       type: object
       required:
-        - rcGroupId
+        - matrixRoomId
         - toConsultantId
       properties:
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         toConsultantId:
           type: string
           format: UUID
@@ -3305,13 +3079,6 @@ components:
           type: string
           format: password
           example: p@ssw0rd
-
-    RocketChatGroupIdDTO:
-      type: object
-      properties:
-        groupId:
-          type: string
-          example: rc123456
 
     EmailDTO:
       type: object

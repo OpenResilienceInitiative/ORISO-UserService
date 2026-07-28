@@ -91,7 +91,6 @@ public class EventNotificationController {
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getThreadRootId(),
-          request.getMatrixRoom() == null || request.getMatrixRoom(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName(),
           request.getThreadParentPreview());
@@ -100,7 +99,6 @@ public class EventNotificationController {
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
-          request.getMatrixRoom() == null || request.getMatrixRoom(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName());
     }
@@ -177,7 +175,6 @@ public class EventNotificationController {
   public static class MessageEventRequestDTO {
     @NotBlank private String roomId;
     private String messagePreview;
-    private Boolean matrixRoom;
     private String threadRootId;
     private Boolean supervisorMessage;
     private String senderDisplayName;
@@ -215,14 +212,6 @@ public class EventNotificationController {
 
     public void setMessagePreview(String messagePreview) {
       this.messagePreview = messagePreview;
-    }
-
-    public Boolean getMatrixRoom() {
-      return matrixRoom;
-    }
-
-    public void setMatrixRoom(Boolean matrixRoom) {
-      this.matrixRoom = matrixRoom;
     }
 
     public String getThreadRootId() {

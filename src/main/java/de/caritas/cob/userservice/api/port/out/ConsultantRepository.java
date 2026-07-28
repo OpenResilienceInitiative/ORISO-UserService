@@ -20,8 +20,6 @@ public interface ConsultantRepository
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
-  Optional<Consultant> findByRocketChatIdAndDeleteDateIsNull(String id);
-
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
@@ -100,13 +98,4 @@ public interface ConsultantRepository
   long countByDeleteDateIsNull();
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
-
-  @Query(
-      value =
-          "SELECT DISTINCT c.rocketChatId "
-              + "FROM Consultant c "
-              + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
-              + "WHERE ca.agencyId IN (?1) "
-              + "AND ca.deleteDate IS NULL")
-  Set<String> findAllByAgencyIds(Set<Long> agencyIds);
 }

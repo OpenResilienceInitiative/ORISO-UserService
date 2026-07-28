@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -30,13 +29,11 @@ public class ConsultantUpdateServiceBase {
 
   @MockitoBean protected IdentityClient identityClient;
 
-  @MockitoBean protected RocketChatService rocketChatService;
-
   @MockitoBean protected AgencyService agencyService;
 
   @BeforeEach
   void stubAssignedAgencies() {
-    when(agencyService.getAgenciesWithoutCaching(anyList()))
+    when(agencyService.getAgencies(anyList()))
         .thenAnswer(
             invocation ->
                 invocation.<List<Long>>getArgument(0).stream()

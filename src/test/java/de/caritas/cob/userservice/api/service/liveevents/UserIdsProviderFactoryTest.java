@@ -26,19 +26,19 @@ public class UserIdsProviderFactoryTest {
   @Mock private RelevantUserAccountIdsBySessionProvider bySessionProvider;
 
   @Test
-  public void buildUserIdsProvider_Should_returnByChatProvider_When_rcGroupIdIsAChat() {
-    when(this.chatRepository.findByGroupId(any())).thenReturn(Optional.of(ACTIVE_CHAT));
+  public void buildUserIdsProvider_Should_returnByChatProvider_When_matrixRoomIdIsAChat() {
+    when(this.chatRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(ACTIVE_CHAT));
 
-    UserIdsProvider resultProvider = this.userIdsProviderFactory.byRocketChatGroup("group");
+    UserIdsProvider resultProvider = this.userIdsProviderFactory.forMatrixRoom("group");
 
     assertThat(resultProvider, is(this.byChatProvider));
   }
 
   @Test
-  public void buildUserIdsProvider_Should_returnBySessionProvider_When_rcGroupIdIsNotChat() {
-    when(this.chatRepository.findByGroupId(any())).thenReturn(Optional.empty());
+  public void buildUserIdsProvider_Should_returnBySessionProvider_When_matrixRoomIdIsNotChat() {
+    when(this.chatRepository.findByMatrixRoomId(any())).thenReturn(Optional.empty());
 
-    UserIdsProvider resultProvider = this.userIdsProviderFactory.byRocketChatGroup("group");
+    UserIdsProvider resultProvider = this.userIdsProviderFactory.forMatrixRoom("group");
 
     assertThat(resultProvider, is(this.bySessionProvider));
   }

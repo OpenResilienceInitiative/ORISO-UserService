@@ -117,9 +117,6 @@ class AgencyInviteLinkControllerTest {
     when(session.getExpiresIn()).thenReturn(60);
     when(session.getRefreshToken()).thenReturn("refresh");
     when(session.getRefreshExpiresIn()).thenReturn(120);
-    when(session.getRcUserId()).thenReturn("rc-u");
-    when(session.getRcToken()).thenReturn("rc-t");
-    when(session.getRcGroupId()).thenReturn("rc-g");
     when(agencyInviteLinkService.redeemWithContext("token-1"))
         .thenReturn(new RedeemContext(session, 7L, 9L, 5, 99L));
 

@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.consultingtype;
 
-import de.caritas.cob.userservice.api.Messenger;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -26,7 +25,6 @@ public class TopicConsultantRoutingService {
 
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull Messenger messenger;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull ConsultantActivityRegistry consultantActivityRegistry;
 
@@ -90,7 +88,7 @@ public class TopicConsultantRoutingService {
     }
   }
 
-  public List<String> findEligibleConsultantIds(Long topicId, Integer consultingTypeId) {
+  public List<String> findEligibleConsultantIds(Long topicId) {
     if (topicId == null) {
       return Collections.emptyList();
     }
@@ -137,39 +135,9 @@ public class TopicConsultantRoutingService {
           .collect(Collectors.toList());
     }
 
-    // Matrix presence unavailable (disabled / no admin token / all lookups failed) — fall back to
-    // the legacy RocketChat presence signal, best-effort, as before.
-    if (consultingTypeId == null) {
-      return activeConsultantIds;
-    }
-
-    Set<String> onlineConsultantIds;
-    try {
-      onlineConsultantIds = messenger.findAvailableConsultants(consultingTypeId);
-    } catch (Exception ex) {
-      return activeConsultantIds;
-    }
-    if (onlineConsultantIds.isEmpty()) {
-      return activeConsultantIds;
-    }
-
-    List<String> onlineTopicConsultantIds =
-        consultants.stream()
-            .filter(consultant -> consultant != null && !consultant.isAbsent())
-            .filter(
-                consultant ->
-                    onlineConsultantIds.contains(consultant.getId())
-                        || (consultant.getRocketChatId() != null
-                            && onlineConsultantIds.contains(consultant.getRocketChatId())))
-            .map(Consultant::getId)
-            .collect(Collectors.toList());
-
-    // RocketChat presence is best-effort during Matrix migration — do not drop all
-    // topic consultants when the online set is populated but none match.
-    if (onlineTopicConsultantIds.isEmpty()) {
-      return activeConsultantIds;
-    }
-
-    return onlineTopicConsultantIds;
+    // Presence may be disabled or temporarily unavailable. Assignment remains possible for all
+    // non-absent topic consultants; the stricter public availability indicator uses the activity
+    // registry in findAvailableConsultantIds.
+    return activeConsultantIds;
   }
 }

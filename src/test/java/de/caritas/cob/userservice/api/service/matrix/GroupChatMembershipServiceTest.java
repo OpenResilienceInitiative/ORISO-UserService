@@ -80,7 +80,7 @@ class GroupChatMembershipServiceTest {
   }
 
   private Chat chatWithMatrixRoom() {
-    return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).groupId(MATRIX_ROOM_ID).build();
+    return chatBuilder().matrixRoomId(MATRIX_ROOM_ID).build();
   }
 
   @Test
@@ -169,7 +169,7 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void hasRemainingHumanMembers_Should_FailSafeToTrue_When_ChatHasNoMatrixRoom() {
-    var legacyChat = chatBuilder().groupId("rcGroupId4711").build();
+    var legacyChat = chatBuilder().matrixRoomId("matrixRoomId4711").build();
 
     assertTrue(groupChatMembershipService.hasRemainingHumanMembers(legacyChat, LEAVER_MATRIX_ID));
     verifyNoInteractions(matrixSynapseService);
@@ -177,7 +177,7 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void hasRemainingHumanMembers_Should_FallBackToGroupId_When_ItIsAMatrixRoomId() {
-    var chat = chatBuilder().groupId(MATRIX_ROOM_ID).build();
+    var chat = chatBuilder().matrixRoomId(MATRIX_ROOM_ID).build();
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
         .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)));
 
@@ -229,7 +229,7 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void removeLeavingMemberFromRoom_Should_DoNothing_When_ChatHasNoMatrixRoom() {
-    var legacyChat = chatBuilder().groupId("rcGroupId4711").build();
+    var legacyChat = chatBuilder().matrixRoomId("matrixRoomId4711").build();
 
     groupChatMembershipService.removeLeavingMemberFromRoom(legacyChat, LEAVER_MATRIX_ID);
 
@@ -363,23 +363,14 @@ class GroupChatMembershipServiceTest {
   void resolveMatrixRoomId_Should_PreferSessionMatrixRoomIdColumn() {
     var session = new de.caritas.cob.userservice.api.model.Session();
     session.setMatrixRoomId(MATRIX_ROOM_ID);
-    session.setGroupId("rcGroupId");
 
     assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(session));
   }
 
   @Test
-  void resolveMatrixRoomId_Should_FallBackToSessionGroupId_When_ItIsAMatrixRoomId() {
+  void resolveMatrixRoomId_Should_ReturnNull_When_SessionRoomIdIsInvalid() {
     var session = new de.caritas.cob.userservice.api.model.Session();
-    session.setGroupId(MATRIX_ROOM_ID);
-
-    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(session));
-  }
-
-  @Test
-  void resolveMatrixRoomId_Should_ReturnNull_When_SessionHasOnlyLegacyGroupId() {
-    var session = new de.caritas.cob.userservice.api.model.Session();
-    session.setGroupId("rcGroupId4711");
+    session.setMatrixRoomId("matrixRoomId4711");
 
     assertNull(groupChatMembershipService.resolveMatrixRoomId(session));
   }
@@ -394,15 +385,7 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void resolveMatrixRoomId_Should_PreferMatrixRoomIdColumn_onChat() {
-    // Dedicated matrix_room_id column is authoritative over legacy group_id values.
-    var chat = chatBuilder().matrixRoomId(MATRIX_ROOM_ID).groupId("rcGroupId").build();
-    assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(chat));
-  }
-
-  @Test
-  void resolveMatrixRoomId_Should_FallBackToGroupId_onChat_When_MatrixRoomIdNull() {
-    // Legacy chats may only store the Matrix room id in group_id — still resolvable.
-    var chat = chatBuilder().groupId(MATRIX_ROOM_ID).build();
+    var chat = chatBuilder().matrixRoomId(MATRIX_ROOM_ID).build();
     assertEquals(MATRIX_ROOM_ID, groupChatMembershipService.resolveMatrixRoomId(chat));
   }
 

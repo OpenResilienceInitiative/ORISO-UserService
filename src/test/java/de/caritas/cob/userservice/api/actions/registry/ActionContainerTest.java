@@ -8,7 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
+import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.NoSuchElementException;
@@ -28,7 +28,7 @@ class ActionContainerTest {
 
     assertThrows(
         NoSuchElementException.class,
-        () -> actionContainer.addActionToExecute(SetRocketChatRoomReadOnlyActionCommand.class));
+        () -> actionContainer.addActionToExecute(PostMatrixUserLeftMessageActionCommand.class));
   }
 
   @Test

@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
@@ -42,6 +44,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
 
   private OutboundHttpMetrics outboundHttpMetrics;
+  private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -67,6 +70,11 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
     this.outboundHttpMetrics = outboundHttpMetrics;
+  }
+
+  @Autowired(required = false)
+  void setObservationRegistry(ObservationRegistry observationRegistry) {
+    this.observationRegistry = observationRegistry;
   }
 
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
@@ -163,12 +171,9 @@ public class MatrixEventListenerService {
 
     while (running) {
       try {
-        // Perform Matrix sync (long-polling with 30-second timeout)
-        Map<String, Object> syncResult = performMatrixSync();
+        MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
-        if (syncResult != null) {
-          // Process events from sync result
-          processMatrixSyncEvents(syncResult);
+        if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
           // Successful sync: reset the error backoff and failure counter.
           errorBackoffMs = INITIAL_BACKOFF_MS;
           consecutiveSyncFailures = 0;
@@ -219,6 +224,40 @@ public class MatrixEventListenerService {
     }
 
     log.info("🔷 Matrix sync loop stopped");
+  }
+
+  /**
+   * Observes one Matrix long poll and all event processing it triggers as one background operation.
+   * The result attribute is deliberately bounded; Matrix tokens, cursors, room identifiers and URL
+   * values must never become observation attributes.
+   */
+  private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    Observation observation =
+        Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
+    String result = "exception";
+
+    try (Observation.Scope ignored = observation.openScope()) {
+      Map<String, Object> syncResult = performMatrixSync();
+      if (syncResult == null) {
+        result = "soft_failure";
+        return MatrixSyncCycleResult.SOFT_FAILURE;
+      }
+
+      processMatrixSyncEvents(syncResult);
+      result = "success";
+      return MatrixSyncCycleResult.SUCCESS;
+    } catch (RuntimeException | Error exception) {
+      observation.error(exception);
+      throw exception;
+    } finally {
+      observation.lowCardinalityKeyValue("result", result);
+      observation.stop();
+    }
+  }
+
+  private enum MatrixSyncCycleResult {
+    SUCCESS,
+    SOFT_FAILURE
   }
 
   /**
@@ -485,10 +524,10 @@ public class MatrixEventListenerService {
               try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, threadRootId, privacyEnvelope);
                 } else {
                   eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, true, privacyEnvelope);
+                      roomId, senderDomainUserId, privacyEnvelope);
                 }
                 if (senderDomainUserId != null && isConsultantMatrixUser(senderId)) {
                   consultantMessageStatService.recordMessageSent(

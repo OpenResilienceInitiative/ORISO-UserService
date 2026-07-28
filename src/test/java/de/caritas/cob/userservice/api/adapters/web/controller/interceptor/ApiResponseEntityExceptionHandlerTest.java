@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import java.util.List;
 import java.util.Map;
@@ -147,12 +146,6 @@ class ApiResponseEntityExceptionHandlerTest {
   @Test
   void mappedExceptionHandlers_returnExpectedHttpStatus() {
     // Business reason: each domain exception type must map to the documented status code.
-    assertEquals(
-        HttpStatus.UNAUTHORIZED,
-        handler
-            .handleUnauthorized(
-                new RocketChatUnauthorizedException("u1", new RuntimeException()), request)
-            .getStatusCode());
     assertEquals(
         HttpStatus.CONFLICT,
         handler

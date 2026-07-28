@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <changeSet id="0073-remove-rocket-chat-user-id-from-user" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="user" columnName="rc_user_id"/>
+    </preConditions>
+    <dropColumn tableName="user" columnName="rc_user_id"/>
+    <rollback>
+      <addColumn tableName="user">
+        <column name="rc_user_id" type="varchar(255)"/>
+      </addColumn>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0073-remove-rocket-chat-user-id-from-consultant" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="consultant" columnName="rc_user_id"/>
+    </preConditions>
+    <dropColumn tableName="consultant" columnName="rc_user_id"/>
+    <rollback>
+      <addColumn tableName="consultant">
+        <column name="rc_user_id" type="varchar(255)"/>
+      </addColumn>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0073-remove-rocket-chat-user-id-from-admin" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="admin" columnName="rc_user_id"/>
+    </preConditions>
+    <dropColumn tableName="admin" columnName="rc_user_id"/>
+    <rollback>
+      <addColumn tableName="admin">
+        <column name="rc_user_id" type="varchar(255)"/>
+      </addColumn>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

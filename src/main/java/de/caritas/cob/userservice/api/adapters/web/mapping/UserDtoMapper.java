@@ -70,14 +70,6 @@ public class UserDtoMapper {
     return null;
   }
 
-  public String chatUserIdOf(Map<String, Object> userMap) {
-    if (userMap.containsKey("chatUserId")) {
-      return (String) userMap.get("chatUserId");
-    }
-
-    return null;
-  }
-
   public Optional<String> preferredLanguageOf(PatchUserDTO patchUserDTO) {
     if (nonNull(patchUserDTO.getPreferredLanguage())) {
       var preferredLanguage = patchUserDTO.getPreferredLanguage().toString();

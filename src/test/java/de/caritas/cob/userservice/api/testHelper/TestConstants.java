@@ -9,17 +9,6 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import com.google.api.client.util.Sets;
 import com.google.common.collect.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.DataDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.attachment.AttachmentDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.message.attachment.FileDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsLastMessageDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.room.RoomsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.subscriptions.SubscriptionsUpdateDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -27,7 +16,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionAttachmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
@@ -64,10 +52,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 
 public class TestConstants {
 
@@ -116,200 +101,20 @@ public class TestConstants {
   public static final String AGE = "age";
 
   /*
-   * RocketChat
+   * Matrix
    */
-  public static final String ROCKETCHAT_ID = "xN3Mobksn3xdp7gEk";
-  public static final String ROCKETCHAT_ID_2 = "tZ6Mdfks5rtxdp7a8i";
-  public static final String RC_TOKEN = "2fUGwNSqvpiEDTsMJQ54XeYdx0XzzCWdu0PP0lXFNu8";
-  public static final String RC_USER_ID = "ogCRwt3ieDiBNJFaR";
-  public static final String RC_USER_ID_2 = "sd3ssdfFFGSGDGWww";
-  public static final String RC_USER_ID_3 = "abcdefsDefdfrWrt";
-  public static final String RC_USERNAME = "rcUsername";
-  public static final String RC_SYSTEM_USERNAME = "system";
-  public static final String ROCKET_CHAT_SYSTEM_USER_ID = "xN3Msb3ksnfxda7gEk";
-  public static final String RC_TOKEN_HEADER_PARAMETER_NAME = "RCToken";
-  public static final String RC_USER_ID_HEADER_PARAMETER_NAME = "RCUserId";
-  public static final String ROCKET_CHAT_TECHNICAL_USER_ID = "dasd83juiosdf";
-  public static final String RC_TECHNICAL_USERNAME = "technical";
-  public static final String RC_GROUP_ID = "jjjuuu";
-  public static final String RC_GROUP_ID_2 = "sdfsdff";
-  public static final String RC_GROUP_ID_3 = "gggewwww";
-  public static final String RC_GROUP_ID_4 = "ssssuuu";
-  public static final String RC_GROUP_ID_5 = "aldoeke";
-  public static final String RC_GROUP_ID_6 = "vmndsjk";
-  public static final String RC_GROUP_ID_7 = "juuuzte";
-  public static final String RC_STATUS_ONLINE = "online";
-  public static final String RC_UTC_OFFSET = "1";
-  public static final String RC_ATTACHMENT_TITLE = "filename.jpg";
-  public static final String RC_ATTACHMENT_FILE_TYPE = "image/jpeg";
-  public static final String RC_ATTACHMENT_IMAGE_PREVIEW =
-      "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAVACADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAAAAYDBAUH/8QAKBAAAQMDBAAFBQAAAAAAAAAAAQIDBAAFBhESITETIkFRgQcjQmHw/8QAGAEAAwEBAAAAAAAAAAAAAAAAAgMEAQX/xAAdEQADAAICAwAAAAAAAAAAAAAAAQIDEQQSIjEy/9oADAMBAAIRAxEAPwCjapLjU7YhHlA+77I+aY0XNgHxZGo52pI9RSvIx6LerBPbsd0U1JLv56jcNff4rHstquEF+PFuc0uBscacgfNc+uJExpMzrpGxdszGL5avw5BYQ+gHno1LdMzs0yKXX56FSFebeDyKzc6iW+4WZ5TzBelAbG3D6HQ/qlbHcPiSVoTKhLUdnSOdDxyafgfWFsKZO24JFiy8ZZfXFaCndSfL1/a1PZ7ZEl3p1l9lJbSNQANKKKg5NNNJDn7QqJsEef8AUB+1OrWIpOoHe3vqnqxYnGs8mT4D7i1ngKUOhRRV+L4AT8j/2Q==";
-  public static final GroupMemberDTO GROUP_MEMBER_SYS_USER =
-      new GroupMemberDTO(
-          ROCKET_CHAT_SYSTEM_USER_ID,
-          RC_STATUS_ONLINE,
-          RC_SYSTEM_USERNAME,
-          RC_SYSTEM_USERNAME,
-          RC_UTC_OFFSET);
-  public static final GroupMemberDTO GROUP_MEMBER_TECH_USER =
-      new GroupMemberDTO(
-          ROCKET_CHAT_TECHNICAL_USER_ID,
-          RC_STATUS_ONLINE,
-          RC_TECHNICAL_USERNAME,
-          RC_SYSTEM_USERNAME,
-          RC_UTC_OFFSET);
-  public static final DataDTO DATA_DTO_LOGIN = new DataDTO(RC_USER_ID, RC_TOKEN, null);
-  public static final DataDTO DATA_DTO_LOGIN_NO_TOKEN = new DataDTO(RC_USER_ID, null, null);
-  public static final String STATUS_OK = "OK";
-  public static final LoginResponseDTO LOGIN_RESPONSE_DTO =
-      new LoginResponseDTO(STATUS_OK, DATA_DTO_LOGIN);
-  public static final LoginResponseDTO LOGIN_RESPONSE_DTO_NO_TOKEN =
-      new LoginResponseDTO(STATUS_OK, DATA_DTO_LOGIN_NO_TOKEN);
-  public static final ResponseEntity<LoginResponseDTO> LOGIN_RESPONSE_ENTITY_OK =
-      new ResponseEntity<>(LOGIN_RESPONSE_DTO, HttpStatus.OK);
-  public static final ResponseEntity<LoginResponseDTO> LOGIN_RESPONSE_ENTITY_OK_NO_TOKEN =
-      new ResponseEntity<>(LOGIN_RESPONSE_DTO_NO_TOKEN, HttpStatus.OK);
-
-  public static final List<SubscriptionsUpdateDTO> SUBSCRIPTIONS_UPDATE_LIST_DTO =
-      Arrays.asList(
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null),
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID_2,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null),
-          new SubscriptionsUpdateDTO(
-              "A",
-              true,
-              false,
-              0,
-              0,
-              0,
-              NOW,
-              RC_GROUP_ID_3,
-              "A",
-              "A",
-              "P",
-              null,
-              null,
-              null,
-              null,
-              null));
-
-  /** Rocket.Chat credentials */
-  public static final String TECHNICAL_USER_A_USERNAME = "techUserAName";
-
-  public static final String TECHNICAL_USER_A_TOKEN = "techUserAToken";
-  public static final String TECHNICAL_USER_A_ID = "techUserAID";
-
-  public static final String TECHNICAL_USER_B_USERNAME = "techUserBName";
-  public static final String TECHNICAL_USER_B_TOKEN = "techUserBToken";
-  public static final String TECHNICAL_USER_B_ID = "techUserBID";
-
-  public static final String TECHNICAL_USER_C_USERNAME = "techUserCName";
-  public static final String TECHNICAL_USER_C_TOKEN = "techUserCToken";
-  public static final String TECHNICAL_USER_C_ID = "techUserCID";
-
-  public static final String SYSTEM_USER_A_USERNAME = "sysUserAName";
-  public static final String SYSTEM_USER_A_TOKEN = "sysUserAToken";
-  public static final String SYSTEM_USER_A_ID = "sysUserAID";
-
-  public static final String SYSTEM_USER_B_TOKEN = "sysUserBToken";
-  public static final String SYSTEM_USER_B_ID = "sysUserBID";
-
-  public static final String SYSTEM_USER_C_USERNAME = "sysUserBName";
-  public static final String SYSTEM_USER_C_TOKEN = "sysUserBToken";
-  public static final String SYSTEM_USER_C_ID = "sysUserBID";
-
-  public static final RocketChatCredentials RC_CREDENTIALS =
-      RocketChatCredentials.builder()
-          .rocketChatToken(RC_TOKEN)
-          .rocketChatUserId(RC_USER_ID)
-          .rocketChatUsername(RC_USERNAME)
-          .timeStampCreated(nowInUtc())
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_WITH_EMPTY_USER_VALUES =
-      RocketChatCredentials.builder()
-          .rocketChatToken(RC_TOKEN)
-          .timeStampCreated(nowInUtc())
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_A =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_A_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_A_ID)
-          .rocketChatUsername(TECHNICAL_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(5))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_B =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_B_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_B_ID)
-          .rocketChatUsername(TECHNICAL_USER_B_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(1))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_TECHNICAL_C =
-      RocketChatCredentials.builder()
-          .rocketChatToken(TECHNICAL_USER_C_TOKEN)
-          .rocketChatUserId(TECHNICAL_USER_C_ID)
-          .rocketChatUsername(TECHNICAL_USER_C_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(10))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_A =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_A_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_A_ID)
-          .rocketChatUsername(SYSTEM_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(5))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_B =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_B_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_B_ID)
-          .rocketChatUsername(SYSTEM_USER_A_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(1))
-          .build();
-
-  public static final RocketChatCredentials RC_CREDENTIALS_SYSTEM_C =
-      RocketChatCredentials.builder()
-          .rocketChatToken(SYSTEM_USER_C_TOKEN)
-          .rocketChatUserId(SYSTEM_USER_C_ID)
-          .rocketChatUsername(SYSTEM_USER_C_USERNAME)
-          .timeStampCreated(nowInUtc().minusMinutes(10))
-          .build();
+  public static final String MATRIX_USER_ID = "@asker:matrix.example";
+  public static final String MATRIX_USER_ID_2 = "@consultant:matrix.example";
+  public static final String MATRIX_USER_ID_3 = "@member-3:matrix.example";
+  public static final String MATRIX_USER_ID_4 = "@member-4:matrix.example";
+  public static final String MATRIX_USER_ID_5 = "@member-5:matrix.example";
+  public static final String MATRIX_ROOM_ID = "!room-1:matrix.example";
+  public static final String MATRIX_ROOM_ID_2 = "!room-2:matrix.example";
+  public static final String MATRIX_ROOM_ID_3 = "!room-3:matrix.example";
+  public static final String MATRIX_ROOM_ID_4 = "!room-4:matrix.example";
+  public static final String MATRIX_ROOM_ID_5 = "!room-5:matrix.example";
+  public static final String MATRIX_ROOM_ID_6 = "!room-6:matrix.example";
+  public static final String MATRIX_ROOM_ID_7 = "!room-7:matrix.example";
 
   /*
    * Agencies
@@ -386,7 +191,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName(FIRST_NAME)
           .lastName(LAST_NAME)
@@ -407,7 +212,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -432,31 +237,19 @@ public class TestConstants {
   public static final GroupSessionConsultantDTO GROUP_SESSION_CONSULTANT_DTO =
       new GroupSessionConsultantDTO();
   public static final AbsenceDTO ABSENCE_DTO_WITH_NULL_MESSAGE = new AbsenceDTO().absent(true);
-  public static final GroupMemberDTO GROUP_MEMBER_USER_1 =
-      new GroupMemberDTO(RC_USER_ID, RC_STATUS_ONLINE, USERNAME, USERNAME, RC_UTC_OFFSET);
-  public static final GroupMemberDTO GROUP_MEMBER_USER_2 =
-      new GroupMemberDTO(
-          RC_USER_ID_2,
-          RC_STATUS_ONLINE,
-          USERNAME_SIMPLE_ENCODED,
-          USERNAME_SIMPLE_ENCODED,
-          RC_UTC_OFFSET);
-  public static final List<GroupMemberDTO> GROUP_MEMBER_DTO_LIST =
-      Arrays.asList(
-          GROUP_MEMBER_SYS_USER, GROUP_MEMBER_TECH_USER, GROUP_MEMBER_USER_1, GROUP_MEMBER_USER_2);
   public static final User USER = new User(USER_ID, null, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
-  public static final User USER_WITH_RC_ID =
+  public static final User USER_WITH_MATRIX_ID =
       User.builder()
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .rcUserId(RC_USER_ID)
+          .matrixUserId(MATRIX_USER_ID_3)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .deleteDate(nowInUtc())
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
-  public static final User USER_NO_RC_USER_ID =
+  public static final User USER_WITHOUT_MATRIX_ID =
       User.builder()
           .userId(USER_ID)
           .username(USERNAME)
@@ -466,7 +259,7 @@ public class TestConstants {
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
-  public static final User USER_NO_RC_USER_ID_2 =
+  public static final User USER_WITHOUT_MATRIX_ID_2 =
       User.builder()
           .userId(USER_ID_2)
           .username(USERNAME)
@@ -536,24 +329,8 @@ public class TestConstants {
       new UserDTO(null, INVALID_STATE, Integer.toString(CONSULTING_TYPE_ID_U25));
   public static final UserDTO USER_DTO_WITHOUT_MANDATORY_STATE =
       new UserDTO(null, null, null, null, null, null, Integer.toString(CONSULTING_TYPE_ID_SUCHT));
-  public static final RocketChatUserDTO ROCKET_CHAT_USER_DTO =
-      new RocketChatUserDTO(RC_USER_ID, USERNAME, null, null);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO, SUCCESS, NULL, NULL);
-  public static final RocketChatUserDTO ROCKET_CHAT_USER_DTO_2 =
-      new RocketChatUserDTO(RC_USER_ID_2, USERNAME, null, null);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO_2 =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO_2, SUCCESS, NULL, NULL);
-  public static final UserInfoResponseDTO USER_INFO_RESPONSE_DTO_FAILED =
-      new UserInfoResponseDTO(ROCKET_CHAT_USER_DTO, FAILED, ERROR, ERROR);
   public static final SessionConsultantForUserDTO SESSION_CONSULTANT_FOR_USER_DTO =
       new SessionConsultantForUserDTO(null, USERNAME, IS_ABSENT, ABSENCE_MESSAGE, null);
-  public static final RocketChatUserDTO USER_DTO_1 =
-      new RocketChatUserDTO("xyz", "123", null, null);
-  public static final RocketChatUserDTO USER_DTO_2 =
-      new RocketChatUserDTO(ROCKETCHAT_ID_2, "456", null, null);
-  public static final RocketChatUserDTO USER_DTO_3 =
-      new RocketChatUserDTO("adg", "789", null, null);
 
   /*
    * /* Messages
@@ -572,12 +349,6 @@ public class TestConstants {
   public static final AbsenceDTO ABSENCE_DTO_WITH_EMPTY_MESSAGE =
       new AbsenceDTO().absent(true).message(TestConstants.MESSAGE_EMPTY);
   /*
-   * Attachments
-   */
-  public static final FileDTO FILE_DTO = new FileDTO(RC_ATTACHMENT_TITLE, RC_ATTACHMENT_FILE_TYPE);
-  public static final AttachmentDTO ATTACHMENT_DTO = new AttachmentDTO(RC_ATTACHMENT_IMAGE_PREVIEW);
-
-  /*
    * ConsultantAgency
    */
 
@@ -594,7 +365,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -616,7 +387,7 @@ public class TestConstants {
   public static final Consultant CONSULTANT_WITH_AGENCY_2 =
       Consultant.builder()
           .id(CONSULTANT_ID_2)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username(USERNAME)
           .firstName("first name")
           .lastName("last name")
@@ -665,13 +436,13 @@ public class TestConstants {
   public static final Session SESSION_WITH_ASKER_AND_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultant(CONSULTANT_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(IN_PROGRESS)
           .createDate(nowInUtc())
@@ -682,13 +453,13 @@ public class TestConstants {
   public static final Session TEAM_SESSION_WITH_ASKER_AND_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultant(CONSULTANT_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(IN_PROGRESS)
           .createDate(nowInUtc())
@@ -703,7 +474,7 @@ public class TestConstants {
           .registrationType(ANONYMOUS)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -714,12 +485,12 @@ public class TestConstants {
   public static final Session SESSION_WITHOUT_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultingTypeId(CONSULTING_TYPE_ID_U25)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(null)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(SessionStatus.NEW)
           .createDate(nowInUtc())
@@ -727,15 +498,15 @@ public class TestConstants {
           .teamSession(true)
           .build();
 
-  public static final Session SESSION_WITHOUT_CONSULTANT_NO_RC_USER_ID =
+  public static final Session SESSION_WITHOUT_CONSULTANT_OR_MATRIX_USER_ID =
       Session.builder()
           .id(TEAM_SESSION_ID)
-          .user(USER_NO_RC_USER_ID_2)
+          .user(USER_WITHOUT_MATRIX_ID_2)
           .consultingTypeId(CONSULTING_TYPE_ID_SUCHT)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -746,12 +517,12 @@ public class TestConstants {
   public static final Session U25_SESSION_WITHOUT_CONSULTANT =
       Session.builder()
           .id(SESSION_ID)
-          .user(USER_WITH_RC_ID)
+          .user(USER_WITH_MATRIX_ID)
           .consultingTypeId(CONSULTING_TYPE_ID_U25)
           .registrationType(REGISTERED)
           .agencyId(AGENCY_ID)
           .enquiryMessageDate(nowInUtc())
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .postcode(POSTCODE)
           .status(NEW)
           .createDate(nowInUtc())
@@ -761,13 +532,14 @@ public class TestConstants {
   public static final List<Session> SESSION_LIST = Collections.singletonList(SESSION);
   public static final Set<Session> SESSION_SET =
       new HashSet<>(
-          Arrays.asList(U25_SESSION_WITHOUT_CONSULTANT, SESSION_WITHOUT_CONSULTANT_NO_RC_USER_ID));
+          Arrays.asList(
+              U25_SESSION_WITHOUT_CONSULTANT, SESSION_WITHOUT_CONSULTANT_OR_MATRIX_USER_ID));
   public static final User USER_WITH_SESSIONS =
       User.builder()
           .userId(USER_ID)
           .username(USERNAME)
           .email(EMAIL)
-          .rcUserId(RC_USER_ID)
+          .matrixUserId(MATRIX_USER_ID_3)
           .languageFormal(IS_LANGUAGE_FORMAL)
           .sessions(SESSION_SET)
           .deleteDate(nowInUtc())
@@ -781,8 +553,8 @@ public class TestConstants {
           .consultingType(CONSULTING_TYPE_ID_U25)
           .status(SESSION_STATUS_IN_PROGRESS)
           .postcode(POSTCODE)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(MESSAGE_DATE)
           .isTeamSession(IS_TEAM_SESSION);
   public static final UserSessionResponseDTO USER_SESSION_RESPONSE_DTO_U25 =
@@ -798,8 +570,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID)
-          .askerRcId(RC_USER_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
+          .askerMatrixUserId(MATRIX_USER_ID_3)
           .messageDate(Helper.getUnixTimestampFromDate(NOW))
           .isTeamSession(IS_NO_TEAM_SESSION);
   public static final SessionDTO SESSION_DTO_2 =
@@ -808,8 +580,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID_2)
-          .askerRcId(RC_USER_ID_2)
+          .matrixRoomId(MATRIX_ROOM_ID_2)
+          .askerMatrixUserId(MATRIX_USER_ID_4)
           .messageDate(Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86400000)))
           .isTeamSession(IS_NO_TEAM_SESSION);
   public static final SessionDTO SESSION_DTO_3 =
@@ -818,8 +590,8 @@ public class TestConstants {
           .agencyId(AGENCY_ID)
           .consultingType(0)
           .status(0)
-          .groupId(RC_GROUP_ID_3)
-          .askerRcId(RC_USER_ID_3)
+          .matrixRoomId(MATRIX_ROOM_ID_3)
+          .askerMatrixUserId(MATRIX_USER_ID_5)
           .messageDate(Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 8640000)))
           .isTeamSession(IS_NO_TEAM_SESSION);
 
@@ -864,7 +636,7 @@ public class TestConstants {
           null);
 
   public static final CreateChatResponseDTO CREATE_CHAT_RESPONSE_DTO =
-      new CreateChatResponseDTO().groupId(RC_GROUP_ID);
+      new CreateChatResponseDTO().matrixRoomId(MATRIX_ROOM_ID);
   public static final Chat ACTIVE_CHAT =
       Chat.builder()
           .id(CHAT_ID)
@@ -877,7 +649,7 @@ public class TestConstants {
           .chatInterval(CHAT_INTERVAL_WEEKLY)
           .active(IS_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatUsers(Sets.newHashSet())
           .updateDate(nowInUtc())
@@ -895,7 +667,7 @@ public class TestConstants {
           .chatInterval(ChatInterval.WEEKLY)
           .active(IS_NOT_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatUsers(Sets.newHashSet())
           .updateDate(nowInUtc())
@@ -912,7 +684,7 @@ public class TestConstants {
           .chatInterval(ChatInterval.WEEKLY)
           .active(IS_NOT_ACTIVE)
           .maxParticipants(CHAT_MAX_PARTICIPANTS)
-          .groupId(RC_GROUP_ID)
+          .matrixRoomId(MATRIX_ROOM_ID)
           .chatOwner(CONSULTANT)
           .chatAgencies(Set.of(new ChatAgency(null, CHAT_AGENCY_ID)))
           .updateDate(nowInUtc())
@@ -935,7 +707,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86300000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_4,
+          MATRIX_ROOM_ID_4,
           null,
           false,
           null,
@@ -957,7 +729,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86200000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_5,
+          MATRIX_ROOM_ID_5,
           null,
           false,
           null,
@@ -979,7 +751,7 @@ public class TestConstants {
           null,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86410000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_6,
+          MATRIX_ROOM_ID_6,
           null,
           false,
           null,
@@ -1045,274 +817,28 @@ public class TestConstants {
   public static final Map<String, Boolean> MESSAGES_READ_MAP_WITH_UNREADS =
       new HashMap<>() {
         {
-          put(RC_GROUP_ID, false);
-          put(RC_GROUP_ID_2, false);
-          put(RC_GROUP_ID_3, false);
-          put(RC_GROUP_ID_4, false);
-          put(RC_GROUP_ID_5, false);
-          put(RC_GROUP_ID_6, false);
+          put(MATRIX_ROOM_ID, false);
+          put(MATRIX_ROOM_ID_2, false);
+          put(MATRIX_ROOM_ID_3, false);
+          put(MATRIX_ROOM_ID_4, false);
+          put(MATRIX_ROOM_ID_5, false);
+          put(MATRIX_ROOM_ID_6, false);
         }
       };
   public static final Map<String, Boolean> MESSAGES_READ_MAP_WITHOUT_UNREADS =
       new HashMap<>() {
         {
-          put(RC_GROUP_ID, true);
-          put(RC_GROUP_ID_2, true);
-          put(RC_GROUP_ID_3, true);
-          put(RC_GROUP_ID_4, true);
-          put(RC_GROUP_ID_5, true);
-          put(RC_GROUP_ID_6, true);
+          put(MATRIX_ROOM_ID, true);
+          put(MATRIX_ROOM_ID_2, true);
+          put(MATRIX_ROOM_ID_3, true);
+          put(MATRIX_ROOM_ID_4, true);
+          put(MATRIX_ROOM_ID_5, true);
+          put(MATRIX_ROOM_ID_6, true);
         }
       };
   public static final List<UserSessionResponseDTO> USER_CHAT_RESPONSE_DTO_LIST =
       Arrays.asList(USER_CHAT_RESPONSE_DTO, USER_CHAT_RESPONSE_DTO_2, USER_CHAT_RESPONSE_DTO_3);
 
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITHOUT_ATTACHMENT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          null,
-          null,
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_1 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_2 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_2,
-          NOW_MINUS_3_DAYS,
-          USER_DTO_2,
-          true,
-          NOW_MINUS_3_DAYS,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_3 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_2_DAYS,
-          USER_DTO_3,
-          true,
-          NOW_MINUS_2_DAYS,
-          MESSAGE,
-          "p",
-          null,
-          null,
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_4 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_4,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_5 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_5,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_6 =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_6,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST =
-      Arrays.asList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_1,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_2,
-              "name2",
-              "fname2",
-              "P",
-              USER_DTO_2,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_2,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_3,
-              "name3",
-              "fname3",
-              "P",
-              USER_DTO_3,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_3,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_4,
-              "name4",
-              "fname4",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_4,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_5,
-              "name5",
-              "fname5",
-              "P",
-              USER_DTO_2,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_5,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_6,
-              "name6",
-              "fname6",
-              "P",
-              USER_DTO_3,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_6,
-              new Date()));
-  public static final Map<String, RoomsLastMessageDTO> ROOMS_LAST_MESSAGE_DTO_MAP =
-      new HashMap<>() {
-        {
-          put(RC_GROUP_ID, ROOMS_LAST_MESSAGE_DTO_1);
-          put(RC_GROUP_ID_2, ROOMS_LAST_MESSAGE_DTO_2);
-          put(RC_GROUP_ID_3, ROOMS_LAST_MESSAGE_DTO_3);
-          put(RC_GROUP_ID_4, ROOMS_LAST_MESSAGE_DTO_4);
-          put(RC_GROUP_ID_5, ROOMS_LAST_MESSAGE_DTO_5);
-          put(RC_GROUP_ID_6, ROOMS_LAST_MESSAGE_DTO_6);
-        }
-      };
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final RoomsLastMessageDTO ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT =
-      new RoomsLastMessageDTO(
-          "id",
-          RC_GROUP_ID_6,
-          NOW_MINUS_1_DAY,
-          USER_DTO_1,
-          true,
-          NOW_MINUS_1_DAY,
-          MESSAGE,
-          "p",
-          FILE_DTO,
-          org.assertj.core.util.Arrays.array(ATTACHMENT_DTO),
-          null);
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT =
-      Collections.singletonList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT,
-              new Date()));
-  public static final List<RoomsUpdateDTO> ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT_FOR_CHAT =
-      Arrays.asList(
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_4,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT,
-              new Date()),
-          new RoomsUpdateDTO(
-              RC_GROUP_ID_6,
-              "name1",
-              "fname1",
-              "P",
-              USER_DTO_1,
-              true,
-              false,
-              new Date(),
-              ROOMS_LAST_MESSAGE_DTO_WITH_ATTACHMENT_FOR_CHAT,
-              new Date()));
-  public static final SessionAttachmentDTO SESSION_ATTACHMENT_DTO_RECEIVED =
-      new SessionAttachmentDTO()
-          .fileType(ROOMS_LAST_MESSAGE_DTO_1.getFile().getType())
-          .imagePreview(ROOMS_LAST_MESSAGE_DTO_1.getAttachements()[0].getImagePreview())
-          .fileReceived(true);
-  public static final SessionAttachmentDTO SESSION_ATTACHMENT_DTO_NOT_RECEIVED =
-      new SessionAttachmentDTO()
-          .fileType(ROOMS_LAST_MESSAGE_DTO_1.getFile().getType())
-          .imagePreview(ROOMS_LAST_MESSAGE_DTO_1.getAttachements()[0].getImagePreview())
-          .fileReceived(false);
-  public static final List<String> USERS_ROOMS_LIST =
-      ROOMS_UPDATE_DTO_LIST.stream().map(RoomsUpdateDTO::getId).collect(Collectors.toList());
-  public static final List<String> USERS_EMPTY_ROOMS_LIST = new ArrayList<>();
   public static final ConsultantSessionResponseDTO CONSULTANT_SESSION_RESPONSE_DTO =
       new ConsultantSessionResponseDTO().session(SESSION_DTO_1).latestMessage(NOW);
   public static final ConsultantSessionResponseDTO CONSULTANT_SESSION_RESPONSE_DTO_2 =
@@ -1345,14 +871,6 @@ public class TestConstants {
         }
       };
 
-  /** GroupMemberDTO */
-  public static final GroupMemberDTO GROUP_MEMBER_DTO =
-      new GroupMemberDTO(RC_USER_ID, null, USERNAME, null, null);
-
-  public static final GroupMemberDTO GROUP_MEMBER_DTO_2 =
-      new GroupMemberDTO(RC_USER_ID_2, null, USERNAME, null, null);
-  public static final List<GroupMemberDTO> LIST_GROUP_MEMBER_DTO =
-      Arrays.asList(GROUP_MEMBER_DTO, GROUP_MEMBER_DTO_2);
   /*
    * Passwords
    */
@@ -1648,7 +1166,7 @@ public class TestConstants {
           ENCRYPTED_MESSAGE,
           Helper.getUnixTimestampFromDate(new Date(NOW.getTime() + 86410000)),
           MESSAGES_NOT_READ,
-          RC_GROUP_ID_6,
+          MATRIX_ROOM_ID_6,
           null,
           false,
           null,

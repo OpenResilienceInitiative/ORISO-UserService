@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,12 +44,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantAgencyServiceTest {
 
   private final String CONSULTANT_ID = "1b71cc46-650d-42bb-8299-f8e3f6d7249a";
-  private final String CONSULTANT_ROCKETCHAT_ID = "xN3Mobksn3xdp7gEk";
+  private final String CONSULTANT_MATRIX_USER_ID = "@consultant:matrix.example";
   private final Long AGENCY_ID = 1L;
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(CONSULTANT_ROCKETCHAT_ID)
+          .matrixUserId(CONSULTANT_MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")
@@ -200,11 +200,9 @@ public class ConsultantAgencyServiceTest {
     when(consultantAgencyRepository.findByConsultantId("valid"))
         .thenReturn(singletonList(activeConsultantAgency));
     when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID))).thenReturn(emptyList());
-    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenThrow(new RuntimeException("Not found"));
     when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
-    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
-        .thenReturn(List.of());
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(emptyList());
     ReflectionTestUtils.setField(
         consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
 
@@ -214,6 +212,7 @@ public class ConsultantAgencyServiceTest {
     assertEquals(AGENCY_ID, agencies.get(0).getId());
     assertEquals(List.of(1L), agencies.get(0).getTopicIds());
     assertEquals(Integer.valueOf(1), agencies.get(0).getConsultingType());
+    verify(agencyService, Mockito.never()).getAgencyWithoutCaching(any());
   }
 
   @Test
@@ -273,11 +272,10 @@ public class ConsultantAgencyServiceTest {
         .thenReturn(singletonList(activeConsultantAgency));
     when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
         .thenThrow(new RuntimeException("Unauthorized"));
-    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenThrow(new RuntimeException("Unauthorized"));
     when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L, 2L));
-    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
-        .thenReturn(List.of(3));
+    var agencyConsultingType = agencyConsultingType(AGENCY_ID, 3);
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(List.of(agencyConsultingType));
     ReflectionTestUtils.setField(
         consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", null);
 
@@ -287,6 +285,7 @@ public class ConsultantAgencyServiceTest {
     assertEquals(AGENCY_ID, resultAgencies.get(0).getId());
     assertEquals(List.of(1L, 2L), resultAgencies.get(0).getTopicIds());
     assertEquals(Integer.valueOf(3), resultAgencies.get(0).getConsultingType());
+    verify(agencyService, Mockito.never()).getAgencyWithoutCaching(any());
   }
 
   @Test
@@ -299,17 +298,61 @@ public class ConsultantAgencyServiceTest {
         .thenReturn(singletonList(activeConsultantAgency));
     when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
         .thenThrow(new RuntimeException("Unauthorized"));
-    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenThrow(new RuntimeException("Unauthorized"));
     when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
-    when(sessionRepository.findDistinctConsultingTypeIdsByAgencyId(AGENCY_ID, PageRequest.of(0, 1)))
-        .thenReturn(List.of());
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(emptyList());
     ReflectionTestUtils.setField(
         consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
 
     var resultAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
 
     assertEquals(Integer.valueOf(1), resultAgencies.get(0).getConsultingType());
+    verify(agencyService, Mockito.never()).getAgencyWithoutCaching(any());
+  }
+
+  @Test
+  public void
+      getOnlineAgenciesOfConsultant_Should_boundFallbackCallsAndPreserveAgencyAssignments_When_batchFails() {
+    var agencyIds = List.of(1L, 2L, 3L);
+    var activeConsultantAgencies =
+        agencyIds.stream()
+            .map(
+                agencyId ->
+                    new ConsultantAgency(
+                        agencyId, CONSULTANT, agencyId, nowInUtc(), nowInUtc(), null, 1L, null))
+            .toList();
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(activeConsultantAgencies);
+    when(agencyService.getAgenciesNotCached(agencyIds))
+        .thenThrow(new RuntimeException("Unavailable"));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(7L, 8L));
+    var firstAgencyConsultingType = agencyConsultingType(1L, 4);
+    var secondAgencyConsultingType = agencyConsultingType(2L, 5);
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.copyOf(agencyIds)))
+        .thenReturn(List.of(firstAgencyConsultingType, secondAgencyConsultingType));
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 9);
+
+    var resultAgencies = consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+    assertEquals(agencyIds, resultAgencies.stream().map(AgencyDTO::getId).toList());
+    assertEquals(
+        List.of(4, 5, 9), resultAgencies.stream().map(AgencyDTO::getConsultingType).toList());
+    assertTrue(
+        resultAgencies.stream().allMatch(agency -> agency.getTopicIds().equals(List.of(7L, 8L))));
+    verify(agencyService, times(1)).getAgenciesNotCached(agencyIds);
+    verify(agencyService, Mockito.never()).getAgencyWithoutCaching(any());
+    verify(sessionRepository, times(1))
+        .findLowestConsultingTypeIdsByAgencyIds(Set.copyOf(agencyIds));
+    verify(consultantTopicRepository, times(1)).findTopicIdsByConsultantId("valid");
+  }
+
+  private SessionRepository.AgencyConsultingTypeProjection agencyConsultingType(
+      Long agencyId, Integer consultingTypeId) {
+    var projection = Mockito.mock(SessionRepository.AgencyConsultingTypeProjection.class);
+    when(projection.getAgencyId()).thenReturn(agencyId);
+    when(projection.getConsultingTypeId()).thenReturn(consultingTypeId);
+    return projection;
   }
 
   private static List<ConsultantAgency> givenConsultantAgenciesWithDeletionDateNull() {

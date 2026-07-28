@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_AGENC
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.EMAIL;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_DECODED;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME_ENCODED;
@@ -61,17 +60,6 @@ class ConsultantServiceTest {
         .thenReturn(Optional.of(CONSULTANT));
 
     var result = consultantService.getConsultant(CONSULTANT_ID);
-
-    assertTrue(result.isPresent());
-    assertEquals(CONSULTANT, result.get());
-  }
-
-  @Test
-  void getConsultantByRcUserId_Should_ReturnConsultantWhenFound() {
-    when(consultantRepository.findByRocketChatIdAndDeleteDateIsNull(RC_USER_ID))
-        .thenReturn(Optional.of(CONSULTANT));
-
-    var result = consultantService.getConsultantByRcUserId(RC_USER_ID);
 
     assertTrue(result.isPresent());
     assertEquals(CONSULTANT, result.get());
