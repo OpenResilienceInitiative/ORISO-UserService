@@ -185,15 +185,30 @@
       "integration": 940,
       "primaryTotal": 4722
     },
-    "matrixOnlyCurrent": {
+    "matrixOnlyCutover": {
       "unit": 3373,
       "integration": 840,
       "primaryTotal": 4213
     },
-    "matrixOnlyDelta": {
+    "matrixOnlyCutoverDelta": {
       "unit": -409,
       "integration": -100,
       "primaryTotal": -509
+    },
+    "verifiedCurrent": {
+      "verifiedApplicationHead": "7255db9b562c208758e5f4a359708baaf3fc043e",
+      "unit": 3412,
+      "integration": 852,
+      "primaryTotal": 4264,
+      "githubEvidence": [
+        "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400295213/job/90413180351",
+        "https://github.com/OpenResilienceInitiative/ORISO-UserService/actions/runs/30400298789/job/90413191373"
+      ]
+    },
+    "sinceCutoverDelta": {
+      "unit": 39,
+      "integration": 12,
+      "primaryTotal": 51
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -202,15 +217,18 @@
       "addedJUnitTestClasses": 29,
       "deletedLegacyNamedClasses": 33
     },
-    "note": "Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
+    "note": "matrixOnlyCutover preserves the first post-cutover inventory. verifiedCurrent is the exact application-head inventory confirmed by the linked GitHub jobs. Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "integrationReports": 78,
-    "integrationTests": 840,
+    "unitTests": 3412,
+    "unitSkipped": 0,
+    "integrationReports": 82,
+    "integrationTests": 852,
+    "integrationSkipped": 9,
     "failures": 0,
     "errors": 0,
-    "skipped": 2,
+    "skipped": 9,
     "quarantine": false,
     "additionalRequiredContracts": [
       "fresh MariaDB schema and statistics contracts",

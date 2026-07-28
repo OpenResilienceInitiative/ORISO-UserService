@@ -37,6 +37,10 @@ runs:
               print(f"- {report}: failures={failures}, errors={errors}")
           sys.exit(1)
       PY
+      python3 scripts/ci/verify-test-inventory.py \
+        --suite unit \
+        --reports target/surefire-reports \
+        --classification documentation/user-service-historical-failure-classification.json
 
   - name: Verify CI and load-test contracts
     shell: bash

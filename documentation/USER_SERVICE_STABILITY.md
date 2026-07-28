@@ -27,25 +27,25 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,438 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 850 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
+| Unit | 3,412 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 852 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,438 unit plus 850
-integration executions, or 4,288.
+comparable primary current inventory is therefore 3,412 unit plus 852
+integration executions, or 4,264.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
 inventory to a recorded 4,213: 409 fewer unit and 100 fewer integration
-executions. Subsequent stability and boundary work raised the current inventory
-to 4,288 without restoring removed legacy paths. The source diff for the
-pre-cutover-to-cutover interval
-deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
+executions. Subsequent stability and boundary work raised the exact verified
+application-head inventory to 4,264 without restoring removed legacy paths. The
+source diff for the pre-cutover-to-cutover interval deletes 40 obsolete test
+classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
@@ -59,15 +59,18 @@ CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
 `scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 830 executed tests and
-checks for critical E2E reports.
+suite, starts from a clean build, preserves the 830-test safety floor, checks
+for critical E2E reports and finally requires the exact versioned inventory of
+852 executions in 82 reports. The unit workflow applies the same exact-count
+gate to all 3,412 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
 deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
 that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
 floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
-disabled or ignored tests. The two environment-gated cases are not quarantined:
+disabled or ignored tests. The six environment-gated suites account for nine
+skipped executions in the generic integration job; they are not quarantined.
 Redis and MariaDB have their own required service-container/fresh-database jobs
 on branch, pull-request and publish workflows.
 
@@ -86,16 +89,28 @@ changesets and passes Hibernate validation.
 
 ## Dependency and call measurements
 
-The source inventory contains 13 generated API-controller factories, six
-client/configuration helpers and 71 direct `RestTemplate` call sites. The
-runtime dependency set is:
+The executable
+[`user-service-outbound-dependencies.json`](user-service-outbound-dependencies.json)
+catalog maps all 11 generated API-controller factories to their configured
+dependency and also records every custom HTTP transport construction site.
+CI compares that catalog with the production source tree, so adding, removing
+or renaming a generated client cannot silently make this inventory stale.
+Six additional client/configuration helpers sit behind the generated factories.
+Runtime call frequency is measured from metrics and load evidence rather than
+being inferred from a fragile count of source expressions. The runtime
+dependency set is:
 
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
 | Chat | Matrix only | HTTP long-poll + HTTP |
-| ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
+| ORISO services | Agency/Agency Admin, Tenant/Tenant Admin, Consulting Type/Topic/Application Settings, Appointment and Mail | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
+
+Rocket.Chat, Jitsi, the former LiveService transport and the former
+MessageService client are explicitly absent runtime dependencies in the
+catalog. The UserService therefore has no hidden chat or video fallback outside
+Matrix.
 
 All `RestTemplateBuilder` clients now emit:
 
@@ -243,8 +258,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -335,11 +350,11 @@ dependencies.
 
 Decision: keep UserService as a modular monolith for now.
 
-The suite demonstrates extensive shared transactional behavior and the service
-already coordinates at least ten synchronous service boundaries. Splitting a
-module before runtime measurements would add more network calls, partial-failure
-states and contract deployment sequencing while the current internal ports
-already provide the needed seam.
+The suite demonstrates extensive shared transactional behavior and the
+executable dependency catalog already records several synchronous service and
+identity boundaries. Splitting a module before runtime measurements would add
+more network calls, partial-failure states and contract deployment sequencing
+while the current internal ports already provide the needed seam.
 
 Reconsider extraction only when PreDev telemetry supplies all of:
 

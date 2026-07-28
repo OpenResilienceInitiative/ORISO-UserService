@@ -63,29 +63,59 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
     def test_current_matrix_only_inventory_is_reconciled(self):
         reconciliation = self.classification["inventoryReconciliation"]
         repaired = reconciliation["repairedPreCutover"]
-        current = reconciliation["matrixOnlyCurrent"]
-        delta = reconciliation["matrixOnlyDelta"]
+        self.assertIn("matrixOnlyCutover", reconciliation)
+        self.assertIn("matrixOnlyCutoverDelta", reconciliation)
+        self.assertIn("verifiedCurrent", reconciliation)
+        self.assertIn("sinceCutoverDelta", reconciliation)
+        cutover = reconciliation["matrixOnlyCutover"]
+        cutover_delta = reconciliation["matrixOnlyCutoverDelta"]
+        current = reconciliation["verifiedCurrent"]
+        current_delta = reconciliation["sinceCutoverDelta"]
 
         self.assertEqual(
             repaired["unit"] + repaired["integration"],
             repaired["primaryTotal"],
         )
         self.assertEqual(
+            cutover["unit"] + cutover["integration"],
+            cutover["primaryTotal"],
+        )
+        self.assertEqual(
+            cutover["unit"] - repaired["unit"],
+            cutover_delta["unit"],
+        )
+        self.assertEqual(
+            cutover["integration"] - repaired["integration"],
+            cutover_delta["integration"],
+        )
+        self.assertEqual(
+            cutover["primaryTotal"] - repaired["primaryTotal"],
+            cutover_delta["primaryTotal"],
+        )
+        self.assertEqual(
             current["unit"] + current["integration"],
             current["primaryTotal"],
         )
         self.assertEqual(
-            current["unit"] - repaired["unit"],
-            delta["unit"],
+            current["unit"] - cutover["unit"],
+            current_delta["unit"],
         )
         self.assertEqual(
-            current["integration"] - repaired["integration"],
-            delta["integration"],
+            current["integration"] - cutover["integration"],
+            current_delta["integration"],
         )
         self.assertEqual(
-            current["primaryTotal"] - repaired["primaryTotal"],
-            delta["primaryTotal"],
+            current["primaryTotal"] - cutover["primaryTotal"],
+            current_delta["primaryTotal"],
         )
+        required_suite = self.classification["currentRequiredSuite"]
+        self.assertEqual(required_suite["unitTests"], current["unit"])
+        self.assertEqual(required_suite["integrationTests"], current["integration"])
+        self.assertEqual(
+            "7255db9b562c208758e5f4a359708baaf3fc043e",
+            current["verifiedApplicationHead"],
+        )
+        self.assertEqual(2, len(current["githubEvidence"]))
         self.assertEqual(40, reconciliation["sourceDiff"]["deletedJUnitTestClasses"])
         self.assertEqual(29, reconciliation["sourceDiff"]["addedJUnitTestClasses"])
         self.assertEqual(
@@ -100,11 +130,12 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertGreaterEqual(current["integrationReports"], 75)
-        self.assertGreaterEqual(current["integrationTests"], 830)
+        self.assertEqual(3412, current.get("unitTests"))
+        self.assertEqual(82, current["integrationReports"])
+        self.assertEqual(852, current["integrationTests"])
         self.assertEqual(0, current["failures"])
         self.assertEqual(0, current["errors"])
-        self.assertEqual(2, current["skipped"])
+        self.assertEqual(9, current["skipped"])
         self.assertFalse(current["quarantine"])
 
     def test_stability_document_links_the_counted_classification(self):
