@@ -371,3 +371,25 @@ read scenario for application-path evidence. The
 aggregate local health group was `DOWN` because the developer RabbitMQ instance
 did not accept the testing profile's credentials; liveness and readiness were
 both `UP`, and the dedicated Redis contract passed independently.
+
+Local authenticated-write proof refreshed on 2026-07-28 used two real
+UserService JVMs,
+one disposable MariaDB 11.0.6 database, shared Redis and a locally signed
+consultant JWT verified through a disposable JWK endpoint. Eighty concurrent
+tutorial-progress PUTs alternated over both replicas, followed by a read from
+each replica: 0 failures, 41.76 ms aggregate p95 and exactly one canonical
+database row. After restarting one replica and initializing its authenticated
+path on the isolated warm-up scope, 12 further writes and both cross-replica
+reads completed with 0 failures and 19.22 ms p95. The runner applies the same
+zero-error and 1,000 ms p95 bound per operation and per replica. Startup
+liveness and authenticated-path initialization are deliberately separated from
+the measured state-transition latency.
+MariaDB's native upsert protects one versioned scope. A database advisory lock,
+whose name hashes the user identifier, serializes only first writes for a user
+so concurrent replicas cannot exceed the per-user row cap while creating
+different scopes. Existing-scope writes do not acquire that lock. Real MariaDB
+contracts prove both the cross-replica same-scope race and the different-scope
+row-cap race, including lock release after a rejected write.
+It introduces no Rocket.Chat or Jitsi configuration or dependency. This is a
+bounded authenticated state-transition and restart proof for one slice, not
+deployed PreDev or whole-service multi-replica evidence.
