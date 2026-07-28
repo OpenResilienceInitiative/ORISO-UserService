@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -31,7 +32,12 @@ public class UpdateAdminServiceIT {
 
   @Autowired private UpdateAdminService updateAdminService;
 
-  @MockitoBean(extraInterfaces = {IdentityEmailOwnerLookup.class, IdentityRoleLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAuthentication.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityRoleLookup.class
+      })
   private IdentityClient identityClient;
 
   @Autowired private RetrieveAdminService retrieveAdminService;
