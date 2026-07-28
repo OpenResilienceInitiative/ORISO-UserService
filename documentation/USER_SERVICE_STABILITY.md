@@ -89,7 +89,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; remaining Rocket.Chat compatibility code is removal debt, not a supported target mode | HTTP long-poll + HTTP; temporary legacy MongoDB boundary |
+| Chat | Matrix only | HTTP long-poll + HTTP |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -171,10 +171,9 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- Matrix-only deployments do not call Rocket.Chat for account or availability
-  reads and do not create its MongoDB client or credential job. Any remaining
-  Rocket.Chat compatibility code is temporary removal debt; the target
-  architecture has no Rocket.Chat or Jitsi runtime, fallback or deployment.
+- Account and availability reads no longer call Rocket.Chat. The Matrix-only
+  runtime has no Rocket.Chat adapter, MongoDB client or credential job. The
+  target architecture also has no Jitsi runtime, fallback or deployment.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
