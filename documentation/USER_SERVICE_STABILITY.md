@@ -55,7 +55,7 @@ runtime dependency set is:
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
-| Chat | Matrix; Rocket.Chat only when explicitly enabled | HTTP long-poll + HTTP; optional MongoDB |
+| Chat | Matrix | HTTP long-poll + HTTP |
 | ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
 
@@ -137,9 +137,8 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- With the default `rocket-chat.enabled=false`, account and availability reads
-  no longer call Rocket.Chat. Matrix-only deployments also do not create the
-  Rocket.Chat MongoDB client or credential job.
+- Account and availability reads no longer call Rocket.Chat. The Matrix-only
+  runtime has no Rocket.Chat adapter, MongoDB client or credential job.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - Appointment deletion uses one conditional database `DELETE` and its affected
