@@ -583,9 +583,9 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Assign a chat, resolved using its Matrix room ID.
+   * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
-   * @param matrixRoomId Matrix room ID (required)
+   * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override

@@ -180,6 +180,23 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
+        source = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/ConsultantAgencyService.java"
+        ).read_text()
+
+        self.assertNotIn(
+            "agencyService.getAgencyWithoutCaching(",
+            source,
+            "A failed agency batch must not trigger one outbound retry per agency",
+        )
+        self.assertNotIn(
+            "findDistinctConsultingTypeIdsByAgencyId(",
+            source,
+            "Fallback consulting types must be loaded in one local batch query",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

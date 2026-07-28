@@ -10,8 +10,8 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -56,7 +56,7 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
 
     verify(this.liveEventNotificationService, times(1))
         .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getUser().getUserId()), FinishConversationPhaseEnum.IN_PROGRESS);
+            singletonList(session.getUser().getUserId()), FinishConversationPhase.IN_PROGRESS);
   }
 
   @Test
@@ -68,8 +68,7 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
 
     verify(this.liveEventNotificationService, times(1))
         .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getConsultant().getId()),
-            FinishConversationPhaseEnum.IN_PROGRESS);
+            singletonList(session.getConsultant().getId()), FinishConversationPhase.IN_PROGRESS);
   }
 
   @Test
@@ -81,7 +80,7 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
 
     verify(this.liveEventNotificationService, times(1))
         .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getUser().getUserId()), FinishConversationPhaseEnum.NEW);
+            singletonList(session.getUser().getUserId()), FinishConversationPhase.NEW);
   }
 
   @Test
@@ -95,6 +94,6 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
     verify(this.liveEventNotificationService, times(1))
         .sendLiveFinishedAnonymousConversationToUsers(
             List.of(session.getConsultant().getId(), session.getUser().getUserId()),
-            FinishConversationPhaseEnum.IN_PROGRESS);
+            FinishConversationPhase.IN_PROGRESS);
   }
 }

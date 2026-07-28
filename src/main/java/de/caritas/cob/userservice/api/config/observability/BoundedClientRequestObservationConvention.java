@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.config.observability;
 
 import io.micrometer.common.KeyValue;
+import java.net.URI;
+import java.util.Locale;
 import org.springframework.http.client.observation.ClientRequestObservationContext;
 import org.springframework.http.client.observation.DefaultClientRequestObservationConvention;
 
@@ -16,7 +18,9 @@ final class BoundedClientRequestObservationConvention
     extends DefaultClientRequestObservationConvention {
 
   private static final String URI_TAG = "uri";
+  private static final String HTTP_URL_TAG = "http.url";
   private static final String UNTEMPLATED = "untemplated";
+  private static final String RELATIVE_URI = "relative-uri";
 
   @Override
   protected KeyValue uri(ClientRequestObservationContext context) {
@@ -26,6 +30,26 @@ final class BoundedClientRequestObservationConvention
     }
 
     return KeyValue.of(URI_TAG, pathWithoutQuery(template));
+  }
+
+  @Override
+  protected KeyValue requestUri(ClientRequestObservationContext context) {
+    return KeyValue.of(HTTP_URL_TAG, dependencyOrigin(context.getCarrier().getURI()));
+  }
+
+  private String dependencyOrigin(URI uri) {
+    var scheme = uri.getScheme();
+    var host = uri.getHost();
+    if (scheme == null || host == null || scheme.isBlank() || host.isBlank()) {
+      return RELATIVE_URI;
+    }
+
+    var normalizedHost = host.toLowerCase(Locale.ROOT);
+    if (normalizedHost.contains(":")) {
+      normalizedHost = "[" + normalizedHost + "]";
+    }
+    var port = uri.getPort() < 0 ? "" : ":" + uri.getPort();
+    return scheme.toLowerCase(Locale.ROOT) + "://" + normalizedHost + port;
   }
 
   private String pathWithoutQuery(String template) {
