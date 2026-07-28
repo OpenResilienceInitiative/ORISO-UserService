@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -63,7 +64,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService implements IdentityClient, IdentityRoleLookup {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -852,7 +853,7 @@ public class KeycloakService implements IdentityClient {
    * @return the realm role names assigned to the user
    */
   @Override
-  public List<String> getRealmRoles(String userId) {
+  public List<String> findAllByUserId(String userId) {
     try {
       return getUserRoles(userId).stream()
           .map(RoleRepresentation::getName)

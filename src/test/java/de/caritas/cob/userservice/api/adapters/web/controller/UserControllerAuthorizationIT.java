@@ -74,6 +74,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -155,7 +156,10 @@ class UserControllerAuthorizationIT {
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
   @MockitoBean private ConsultantImportService consultantImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(extraInterfaces = IdentityRoleLookup.class)
+  private IdentityClient identityClient;
+
   @MockitoBean private IdentityManager identityManager;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;
