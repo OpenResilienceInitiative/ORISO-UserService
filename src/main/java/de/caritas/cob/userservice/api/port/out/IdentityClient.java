@@ -4,10 +4,8 @@ import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserRe
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.keycloak.representations.idm.UserRepresentation;
 
 public interface IdentityClient {
@@ -25,16 +23,6 @@ public interface IdentityClient {
   void changeEmailAddress(final String username, final String emailAddress);
 
   void deleteEmailAddress();
-
-  OtpInfoDTO getOtpCredential(final String userName);
-
-  boolean setUpOtpCredential(final String userName, final String initialCode, final String secret);
-
-  void deleteOtpCredential(final String userName);
-
-  Optional<String> initiateEmailVerification(final String username, final String email);
-
-  Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
   Map<String, String> findUserByEmail(String email);
 
