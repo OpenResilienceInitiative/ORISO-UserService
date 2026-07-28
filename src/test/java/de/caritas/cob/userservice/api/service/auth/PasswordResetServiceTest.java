@@ -380,6 +380,24 @@ class PasswordResetServiceTest {
     assertThat(sentMails).isEmpty();
   }
 
+  // Password reset is unauthenticated and dispatched off the request thread, so no user token
+  // exists and the super-admin-guarded credentials endpoint is unreachable. Operator-provided
+  // SMTP credentials (env SMTP_USER / SMTP_PASSWORD) must therefore be enough on their own.
+  @Test
+  void requestPasswordReset_Should_SendMail_When_CredentialsComeFromOperatorConfiguration() {
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpUsername", "env-user");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpPassword", "env-pass");
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).hasSize(1);
+    verify(applicationSettingsService, never()).getGlobalSmtpCredentials();
+  }
+
   private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
     return Map.of(
         "globalFeatureSystemNotificationEmailsEnabled",

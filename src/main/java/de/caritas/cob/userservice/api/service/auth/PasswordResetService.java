@@ -112,6 +112,17 @@ public class PasswordResetService {
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
 
+  /**
+   * Operator-provided SMTP credentials. Password reset is unauthenticated and dispatched off the
+   * request thread, so there is no user token and the super-admin-guarded credentials endpoint is
+   * unreachable; these are the primary source.
+   */
+  @Value("${smtp.user:}")
+  private String configuredSmtpUsername;
+
+  @Value("${smtp.password:}")
+  private String configuredSmtpPassword;
+
   @PostConstruct
   void logFeatureAvailability() {
     if (isBlank(passwordResetFrontendBaseUrl)) {
@@ -441,16 +452,22 @@ public class PasswordResetService {
       }
 
       // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they must come from the authenticated settings endpoint.
-      var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-      if (credentials.isEmpty()) {
-        log.warn(
-            "Password reset email not sent: global SMTP credentials are unavailable. "
-                + "Set the SMTP username and password in the platform settings.");
-        return Optional.empty();
+      // CTS-C01 credential-leak fix, so they can never be read from there.
+      String username = configuredSmtpUsername;
+      String password = configuredSmtpPassword;
+      if (isBlank(username) || isBlank(password)) {
+        // Fallback for callers that do run inside an authenticated super-admin request.
+        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+        if (credentials.isEmpty()) {
+          log.warn(
+              "Password reset email not sent: no SMTP credentials available. Set SMTP_USER and "
+                  + "SMTP_PASSWORD on UserService (the platform-settings credentials are only "
+                  + "readable by a super-admin token, which this unauthenticated flow never has).");
+          return Optional.empty();
+        }
+        username = credentials.get().getGlobalSmtpUsername();
+        password = credentials.get().getGlobalSmtpPassword();
       }
-      String username = credentials.get().getGlobalSmtpUsername();
-      String password = credentials.get().getGlobalSmtpPassword();
 
       return Optional.of(
           new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));

@@ -77,6 +77,13 @@ public class MagicLinkLoginService {
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
 
+  /** Operator-provided SMTP credentials; see {@link PasswordResetService}. */
+  @Value("${smtp.user:}")
+  private String configuredSmtpUsername;
+
+  @Value("${smtp.password:}")
+  private String configuredSmtpPassword;
+
   public MagicLinkRequestResult requestMagicLink(String usernameInput) {
     if (isBlank(usernameInput)) {
       return MagicLinkRequestResult.ACCEPTED;
@@ -341,16 +348,20 @@ public class MagicLinkLoginService {
       }
 
       // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they must come from the authenticated settings endpoint.
-      var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-      if (credentials.isEmpty()) {
-        log.warn(
-            "Magic link email not sent: global SMTP credentials are unavailable. "
-                + "Set the SMTP username and password in the platform settings.");
-        return Optional.empty();
+      // CTS-C01 credential-leak fix, so they can never be read from there.
+      String username = configuredSmtpUsername;
+      String password = configuredSmtpPassword;
+      if (isBlank(username) || isBlank(password)) {
+        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+        if (credentials.isEmpty()) {
+          log.warn(
+              "Magic link email not sent: no SMTP credentials available. Set SMTP_USER and "
+                  + "SMTP_PASSWORD on UserService.");
+          return Optional.empty();
+        }
+        username = credentials.get().getGlobalSmtpUsername();
+        password = credentials.get().getGlobalSmtpPassword();
       }
-      String username = credentials.get().getGlobalSmtpUsername();
-      String password = credentials.get().getGlobalSmtpPassword();
 
       return Optional.of(
           new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));
