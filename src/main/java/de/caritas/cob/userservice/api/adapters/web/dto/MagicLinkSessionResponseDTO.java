@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 
 /** Public magic-link consume response preserving the existing token JSON contract. */
 public record MagicLinkSessionResponseDTO(

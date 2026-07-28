@@ -116,6 +116,25 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_magic_link_web_response_does_not_depend_on_output_port_models(self):
+        response_dto = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/web/dto/"
+            "MagicLinkSessionResponseDTO.java"
+        )
+        offenders = [
+            line
+            for line in response_dto.read_text().splitlines()
+            if line.startswith("import de.caritas.cob.userservice.api.port.out.")
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The magic-link web response must map an application/domain model, "
+            "not expose the outbound-port package:\n" + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (

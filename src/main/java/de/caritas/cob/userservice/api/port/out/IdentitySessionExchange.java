@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import java.util.Optional;
 
 /** Exchanges a trusted identity subject for an authenticated provider-neutral session. */

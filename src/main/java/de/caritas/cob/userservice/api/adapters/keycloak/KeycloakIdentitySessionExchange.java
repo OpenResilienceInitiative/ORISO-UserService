@@ -3,9 +3,9 @@ package de.caritas.cob.userservice.api.adapters.keycloak;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import java.util.Map;
 import java.util.Optional;
 import lombok.NonNull;
