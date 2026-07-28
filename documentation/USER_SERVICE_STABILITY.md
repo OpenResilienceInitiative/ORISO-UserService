@@ -182,10 +182,9 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- Account and availability reads no longer call Rocket.Chat. The Matrix-only
-  runtime has no Rocket.Chat adapter, MongoDB client or credential job. The
-  seeded load proof carries no Rocket.Chat configuration or dependency, and the
-  target architecture has no Jitsi runtime, fallback or deployment.
+- The Matrix-only cutover physically removed the Rocket.Chat adapter, credential
+  provider, MongoDB client and scheduler. Negative architecture contracts
+  prevent those production paths from returning.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - When the consultant-agency batch read is empty or fails, the local fallback
@@ -237,7 +236,7 @@ whole codebase as modular:
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
 from reverting to concrete application/chat services and prevents the
-`service.session` application package from importing Matrix adapters. It also
+`service.session` application package from importing concrete Matrix adapters. It also
 prevents the Identity/Profile packages and the Admin module from importing
 their protected concrete chat adapters. The separate removal contract prevents
 Rocket.Chat production packages, configuration, DTOs and schema fields from
