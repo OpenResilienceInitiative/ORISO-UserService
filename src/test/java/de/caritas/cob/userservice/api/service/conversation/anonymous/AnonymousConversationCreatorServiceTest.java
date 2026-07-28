@@ -25,7 +25,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -47,7 +46,6 @@ class AnonymousConversationCreatorServiceTest {
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantAgencyService consultantAgencyService;
-  @Mock private LiveEventNotificationService liveEventNotificationService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
 
@@ -78,8 +76,6 @@ class AnonymousConversationCreatorServiceTest {
     assertThat(created.getConversationType()).isEqualTo(ConversationType.LIVE_CHAT);
     assertThat(created.getMatrixRoomId()).isNull();
     verify(sessionService).saveSession(session);
-    verify(liveEventNotificationService)
-        .sendLiveNewAnonymousEnquiryEventToUsers(List.of("consultant-id"), session.getId());
     verify(eventNotificationService)
         .createWaitingRoomClientJoinedNotifications(session, List.of("consultant-id"));
   }
@@ -113,6 +109,6 @@ class AnonymousConversationCreatorServiceTest {
 
     verify(rollbackFacade).rollBackUserAccount(any());
     verify(sessionService, never()).saveSession(any());
-    verifyNoInteractions(liveEventNotificationService, eventNotificationService);
+    verifyNoInteractions(eventNotificationService);
   }
 }

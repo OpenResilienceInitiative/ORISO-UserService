@@ -6,7 +6,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -25,8 +25,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * Service to listen to Matrix events and trigger LiveService notifications. Uses Matrix /sync
- * endpoint for real-time event detection.
+ * Service to listen to Matrix events and trigger notifications. Uses the Matrix /sync endpoint for
+ * real-time event detection.
  */
 @Slf4j
 @Service
@@ -35,7 +35,7 @@ public class MatrixEventListenerService {
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull MobilePushNotificationService mobilePushNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
   private final @NonNull UserRepository userRepository;
@@ -410,7 +410,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Process a single Matrix event and trigger appropriate LiveService notifications.
+   * Process a single Matrix event and trigger the appropriate notifications.
    *
    * @param roomId the Matrix room ID
    * @param event the Matrix event
@@ -455,7 +455,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Handle m.room.message event - trigger directMessage live event.
+   * Handle an m.room.message event.
    *
    * @param roomId the Matrix room ID
    * @param event the message event
@@ -497,30 +497,27 @@ public class MatrixEventListenerService {
       return;
     }
 
-    // Trigger LiveService directMessage event for all users except sender
+    // Notify all room participants except the sender.
     List<String> recipientIds =
         userIds.stream()
             .filter(userId -> senderDomainUserId == null || !userId.equals(senderDomainUserId))
             .collect(java.util.stream.Collectors.toList());
 
     if (!recipientIds.isEmpty()) {
-      log.info("🔔 Triggering LiveService directMessage event for {} users", recipientIds.size());
+      log.info("🔔 Triggering direct-message notification for {} users", recipientIds.size());
 
-      // Use existing LiveService notification service
-      // Note: We need to convert Matrix room ID to session/group ID
       Long mappedSessionId = roomToSessionMap.get(roomId);
       if (mappedSessionId != null) {
-        // Trigger notification asynchronously to not block sync loop
+        // Notify asynchronously so the Matrix sync loop is not blocked.
         executorService.submit(
             () -> {
-              // The live STOMP push is best-effort; the persisted feed entry is the
-              // source of truth for the notification timeline. Isolate the failure
-              // domains so a live-send problem cannot swallow the notification row.
               try {
-                liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
+                mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
               } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
+                log.error("❌ Failed to send mobile push notification", e);
               }
+              // The persisted feed entry is the source of truth for the notification timeline.
+              // Isolate the failure domains so a push failure cannot swallow the notification row.
               try {
                 if (threadRootId != null && !threadRootId.isBlank()) {
                   eventNotificationService.createThreadReplyNotificationFromRoom(
@@ -726,7 +723,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Handle m.call.invite event - trigger videoCallRequest live event.
+   * Handle an m.call.invite event.
    *
    * @param roomId the Matrix room ID
    * @param event the call invite event
@@ -762,13 +759,7 @@ public class MatrixEventListenerService {
             .collect(java.util.stream.Collectors.toList());
 
     if (!recipientIds.isEmpty()) {
-      log.info(
-          "🔔 Triggering LiveService videoCallRequest event for {} users", recipientIds.size());
-
-      // TODO: Implement videoCallRequest event trigger
-      // This requires extending LiveEventNotificationService to support call events
-      // For now, we'll log it
-      log.warn("⚠️ videoCallRequest live event not yet implemented");
+      log.info("🔔 Matrix call invite received for {} users", recipientIds.size());
     }
   }
 
@@ -781,7 +772,7 @@ public class MatrixEventListenerService {
   private void handleCallAnswer(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call answered in room {} by {}", roomId, senderId);
-    // Can trigger additional live events if needed
+    // Additional call-state handling can be added here if needed.
   }
 
   /**
@@ -793,6 +784,6 @@ public class MatrixEventListenerService {
   private void handleCallHangup(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call ended in room {} by {}", roomId, senderId);
-    // Can trigger additional live events if needed
+    // Additional call-state handling can be added here if needed.
   }
 }

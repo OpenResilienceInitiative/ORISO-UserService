@@ -39,7 +39,6 @@ import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -76,7 +75,6 @@ class AssignEnquiryFacadeTest {
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
-  @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
@@ -222,6 +220,9 @@ class AssignEnquiryFacadeTest {
     verifyConsultantAndSessionHaveBeenChecked(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------
