@@ -12,4 +12,6 @@ public interface UserChatRepository extends CrudRepository<UserChat, Long> {
   Optional<UserChat> findByChatAndUser(Chat chat, User user);
 
   List<UserChat> findByChat(Chat chat);
+
+  List<UserChat> findByUser(User user);
 }
