@@ -441,19 +441,20 @@ can be overridden with
 Cleanup removes both JVMs, the dependency containers, the AgencyService stub,
 and the temporary run directory.
 
-Local two-replica proof on 2026-07-27:
+Local two-replica proof on exact integration head
+`7255db9b562c208758e5f4a359708baaf3fc043e` on 2026-07-28:
 
 | Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Replica one | 700 | 0 | 274,800 | 44.79 ms | 81.29 ms | 183.89 ms |
-| Replica two | 700 | 0 | 206,200 | 30.01 ms | 56.67 ms | 218.61 ms |
-| **Overall** | **1,400** | **0** | **481,000** | **37.40 ms** | **68.61 ms** | **218.61 ms** |
+| Replica one | 700 | 0 | 274,800 | 55.41 ms | 102.71 ms | 225.26 ms |
+| Replica two | 700 | 0 | 206,200 | 44.22 ms | 92.66 ms | 204.29 ms |
+| **Overall** | **1,400** | **0** | **481,000** | **49.82 ms** | **95.38 ms** | **225.26 ms** |
 
-The current rerun completed in 1.648 seconds at 849.42 requests/second. The
-slowest named operation was `consultant-profile-peer` at 82.23 ms p95; all six
+The exact-head rerun completed in 2.209 seconds at 633.63 requests/second. The
+slowest named operation was `consultant-profile-addiction` at 107.51 ms p95; all six
 operations had zero failures. The measured 900 consultant-profile reads caused
 exactly 900 AgencyService calls across both JVMs: 1.0 call per profile read,
-6.74 ms mean and 140.55 ms maximum outbound latency, with 260,000 response
+8.87 ms mean and 101.91 ms maximum outbound latency, with 260,000 response
 bytes in total, 288.89 bytes per call on average and 436 bytes maximum. Every
 successful call had a latency and payload measurement.
 

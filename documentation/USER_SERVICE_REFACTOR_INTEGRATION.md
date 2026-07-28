@@ -66,6 +66,12 @@ Executed on 2026-07-28 with Temurin JDK 21:
 - OpenAPI contract gate: 8 tests passed;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
+- local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
+  failures, 95.38 ms overall p95 and 633.63 requests/second;
+- dependency proof for those reads: 900 consultant-profile reads produced
+  exactly 900 AgencyService calls, 8.87 ms mean and 101.91 ms maximum outbound
+  latency, 288.89 response bytes per call on average, and no threshold
+  violations;
 - package build and Spotless: passed;
 - `git diff --check`: passed.
 
@@ -76,8 +82,11 @@ contracts cover the dependency-free `410 Gone` tombstone, Matrix-recipient
 push, durable timeline delivery and partial-failure isolation.
 
 The dedicated MariaDB and Redis service-container gates remain required in
-GitHub CI. A local database reset was not needed because the integration suite
-creates and cleans isolated test databases.
+GitHub CI. A local database reset was not needed because both the integration
+suite and the exact-head load proof create and clean isolated databases. The
+load runner also removed both JVMs, both disposable dependency containers and
+the AgencyService stub; its three local listening ports were free after the
+run.
 
 ## Problems addressed
 
