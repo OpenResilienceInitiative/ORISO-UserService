@@ -199,24 +199,29 @@ The pod audited on July 25 predates this branch. Its data proves the OTel
 pipeline and supplies a historical baseline, but it is not evidence for the
 current integration head.
 
-### Live PreDev deployment truth on 2026-07-28
+### Live PreDev deployment truth on 2026-07-28/29
 
-A fresh read-only cluster and SigNoz audit at 23:53 CEST separates current
-source from current runtime:
+Read-only cluster and SigNoz audits at 23:53 CEST and again at 00:09 CEST
+separate current source from current runtime:
 
 - `origin/pre-dev` remained
   `be15d12f6305f3370e626a0eec131293cceb5624`; integration PR #888 remained
   unmerged.
-- PreDev ran one ready UserService replica from
-  `docker.io/library/oriso-userservice:fe811-20260728`, resolved by the running
-  pod to image ID
-  `sha256:078e70966811aa1a7aef189a59d6be1c8f3c7d149aa1b0d86f43c234e33d8a04`.
-  The pod started at 21:31 CEST. This is not the integration PR image.
-- The current pod exported the bounded `userservice.outbound.*` metrics. Its
+- The first audit observed one ready UserService replica from the local
+  `fe811-20260728` image. Before the second audit the workload was republished
+  as the immutable GHCR image
+  `sha256:25d0ae8aabe3032b66dc37b1c128635c35ffe5086d1d8d1b41624c660960dea4`.
+  Its OCI revision label resolves exactly to the unchanged `pre-dev` commit
+  above, not the integration PR head. The replacement pod started at
+  00:01 CEST, was ready with zero restarts and ran as the only replica.
+- The first pod exported the bounded `userservice.outbound.*` metrics. Its
   cumulative counters contained 73 `live-service` POST attempts, all with
   `async_error`, 8.31 ms mean attempt latency and 138.08 measured request bytes
   per call. That is direct runtime proof that the dead LiveService path in
-  #901/#902 has not yet been deployed away.
+  #901/#902 has not yet been deployed away. The replacement baseline pod
+  produced 146 `LiveService`-matching log records after its restart, independently
+  confirming that the old path remains active; the log-record count is not
+  treated as an attempt counter.
 - Matrix, the MatrixRTC authorization/gateway components, Element Call and
   LiveKit were running. No Rocket.Chat pod or Jitsi workload was present.
 - The old `rocketchat` Service nevertheless remained with zero endpoints, and
