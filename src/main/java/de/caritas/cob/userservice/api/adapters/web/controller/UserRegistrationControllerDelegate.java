@@ -3,11 +3,11 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
@@ -86,9 +86,10 @@ class UserRegistrationControllerDelegate {
     return ResponseEntity.noContent().build();
   }
 
-  ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
+  ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
     return magicLinkLoginService
         .consumeMagicLink(consumeDTO.getToken())
+        .map(MagicLinkSessionResponseDTO::from)
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.badRequest().build());
   }

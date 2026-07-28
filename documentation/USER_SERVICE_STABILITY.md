@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Date: 2026-07-25
+Date: 2026-07-27
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -149,11 +149,10 @@ repair. Those require the branch image to be deployed and queried again.
 
 ## Chatty-call reductions
 
-- Rocket.Chat is a complete removal target, never a fallback. Until its legacy
-  code is deleted, the default `rocket-chat.enabled=false` prevents account and
-  availability reads from calling it and prevents creation of its MongoDB
-  client or credential job. Matrix remains the sole intended chat transport;
-  Jitsi is likewise not part of the target call stack.
+- Account and availability reads no longer call Rocket.Chat. The Matrix-only
+  runtime has no Rocket.Chat adapter, MongoDB client or credential job. The
+  seeded load proof carries no Rocket.Chat configuration or dependency, and the
+  target architecture has no Jitsi runtime, fallback or deployment.
 - Anonymous live-chat queue visibility is topic-only and therefore avoids an
   AgencyService lookup merely to resolve consulting-type visibility.
 - When the consultant-agency batch read is empty or fails, the local fallback
@@ -175,10 +174,11 @@ model.
 
 ## Internal module boundaries
 
-The target is Matrix-only. Rocket.Chat references below describe legacy code
-that remains to be deleted; they are not an approved fallback or target
-adapter. Video calling belongs to the ORISO-controlled Element Call/MatrixRTC
-fork with LiveKit, without Jitsi.
+The target is Matrix-only. The Rocket.Chat production adapter, configuration,
+DTOs and optional MongoDB access have been removed; retained names are limited
+to forward-only changelogs, removal contracts and historic evidence. Video
+calling belongs to the ORISO-controlled Element Call/MatrixRTC fork with
+LiveKit, without Jitsi.
 
 The intended dependency direction is:
 
@@ -188,7 +188,7 @@ flowchart LR
   IN[Input ports]
   APP[Managers, facades and workflows]
   OUT[Output ports]
-  ADAPTERS[Matrix, Keycloak, repositories, generated clients and legacy adapters]
+  ADAPTERS[Matrix, Keycloak, repositories and generated clients]
 
   HTTP --> IN --> APP --> OUT --> ADAPTERS
 ```
@@ -198,7 +198,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. | The older `IdentityClient` contract and magic-link token exchange still expose Keycloak transport types. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -211,10 +211,15 @@ Rocket.Chat production packages, configuration, DTOs and schema fields from
 returning. The appointment deletion repair stays behind `Organizing` and
 `AppointmentRepository`.
 
+A dedicated magic-link boundary contract prevents the application service and
+both web entry points from importing Keycloak transport types. It also prevents
+the public magic-link response DTO from depending on an outbound-port package.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source; the next sequence is identity/provisioning cleanup, then smaller Admin
-and Session orchestration boundaries. Each step must add a failing boundary
+source. The next safe sequence is the remaining identity create-user DTO
+decoupling, then the Admin controller composition boundary, then smaller
+Session orchestration boundaries. Each step must add a failing boundary
 contract before moving dependencies.
 
 ## Microservice decision
