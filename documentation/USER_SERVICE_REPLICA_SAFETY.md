@@ -28,11 +28,19 @@ state.
   count exceeds the supported maximum.
 - `userservice.replica.local_state` publishes one bounded gauge per catalogued
   local-state component with `component`, `owner`, `risk` and `status`.
+- `userservice.replica.local_state.components` and
+  `userservice.replica.local_state.risks` aggregate only the 17 local-state
+  entries; scheduled workflows are not double-counted as local state.
 - `userservice.scheduler.registered` publishes every catalogued scheduler,
   including jobs whose cron interval has not elapsed.
 - `userservice.scheduler.executions` counts completed executions by bounded
   task signature and `success` or `failure`.
 - `userservice.scheduler.duration` measures the corresponding duration.
+
+Scheduler registration, execution and duration use the same bounded
+`Class.method()` task signature. The CI contract verifies that each catalogued
+method is an actual `@Scheduled` method, so dashboards can join registration
+and execution without a handwritten name map.
 
 The metrics contain no user, tenant, room, message or credential values. The
 OpenTelemetry resource already supplies the service-instance identity, so

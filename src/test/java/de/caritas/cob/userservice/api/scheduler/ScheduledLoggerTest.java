@@ -24,7 +24,8 @@ class ScheduledLoggerTest {
   void shouldMeasureSuccessfulExecutionCountAndDuration() throws Throwable {
     var registry = new SimpleMeterRegistry();
     var logger = new ScheduledLogger(registry);
-    var joinPoint = joinPoint("EnquiryNotificationScheduler.performEnquiryNotifications()");
+    var joinPoint =
+        joinPoint("EnquiryNotificationScheduler.sendEmailNotificationsForOpenEnquiries()");
 
     logger.logMethod(joinPoint);
 
@@ -33,7 +34,7 @@ class ScheduledLoggerTest {
                 .get("userservice.scheduler.executions")
                 .tags(
                     "task",
-                    "EnquiryNotificationScheduler.performEnquiryNotifications()",
+                    "EnquiryNotificationScheduler.sendEmailNotificationsForOpenEnquiries()",
                     "outcome",
                     "success")
                 .counter()
@@ -44,7 +45,7 @@ class ScheduledLoggerTest {
                 .get("userservice.scheduler.duration")
                 .tags(
                     "task",
-                    "EnquiryNotificationScheduler.performEnquiryNotifications()",
+                    "EnquiryNotificationScheduler.sendEmailNotificationsForOpenEnquiries()",
                     "outcome",
                     "success")
                 .timer()
@@ -56,7 +57,7 @@ class ScheduledLoggerTest {
   void shouldPreserveFailuresAndMeasureTheirCountAndDuration() throws Throwable {
     var registry = new SimpleMeterRegistry();
     var logger = new ScheduledLogger(registry);
-    var joinPoint = joinPoint("DeleteUserAccountScheduler.performDeletion()");
+    var joinPoint = joinPoint("DeleteUserAccountScheduler.performDeletionWorkflow()");
     var failure = new IllegalStateException("dependency unavailable");
     when(joinPoint.proceed()).thenThrow(failure);
 
@@ -65,14 +66,22 @@ class ScheduledLoggerTest {
     assertThat(
             registry
                 .get("userservice.scheduler.executions")
-                .tags("task", "DeleteUserAccountScheduler.performDeletion()", "outcome", "failure")
+                .tags(
+                    "task",
+                    "DeleteUserAccountScheduler.performDeletionWorkflow()",
+                    "outcome",
+                    "failure")
                 .counter()
                 .count())
         .isEqualTo(1);
     assertThat(
             registry
                 .get("userservice.scheduler.duration")
-                .tags("task", "DeleteUserAccountScheduler.performDeletion()", "outcome", "failure")
+                .tags(
+                    "task",
+                    "DeleteUserAccountScheduler.performDeletionWorkflow()",
+                    "outcome",
+                    "failure")
                 .timer()
                 .count())
         .isEqualTo(1);

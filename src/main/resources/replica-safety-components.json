@@ -205,7 +205,7 @@
       "kind": "scheduler",
       "owner": "sessions-appointments",
       "risk": "duplicate-side-effect",
-      "components": ["deleteOldAppointments"],
+      "components": ["deleteObsoleteAppointments"],
       "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -216,7 +216,7 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["performEnquiryNotifications"],
+      "components": ["sendEmailNotificationsForOpenEnquiries"],
       "decision": "Lease execution and keep notification delivery idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -227,7 +227,7 @@
       "kind": "scheduler",
       "owner": "sessions-group-chat",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivation"],
+      "components": ["performDeactivationWorkflow"],
       "decision": "Prove Matrix and notification effects idempotent or add a lease.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -238,7 +238,7 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivation"],
+      "components": ["performDeactivationWorkflow"],
       "decision": "Lease execution and make every external side effect idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -249,7 +249,7 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["sendReminders"],
+      "components": ["publishUpcomingReminders"],
       "decision": "Deduplicate by reminder identity and prove concurrent execution.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -260,7 +260,7 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["sendNotifications"],
+      "components": ["notifyInactiveAccounts"],
       "decision": "Claim each dispatch durably and deduplicate replay.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -271,7 +271,7 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletion"],
+      "components": ["performDeletionWorkflow"],
       "decision": "Lease execution and make provider cleanup idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -282,7 +282,7 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletion"],
+      "components": ["performDeletionWorkflow"],
       "decision": "Lease execution and make provider cleanup idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
@@ -293,7 +293,7 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletion"],
+      "components": ["performDeletionWorkflow"],
       "decision": "Lease execution and make provider cleanup idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"

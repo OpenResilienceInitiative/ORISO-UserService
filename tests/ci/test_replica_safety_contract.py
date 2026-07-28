@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import re
+import tempfile
 import unittest
 
 
@@ -10,7 +12,7 @@ MAIN_JAVA = ROOT / "src/main/java"
 
 def source_has_annotation(source: Path, annotation: str) -> bool:
     return any(
-        line.lstrip().startswith(f"@{annotation}(")
+        source_has_annotation_text(line, annotation)
         for line in source.read_text().splitlines()
     )
 
@@ -22,10 +24,47 @@ def source_has_process_local_state(source: Path) -> bool:
         or "new java.util.concurrent.ConcurrentHashMap<" in text
         or "ConcurrentHashMap.newKeySet()" in text
         or source_has_annotation(source, "Cacheable")
-        or "private final AtomicReference<" in text
-        or "private ExecutorService " in text
+        or re.search(
+            r"(?m)^\s*(?:public|protected|private)\s+"
+            r"(?:(?:static|final|volatile|transient)\s+)*"
+            r"(?:java\.util\.concurrent\.atomic\.)?AtomicReference\s*<",
+            text,
+        )
+        is not None
+        or re.search(
+            r"(?m)^\s*(?:public|protected|private)\s+"
+            r"(?:(?:static|final|volatile|transient)\s+)*"
+            r"(?:java\.util\.concurrent\.)?ExecutorService\s+",
+            text,
+        )
+        is not None
         or "Caffeine.newBuilder" in text
     )
+
+
+def scheduled_methods(source: Path) -> set[str]:
+    methods = set()
+    scheduled = False
+    for line in source.read_text().splitlines():
+        if source_has_annotation_text(line, "Scheduled"):
+            scheduled = True
+            continue
+        if not scheduled or not line.strip() or line.lstrip().startswith("@"):
+            continue
+        declaration = re.search(
+            r"\b(?:public|protected|private)\s+"
+            r"(?:(?:static|final|synchronized)\s+)*"
+            r"[\w<>, ?\[\].]+\s+(\w+)\s*\(",
+            line,
+        )
+        if declaration:
+            methods.add(declaration.group(1))
+            scheduled = False
+    return methods
+
+
+def source_has_annotation_text(text: str, annotation: str) -> bool:
+    return re.search(rf"@{re.escape(annotation)}\b", text) is not None
 
 
 def load_catalog(test_case: unittest.TestCase) -> dict:
@@ -61,6 +100,11 @@ class ReplicaSafetyContractTest(unittest.TestCase):
 
         self.assertEqual(scheduled_sources, inventoried_sources)
         for entry in entries:
+            self.assertEqual(
+                scheduled_methods(ROOT / entry["source"]),
+                set(entry["components"]),
+                f"{entry['id']} must name every actual @Scheduled method exactly",
+            )
             self.assertTrue(entry["owner"])
             self.assertIn(
                 entry["risk"],
@@ -106,6 +150,35 @@ class ReplicaSafetyContractTest(unittest.TestCase):
         self.assertNotIn("rocket.chat", catalog_text)
         self.assertNotIn("rocketchat", catalog_text)
         self.assertNotIn("jitsi", catalog_text)
+
+
+class ReplicaSafetyDetectorTest(unittest.TestCase):
+    def test_annotation_detection_accepts_no_arguments_and_same_line_annotations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            no_arguments = Path(directory) / "NoArguments.java"
+            no_arguments.write_text("@Scheduled\npublic void run() {}\n")
+            same_line = Path(directory) / "SameLine.java"
+            same_line.write_text(
+                '@Profile("!testing") @Scheduled(cron = "0 * * * * *")\n'
+                "public void run() {}\n"
+            )
+
+            self.assertTrue(source_has_annotation(no_arguments, "Scheduled"))
+            self.assertTrue(source_has_annotation(same_line, "Scheduled"))
+
+    def test_local_state_detection_accepts_final_executor_and_non_final_atomic_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            final_executor = Path(directory) / "FinalExecutor.java"
+            final_executor.write_text(
+                "private final ExecutorService executorService;\n"
+            )
+            mutable_reference = Path(directory) / "MutableReference.java"
+            mutable_reference.write_text(
+                "private AtomicReference<String> currentState;\n"
+            )
+
+            self.assertTrue(source_has_process_local_state(final_executor))
+            self.assertTrue(source_has_process_local_state(mutable_reference))
 
 
 if __name__ == "__main__":

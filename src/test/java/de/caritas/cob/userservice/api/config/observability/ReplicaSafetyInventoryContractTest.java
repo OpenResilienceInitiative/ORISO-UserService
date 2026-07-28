@@ -82,6 +82,7 @@ class ReplicaSafetyInventoryContractTest {
               assertThat(component.get("decision")).asString().isNotBlank();
               assertThat((List<?>) component.get("components")).isNotEmpty();
               assertThat((List<?>) component.get("signals")).isNotEmpty();
+              assertThat(component.get("kind")).isIn("local-state", "scheduler");
               assertThat(component.get("risk"))
                   .isIn("performance", "correctness", "duplicate-side-effect");
               assertThat(component.get("status")).isIn("safe", "bounded", "blocker");

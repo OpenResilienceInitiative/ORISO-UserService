@@ -17,13 +17,22 @@ class ReplicaSafetyMetricsTest {
 
     assertThat(registry.get("userservice.replica.configured").gauge().value()).isEqualTo(2);
     assertThat(registry.get("userservice.replica.supported.max").gauge().value()).isEqualTo(1);
+    assertThat(registry.get("userservice.replica.constraint.violated").gauge().value())
+        .isEqualTo(1);
     assertThat(
             registry
                 .get("userservice.replica.local_state.components")
                 .tag("status", "blocker")
                 .gauge()
                 .value())
-        .isPositive();
+        .isEqualTo(9);
+    assertThat(
+            registry
+                .get("userservice.replica.local_state.risks")
+                .tag("risk", "duplicate-side-effect")
+                .gauge()
+                .value())
+        .isEqualTo(1);
     assertThat(
             registry
                 .get("userservice.replica.local_state")
@@ -44,7 +53,7 @@ class ReplicaSafetyMetricsTest {
                 .get("userservice.scheduler.registered")
                 .tags(
                     "task",
-                    "enquiry-notification-scheduler",
+                    "EnquiryNotificationScheduler.sendEmailNotificationsForOpenEnquiries()",
                     "owner",
                     "notifications",
                     "risk",
