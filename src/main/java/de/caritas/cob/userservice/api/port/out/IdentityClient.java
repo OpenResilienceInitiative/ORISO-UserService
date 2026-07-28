@@ -12,12 +12,6 @@ public interface IdentityClient {
 
   void changeLanguage(final String userId, final String language);
 
-  void changeEmailAddress(final String emailAddress);
-
-  void changeEmailAddress(final String username, final String emailAddress);
-
-  void deleteEmailAddress();
-
   KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
 
   KeycloakCreateUserResponseDTO createKeycloakUser(
@@ -40,8 +34,6 @@ public interface IdentityClient {
   void updateDummyEmail(String userId);
 
   void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
-
-  void updateEmail(String userId, String emailAddress);
 
   void rollBackUser(String userId);
 

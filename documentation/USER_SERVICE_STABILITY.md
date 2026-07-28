@@ -237,7 +237,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -300,6 +300,19 @@ through the focused port; the Keycloak adapter owns provider-specific decoding,
 while the verified email mutation continues to use the decoded username.
 External APIs, schemas and configuration remain unchanged, and this refactor
 does not reduce the number of second-factor provider calls. These are
+source-and-local-test guarantees until the branch is merged, deployed and
+verified on PreDev.
+
+A dedicated email-mutation contract prevents `IdentityManager` and
+`UserAccountService` from returning to the broad `IdentityClient` for account
+email writes. A changed current-account email performs one representation read,
+one availability search with an exact email match and one provider update. An
+unchanged email stops after the representation read with no availability search or update. Current
+account deletion follows the same focused path with the adapter-owned dummy
+email. A completed email verification performs one username lookup and at most
+one provider update; an unchanged verified email remains a no-op after that
+lookup. Lowercase normalization uses the locale-independent root locale.
+External APIs, schemas and configuration remain unchanged. These are
 source-and-local-test guarantees until the branch is merged, deployed and
 verified on PreDev.
 

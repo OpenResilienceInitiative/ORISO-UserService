@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -57,6 +58,7 @@ class CreateAdminServiceIT {
   @MockitoBean(
       extraInterfaces = {
         IdentityAuthentication.class,
+        IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class,

@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -30,6 +31,7 @@ class IdentityManagerTest {
   private static final String EMAIL = "consultant@example.org";
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentitySecondFactor identitySecondFactor;
@@ -58,7 +60,7 @@ class IdentityManagerTest {
         .isEqualTo(validationResult);
 
     verify(identitySecondFactor).finishEmailVerification(encodedUsername, "123456");
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
   }
 
   @Test
@@ -69,7 +71,7 @@ class IdentityManagerTest {
 
     identityManager.validateOneTimePassword(RAW_USERNAME, "123456");
 
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
   }
 
   @Test
