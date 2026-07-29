@@ -74,7 +74,7 @@ class InviteMailDispatchServiceTest {
   }
 
   private void givenNeutralBranding() {
-    when(emailBrandingResolver.resolve(any(), any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
   }
 
   @Test
@@ -128,9 +128,13 @@ class InviteMailDispatchServiceTest {
         .contains("https://app.oriso.org/account-invite/tok");
   }
 
-  /** The theme colour travels in the same settings payload the SMTP connection comes from. */
+  /**
+   * The mail palette follows the product colour rule only (#914, final decision): branding is
+   * resolved from the tenant, and the SMTP "E-Mail Designfarbe" is not part of the chain — even
+   * though it travels in the very settings payload the SMTP connection comes from.
+   */
   @Test
-  void send_Should_passGlobalEmailThemeColorToBrandingResolver() {
+  void send_Should_resolveBrandingFromTheTenantAndIgnoreTheSmtpThemeColor() {
     when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
     givenNeutralBranding();
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
@@ -138,7 +142,12 @@ class InviteMailDispatchServiceTest {
 
     service("u", "p").send("to@example.org", "s", "b", null, 42L, null);
 
-    verify(emailBrandingResolver).resolve(42L, "#f8e71c");
+    verify(emailBrandingResolver).resolve(42L);
+    ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+    verify(inviteMailTransport).send(any(), any(), any(), html.capture(), anyString());
+    assertThat(html.getValue())
+        .as("the SMTP theme colour #f8e71c must not reach the mail")
+        .doesNotContain("f8e71c");
   }
 
   @Test

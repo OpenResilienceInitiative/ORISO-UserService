@@ -19,15 +19,15 @@ public record EmailBranding(
   public EmailBranding {
     brandName = brandName == null || brandName.isBlank() ? "ORISO" : brandName.trim();
     accentColor =
-        accentColor == null ? EmailColors.DEFAULT_ACCENT : EmailColors.normalize(accentColor);
+        accentColor == null ? EmailColors.PLATFORM_ACCENT_DARK : EmailColors.normalize(accentColor);
     if (accentColor == null) {
-      accentColor = EmailColors.DEFAULT_ACCENT;
+      accentColor = EmailColors.PLATFORM_ACCENT_DARK;
     }
   }
 
   /** Neutral branding for tenants (and technical contexts) without any theming configured. */
   public static EmailBranding neutral() {
-    return new EmailBranding("ORISO", null, EmailColors.DEFAULT_ACCENT, null, null);
+    return new EmailBranding("ORISO", null, EmailColors.PLATFORM_ACCENT_DARK, null, null);
   }
 
   /** Foreground colour on the accent-filled call-to-action button — contrast-guarded. */

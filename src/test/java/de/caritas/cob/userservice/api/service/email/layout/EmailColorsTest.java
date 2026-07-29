@@ -33,8 +33,25 @@ class EmailColorsTest {
   }
 
   /**
-   * The real Pre-Dev value {@code globalSmtpEmailThemeColor = #f8e71c} is a light yellow: white
-   * button text on it would be unreadable, so the layout must flip to dark text.
+   * The platform fallback is the product's own dark accent {@code --oriso-app-accent-dark} (#914,
+   * final decision), and white text on it must clear AA — the layout paints the CTA label white on
+   * a deep tone, never a mid-tone on a mid-tone.
+   */
+  @Test
+  void platformAccent_Should_beTheProductDarkAccentAndCarryWhiteText() {
+    assertThat(EmailColors.PLATFORM_ACCENT_DARK).isEqualTo("#a5000a");
+    assertThat(EmailColors.readableTextColor(EmailColors.PLATFORM_ACCENT_DARK))
+        .isEqualTo(EmailColors.LIGHT_TEXT);
+    assertThat(EmailColors.contrastRatio(EmailColors.PLATFORM_ACCENT_DARK, EmailColors.LIGHT_TEXT))
+        .isGreaterThanOrEqualTo(4.5d);
+    assertThat(EmailColors.onLightBackground(EmailColors.PLATFORM_ACCENT_DARK))
+        .as("the product accent is already dark enough to be link text on the white card")
+        .isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+  }
+
+  /**
+   * A light tenant primary colour (the real Pre-Dev theme colour {@code #f8e71c} is a yellow) would
+   * render white button text unreadable, so the layout must flip to dark text.
    */
   @Test
   void readableTextColor_Should_returnDarkText_When_BackgroundIsLight() {
@@ -44,14 +61,14 @@ class EmailColorsTest {
 
   @Test
   void readableTextColor_Should_returnWhite_When_BackgroundIsDark() {
-    assertThat(EmailColors.readableTextColor("#0f3b8f")).isEqualTo(EmailColors.LIGHT_TEXT);
+    assertThat(EmailColors.readableTextColor("#a5000a")).isEqualTo(EmailColors.LIGHT_TEXT);
     assertThat(EmailColors.readableTextColor("#000000")).isEqualTo(EmailColors.LIGHT_TEXT);
   }
 
   @Test
   void readableTextColor_Should_alwaysReachAaContrast() {
     for (String accent :
-        new String[] {"#f8e71c", "#ffffff", "#0f3b8f", "#7f7f7f", "#00ff00", "#123456"}) {
+        new String[] {"#f8e71c", "#ffffff", "#a5000a", "#7f7f7f", "#00ff00", "#123456"}) {
       String text = EmailColors.readableTextColor(accent);
       assertThat(EmailColors.contrastRatio(accent, text))
           .as("contrast of %s on %s", text, accent)
@@ -69,7 +86,7 @@ class EmailColorsTest {
 
   @Test
   void onLightBackground_Should_keepAlreadyDarkAccentsUnchanged() {
-    assertThat(EmailColors.onLightBackground("#0f3b8f")).isEqualTo("#0f3b8f");
+    assertThat(EmailColors.onLightBackground("#a5000a")).isEqualTo("#a5000a");
   }
 
   @Test
@@ -80,7 +97,7 @@ class EmailColorsTest {
   /** A near-white accent would make the filled button vanish on the white card. */
   @Test
   void borderColor_Should_darkenNearWhiteAccentsOnly() {
-    assertThat(EmailColors.borderColor("#0f3b8f")).isEqualTo("#0f3b8f");
+    assertThat(EmailColors.borderColor("#a5000a")).isEqualTo("#a5000a");
     assertThat(EmailColors.borderColor("#fffdf5")).isNotEqualTo("#fffdf5");
   }
 

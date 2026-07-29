@@ -52,7 +52,7 @@ class EmailBrandingResolverTest {
     theming.setAssociationLogo("https://cdn.example.org/association.png");
     when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", theming));
 
-    EmailBranding branding = resolver("https://cdn.example.org/platform.png").resolve(7L, null);
+    EmailBranding branding = resolver("https://cdn.example.org/platform.png").resolve(7L);
 
     assertThat(branding.logoUrl()).isEqualTo("https://cdn.example.org/tenant.png");
     assertThat(branding.brandName()).isEqualTo("Nord");
@@ -65,10 +65,10 @@ class EmailBrandingResolverTest {
     associationOnly.setAssociationLogo("https://cdn.example.org/association.png");
     when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", associationOnly));
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(7L, null).logoUrl())
+    assertThat(resolver("https://cdn.example.org/platform.png").resolve(7L).logoUrl())
         .isEqualTo("https://cdn.example.org/association.png");
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(null, null).logoUrl())
+    assertThat(resolver("https://cdn.example.org/platform.png").resolve(null).logoUrl())
         .isEqualTo("https://cdn.example.org/platform.png");
   }
 
@@ -84,7 +84,7 @@ class EmailBrandingResolverTest {
     base64Logo.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
     when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", base64Logo));
 
-    EmailBranding branding = resolver("").resolve(7L, null);
+    EmailBranding branding = resolver("").resolve(7L);
 
     assertThat(branding.logoUrl()).isNull();
     assertThat(branding.hasLogo()).isFalse();
@@ -92,46 +92,55 @@ class EmailBrandingResolverTest {
 
   // --- colour ---------------------------------------------------------------------------
 
+  /**
+   * The mail follows the product colour rule and nothing else (#914, final decision): the light
+   * rendering uses the dark accent, which on the tenant is {@code theming.primaryColor}.
+   */
   @Test
-  void resolve_Should_preferTenantPrimaryThenSecondaryThenGlobalThemeColor() {
+  void resolve_Should_useTheTenantPrimaryColorAsTheLightRenderingAccent() {
     givenNoTemplateAttributes();
-    Theming full = new Theming();
-    full.setPrimaryColor("#123456");
-    full.setSecondaryColor("#654321");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", full));
+    Theming primary = new Theming();
+    primary.setPrimaryColor("#123456");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", primary));
 
-    assertThat(resolver("").resolve(7L, "#f8e71c").accentColor()).isEqualTo("#123456");
+    assertThat(resolver("").resolve(7L).accentColor()).isEqualTo("#123456");
+  }
 
+  /**
+   * {@code secondaryColor} is dead weight and must not silently become the mail accent: ORISO-Admin
+   * writes it as {@code null} on every theming save, so a chain step reading it can never resolve
+   * and would only hide the real fallback.
+   */
+  @Test
+  void resolve_Should_ignoreTheTenantSecondaryColor() {
+    givenNoTemplateAttributes();
     Theming secondaryOnly = new Theming();
     secondaryOnly.setSecondaryColor("#654321");
     when(tenantService.getRestrictedTenantData(8L)).thenReturn(tenant("Sued", secondaryOnly));
-    assertThat(resolver("").resolve(8L, "#f8e71c").accentColor()).isEqualTo("#654321");
+
+    assertThat(resolver("").resolve(8L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
 
+  /** The platform fallback is the product's own dark accent, not an invented colour. */
   @Test
-  void resolve_Should_useTheGlobalThemeColor_When_TenantHasNoTheming() {
+  void resolve_Should_fallBackToTheProductDarkAccent_When_NoTenantColorIsConfigured() {
     givenNoTemplateAttributes();
 
-    assertThat(resolver("").resolve(null, "#f8e71c").accentColor()).isEqualTo("#f8e71c");
-  }
+    EmailBranding branding = resolver("").resolve(null);
 
-  @Test
-  void resolve_Should_useTheNeutralDefault_When_NothingIsConfigured() {
-    givenNoTemplateAttributes();
-
-    EmailBranding branding = resolver("").resolve(null, null);
-
-    assertThat(branding.accentColor()).isEqualTo(EmailColors.DEFAULT_ACCENT);
+    assertThat(branding.accentColor()).isEqualTo("#a5000a");
     assertThat(branding.brandName()).isEqualTo("ORISO");
     assertThat(branding.logoUrl()).isNull();
   }
 
   @Test
-  void resolve_Should_ignoreAMalformedGlobalThemeColor() {
+  void resolve_Should_ignoreAMalformedTenantPrimaryColor() {
     givenNoTemplateAttributes();
+    Theming broken = new Theming();
+    broken.setPrimaryColor("not-a-color");
+    when(tenantService.getRestrictedTenantData(9L)).thenReturn(tenant("Ost", broken));
 
-    assertThat(resolver("").resolve(null, "not-a-color").accentColor())
-        .isEqualTo(EmailColors.DEFAULT_ACCENT);
+    assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
 
   // --- degradation ----------------------------------------------------------------------
@@ -145,17 +154,17 @@ class EmailBrandingResolverTest {
             HttpClientErrorException.create(
                 org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
 
-    EmailBranding branding = resolver("").resolve(4711L, "#f8e71c");
+    EmailBranding branding = resolver("").resolve(4711L);
 
     assertThat(branding.brandName()).isEqualTo("ORISO");
-    assertThat(branding.accentColor()).isEqualTo("#f8e71c");
+    assertThat(branding.accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
 
   @Test
   void resolve_Should_notCallTenantService_When_NoTenantIdIsKnown() {
     givenNoTemplateAttributes();
 
-    resolver("").resolve(null, null);
+    resolver("").resolve(null);
 
     verifyNoInteractions(tenantService);
   }
@@ -174,7 +183,7 @@ class EmailBrandingResolverTest {
                     .key("tenant_urldatenschutz")
                     .value("https://nord.org/datenschutz")));
 
-    EmailBranding branding = resolver("").resolve(null, null);
+    EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.imprintUrl()).isEqualTo("https://nord.org/impressum");
     assertThat(branding.privacyUrl()).isEqualTo("https://nord.org/datenschutz");
@@ -185,7 +194,7 @@ class EmailBrandingResolverTest {
     when(tenantTemplateSupplier.getTemplateAttributes())
         .thenThrow(new IllegalStateException("no tenant context"));
 
-    EmailBranding branding = resolver("").resolve(null, null);
+    EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
     assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");

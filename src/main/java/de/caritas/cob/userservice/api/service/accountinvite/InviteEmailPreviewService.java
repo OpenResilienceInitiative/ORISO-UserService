@@ -89,12 +89,7 @@ public class InviteEmailPreviewService {
 
     BrandedEmail mail =
         inviteMailDispatchService.renderBrandedMail(
-            renderedSubject,
-            renderedBody,
-            acceptUrl,
-            safe.tenantId(),
-            language,
-            inviteMailDispatchService.resolveGlobalEmailThemeColor());
+            renderedSubject, renderedBody, acceptUrl, safe.tenantId(), language);
 
     return new InviteEmailPreview(
         template == null ? null : template.getId(),

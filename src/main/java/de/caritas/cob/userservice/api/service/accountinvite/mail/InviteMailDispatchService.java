@@ -104,7 +104,7 @@ public class InviteMailDispatchService {
       String primaryActionUrl,
       Long tenantId,
       String language) {
-    ResolvedInviteMailSettings resolved =
+    InviteSmtpSettings smtp =
         resolveGlobalSmtpSettings()
             .orElseThrow(
                 () ->
@@ -112,40 +112,28 @@ public class InviteMailDispatchService {
                         "Global SMTP settings are unavailable or incomplete — invite mail not"
                             + " sent"));
     BrandedEmail mail =
-        renderBrandedMail(
-            subject, bodyContent, primaryActionUrl, tenantId, language, resolved.emailThemeColor());
-    return inviteMailTransport.send(
-        resolved.smtp(), recipient, subject, mail.html(), mail.plainText());
+        renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
+    return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
   }
 
   /**
    * Renders exactly what {@link #send} would transmit. The Admin preview endpoint calls this, so a
    * preview can never show markup the dispatcher would not produce.
+   *
+   * <p>The palette comes from the tenant theming alone (#914, final decision). The SMTP settings
+   * payload also carries {@code globalSmtpEmailThemeColor} ("E-Mail Designfarbe"), but that value
+   * is deliberately not read: a transport setting is not a design token, and mixing it in produced
+   * mails in a colour the product never uses.
    */
   public BrandedEmail renderBrandedMail(
-      String subject,
-      String bodyContent,
-      String primaryActionUrl,
-      Long tenantId,
-      String language,
-      String globalEmailThemeColor) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId, globalEmailThemeColor);
+      String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
+    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
     return brandedEmailLayoutRenderer.render(
         branding, new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language));
   }
 
-  /** Reads {@code globalSmtpEmailThemeColor} from the same settings payload the send path uses. */
-  public String resolveGlobalEmailThemeColor() {
-    return resolveGlobalSmtpSettings()
-        .map(ResolvedInviteMailSettings::emailThemeColor)
-        .orElse(null);
-  }
-
-  /** Connection settings plus the branding-relevant part of the same {@code /settings} payload. */
-  record ResolvedInviteMailSettings(InviteSmtpSettings smtp, String emailThemeColor) {}
-
   @SuppressWarnings("unchecked")
-  private Optional<ResolvedInviteMailSettings> resolveGlobalSmtpSettings() {
+  private Optional<InviteSmtpSettings> resolveGlobalSmtpSettings() {
     if (isBlank(consultingTypeServiceApiUrl)) {
       log.warn("Invite mail dispatch: 'consulting.type.service.api.url' is not configured");
       return Optional.empty();
@@ -165,8 +153,6 @@ public class InviteMailDispatchService {
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
       boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-      String emailThemeColor =
-          asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
       if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
         log.warn("Invite mail dispatch: global SMTP settings are incomplete or disabled");
@@ -189,10 +175,7 @@ public class InviteMailDispatchService {
         password = credentials.get().getGlobalSmtpPassword();
       }
 
-      return Optional.of(
-          new ResolvedInviteMailSettings(
-              new InviteSmtpSettings(host, port, secure, username, password, from),
-              emailThemeColor));
+      return Optional.of(new InviteSmtpSettings(host, port, secure, username, password, from));
     } catch (Exception exception) {
       log.warn(
           "Invite mail dispatch: could not resolve global SMTP settings ({})",

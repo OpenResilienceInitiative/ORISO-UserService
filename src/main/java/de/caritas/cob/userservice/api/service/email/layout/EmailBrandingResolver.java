@@ -29,10 +29,10 @@ import org.springframework.stereotype.Component;
  *       wordmark. Only absolute {@code http(s)} URLs are accepted: the tenant theming fields may
  *       hold inline base64 images, and {@code data:} URIs are blocked by Gmail and Outlook, so a
  *       base64 logo deliberately degrades to the wordmark instead of producing a broken image.
- *   <li><b>Accent colour</b> — tenant {@code primaryColor} → tenant {@code secondaryColor} → {@code
- *       globalSmtpEmailThemeColor} from the platform settings → {@link EmailColors#DEFAULT_ACCENT}.
- *       Contrast-safe foregrounds are derived from it in {@link EmailBranding}, so a light theme
- *       colour never yields light-on-light text.
+ *   <li><b>Accent colour</b> — tenant {@code theming.primaryColor} → {@link
+ *       EmailColors#PLATFORM_ACCENT_DARK}. Contrast-safe foregrounds are derived from it in {@link
+ *       EmailBranding}, so a light theme colour never yields light-on-light text. See {@link
+ *       #resolveAccentColor} for why the chain is exactly two steps long.
  *   <li><b>Footer</b> — the imprint/privacy URLs already computed by {@link TenantTemplateSupplier}
  *       (reused, not re-derived) → the configured application base URL.
  * </ul>
@@ -40,11 +40,6 @@ import org.springframework.stereotype.Component;
  * <p>Every remote lookup is best-effort. A tenant-admin invite is sent <em>before</em> the tenant
  * exists, so a 404 from TenantService is the normal case, not an error — the mail then simply uses
  * platform branding.
- *
- * <p>Note on {@code accent}/{@code signal}: the tenant theming contract consumed here ({@code
- * services/tenantservice.yaml → Theming}) exposes {@code logo}, {@code associationLogo}, {@code
- * favicon}, {@code primaryColor} and {@code secondaryColor}. Once TenantService publishes dedicated
- * accent/signal fields they slot into {@link #resolveAccentColor} without touching the layout.
  */
 @Slf4j
 @Component
@@ -74,9 +69,8 @@ public class EmailBrandingResolver {
 
   /**
    * @param tenantId tenant the mail belongs to, or {@code null} when it is not (yet) known
-   * @param globalEmailThemeColor {@code globalSmtpEmailThemeColor} from the platform settings
    */
-  public EmailBranding resolve(Long tenantId, String globalEmailThemeColor) {
+  public EmailBranding resolve(Long tenantId) {
     RestrictedTenantDTO tenant = loadTenantQuietly(tenantId);
     Theming theming = tenant == null ? null : tenant.getTheming();
 
@@ -88,7 +82,7 @@ public class EmailBrandingResolver {
     return new EmailBranding(
         brandName,
         resolveLogoUrl(theming),
-        resolveAccentColor(theming, globalEmailThemeColor),
+        resolveAccentColor(theming),
         resolveFooterUrl(IMPRINT_KEY, "/impressum"),
         resolveFooterUrl(PRIVACY_KEY, "/datenschutz"));
   }
@@ -103,13 +97,42 @@ public class EmailBrandingResolver {
     return firstAbsoluteUrl(platformLogoUrl);
   }
 
-  private String resolveAccentColor(Theming theming, String globalEmailThemeColor) {
-    String color =
-        theming == null
-            ? EmailColors.normalize(globalEmailThemeColor)
-            : EmailColors.firstValid(
-                theming.getPrimaryColor(), theming.getSecondaryColor(), globalEmailThemeColor);
-    return color == null ? EmailColors.DEFAULT_ACCENT : color;
+  /**
+   * The accent of the <b>light</b> rendering — the only rendering the platform ships today.
+   *
+   * <p>Chain: {@code theming.primaryColor} → {@link EmailColors#PLATFORM_ACCENT_DARK}. Two steps,
+   * deliberately, per the binding decision on ORISO-UserService#914:
+   *
+   * <ul>
+   *   <li>Light rendering uses the <em>dark</em> accent. {@code primaryColor} is exactly that — a
+   *       light-mode token — so it is the tenant-level input and needs no further candidates.
+   *   <li>{@code secondaryColor} is <b>not</b> a candidate. ORISO-Admin's {@code buildSeedUpdate}
+   *       writes it as {@code null} on every theming save, so a step reading it could never resolve
+   *       and would only obscure which value actually reaches the mail.
+   *   <li>The SMTP setting {@code globalSmtpEmailThemeColor} ("E-Mail Designfarbe") is <b>not</b> a
+   *       candidate either. The mail follows the product colour rule and nothing else; an SMTP
+   *       transport setting is not a design token.
+   * </ul>
+   *
+   * <p><b>Seam for the dark rendering — the single place it plugs in.</b> The colour rule says a
+   * dark rendering must invert and use the <em>light</em> accent (the rose tone), never a darkened
+   * or otherwise derived variant of the dark one. That value does not exist here: the tenant
+   * contract this service consumes ({@code services/tenantservice.yaml → Theming}) exposes only
+   * {@code logo}, {@code associationLogo}, {@code favicon}, {@code primaryColor} and {@code
+   * secondaryColor}; {@code theming.accent} is dropped on save and is tracked as
+   * OpenResilienceInitiative/ORISO-TenantService#154. Deriving a substitute rose here would hide
+   * that gap, so nothing is derived and the mail renders light-only (see the {@code color-scheme:
+   * light only} opt-out in {@code branded-email.html}).
+   *
+   * <p>Once #154 lands, the dark half is: add {@code resolveDarkRenderingAccent(theming)} next to
+   * this method returning {@code firstValid(theming.getAccent())} with a light-accent platform
+   * fallback, carry it as a second component on {@link EmailBranding}, and let {@link
+   * BrandedEmailLayoutRenderer} emit it in a {@code prefers-color-scheme: dark} block alongside the
+   * dark-surface neutrals. Nothing else in this resolver changes.
+   */
+  private String resolveAccentColor(Theming theming) {
+    String color = theming == null ? null : EmailColors.firstValid(theming.getPrimaryColor());
+    return color == null ? EmailColors.PLATFORM_ACCENT_DARK : color;
   }
 
   private String resolveFooterUrl(String templateKey, String fallbackPath) {

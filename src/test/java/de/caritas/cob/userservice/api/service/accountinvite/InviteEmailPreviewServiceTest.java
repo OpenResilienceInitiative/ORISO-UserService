@@ -80,7 +80,7 @@ class InviteEmailPreviewServiceTest {
                 "globalSmtpSecure", Map.of("value", false),
                 "globalSmtpFrom", Map.of("value", "noreply@example.org"),
                 "globalSmtpEmailThemeColor", Map.of("value", "#f8e71c")));
-    when(emailBrandingResolver.resolve(any(), any()))
+    when(emailBrandingResolver.resolve(any()))
         .thenReturn(new EmailBranding("Nord", null, "#f8e71c", null, null));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
@@ -182,6 +182,6 @@ class InviteEmailPreviewServiceTest {
   void preview_Should_resolveBrandingForTheRequestedTenant() {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
-    verify(emailBrandingResolver).resolve(21L, "#f8e71c");
+    verify(emailBrandingResolver).resolve(21L);
   }
 }

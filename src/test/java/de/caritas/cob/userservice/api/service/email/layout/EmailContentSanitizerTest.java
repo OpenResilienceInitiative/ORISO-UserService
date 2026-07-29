@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
  */
 class EmailContentSanitizerTest {
 
-  private static final String LINK_COLOR = "#0f3b8f";
+  private static final String LINK_COLOR = "#a5000a";
 
   private final EmailContentSanitizer sanitizer = new EmailContentSanitizer();
 

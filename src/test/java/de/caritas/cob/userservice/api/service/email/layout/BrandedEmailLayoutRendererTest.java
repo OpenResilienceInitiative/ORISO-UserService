@@ -22,7 +22,7 @@ class BrandedEmailLayoutRendererTest {
     return new EmailBranding(
         "Beratungsstelle Nord",
         "https://cdn.example.org/logo.png",
-        "#0f3b8f",
+        "#a5000a",
         "https://nord.oriso.org/impressum",
         "https://nord.oriso.org/datenschutz");
   }
@@ -67,7 +67,35 @@ class BrandedEmailLayoutRendererTest {
 
     assertThat(html).contains("color-scheme: light only").contains("content=\"light only\"");
     assertThat(html).doesNotContain("prefers-color-scheme");
-    assertThat(html).contains("bgcolor=\"#ffffff\"").contains("bgcolor=\"#f6f7fb\"");
+    assertThat(html).contains("bgcolor=\"#ffffff\"").contains("bgcolor=\"#e4e2e2\"");
+  }
+
+  /**
+   * Every neutral surface is a product token from ORISO-Admin {@code src/app.css} — workspace
+   * {@code #e4e2e2}, card {@code #ffffff}, footer {@code #f0edee}, outline {@code #c4c7c8}, text
+   * {@code #1b1b1c}/{@code #444748}/{@code #747878} — not an invented grey ramp.
+   */
+  @Test
+  void render_Should_useTheProductNeutralTokensForEverySurface() {
+    String html = render(tenantBranding(), "Hallo", ACCEPT_URL).html();
+
+    assertThat(html)
+        .contains("background-color:#e4e2e2")
+        .contains("background-color:#ffffff")
+        .contains("background-color:#f0edee")
+        .contains("#c4c7c8")
+        .contains("color:#1b1b1c")
+        .contains("color:#444748")
+        .contains("color:#747878");
+    assertThat(html)
+        .as("no invented grey ramp")
+        .doesNotContain("#f6f7fb")
+        .doesNotContain("#111827")
+        .doesNotContain("#374151")
+        .doesNotContain("#e5e7eb")
+        .doesNotContain("#f0f1f5")
+        .doesNotContain("#4b5563")
+        .doesNotContain("#6b7280");
   }
 
   // --- branding fallbacks ---------------------------------------------------------------
@@ -83,7 +111,7 @@ class BrandedEmailLayoutRendererTest {
 
   @Test
   void render_Should_fallBackToATextWordmark_When_NoLogoIsConfigured() {
-    EmailBranding noLogo = new EmailBranding("Beratungsstelle Nord", null, "#0f3b8f", null, null);
+    EmailBranding noLogo = new EmailBranding("Beratungsstelle Nord", null, "#a5000a", null, null);
 
     String html = render(noLogo, "Hallo", ACCEPT_URL).html();
 
@@ -95,14 +123,14 @@ class BrandedEmailLayoutRendererTest {
   void render_Should_produceACompleteNeutralMail_When_NoBrandingIsConfiguredAtAll() {
     BrandedEmail mail = render(EmailBranding.neutral(), "Hallo", ACCEPT_URL);
 
-    assertThat(mail.html()).contains(EmailColors.DEFAULT_ACCENT).contains(">ORISO<");
+    assertThat(mail.html()).contains(EmailColors.PLATFORM_ACCENT_DARK).contains(">ORISO<");
     assertThat(mail.plainText()).contains("ORISO");
   }
 
   @Test
   void render_Should_fallBackToNeutralBranding_When_BrandingIsNull() {
     assertThat(renderer.render(null, BrandedEmailRequest.of("s", "b", null)).html())
-        .contains(EmailColors.DEFAULT_ACCENT);
+        .contains(EmailColors.PLATFORM_ACCENT_DARK);
   }
 
   /** The Pre-Dev theme colour {@code #f8e71c} must never produce white-on-yellow button text. */
@@ -126,7 +154,7 @@ class BrandedEmailLayoutRendererTest {
         new EmailBranding("ORISO", null, "#fff\";background:url(evil)", null, null);
 
     assertThat(render(broken, "Hallo", null).html())
-        .contains(EmailColors.DEFAULT_ACCENT)
+        .contains(EmailColors.PLATFORM_ACCENT_DARK)
         .doesNotContain("evil");
   }
 
@@ -172,7 +200,7 @@ class BrandedEmailLayoutRendererTest {
   @Test
   void render_Should_escapeTheSubjectAndBrandName() {
     EmailBranding branding =
-        new EmailBranding("<script>x</script>Nord", null, "#0f3b8f", null, null);
+        new EmailBranding("<script>x</script>Nord", null, "#a5000a", null, null);
 
     String html =
         renderer

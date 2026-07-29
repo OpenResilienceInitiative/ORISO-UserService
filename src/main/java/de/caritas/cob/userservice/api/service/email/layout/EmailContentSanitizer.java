@@ -169,7 +169,7 @@ public class EmailContentSanitizer {
 
   private static void styleAnchors(Element root, String linkColor) {
     String color = EmailColors.normalize(linkColor);
-    String effective = color == null ? EmailColors.DEFAULT_ACCENT : color;
+    String effective = color == null ? EmailColors.PLATFORM_ACCENT_DARK : color;
     for (Element anchor : root.select("a[href]")) {
       anchor.attr("target", "_blank");
       anchor.attr("rel", "noopener noreferrer");
