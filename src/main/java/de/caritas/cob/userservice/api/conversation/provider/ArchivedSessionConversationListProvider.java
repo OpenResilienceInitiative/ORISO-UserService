@@ -5,7 +5,7 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
-import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionQueryService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
@@ -15,15 +15,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class ArchivedSessionConversationListProvider extends DefaultConversationListProvider {
 
-  private final SessionService sessionService;
+  private final ConsultantSessionQueryService consultantSessionQueryService;
   private final UserAccountService userAccountProvider;
 
   public ArchivedSessionConversationListProvider(
       @NonNull UserAccountService userAccountProvider,
       @NonNull ConsultantSessionEnricher consultantSessionEnricher,
-      @NonNull SessionService sessionService) {
+      @NonNull ConsultantSessionQueryService consultantSessionQueryService) {
     super(consultantSessionEnricher);
-    this.sessionService = sessionService;
+    this.consultantSessionQueryService = consultantSessionQueryService;
     this.userAccountProvider = userAccountProvider;
   }
 
@@ -36,7 +36,7 @@ public class ArchivedSessionConversationListProvider extends DefaultConversation
     return buildConversations(
         pageableListRequest,
         consultant,
-        sessionService.getArchivedSessionsForConsultant(consultant));
+        consultantSessionQueryService.getArchivedSessionsForConsultant(consultant));
   }
 
   /** {@inheritDoc} */

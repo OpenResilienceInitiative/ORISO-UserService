@@ -10,7 +10,6 @@ import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
@@ -19,36 +18,24 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
-import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +43,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Service for sessions */
@@ -66,14 +52,10 @@ import org.springframework.web.client.HttpClientErrorException;
 public class SessionService {
 
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
-  private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull SessionAccessService sessionAccessService;
-  private final @NonNull UserService userService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
-  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -275,203 +257,6 @@ public class SessionService {
     return sessionRepository.save(session);
   }
 
-  /**
-   * Returns a list of {@link ConsultantSessionResponseDTO} containing team sessions excluding
-   * sessions which are taken by the consultant.
-   *
-   * @param consultant the consultant
-   * @return A list of {@link ConsultantSessionResponseDTO}
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getTeamSessionsForConsultant(Consultant consultant) {
-
-    List<Session> sessions = new ArrayList<>();
-
-    Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
-    if (nonNull(consultantAgencies)) {
-      List<Long> consultantAgencyIds =
-          consultantAgencies.stream()
-              .map(ConsultantAgency::getAgencyId)
-              .collect(Collectors.toList());
-
-      // Get traditional team sessions (where consultant is NOT the owner)
-      List<Session> teamSessions =
-          sessionRepository
-              .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
-                  consultantAgencyIds, consultant, SessionStatus.IN_PROGRESS, true);
-      if (teamSessions != null) {
-        sessions.addAll(teamSessions);
-      }
-
-      // MATRIX MIGRATION: Also get group chat sessions where consultant is the creator
-      List<Session> ownedGroupChats =
-          sessionRepository.findByConsultantAndTeamSessionAndStatus(
-              consultant, true, SessionStatus.IN_PROGRESS);
-      if (ownedGroupChats != null) {
-        sessions.addAll(ownedGroupChats);
-      }
-
-      // MATRIX MIGRATION: Also get group chat sessions where consultant is a participant
-      List<GroupChatParticipant> participations =
-          groupChatParticipantRepository.findByConsultantId(consultant.getId());
-      if (participations != null && !participations.isEmpty()) {
-        List<Long> participantSessionIds =
-            participations.stream()
-                .map(GroupChatParticipant::getChatId)
-                .collect(Collectors.toList());
-        Iterable<Session> participantSessionsIterable =
-            sessionRepository.findAllById(participantSessionIds);
-        List<Session> participantSessions = new ArrayList<>();
-        participantSessionsIterable.forEach(participantSessions::add);
-        if (!participantSessions.isEmpty()) {
-          sessions.addAll(participantSessions);
-        }
-      }
-
-      // SUPERVISION: Also get sessions where consultant is a supervisor
-      List<SessionSupervisor> supervisions =
-          sessionSupervisorRepository.findActiveSupervisionsByConsultantId(consultant.getId());
-      if (supervisions != null && !supervisions.isEmpty()) {
-        List<Session> supervisedSessions =
-            supervisions.stream()
-                .map(ss -> ss.getSession())
-                .filter(s -> s.getStatus() == SessionStatus.IN_PROGRESS)
-                .collect(Collectors.toList());
-        if (!supervisedSessions.isEmpty()) {
-          sessions.addAll(supervisedSessions);
-        }
-      }
-    }
-
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Retrieves all related registered enquiries of given {@link Consultant}.
-   *
-   * @param consultant the consultant
-   * @return the related {@link ConsultantSessionResponseDTO}s
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getRegisteredEnquiriesForConsultant(
-      Consultant consultant) {
-    List<Session> mergedSessions = new ArrayList<>();
-
-    Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
-    if (isNotEmpty(consultantAgencies)) {
-      List<Long> consultantAgencyIds =
-          consultantAgencies.stream()
-              .map(ConsultantAgency::getAgencyId)
-              .collect(Collectors.toList());
-      mergedSessions.addAll(retrieveRegisteredSessions(consultantAgencyIds));
-    }
-
-    List<Long> consultantTopicIds =
-        consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
-    if (isNotEmpty(consultantTopicIds)) {
-      mergedSessions.addAll(retrieveRegisteredSessionsByMainTopicIds(consultantTopicIds));
-    }
-
-    if (mergedSessions.isEmpty()) {
-      return emptyList();
-    }
-
-    List<Session> dedupedSessions =
-        mergedSessions.stream()
-            .filter(Objects::nonNull)
-            .collect(
-                Collectors.collectingAndThen(
-                    Collectors.toMap(
-                        Session::getId,
-                        session -> session,
-                        (left, right) -> left,
-                        LinkedHashMap::new),
-                    map -> new ArrayList<>(map.values())));
-
-    dedupedSessions.sort(
-        Comparator.comparing(
-                Session::getCreateDate, Comparator.nullsLast(Comparator.naturalOrder()))
-            .reversed());
-
-    return mapSessionsToConsultantSessionDto(dedupedSessions);
-  }
-
-  private List<Session> retrieveRegisteredSessions(List<Long> consultantAgencyIds) {
-    return this.sessionRepository
-        .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
-            consultantAgencyIds, SessionStatus.NEW, RegistrationType.REGISTERED)
-        .stream()
-        // Anonymous-style registrations can be created via /users/askers/new and therefore have
-        // registrationType REGISTERED. Keep them hidden in consultant inquiries until consent.
-        .filter(this::isVisibleRegisteredEnquiryForConsultant)
-        .collect(Collectors.toList());
-  }
-
-  private List<Session> retrieveRegisteredSessionsByMainTopicIds(List<Long> topicIds) {
-    return this.sessionRepository
-        .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
-            topicIds, SessionStatus.NEW, RegistrationType.REGISTERED)
-        .stream()
-        .filter(this::isAnonymousStyleRegistration)
-        .filter(this::isVisibleRegisteredEnquiryForConsultant)
-        .collect(Collectors.toList());
-  }
-
-  private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
-    if (!isAnonymousStyleRegistration(session)) {
-      return true;
-    }
-    return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
-  }
-
-  /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
-  public boolean isAnonymousStyleRegistration(Session session) {
-    return sessionAccessService.isAnonymousStyleRegistration(session);
-  }
-
-  /**
-   * Retrieves all related active sessions of given {@link Consultant}.
-   *
-   * @param consultant the consultant
-   * @return the related {@link ConsultantSessionResponseDTO}s
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getActiveAndDoneSessionsForConsultant(
-      Consultant consultant) {
-    return Stream.of(
-            getSessionsForConsultantByStatus(consultant, SessionStatus.IN_PROGRESS),
-            getSessionsForConsultantByStatus(consultant, SessionStatus.DONE))
-        .flatMap(Collection::stream)
-        .map(session -> new SessionMapper().toConsultantSessionDto(session))
-        .collect(Collectors.toList());
-  }
-
-  private List<Session> getSessionsForConsultantByStatus(
-      Consultant consultant, SessionStatus sessionStatus) {
-    // Get sessions where consultant is assigned
-    List<Session> assignedSessions =
-        sessionRepository.findByConsultantAndStatus(consultant, sessionStatus);
-
-    // Get sessions where consultant is a supervisor
-    List<SessionSupervisor> supervisions =
-        sessionSupervisorRepository.findActiveSupervisionsByConsultantId(consultant.getId());
-    List<Session> supervisedSessions =
-        supervisions.stream()
-            .map(ss -> ss.getSession())
-            .filter(s -> s.getStatus() == sessionStatus)
-            .collect(Collectors.toList());
-
-    // Combine and deduplicate
-    List<Session> allSessions = new ArrayList<>(assignedSessions);
-    for (Session supervised : supervisedSessions) {
-      if (!allSessions.stream().anyMatch(s -> s.getId().equals(supervised.getId()))) {
-        allSessions.add(supervised);
-      }
-    }
-
-    return allSessions;
-  }
-
   private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
       List<Session> sessions, List<AgencyDTO> agencies) {
     return sessions.stream()
@@ -571,128 +356,6 @@ public class SessionService {
     }
   }
 
-  /**
-   * Retrieves consultant sessions by consultant ID and Matrix room IDs.
-   *
-   * @param consultant the ID of the consultant
-   * @param matrixRoomIds Matrix room IDs
-   * @param roles the roles of the given consultant
-   * @return {@link ConsultantSessionResponseDTO}
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndRoomIds(
-      Consultant consultant, Set<String> matrixRoomIds, Set<String> roles) {
-    sessionAccessService.checkForUserOrConsultantRole(roles);
-    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
-
-    List<Session> allowedSessions =
-        sessions.stream()
-            .filter(
-                session -> sessionAccessService.isConsultantPermittedToSession(consultant, session))
-            .collect(Collectors.toList());
-
-    return mapSessionsToConsultantSessionDto(allowedSessions);
-  }
-
-  /**
-   * Retrieves consultant sessions by session IDs
-   *
-   * @param consultant the ID of the consultant
-   * @param sessionIds the session IDs
-   * @param roles the roles of the given consultant
-   * @return {@link ConsultantSessionResponseDTO}
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getSessionsByIds(
-      Consultant consultant, Set<Long> sessionIds, Set<String> roles) {
-    sessionAccessService.checkForUserOrConsultantRole(roles);
-    var sessions =
-        StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-            .filter(
-                session -> sessionAccessService.isConsultantPermittedToSession(consultant, session))
-            .collect(Collectors.toList());
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Loads anonymous Live Chat queue entries by id for a consultant, applying the exact same
-   * topic-based, cross-tenant visibility the queue itself uses ({@link
-   * de.caritas.cob.userservice.api.conversation.provider.AnonymousEnquiryConversationListProvider}).
-   *
-   * <p>#774: the queue makes anonymous NEW enquiries visible by the consultant's topics across
-   * tenants, but {@link #getSessionsByIds} only permits sessions the consultant is assigned to /
-   * shares an agency with, and runs tenant-filtered. A consultant could therefore see a live chat
-   * request in the queue yet receive 204 opening it, blocking acceptance. This method is the scoped
-   * fallback the open path uses so a visible request can always be opened; it never widens access
-   * to registered sessions.
-   */
-  public List<ConsultantSessionResponseDTO> getVisibleAnonymousLiveChatEnquiriesByIds(
-      Consultant consultant, Set<Long> sessionIds) {
-    if (!isNotEmpty(sessionIds)) {
-      return emptyList();
-    }
-    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
-    if (topicIds == null || topicIds.isEmpty()) {
-      return emptyList();
-    }
-    var sessions =
-        runCrossTenant(
-            () ->
-                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
-                    sessionIds,
-                    new HashSet<>(topicIds),
-                    SessionStatus.NEW,
-                    RegistrationType.ANONYMOUS));
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Loads sessions the consultant is <b>directly assigned to</b> by id, bypassing the tenant
-   * filter.
-   *
-   * <p>#774 follow-up: once a consultant accepts a cross-tenant anonymous Live Chat, the session
-   * becomes IN_PROGRESS and keeps the asker's tenant. The frontend then re-reads it by id to route
-   * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
-   * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
-   * chat never opens. This scoped fallback resolves such a session across tenants, but only when
-   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
-   * never widens access by agency or topic, and it does not change the session's tenant ownership
-   * (the asker keeps seeing their own chat).
-   */
-  public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
-      Consultant consultant, Set<Long> sessionIds) {
-    if (!isNotEmpty(sessionIds)) {
-      return emptyList();
-    }
-    var sessions =
-        runCrossTenant(
-            () ->
-                StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-                    .filter(session -> session.isAdvisedBy(consultant))
-                    .collect(Collectors.toList()));
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  /**
-   * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
-   * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
-   * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
-   * guard.
-   */
-  private <T> T runCrossTenant(Supplier<T> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
-  }
-
   public Session getSessionByMatrixRoomId(String matrixRoomId) {
     return sessionRepository
         .findByMatrixRoomId(matrixRoomId)
@@ -754,62 +417,6 @@ public class SessionService {
     }
 
     return consultantSessionDTO;
-  }
-
-  /**
-   * Retrieves all archived sessions of given {@link Consultant}.
-   *
-   * @param consultant the consultant
-   * @return the related {@link ConsultantSessionResponseDTO}s
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getArchivedSessionsForConsultant(
-      Consultant consultant) {
-    final List<Session> sessions = retrieveArchivedSessions(consultant);
-
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  private List<Session> retrieveArchivedSessions(Consultant consultant) {
-    return this.sessionRepository.findByConsultantAndStatusOrderByUpdateDateDesc(
-        consultant, SessionStatus.IN_ARCHIVE);
-  }
-
-  /**
-   * Retrieves all archived team sessions of given {@link Consultant}.
-   *
-   * @param consultant the consultant
-   * @return the related {@link ConsultantSessionResponseDTO}s
-   */
-  @Transactional(readOnly = true)
-  public List<ConsultantSessionResponseDTO> getArchivedTeamSessionsForConsultant(
-      Consultant consultant) {
-    final List<Session> sessions = retrieveArchivedTeamSessionsForConsultant(consultant);
-    return mapSessionsToConsultantSessionDto(sessions);
-  }
-
-  private List<Session> retrieveArchivedTeamSessionsForConsultant(Consultant consultant) {
-    Set<ConsultantAgency> consultantAgencies = consultant.getConsultantAgencies();
-    if (isNotEmpty(consultantAgencies)) {
-      List<Long> consultantAgencyIds =
-          consultantAgencies.stream()
-              .map(ConsultantAgency::getAgencyId)
-              .collect(Collectors.toList());
-      return this.sessionRepository
-          .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionIsTrueOrderByUpdateDateDesc(
-              consultantAgencyIds, consultant, SessionStatus.IN_ARCHIVE);
-    }
-    return emptyList();
-  }
-
-  private List<ConsultantSessionResponseDTO> mapSessionsToConsultantSessionDto(
-      List<Session> sessions) {
-    if (nonNull(sessions)) {
-      return sessions.stream()
-          .map(session -> new SessionMapper().toConsultantSessionDto(session))
-          .collect(Collectors.toList());
-    }
-    return emptyList();
   }
 
   /**

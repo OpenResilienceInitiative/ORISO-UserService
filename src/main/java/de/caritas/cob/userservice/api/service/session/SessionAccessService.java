@@ -125,7 +125,7 @@ public class SessionAccessService {
   }
 
   /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
-  boolean isAnonymousStyleRegistration(Session session) {
+  public boolean isAnonymousStyleRegistration(Session session) {
     if (isNull(session)) {
       return false;
     }

@@ -163,6 +163,73 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{controller_source.name} must not authorize through SessionService",
             )
 
+    def test_consultant_session_queries_have_a_focused_application_boundary(self):
+        session_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/session"
+        )
+        query_service = session_module / "ConsultantSessionQueryService.java"
+        session_service = (session_module / "SessionService.java").read_text()
+        query_consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/sessionlist/"
+            "ConsultantSessionListService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/provider/"
+            "RegisteredEnquiryConversationListProvider.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/provider/"
+            "ArchivedSessionConversationListProvider.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/provider/"
+            "ArchivedTeamSessionConversationListProvider.java",
+        )
+
+        self.assertTrue(
+            query_service.exists(),
+            "Consultant-facing session reads must live in ConsultantSessionQueryService",
+        )
+        for collaborator in (
+            "ConsultantTopicRepository consultantTopicRepository",
+            "GroupChatParticipantRepository groupChatParticipantRepository",
+            "SessionSupervisorRepository sessionSupervisorRepository",
+            "UserService userService",
+        ):
+            self.assertNotIn(
+                collaborator,
+                session_service,
+                f"SessionService must not retain consultant-query collaborator {collaborator}",
+            )
+        for method in (
+            "getTeamSessionsForConsultant(",
+            "getRegisteredEnquiriesForConsultant(",
+            "getActiveAndDoneSessionsForConsultant(",
+            "getAllowedSessionsByConsultantAndRoomIds(",
+            "getSessionsByIds(",
+            "getVisibleAnonymousLiveChatEnquiriesByIds(",
+            "getDirectlyAssignedSessionsByIdsCrossTenant(",
+            "getArchivedSessionsForConsultant(",
+            "getArchivedTeamSessionsForConsultant(",
+        ):
+            self.assertNotIn(
+                f"public List<ConsultantSessionResponseDTO> {method}",
+                session_service,
+                f"SessionService must not own consultant query method {method}",
+            )
+
+        for consumer_source in query_consumers:
+            consumer = consumer_source.read_text()
+            self.assertIn(
+                "ConsultantSessionQueryService",
+                consumer,
+                f"{consumer_source.name} must use the focused consultant query boundary",
+            )
+            self.assertNotIn(
+                "SessionService",
+                consumer,
+                f"{consumer_source.name} must not use the broad SessionService for queries",
+            )
+
     def test_identity_profile_module_depends_on_ports_not_identity_or_chat_adapters(self):
         application_roots = (
             ROOT
