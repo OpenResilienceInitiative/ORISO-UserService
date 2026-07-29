@@ -27,21 +27,21 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,542 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,547 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,542 unit plus 860
-integration executions, or 4,402.
+comparable primary current inventory is therefore 3,547 unit plus 860
+integration executions, or 4,407.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,402: 240 fewer unit and 80 fewer integration
+inventory to the current 4,407: 235 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,542 unit executions.
+gate to all 3,547 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -121,6 +121,8 @@ All `RestTemplateBuilder` clients now emit:
   when `Content-Length` is available;
 - `userservice.outbound.retries`: explicitly scheduled Keycloak and Matrix
   retries by fixed dependency and operation tags.
+- `userservice.dependency.fallbacks`: successful application fallbacks by fixed
+  dependency, operation and reason tags.
 
 Paths, query values, IDs and exception text are never custom metric tags.
 Spring Boot's standard `http.client.requests` remains available as an
@@ -298,10 +300,10 @@ context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
 Measured on integration source commit
-`4dbf5c8f887da55e8ed1f81f8bc5e7b54b895321`: 3,542 unit executions across
-402 reports with zero failures, zero errors and no skips, and 860 required
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec`: 3,547 unit executions across
+403 reports with zero failures, zero errors and no skips, and 860 required
 integration executions across 84 reports with zero failures, zero errors and
-nine skips. The 73-test CI/architecture suite, 8-test OpenAPI contract suite,
+nine skips. The 77-test CI/architecture suite, 8-test OpenAPI contract suite,
 focused 177-test DPA/identity/Keycloak composition and formatting gate also
 pass.
 
@@ -688,10 +690,11 @@ The runner also exposes the normal Micrometer endpoint only on the disposable
 local JVMs and captures `userservice.outbound.http.calls`,
 `userservice.outbound.http.latency` and
 `userservice.outbound.http.payload` immediately before and after the measured
-workload. It fails if the AgencyService path is not exercised, produces more
-than one call per consultant-profile read, loses a latency/payload measurement,
-or exceeds the configured mean-latency or response-payload bounds. The bounds
-can be overridden with
+workload. It also captures `userservice.dependency.fallbacks` and requires zero
+fallbacks for a healthy dependency. It fails if the AgencyService path is not
+exercised, produces more than one call per consultant-profile read, loses a
+latency/payload measurement, or exceeds the configured mean-latency or
+response-payload bounds. The bounds can be overridden with
 `USERSERVICE_LOAD_MAX_AGENCY_CALLS_PER_CONSULTANT_READ`,
 `USERSERVICE_LOAD_MAX_AGENCY_MEAN_LATENCY_MS` and
 `USERSERVICE_LOAD_MAX_AGENCY_RESPONSE_BYTES_PER_CALL`.
@@ -700,21 +703,22 @@ Cleanup removes both JVMs, the dependency containers, the AgencyService stub,
 and the temporary run directory.
 
 Local two-replica proof on exact integration head
-`7255db9b562c208758e5f4a359708baaf3fc043e` on 2026-07-28:
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec` on 2026-07-29:
 
 | Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Replica one | 700 | 0 | 274,800 | 55.41 ms | 102.71 ms | 225.26 ms |
-| Replica two | 700 | 0 | 206,200 | 44.22 ms | 92.66 ms | 204.29 ms |
-| **Overall** | **1,400** | **0** | **481,000** | **49.82 ms** | **95.38 ms** | **225.26 ms** |
+| Replica one | 700 | 0 | 274,800 | 56.78 ms | 104.16 ms | 223.89 ms |
+| Replica two | 700 | 0 | 206,200 | 39.72 ms | 80.56 ms | 190.52 ms |
+| **Overall** | **1,400** | **0** | **481,000** | **48.25 ms** | **93.76 ms** | **223.89 ms** |
 
-The exact-head rerun completed in 2.209 seconds at 633.63 requests/second. The
-slowest named operation was `consultant-profile-addiction` at 107.51 ms p95; all six
+The exact-head rerun completed in 2.124 seconds at 659.05 requests/second. The
+slowest named operation was `consultant-profile-addiction` at 108.18 ms p95; all six
 operations had zero failures. The measured 900 consultant-profile reads caused
 exactly 900 AgencyService calls across both JVMs: 1.0 call per profile read,
-8.87 ms mean and 101.91 ms maximum outbound latency, with 260,000 response
+5.90 ms mean and 127.97 ms maximum outbound latency, with 260,000 response
 bytes in total, 288.89 bytes per call on average and 436 bytes maximum. Every
-successful call had a latency and payload measurement.
+successful call had a latency and payload measurement, and the fallback count
+was exactly zero.
 
 This proves that the bounded mixed-read scenario can run across two real JVMs
 sharing MariaDB and Redis, and that its healthy AgencyService dependency has no
@@ -724,12 +728,31 @@ Kubernetes service routing, or deployed PreDev behavior. The production
 replica maximum must therefore remain one until those paths and their
 idempotency/locking contracts are exercised.
 
-The same seeded workload was also run with AgencyService deliberately
-unavailable. UserService still returned all 1,400 responses through its local
-topic fallback at concurrency 32 (121.19 ms p95, 843.2 requests/second).
-However, each failed dependency attempt emitted a WARN stack trace. That proves
-fallback continuity while exposing log amplification as a separate operational
-risk; it is not equivalent to the healthy-dependency result above.
+The required outage variant is:
+
+```bash
+bash scripts/load/run-seeded-public-read-replicas-outage.sh
+```
+
+It runs the same two JVMs and shared MariaDB/Redis state while the deterministic
+AgencyService stub returns HTTP 503. On exact source head
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec`, all 1,400 responses succeeded at
+concurrency 32 with 93.16 ms overall p95 and 654.12 requests/second. The 900
+consultant-profile reads produced exactly 900 dependency attempts, 900 latency
+measurements and 900 `userservice.dependency.fallbacks` measurements: one
+attempt and one successful local fallback per read, with 7.57 ms mean and 92.28
+ms maximum dependency latency. Error response payloads were also measured at
+40 bytes per call.
+
+Fallback use remains fully countable while operator warnings are bounded
+independently in each process. The warm-up plus measured outage produced
+exactly one fallback warning in each JVM and no
+`HttpServerErrorException` stack trace. Later fallbacks within the configured
+one-minute window increment the metric and the suppressed-warning count instead
+of amplifying logs. The next emitted warning reports how many were suppressed;
+consultant, agency, tenant and exception values are never metric tags or
+warning fields. This outage proof is required by the MariaDB/replica workflow,
+not an ad-hoc local experiment.
 
 The earlier control proof on 2026-07-25 used a real started UserService testing process and
 500 requests at concurrency 20 against `/actuator/health/liveness`: 0 failures,

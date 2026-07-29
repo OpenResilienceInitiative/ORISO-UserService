@@ -117,24 +117,28 @@ the focused replay PRs.
 ## Combined local verification
 
 Executed on 2026-07-29 with Temurin JDK 21 against source commit
-`4dbf5c8f887da55e8ed1f81f8bc5e7b54b895321`:
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec`:
 
-- unit suite: 3,542 tests in 402 reports, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,547 tests in 403 reports, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 73 tests passed;
+- CI and executable architecture contracts: 77 tests passed;
 - OpenAPI contract gate: 8 tests passed;
 - focused DPA, identity and Keycloak composition: 177 Java tests passed; all
-  25 focused module-boundary tests passed within the 73-test CI suite;
+  25 focused module-boundary tests passed within the 77-test CI suite;
 - focused Matrix-only dead-wiring composition: 98 Java tests passed;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
-  failures, 95.38 ms overall p95 and 633.63 requests/second;
+  failures, 93.76 ms overall p95 and 659.05 requests/second;
 - dependency proof for those reads: 900 consultant-profile reads produced
-  exactly 900 AgencyService calls, 8.87 ms mean and 101.91 ms maximum outbound
+  exactly 900 AgencyService calls, 5.90 ms mean and 127.97 ms maximum outbound
   latency, 288.89 response bytes per call on average, and no threshold
   violations;
+- required AgencyService-outage proof: two real UserService JVMs returned all
+  1,400 responses with 93.16 ms overall p95; 900 consultant-profile reads
+  produced exactly 900 failed dependency attempts and 900 measured local
+  fallbacks, with one bounded warning per JVM and no dependency stack trace;
 - authenticated two-replica write proof after the CI port-allocation regression
   fix: 80 concurrent upserts and both cross-replica reads passed, followed by 12
   writes and both reads after one replica restart, with one canonical row;
