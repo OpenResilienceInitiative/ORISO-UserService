@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 2,
+  "baseline": {
+    "date": "2026-07-24",
+    "source": "https://github.com/OpenResilienceInitiative/ORISO-UserService/issues/734",
+    "totals": {
+      "tests": 4707,
+      "failures": 28,
+      "errors": 704,
+      "skipped": 10
+    },
+    "rawReportsRetainedInRepository": false,
+    "classificationMethod": "The original Surefire XML was parsed by test and suite before repair. Spring's context failure threshold masked the causal exception for 45 errors; those entries retain that truthful initial classification and were resolved through staged reruns after the two primary startup blockers were removed."
+  },
+  "failureClusters": [
+    {
+      "id": "obsolete-spring-security-expectations",
+      "count": 19,
+      "status": "stale-tests-removed",
+      "classification": "Authorization tests expected CSRF failures for safe GET requests or for the explicitly CSRF-exempt public registration endpoint.",
+      "resolution": "Removed the 19 assertions that contradicted the effective Spring Security contract; retained positive authentication and authorization coverage.",
+      "evidence": [
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7",
+        "current complete required integration suite"
+      ]
+    },
+    {
+      "id": "actuator-contract-drift",
+      "count": 2,
+      "status": "resolved",
+      "classification": "One test treated aggregate dependency health as process liveness and one expected a hidden Actuator endpoint to return CSRF 403 instead of 404.",
+      "resolution": "Assert liveness on /actuator/health/liveness and the not-exposed contract on /actuator/env; Redis and MariaDB remain separate required contracts.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/ActuatorControllerIT.java",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    },
+    {
+      "id": "rocketchat-configuration-expectation-drift",
+      "count": 1,
+      "status": "stale-tests-removed",
+      "classification": "The test expected an obsolete credential-refresh cron and an environment-owned MongoDB URL.",
+      "resolution": "Removed the stale environment-value assertions; the Matrix-only cutover subsequently deleted the Rocket.Chat configuration and tests.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/rocketchat/config/RocketChatConfigIT.java",
+        "commits dce9b2f4d89851d452135de6b0697d22413368c7 and 43f0d43ac86a8e692e3a5e05fdb3746d70381ee9"
+      ]
+    },
+    {
+      "id": "session-locking-test-double-drift",
+      "count": 3,
+      "status": "resolved",
+      "classification": "Accept-enquiry tests stubbed the old session read after production moved the workflow to the locking getSessionForUpdate path.",
+      "resolution": "Aligned the test double with the production locking contract without weakening the expected success, conflict or missing-group behavior.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserControllerIT.java",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    },
+    {
+      "id": "jackson-request-fixture-drift",
+      "count": 1,
+      "status": "resolved",
+      "classification": "The update-email test sent an unquoted raw string although the controller contract consumes a JSON string.",
+      "resolution": "Serialize the request through the configured ObjectMapper so the test exercises the Jackson 3 HTTP contract.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserControllerIT.java",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    },
+    {
+      "id": "public-consultant-test-double-gap",
+      "count": 1,
+      "status": "resolved",
+      "classification": "The public-consultant test did not configure the active-slug lookup introduced by the production endpoint.",
+      "resolution": "Provide the active consultant through the slug service and verify agency lookup with the actual generated consultant identifier.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserControllerIT.java",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    },
+    {
+      "id": "stale-chat-aggregate-assertion",
+      "count": 1,
+      "status": "stale-tests-removed",
+      "classification": "The session-list assertion compared an obsolete whole transport aggregate containing legacy chat state.",
+      "resolution": "Replaced the transport aggregate with Matrix-only session-list contracts covering the stable session, agency and display-name behavior.",
+      "evidence": [
+        "historical src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserControllerIT.java",
+        "src/test/java/de/caritas/cob/userservice/api/MatrixOnlyUserSessionListContractTest.java",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    }
+  ],
+  "errorClusters": [
+    {
+      "id": "replacement-h2-lost-mariadb-compatibility",
+      "count": 637,
+      "status": "resolved",
+      "classification": "Forty-seven suites replaced the configured test datasource, lost H2 MariaDB compatibility and failed while loading the shared SQL fixture at the reserved user table. Spring then reported the remaining tests in each suite as context-threshold errors.",
+      "resolution": "Preserve application-testing.properties for every integration context, use H2 MariaDB mode with USER, VALUE and DAY compatibility, and isolate cached contexts with unique in-memory databases.",
+      "evidence": [
+        "src/main/resources/application-testing.properties",
+        "tests/ci/test_required_ci_contract.py",
+        "commits dce9b2f4d89851d452135de6b0697d22413368c7 and f579d98483a094af7037a3beabe5736d4fdc1d99"
+      ]
+    },
+    {
+      "id": "spring-plugin-hateoas-abi-mismatch",
+      "count": 22,
+      "status": "resolved",
+      "classification": "Two suites loaded Spring Plugin Core 2.x while Spring HATEOAS on Spring Boot 4 required the newer BeanFactory-compatible API.",
+      "resolution": "Pin Spring Plugin Core 4.0.0 and keep the controller contexts in the complete required suite.",
+      "evidence": [
+        "pom.xml spring-plugin-core.version",
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7"
+      ]
+    },
+    {
+      "id": "masked-spring-context-threshold-cascades",
+      "count": 45,
+      "status": "resolved",
+      "classification": "The initial XML retained only Spring's context failure-threshold exception for these tests, so assigning a more specific original exception would fabricate evidence. Staged reruns after the 637- and 22-error blockers exposed the remaining database-lifecycle, reserved-word, transaction/lazy-loading, generated-client-fake, external-service and stale-fixture clusters.",
+      "resolution": "Repair the exposed clusters iteratively, rerun the entire inventory from a clean build, require deterministic generated-client fakes and real Redis/MariaDB contracts, and remove quarantine only after the full required lane passes.",
+      "suiteCounts": {
+        "ChatRepositoryIT": 8,
+        "RetrieveAdminServiceIT": 7,
+        "RegisteredEnquiryConversationListProviderIT": 5,
+        "ArchivedTeamSessionConversationListProviderTestIT": 4,
+        "UserRepositoryIT": 4,
+        "CreateAdminAgencyRelationServiceIT": 3,
+        "AdminRepositoryIT": 2,
+        "AdminStatisticsRepositoryIT": 2,
+        "SessionRepositoryIT": 2,
+        "ConsultantServiceIT": 2,
+        "UserServiceIT": 2,
+        "ConsultantMessageStatRepositoryIT": 1,
+        "ConsultantMobileTokenRepositoryIT": 1,
+        "UserMobileTokenRepositoryIT": 1,
+        "StatisticsServiceIT": 1
+      },
+      "evidence": [
+        "commit dce9b2f4d89851d452135de6b0697d22413368c7",
+        "commit f579d98483a094af7037a3beabe5736d4fdc1d99",
+        "scripts/ci/run-required-integration-tests.sh",
+        "current complete required integration suite"
+      ]
+    }
+  ],
+  "stagedRerunEvidence": {
+    "purpose": "These counts show the failure layers exposed after primary blockers were repaired. They are not added to the original 28/704 totals.",
+    "runs": [
+      {
+        "tests": 4707,
+        "failures": 148,
+        "errors": 365,
+        "skipped": 10,
+        "dominantExposedClusters": [
+          "233 Spring context cascades",
+          "134 HTTP/security expectation drift",
+          "38 H2 session_data.value errors",
+          "27 transaction/lazy-loading errors",
+          "15 generated-client fake errors"
+        ]
+      },
+      {
+        "tests": 4707,
+        "failures": 95,
+        "errors": 124,
+        "skipped": 10,
+        "dominantExposedClusters": [
+          "71 HTTP/security expectation failures",
+          "30 missing generated ConsultingType client beans",
+          "27 transaction/lazy-loading errors",
+          "15 generated-client fake errors",
+          "7 unmocked Keycloak localhost calls"
+        ]
+      }
+    ]
+  },
+  "inventoryReconciliation": {
+    "rawFailureDiscoveryExecutions": 4707,
+    "repairedPreCutover": {
+      "unit": 3782,
+      "integration": 940,
+      "primaryTotal": 4722
+    },
+    "matrixOnlyCurrent": {
+      "unit": 3373,
+      "integration": 840,
+      "primaryTotal": 4213
+    },
+    "matrixOnlyDelta": {
+      "unit": -409,
+      "integration": -100,
+      "primaryTotal": -509
+    },
+    "sourceDiff": {
+      "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
+      "toBaselineCommit": "5eb17ab23b56223f26474cb4a19ead482aaa89dc",
+      "deletedJUnitTestClasses": 40,
+      "addedJUnitTestClasses": 29,
+      "deletedLegacyNamedClasses": 33
+    },
+    "note": "Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
+  },
+  "currentRequiredSuite": {
+    "command": "scripts/ci/run-required-integration-tests.sh",
+    "integrationReports": 78,
+    "integrationTests": 840,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "quarantine": false,
+    "additionalRequiredContracts": [
+      "fresh MariaDB schema and statistics contracts",
+      "Redis shared-state contracts",
+      "CI contract forbidding the removed quarantine workflow",
+      "CI source guard rejecting JUnit disabled and ignored test annotations"
+    ]
+  }
+}
