@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.helper;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,16 +42,17 @@ public class MailServiceTest {
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
-    when(this.mailsControllerApi.getApiClient()).thenReturn(this.apiClient);
+    lenient().when(this.mailsControllerApi.getApiClient()).thenReturn(this.apiClient);
   }
 
   @Test
   public void sendEmailNotification_Should_CallMailService() {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
 
-    mailService.sendEmailNotification(new MailsDTO());
+    boolean accepted = mailService.sendEmailNotification(new MailsDTO());
 
     verify(mailsControllerApi, times(1)).sendMails(any());
+    assertThat(accepted).isTrue();
   }
 
   @Test
@@ -60,9 +62,23 @@ public class MailServiceTest {
     doThrow(new RuntimeException()).when(this.mailsControllerApi).sendMails(any());
 
     try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
-      mailService.sendEmailNotification(new MailsDTO());
+      boolean accepted = mailService.sendEmailNotification(new MailsDTO());
 
       assertThat(logCaptor.contains(Level.ERROR, "Error while calling the MailService")).isTrue();
+      assertThat(accepted).isFalse();
+    }
+  }
+
+  @Test
+  public void sendEmailNotification_ShouldReturnFalse_WhenControllerSetupFails() {
+    when(mailServiceApiControllerFactory.createControllerApi())
+        .thenThrow(new RuntimeException("controller setup failed"));
+
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      boolean accepted = mailService.sendEmailNotification(new MailsDTO());
+
+      assertThat(logCaptor.contains(Level.ERROR, "Error while calling the MailService")).isTrue();
+      assertThat(accepted).isFalse();
     }
   }
 

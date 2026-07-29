@@ -1,12 +1,16 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_AIDS;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -17,6 +21,7 @@ import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiry
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -24,11 +29,18 @@ import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import de.caritas.cob.userservice.api.workflow.delete.service.WorkflowErrorMailService;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -38,6 +50,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.UnexpectedRollbackException;
 
 @SpringBootTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -67,6 +81,10 @@ class DeleteUserAnonymousSchedulerIT {
   @MockitoBean MatrixSynapseService matrixSynapseService;
 
   @MockitoBean WorkflowErrorMailService workflowErrorMailService;
+
+  @MockitoSpyBean IdentityTombstoneService identityTombstoneService;
+
+  @Autowired private EntityManager entityManager;
 
   private Session currentSession;
 
@@ -134,6 +152,11 @@ class DeleteUserAnonymousSchedulerIT {
         currentSession.getId(), currentSession.getUser().getUserId());
   }
 
+  /**
+   * The deletion transaction ends before notification starts, so a notification failure cannot
+   * reach it. #746 additionally made that failure non-fatal for the scheduler run, so it is logged
+   * rather than propagated; the deletion stays committed either way.
+   */
   @Test
   void performDeletionWorkflow_Should_commitDeletionBeforeErrorNotificationFails() {
     prepareCurrentSessionForDeletion();
@@ -142,8 +165,7 @@ class DeleteUserAnonymousSchedulerIT {
         .when(workflowErrorMailService)
         .buildAndSendErrorMail(anyList());
 
-    assertThrows(
-        IllegalStateException.class, deleteUserAnonymousScheduler::performDeletionWorkflow);
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
 
     assertSessionAndUserDoNotExistInDatabase(
         currentSession.getId(), currentSession.getUser().getUserId());
@@ -175,5 +197,92 @@ class DeleteUserAnonymousSchedulerIT {
 
     assertSessionAndUserDoNotExistInDatabase(
         currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
+  @Test
+  void performDeletionWorkflow_Should_commitDeletion_When_errorNotificationDependencyFails() {
+    prepareCurrentSessionForDeletion();
+    when(matrixSynapseService.deactivateUser(anyString()))
+        .thenThrow(new IllegalStateException("matrix deletion failed"));
+    doThrow(new IllegalStateException("error notification failed"))
+        .when(workflowErrorMailService)
+        .buildAndSendErrorMail(anyList());
+
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
+
+    assertSessionAndUserDoNotExistInDatabase(
+        currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
+  /**
+   * Pins the PreDev failure mode behind #745, which this branch does <em>not</em> yet repair.
+   *
+   * <p>The workflow error there originates in the database delete rather than in an external call:
+   * with the preceding session deletes flushed and the user detached, {@code
+   * DeleteDatabaseAskerAction} takes Hibernate's merge path and fails while re-resolving the
+   * sessions removed moments earlier in the same run. The exception is raised by Hibernate, not
+   * stubbed — stubbing the repository would reproduce the shape but not the consequence, because
+   * only a genuine failure marks the persistence context rollback-only.
+   *
+   * <p>The consequence is that catching the notification failure is not sufficient on its own: the
+   * commit still fails, so nothing is retained and the next scheduler run repeats the irreversible
+   * Matrix and Keycloak calls. Giving the deletion its own transaction boundary is what closes
+   * this; when that lands, this test has to flip to asserting that the session deletion is
+   * retained.
+   */
+  @Test
+  void performDeletionWorkflow_Should_stillRollBack_When_databaseOriginFailurePoisonsTransaction() {
+    prepareCurrentSessionForDeletion();
+    var sessionId = currentSession.getId();
+    detachUserAfterFlushingSessionDeletes();
+    doThrow(new IllegalStateException("error notification failed"))
+        .when(workflowErrorMailService)
+        .buildAndSendErrorMail(anyList());
+
+    assertThrows(
+        UnexpectedRollbackException.class, deleteUserAnonymousScheduler::performDeletionWorkflow);
+
+    assertDatabaseUserDeleteFailed();
+    assertTrue(
+        sessionRepository.findById(sessionId).isPresent(),
+        "session deletion is still lost to the rollback until the deletion owns its transaction");
+  }
+
+  /**
+   * Recreates the PreDev persistence state: {@code DeleteDatabaseAskerAction} records the tombstone
+   * immediately before deleting the user, so flushing and detaching at that point leaves the
+   * already-initialized session collection behind for the following merge to trip over.
+   */
+  private void detachUserAfterFlushingSessionDeletes() {
+    doAnswer(
+            invocation -> {
+              var result = invocation.callRealMethod();
+              entityManager.flush();
+              entityManager.detach(invocation.getArgument(0));
+              return result;
+            })
+        .when(identityTombstoneService)
+        .recordDeletedUser(any(User.class));
+  }
+
+  /**
+   * Guards the reproduction itself: the workflow error handed to the notification step has to come
+   * from the database delete of the user, otherwise this test would pass without exercising the
+   * failure mode it exists for.
+   */
+  @SuppressWarnings("unchecked")
+  private void assertDatabaseUserDeleteFailed() {
+    var captor = ArgumentCaptor.forClass(List.class);
+    verify(workflowErrorMailService).buildAndSendErrorMail(captor.capture());
+
+    List<DeletionWorkflowError> workflowErrors = captor.getValue();
+    assertTrue(
+        workflowErrors.stream()
+            .anyMatch(
+                error ->
+                    DeletionSourceType.ASKER.equals(error.getDeletionSourceType())
+                        && DeletionTargetType.DATABASE.equals(error.getDeletionTargetType())
+                        && "Unable to delete user".equals(error.getReason())),
+        "expected a database user-delete workflow error, got: " + workflowErrors);
   }
 }
