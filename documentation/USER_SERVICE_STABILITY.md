@@ -27,27 +27,27 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,429 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 852 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
+| Unit | 3,456 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 856 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,429 unit plus 852
-integration executions, or 4,281.
+comparable primary current inventory is therefore 3,456 unit plus 856
+integration executions, or 4,312.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,281: 353 fewer unit and 88 fewer integration
+inventory to the current 4,312: 326 fewer unit and 84 fewer integration
 executions. The source diff for that same pre-cutover-to-current interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 441-execution net reduction. This is intentional scope
+map one-to-one to the 410-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -238,9 +238,9 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,429 unit executions with
-zero failures, zero errors and no skips, and 852 required integration
-executions across 83 reports with zero failures, zero errors and nine skips.
+Measured on this branch after merging `pre-dev`: 3,456 unit executions with
+zero failures, zero errors and no skips, and 856 required integration
+executions across 84 reports with zero failures, zero errors and nine skips.
 The focused supplier test and formatting gate also pass.
 
 #### Measured limit of this repair
@@ -266,8 +266,37 @@ but not its consequence, because only a genuine failure poisons the persistence
 context; the test therefore provokes the real exception.
 
 Making the deletion commit independently of that poisoned context requires its
-own transaction boundary and is tracked separately. Until then the hourly
-repeat loop is narrowed to the cases this branch removes, not closed.
+own transaction boundary. That boundary now exists, described below.
+
+#### Per-user transaction boundary
+
+Selection, deletion and notification each own their scope:
+
+- `AnonymousUserDeletionCandidates` reads in a read-only transaction and returns
+  user **ids**, not entities. An entity handed across a transaction boundary
+  would be detached in the next one, which is what made the delete take
+  Hibernate's merge path over an already-initialized session collection in the
+  first place. Loading the user inside the deleting transaction removes that
+  path entirely.
+- `AnonymousUserDeletionUnit` deletes exactly one user under
+  `Propagation.REQUIRES_NEW` and commits when it returns.
+- `AnonymousUserDeletionBatch` holds no transaction. It catches a failed
+  per-user commit, records it as a workflow error and continues with the
+  remaining users.
+- `DeleteUserAnonymousService` notifies after the batch, outside every deletion
+  transaction.
+
+A user whose own transaction is poisoned still cannot be retained — that
+transaction is doomed by definition — but it is now the only one lost, and it
+is reported rather than silent. Proven in `DeleteUserAnonymousSchedulerIT` with
+a genuine `DataIntegrityViolationException`: a leftover `user_agency` row makes
+one user's delete violate the restricting foreign key, and the other user in
+the same batch is still deleted and committed.
+
+The selection is also filtered to `RegistrationType.ANONYMOUS`. Without that
+filter this workflow, configured under `user.anonymous.deleteworkflow.*`, also
+selected registered system accounts such as the per-tenant
+`group-chat-system-*` users.
 
 ## Chatty-call reductions
 

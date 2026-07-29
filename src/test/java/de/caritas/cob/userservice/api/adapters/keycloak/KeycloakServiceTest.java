@@ -1581,6 +1581,25 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void deleteUser_Should_TreatNotFoundAfterUnauthorizedRetryAsAlreadyDeleted() {
+    UsersResource usersResource = mock(UsersResource.class);
+    UserResource userResource = mock(UserResource.class);
+    org.mockito.Mockito.doThrow(new jakarta.ws.rs.NotAuthorizedException("unauthorized"))
+        .doThrow(new jakarta.ws.rs.NotFoundException("already deleted"))
+        .when(userResource)
+        .remove();
+    when(usersResource.get(any())).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.deleteUser(USER_ID);
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(userResource, times(2)).remove();
+    assertThat(
+        logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
+  }
+
+  @Test
   public void ensureRole_Should_SkipUpdate_When_UserAlreadyHasRole() {
     UserResource userResource = givenUserResourceWithRealmRoles("consultant");
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
