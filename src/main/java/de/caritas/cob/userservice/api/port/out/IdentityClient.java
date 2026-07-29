@@ -77,8 +77,6 @@ public interface IdentityClient {
 
   List<UserRepresentation> findByUsername(String username);
 
-  void closeSession(String sessionId);
-
   void deactivateUser(String userId);
 
   boolean verifyIgnoringOtp(String username, String password);
