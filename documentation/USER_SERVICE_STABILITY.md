@@ -327,8 +327,37 @@ but not its consequence, because only a genuine failure poisons the persistence
 context; the test therefore provokes the real exception.
 
 Making the deletion commit independently of that poisoned context requires its
-own transaction boundary and is tracked separately. Until then the hourly
-repeat loop is narrowed to the cases this branch removes, not closed.
+own transaction boundary. That boundary now exists, described below.
+
+#### Per-user transaction boundary
+
+Selection, deletion and notification each own their scope:
+
+- `AnonymousUserDeletionCandidates` reads in a read-only transaction and returns
+  user **ids**, not entities. An entity handed across a transaction boundary
+  would be detached in the next one, which is what made the delete take
+  Hibernate's merge path over an already-initialized session collection in the
+  first place. Loading the user inside the deleting transaction removes that
+  path entirely.
+- `AnonymousUserDeletionUnit` deletes exactly one user under
+  `Propagation.REQUIRES_NEW` and commits when it returns.
+- `AnonymousUserDeletionBatch` holds no transaction. It catches a failed
+  per-user commit, records it as a workflow error and continues with the
+  remaining users.
+- `DeleteUserAnonymousService` notifies after the batch, outside every deletion
+  transaction.
+
+A user whose own transaction is poisoned still cannot be retained — that
+transaction is doomed by definition — but it is now the only one lost, and it
+is reported rather than silent. Proven in `DeleteUserAnonymousSchedulerIT` with
+a genuine `DataIntegrityViolationException`: a leftover `user_agency` row makes
+one user's delete violate the restricting foreign key, and the other user in
+the same batch is still deleted and committed.
+
+The selection is also filtered to `RegistrationType.ANONYMOUS`. Without that
+filter this workflow, configured under `user.anonymous.deleteworkflow.*`, also
+selected registered system accounts such as the per-tenant
+`group-chat-system-*` users.
 
 ## Chatty-call reductions
 
