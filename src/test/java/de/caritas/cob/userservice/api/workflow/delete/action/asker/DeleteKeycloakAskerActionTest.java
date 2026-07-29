@@ -14,8 +14,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import ch.qos.logback.classic.Level;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -37,7 +37,7 @@ public class DeleteKeycloakAskerActionTest {
 
   @InjectMocks private DeleteKeycloakAskerAction deleteKeycloakAskerAction;
 
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityAccountRemover identityAccountRemover;
 
   private LogbackCaptor askerActionLogCaptor;
   private LogbackCaptor userActionLogCaptor;
@@ -62,14 +62,14 @@ public class DeleteKeycloakAskerActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(this.keycloakService, times(1)).deleteUser(any());
+    verify(this.identityAccountRemover, times(1)).deleteUser(any());
   }
 
   @Test
   public void execute_Should_returnExpectedWorkflowErrorAndLogError_When_userDeletionFailes() {
     User user = new User();
     user.setUserId("userId");
-    doThrow(new RuntimeException()).when(this.keycloakService).deleteUser(any());
+    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any());
     AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 
     this.deleteKeycloakAskerAction.execute(workflowDTO);
@@ -90,7 +90,7 @@ public class DeleteKeycloakAskerActionTest {
     User user = new User();
     user.setUserId("userId");
     doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
-        .when(this.keycloakService)
+        .when(this.identityAccountRemover)
         .deleteUser(any());
     AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 

@@ -29,10 +29,6 @@ public interface IdentityClient {
 
   void updateDummyEmail(String userId);
 
-  void rollBackUser(String userId);
-
-  void deleteUser(String userId);
-
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);

@@ -73,6 +73,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -169,6 +170,7 @@ class UserControllerAuthorizationIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountRemover.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
         IdentityEmailAddressUpdater.class,
