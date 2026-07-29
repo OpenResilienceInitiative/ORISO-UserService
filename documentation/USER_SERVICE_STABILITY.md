@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-28
+Last verified: 2026-07-29
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -27,31 +27,28 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,438 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 850 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
+| Unit | 3,439 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 852 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,438 unit plus 850
-integration executions, or 4,288.
+comparable primary current inventory is therefore 3,439 unit plus 852
+integration executions, or 4,291.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to a recorded 4,213: 409 fewer unit and 100 fewer integration
-executions. Subsequent stability and boundary work raised the current inventory
-to 4,288 without restoring removed legacy paths. The source diff for the
-pre-cutover-to-cutover interval
+inventory to the current 4,291: 343 fewer unit and 88 fewer integration
+executions. The source diff for that same pre-cutover-to-current interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the initially recorded 509-execution net reduction. This is
-intentional scope removal plus replacement coverage, not unexplained test
-quarantine.
+map one-to-one to the 431-execution net reduction. This is intentional scope
+removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
@@ -182,6 +179,95 @@ The audited pod predates this branch. Therefore its live data proves the OTel
 pipeline and supplies a baseline, but it does not prove the new
 `userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
 repair. Those require the branch image to be deployed and queried again.
+
+### Live PreDev follow-up after the `pre-dev` merge
+
+The 2026-07-26 read-only follow-up kept build, deploy and runtime evidence
+separate:
+
+- merge commit `730a9323` published the UserService `pre-dev` image with digest
+  `sha256:16534c4d5b0cf8d98b58e164c75bc1ee0320e4597fe28181ab56eee198fe1cfb`;
+- the running PreDev deployment still used the older digest
+  `sha256:11c0a03cd903d387a6cc229412ac91e1a99b33cb68f1d276e09613d4c4c479e2`;
+- no `userservice.*` metric metadata existed in the live SigNoz store.
+
+The merge and image publication are therefore confirmed, but deployment and
+the new custom-metric runtime proof remain open.
+
+Approximately 24 hours of traces from that older running image supplied this
+baseline:
+
+| Service/client operation | Spans/calls | Errors | p95 latency |
+| --- | ---: | ---: | ---: |
+| UserService, all spans | 15,732 | 33 | 25.38 ms |
+| Matrix POST | 877 | 0 | 47.64 ms |
+| Matrix DELETE | 660 | 0 | 26.27 ms |
+| Matrix GET | 474 | 1 | about 30 s |
+| Matrix PUT | 8 | 0 | 287.16 ms |
+| Tenant GET | 14 | 10 | n/a |
+| Keycloak GET | 9 | 0 | 16.23 ms |
+| Consulting Type GET | 9 | 0 | 20.86 ms |
+| Agency GET | 4 | 0 | 28.89 ms |
+
+Of the Matrix GET calls, 462 were expected `/sync` long-polls. Their latency is
+not ordinary request slowness. The Tenant errors were 404 responses in a
+technical/global context. That context has no tenant-specific branding, so the
+canonical tenant-template supplier now returns only the generic application URL
+without calling TenantService or ApplicationSettingsService. A unit regression
+test proves that both outbound boundaries remain untouched. Runtime
+confirmation still requires the repaired branch image to be merged, deployed
+and traced.
+
+### Anonymous-deletion repeat loop
+
+Trace grouping identified one concrete chatty-call cause in
+`deleteUserAnonymousScheduler.performDeletionWorkflow`:
+
+- six scheduler runs made 1,510 successful Matrix client calls;
+- each run averaged about 252 Matrix calls and reached a maximum of 272;
+- every root workflow then failed after about 7.5 seconds while the secondary
+  error-notification path tried to resolve a tenant template.
+
+The deletion method wrapped both irreversible Matrix actions and database
+cleanup in one transaction. When notification failed after the actions, the
+exception rolled back database cleanup, so the next scheduler run repeated the
+already completed external calls.
+
+The notification step is now best-effort: its runtime failure is logged without
+workflow identifiers instead of escaping the transaction. The technical mail
+context also no longer performs the TenantService lookup that caused the
+observed notification failure, which removes the most frequent trigger.
+
+Measured on this branch after merging `pre-dev`: 3,439 unit executions with
+zero failures, zero errors and no skips, and 852 required integration
+executions across 83 reports with zero failures, zero errors and nine skips.
+The focused supplier test and formatting gate also pass.
+
+#### Measured limit of this repair
+
+Catching the notification failure is not sufficient on its own when the
+workflow error originates inside the database delete. Reproduced locally in
+`DeleteUserAnonymousSchedulerIT`: with the preceding session deletes flushed
+and the user detached, `userRepository.delete` takes Hibernate's merge path and
+raises
+
+```
+org.hibernate.ObjectNotFoundException: No row with the given identifier exists
+  for entity [de.caritas.cob.userservice.api.model.Session with id ...]
+  at org.hibernate.type.EntityType.replace(EntityType.java:334)
+```
+
+which matches the PreDev stack. `DeleteDatabaseAskerAction` catches it and
+records a workflow error, the notification then fails and is caught here as
+intended — but Hibernate has already marked the transaction rollback-only, so
+the commit still fails with `UnexpectedRollbackException` and nothing is
+retained. Stubbing the repository to throw reproduces the shape of that failure
+but not its consequence, because only a genuine failure poisons the persistence
+context; the test therefore provokes the real exception.
+
+Making the deletion commit independently of that poisoned context requires its
+own transaction boundary and is tracked separately. Until then the hourly
+repeat loop is narrowed to the cases this branch removes, not closed.
 
 ## Chatty-call reductions
 
