@@ -24,6 +24,8 @@ public interface IdentityManaging {
 
   IdentityOtpCredential getOtpCredential(String username);
 
+  boolean isUsernameAvailable(String username);
+
   boolean isEmailAvailableOrOwn(String username, String email);
 
   boolean hasRole(String userId, UserRole role);

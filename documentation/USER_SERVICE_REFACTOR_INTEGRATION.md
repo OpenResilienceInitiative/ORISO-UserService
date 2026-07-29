@@ -10,7 +10,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 
 - Branch: `feature/user-service-refactor`
 - Base: `pre-dev`
-- Base commit: `be15d12f6305f3370e626a0eec131293cceb5624`
+- Base commit: `0ea5ba3206ad3a59c8a91e09d8b3d626ded438f4`
 - Product target: Matrix-only chat through the ORISO frontend, the
   ORISO-controlled Element Call/MatrixRTC fork, and LiveKit
 - Rocket.Chat and Jitsi: complete removal targets, never fallback transports
@@ -25,6 +25,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity email ownership | [#879](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/879) | Provider-neutral typed owner lookup replaces transport maps in application code |
 | Identity authentication | [#880](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/880) | Login, logout, and verification use a focused provider-neutral port |
 | Username availability | [#881](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/881) | Four current consumers use a focused availability port |
+| Username application input | [#833](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/833) | Web adapters call the application-owned identity input; `IdentityManager` delegates to the focused availability output |
 | Identity second factor | [#882](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/882) | OTP and email verification use typed application values, bounded retries, and five stable low-cardinality operation tags |
 | Identity email mutations | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Current-account and post-verification email writes use a focused output port with explicit no-op and provider-call bounds |
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
@@ -33,7 +34,10 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 Every row is represented by a separate merge commit so the original PR head and
 its review history remain traceable.
 
-The #882 and #885 merges compose `IdentitySecondFactor` and
+The #881 and #833 merges compose the username path as web adapter →
+`IdentityManaging` → `IdentityUsernameAvailability`, so web code cannot bypass
+the application boundary while the broad provider client remains free of the
+availability read. The #882 and #885 merges compose `IdentitySecondFactor` and
 `IdentityEmailAddressUpdater` with the previously integrated authentication,
 email-owner, role-read, and username-availability interfaces in
 `KeycloakService`. Shared Spring test doubles implement all focused interfaces,
@@ -57,13 +61,15 @@ the focused replay PRs.
 
 ## Combined local verification
 
-Executed on 2026-07-28 with Temurin JDK 21:
+Executed on 2026-07-29 with Temurin JDK 21:
 
-- unit suite: 3,412 tests, 0 failures, 0 errors, 0 skipped;
-- required integration/contract/E2E suite: 852 tests in 82 reports, 0 failures,
+- unit suite: 3,414 tests, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 59 tests and 2 subtests passed;
+- CI and executable architecture contracts: 65 tests passed;
 - OpenAPI contract gate: 8 tests passed;
+- focused username application/output composition: 38 Java tests passed; the
+  17 focused module-boundary tests also passed within the 65-test CI suite;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0

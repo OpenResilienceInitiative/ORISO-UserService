@@ -227,7 +227,7 @@ class UserControllerAuthorizationIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
 
-    verifyNoInteractions(identityClient);
+    verifyNoInteractions(identityManager);
   }
 
   private IdentityUsernameAvailability identityUsernameAvailability() {
@@ -238,23 +238,23 @@ class UserControllerAuthorizationIT {
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNotFound());
 
-    verify(identityUsernameAvailability()).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test
   void usernameAvailability_Should_StayPublic_WhenNoKeycloakAuthorization() throws Exception {
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
 
-    verify(identityUsernameAvailability()).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test

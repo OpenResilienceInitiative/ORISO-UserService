@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class IdentityManager implements IdentityManaging {
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentityAuthentication identityAuthentication;
   private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
@@ -72,6 +74,11 @@ public class IdentityManager implements IdentityManaging {
   @Override
   public IdentityOtpCredential getOtpCredential(String username) {
     return identitySecondFactor.getOtpCredential(username);
+  }
+
+  @Override
+  public boolean isUsernameAvailable(String username) {
+    return identityUsernameAvailability.isUsernameAvailable(username);
   }
 
   @Override

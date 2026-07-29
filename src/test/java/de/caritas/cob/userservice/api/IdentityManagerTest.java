@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +36,7 @@ class IdentityManagerTest {
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentitySecondFactor identitySecondFactor;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
@@ -157,5 +159,14 @@ class IdentityManagerTest {
     assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
 
     verify(identityClient).userHasRole("consultant-id", "group-chat-consultant");
+  }
+
+  @Test
+  void isUsernameAvailableShouldDelegateToFocusedAvailabilityPort() {
+    when(identityUsernameAvailability.isUsernameAvailable(RAW_USERNAME)).thenReturn(true);
+
+    assertThat(identityManager.isUsernameAvailable(RAW_USERNAME)).isTrue();
+
+    verify(identityUsernameAvailability).isUsernameAvailable(RAW_USERNAME);
   }
 }

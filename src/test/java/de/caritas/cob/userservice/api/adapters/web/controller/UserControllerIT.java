@@ -400,7 +400,7 @@ class UserControllerIT {
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
@@ -411,7 +411,7 @@ class UserControllerIT {
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -423,7 +423,7 @@ class UserControllerIT {
   void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -465,7 +465,7 @@ class UserControllerIT {
   void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -478,7 +478,7 @@ class UserControllerIT {
       throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityUsernameAvailability().isUsernameAvailable(username))
+    when(identityManager.isUsernameAvailable(username))
         .thenThrow(new RuntimeException("Keycloak 401"));
 
     /* when */

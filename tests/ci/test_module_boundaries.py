@@ -193,8 +193,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "IdentityUsernameAvailability.java"
         )
         consumers = (
-            CONTROLLERS / "UserController.java",
-            CONTROLLERS / "UserRegistrationControllerDelegate.java",
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
             "anonymous/AnonymousUsernameRegistry.java",
@@ -333,6 +332,36 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 keycloak_adapter,
                 "Second-factor retries must retain stable per-operation metric tags",
             )
+
+    def test_username_availability_web_boundaries_depend_on_identity_input_port(self):
+        sources = (
+            CONTROLLERS / "UserController.java",
+            CONTROLLERS / "UserRegistrationControllerDelegate.java",
+        )
+        forbidden_imports = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;",
+            "import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;",
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)} imports {forbidden_import}"
+            for source in sources
+            for forbidden_import in forbidden_imports
+            if forbidden_import in source.read_text()
+        ]
+        offenders.extend(
+            f"{source.relative_to(ROOT)} does not import IdentityManaging"
+            for source in sources
+            if "import de.caritas.cob.userservice.api.port.in.IdentityManaging;"
+            not in source.read_text()
+        )
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Username-availability web adapters must call IdentityManaging instead "
+            "of bypassing the application boundary through an output port:\n"
+            + "\n".join(offenders),
+        )
 
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
