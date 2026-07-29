@@ -30,6 +30,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity email mutations | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Current-account and post-verification email writes use a focused output port with explicit no-op and provider-call bounds |
 | Identity profile reads | [#891](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/891) | Authenticated user-data mapping uses a focused lookup and a five-field provider-neutral profile |
 | Identity role writes | [#894](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/894) | Consultant role writes use a focused batch port, deduplicate roles and bound provider reads, writes, visibility checks and retries |
+| Identity profile writes | [#895](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/895) | Admin and consultant profile mutations use a focused five-field provider-neutral port with explicit lookup, availability-check, update and retry bounds |
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 | Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
@@ -50,8 +51,12 @@ representations from the broad client and composes its lookup into the same
 shared Spring test doubles without weakening any earlier focused port. The #894
 merge moves consultant role writes out of the broad client, batches missing
 roles in one add operation per attempt, skips empty and case-equivalent role
-sets, and retains bounded visibility and admin-session retries. The #886 merge
-removes the unused session-close command while
+sets, and retains bounded visibility and admin-session retries. The #895 merge
+moves admin and consultant profile writes out of the broad client and keeps
+username, email, tenant ID, first name and last name provider-neutral. An
+unchanged email skips the availability search; a changed email performs one
+search before the single update; the adapter does not retry profile writes. The
+#886 merge removes the unused session-close command while
 preserving the active refresh-token logout flow. The #902 merge deletes the
 unreachable LiveService dependency while keeping Matrix push and durable
 timeline notifications independent of partial persistence and cache failures.
@@ -74,11 +79,12 @@ Executed on 2026-07-29 with Temurin JDK 21:
 - unit suite: 3,420 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 67 tests passed;
+- CI and executable architecture contracts: 68 tests passed;
 - OpenAPI contract gate: 8 tests passed;
 - focused username application/output composition: 38 Java tests passed;
-  focused Keycloak and batch-role composition: 117 Java tests passed; all 19
-  focused module-boundary tests passed within the 67-test CI suite;
+  focused Keycloak, batch-role and profile-write composition: 121 Java tests
+  passed; all 20 focused module-boundary tests passed within the 68-test CI
+  suite;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0

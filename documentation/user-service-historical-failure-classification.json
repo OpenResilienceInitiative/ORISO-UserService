@@ -196,7 +196,7 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "51e9415e8890101910c70ae137e6fbc13467e24e",
+      "verifiedApplicationHead": "44b6ed5a3107fc5a9f291f267a470e71910ccd9b",
       "unit": 3420,
       "integration": 854,
       "primaryTotal": 4274,
@@ -222,6 +222,7 @@
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
     "unitTests": 3420,
+    "unitReports": 393,
     "unitSkipped": 0,
     "integrationReports": 82,
     "integrationTests": 854,

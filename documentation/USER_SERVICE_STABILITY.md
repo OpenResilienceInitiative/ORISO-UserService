@@ -296,10 +296,12 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,420 unit executions with
-zero failures, zero errors and no skips, and 854 required integration
-executions across 82 reports with zero failures, zero errors and nine skips.
-The focused supplier test and formatting gate also pass.
+Measured on integration source commit
+`44b6ed5a3107fc5a9f291f267a470e71910ccd9b`: 3,420 unit executions across
+393 reports with zero failures, zero errors and no skips, and 854 required
+integration executions across 82 reports with zero failures, zero errors and
+nine skips. The 68-test CI/architecture suite, 8-test OpenAPI contract suite,
+focused 121-test identity composition and formatting gate also pass.
 
 #### Measured limit of this repair
 
