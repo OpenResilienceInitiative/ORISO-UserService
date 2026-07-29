@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
@@ -90,6 +91,7 @@ public class KeycloakService
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
         IdentityProfileUpdater,
+        IdentityPasswordUpdater,
         IdentityRoleLookup,
         IdentityRoleUpdater,
         IdentityUsernameAvailability,
@@ -746,6 +748,7 @@ public class KeycloakService
    * @param userId Keycloak user ID
    * @param password user password
    */
+  @Override
   public void updatePassword(final String userId, final String password) {
     var newCredentials = getCredentialRepresentation(password);
     var userResource = keycloakClient.getUsersResource().get(userId);
