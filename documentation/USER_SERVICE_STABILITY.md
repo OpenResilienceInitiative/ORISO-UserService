@@ -186,7 +186,9 @@ The parallel regression test sends 64 simultaneous callers through the
 provider and proves one identity grant; expiry, zero-lifetime and targeted
 invalidation are covered separately. After warm-up, this removes the observed
 per-session Keycloak roundtrip while preserving the separate AgencyService
-public-agency and secret Matrix-credential boundaries.
+public-agency and secret Matrix-credential boundaries. The implementation and
+its exact inventory were verified at
+`fc6425a00bd3faf2eddd303c5ba3138def42b8bd`.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.

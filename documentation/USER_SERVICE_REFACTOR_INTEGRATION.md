@@ -149,8 +149,9 @@ Executed on 2026-07-29 with Temurin JDK 21 against source commit
 
 ### Technical-identity fan-out increment
 
-Reverified on 2026-07-29 with Temurin JDK 21 after introducing the
-replica-local technical-identity token boundary:
+Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
+`fc6425a00bd3faf2eddd303c5ba3138def42b8bd`, which introduces the replica-local
+technical-identity token boundary:
 
 - unit suite: 3,552 tests in 404 reports, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
