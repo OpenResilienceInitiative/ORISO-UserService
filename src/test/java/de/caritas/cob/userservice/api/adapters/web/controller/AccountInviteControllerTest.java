@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -181,6 +182,29 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(accountInviteService).acceptInvite("token-1", "user-1");
+    // No pending mandatory 2FA on this invite: the onboarding phase is terminal.
+    assertNotNull(response.getBody());
+    assertEquals("COMPLETED", response.getBody().phase);
+  }
+
+  @Test
+  void acceptInvite_pendingTwoFactor_reportsResumablePhase() {
+    // Resume contract (ORISO-Admin#569): while the mandatory 2FA activation is open, the accept
+    // response tells the client to continue at the 2FA step instead of a terminal state.
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    when(accountInviteService.acceptInvite("token-3", null)).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
+
+    var response = controller.acceptInvite("token-3", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("PENDING_2FA_ACTIVATION", response.getBody().phase);
+    assertEquals(
+        AccountAccessGateStatus.BLOCKED_TWO_FACTOR.name(), response.getBody().accessGateStatus);
   }
 
   @Test

@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryS
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -161,16 +162,25 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
+  /**
+   * Public accept endpoint. Resume contract (ORISO-Admin#569 hardening): while the accepted
+   * invite's mandatory 2FA activation is pending and the link is unexpired, repeated calls stay
+   * idempotent 200s carrying {@code phase = PENDING_2FA_ACTIVATION}; once the gate is satisfied the
+   * link is terminally consumed (410 {@code reason=CONSUMED}).
+   */
   @PostMapping("/users/account-invites/{token}/accept")
   public ResponseEntity<AccountInviteResponseDTO> acceptInvite(
       @PathVariable String token, @RequestBody(required = false) AcceptInviteRequestDTO request) {
     String acceptedByUserId = request == null ? null : request.acceptedByUserId;
     AccountInvite invite = accountInviteService.acceptInvite(token, acceptedByUserId);
-    return ResponseEntity.ok(
+    AccountInviteResponseDTO response =
         AccountInviteResponseDTO.from(
-            invite,
-            latestDeliveryStatus(invite),
-            accountInviteService.calculateAccessGate(invite)));
+            invite, latestDeliveryStatus(invite), accountInviteService.calculateAccessGate(invite));
+    response.phase =
+        invite.getTwoFactorStatus() == TwoFactorGateStatus.PENDING_SETUP
+            ? AcceptPhase.PENDING_2FA_ACTIVATION.name()
+            : AcceptPhase.COMPLETED.name();
+    return ResponseEntity.ok(response);
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -287,6 +297,14 @@ public class AccountInviteController {
     public String acceptedByUserId;
   }
 
+  /** Onboarding phase reported by the public accept endpoint (ORISO-Admin#569 resume contract). */
+  public enum AcceptPhase {
+    /** Invite consumed, but the mandatory 2FA activation is still open — the link is resumable. */
+    PENDING_2FA_ACTIVATION,
+    /** All account gates of the invite are satisfied. */
+    COMPLETED
+  }
+
   public static class TemplateRequestDTO {
     public String kind;
     public String name;
@@ -321,6 +339,13 @@ public class AccountInviteController {
     public LocalDateTime createDate;
     public String rawToken;
     public String acceptUrl;
+
+    /**
+     * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
+     * PENDING_2FA_ACTIVATION} while the mandatory 2FA activation is open (link resumable), {@code
+     * COMPLETED} once every account gate is satisfied. {@code null} on admin-facing endpoints.
+     */
+    public String phase;
 
     static AccountInviteResponseDTO from(InviteSendResult result) {
       AccountInviteResponseDTO dto =

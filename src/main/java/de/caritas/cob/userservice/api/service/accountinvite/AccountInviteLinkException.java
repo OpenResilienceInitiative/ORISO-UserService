@@ -11,7 +11,13 @@ public class AccountInviteLinkException extends RuntimeException {
 
   /** Why the link cannot (or can no longer) be used. */
   public enum Reason {
-    /** The invite was already accepted — links are strictly single-use. */
+    /**
+     * The invite was already accepted and is terminally consumed — links are strictly single-use.
+     * Exception (ORISO-Admin#569 resume contract): while the invite's mandatory two-factor
+     * activation is still pending and the link is not expired, the accept endpoint answers 200 with
+     * {@code phase=PENDING_2FA_ACTIVATION} instead of this reason, so an interrupted onboarding can
+     * be resumed.
+     */
     CONSUMED,
     /** An admin revoked the invite. */
     REVOKED,

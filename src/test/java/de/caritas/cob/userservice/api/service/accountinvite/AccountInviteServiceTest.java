@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -406,7 +407,31 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void createInvite_Should_defaultTwoFactorNotRequired_When_targetRoleNotCounsellor() {
+  void createInvite_Should_defaultTwoFactorNotRequired_When_targetRoleWithoutMandatory2fa() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.PLATFORM_ADMIN,
+                null,
+                "new@example.org",
+                null,
+                null,
+                null,
+                null,
+                null));
+
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.NOT_REQUIRED);
+    assertThat(invite.getFirstName()).isNull();
+  }
+
+  @Test
+  void createInvite_Should_defaultTwoFactorPendingSetup_When_targetRoleTenantAdmin() {
+    // Tenant-admin TOTP is mandatory (#569): the gate starts open and the invite stays
+    // resumable until markTwoFactorActive() flips it to ACTIVE.
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -423,8 +448,7 @@ class AccountInviteServiceTest {
                 null,
                 null));
 
-    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.NOT_REQUIRED);
-    assertThat(invite.getFirstName()).isNull();
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
   }
 
   @Test
@@ -607,13 +631,156 @@ class AccountInviteServiceTest {
             .expiresAt(LocalDateTime.now().plusDays(1))
             .build();
     when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.claimForAcceptance(eq(1L), eq("user-1"), any())).thenReturn(1);
 
     AccountInvite result = service.acceptInvite("raw-token", "user-1");
 
     assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
     assertThat(result.getAcceptedByUserId()).isEqualTo("user-1");
     assertThat(result.getEmailVerificationStatus()).isEqualTo(EmailVerificationStatus.VERIFIED);
+    assertThat(result.getAcceptedAt()).isNotNull();
+    // The claim is the single write — no additional save() that could race.
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void acceptInvite_Should_resolveAuthoritativeState_When_singleUseClaimIsLostToRacer() {
+    // Both callers read EMAIL_SENT, but the guarded UPDATE flips the row exactly once — the
+    // loser must re-read the winner's committed state and map it like any consumed link.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    AccountInvite claimedByWinner =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.ACCEPTED)
+            .acceptedByUserId("winner")
+            .twoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED)
+            .expiresAt(invite.getExpiresAt())
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(1L), eq("loser"), any())).thenReturn(0);
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(claimedByWinner));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "loser"))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.CONSUMED);
+  }
+
+  // --- resume contract (#569 hardening): consumed but 2FA still pending ---
+
+  @Test
+  void acceptInvite_Should_returnInviteForResume_When_consumedButTwoFactorPendingAndNotExpired() {
+    // A tenant admin who registered but closed the browser before activating mandatory TOTP
+    // must be able to reopen the link instead of hitting a terminal 410 CONSUMED.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.ACCEPTED)
+            .acceptedByUserId("owner-1")
+            .acceptedAt(LocalDateTime.now().minusHours(2))
+            .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .expiresAt(LocalDateTime.now().plusDays(10))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    AccountInvite result = service.acceptInvite("raw-token", "someone-else");
+
+    // Idempotent: same invite, no state change, the original acceptor is untouched.
+    assertThat(result).isSameAs(invite);
+    assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThat(result.getAcceptedByUserId()).isEqualTo("owner-1");
+    assertThat(result.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    verify(accountInviteRepository, never()).save(any());
+    verify(accountInviteRepository, never()).claimForAcceptance(any(), any(), any());
+  }
+
+  @Test
+  void acceptInvite_Should_stayIdempotent_When_resumedRepeatedly() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.ACCEPTED)
+            .acceptedByUserId("owner-1")
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .expiresAt(LocalDateTime.now().plusDays(10))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    AccountInvite first = service.acceptInvite("raw-token", null);
+    AccountInvite second = service.acceptInvite("raw-token", null);
+
+    assertThat(first).isSameAs(second);
+    assertThat(second.getAcceptedByUserId()).isEqualTo("owner-1");
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void acceptInvite_Should_throwConsumed_When_consumedAndTwoFactorPendingButExpired() {
+    // The resume window stays expiry-bound: after expiresAt the consumed link is terminal.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.ACCEPTED)
+            .acceptedByUserId("owner-1")
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .expiresAt(LocalDateTime.now().minusMinutes(5))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", null))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.CONSUMED);
+    // The ACCEPTED audit state must never be rewritten by the resume expiry check.
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void acceptInvite_Should_throwConsumed_When_consumedAndTwoFactorActive() {
+    // Once 2FA is activated the link is terminally consumed — resume closes for good.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.ACCEPTED)
+            .twoFactorStatus(TwoFactorGateStatus.ACTIVE)
+            .expiresAt(LocalDateTime.now().plusDays(10))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", null))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.CONSUMED);
+  }
+
+  @Test
+  void acceptInvite_Should_throwConsumed_When_consumedAndTwoFactorWaived() {
+    // A waiver satisfies the gate exactly like an activation: nothing is left to resume.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.ACCEPTED)
+            .twoFactorStatus(TwoFactorGateStatus.WAIVED)
+            .expiresAt(LocalDateTime.now().plusDays(10))
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", null))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.CONSUMED);
   }
 
   @Test
@@ -1147,6 +1314,64 @@ class AccountInviteServiceTest {
             AccountInviteTargetRole.TENANT_ADMIN,
             List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)))
         .thenReturn(false);
+  }
+
+  @Test
+  void createInvite_Should_FallBackToLegacyChecks_When_AllocationEndpointsMissingAndNoMode() {
+    // Deployment-order gap (#569, U3 verify): a TenantService without the U1 endpoints answers
+    // 404. Legacy requests (no allocation mode) must degrade to the pre-U3 duplicate checks
+    // instead of failing with an unmapped 500.
+    givenAdminAndPassthroughSave();
+    givenTenantIdFreeLocally(7L);
+    when(tenantIdAllocationClient.reserve(7L))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                7L,
+                "owner@example.org",
+                "New",
+                "Owner",
+                null,
+                null,
+                30L));
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(invite.getTenantId()).isEqualTo(7L);
+    assertThat(invite.getTenantIdReservationToken()).isNull();
+    // No reservation exists, so no availability re-validation and no release compensation.
+    verify(tenantIdAllocationClient, never()).getAvailability(anyLong());
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void createInvite_Should_FailLoudly_When_AllocationEndpointsMissingButModeExplicit() {
+    // An explicit AUTO/MANUAL allocation request cannot be honored without the U1 endpoints —
+    // pretending a reservation would reintroduce the collision risk the epic closes.
+    when(tenantIdAllocationClient.reserve(null))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            null,
+            "owner@example.org",
+            "New",
+            "Owner",
+            null,
+            null,
+            30L,
+            IdAllocationMode.AUTO,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("TEN-INV-U1");
+    verify(accountInviteRepository, never()).save(any());
   }
 
   @Test
