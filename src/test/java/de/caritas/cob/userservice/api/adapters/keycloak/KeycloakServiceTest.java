@@ -735,17 +735,23 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void isUsernameAvailable_Should_returnTrue_When_usernameIsAvailable() {
-    UserRepresentation userMock = mock(UserRepresentation.class);
-    when(userMock.getUsername()).thenReturn("Unique");
-    List<UserRepresentation> userRepresentations = singletonList(userMock);
+  public void isUsernameAvailable_ShouldSearchDecodedAndEncodedUsernameExactlyOnce() {
+    String inputUsername = "enc.KVXGS4LVMU......";
+    String decodedUsername = "NotUnique";
+    String encodedUsername = "enc.JZXW6......";
     UsersResource usersResource = mock(UsersResource.class);
-    when(usersResource.search(any())).thenReturn(userRepresentations);
+    when(usernameTranscoder.decodeUsername(inputUsername)).thenReturn(decodedUsername);
+    when(usernameTranscoder.encodeUsername(inputUsername)).thenReturn(encodedUsername);
+    when(usersResource.search(decodedUsername)).thenReturn(List.of());
+    when(usersResource.search(encodedUsername)).thenReturn(List.of());
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    boolean isAvailable = this.keycloakService.isUsernameAvailable("username");
+    boolean isAvailable = this.keycloakService.isUsernameAvailable(inputUsername);
 
     assertThat(isAvailable, is(true));
+    verify(usersResource).search(decodedUsername);
+    verify(usersResource).search(encodedUsername);
+    verify(usersResource, times(2)).search(anyString());
   }
 
   @Test

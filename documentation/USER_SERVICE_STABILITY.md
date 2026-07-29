@@ -352,7 +352,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -370,6 +370,17 @@ appointment deletion repair stays behind `Organizing` and `AppointmentRepository
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+
+The username-availability boundary is enforced by the provider-neutral
+`IdentityUsernameAvailability` output port. Its direct consumer classes are
+`IdentityManager` (which the `IdentityManaging` input port delegates through
+for the web entry points), `AnonymousUsernameRegistry` and
+`ConsultantImportService`. `UserVerifier` no longer retains an unused broad
+identity dependency. The focused port does not change the external API, schema,
+configuration or failure policy. One availability check still performs exactly
+two adapter-internal Keycloak searches, for the decoded and encoded username.
+This slice improves ownership and testability; it does not claim a call
+reduction or deployed/runtime evidence.
 
 Email-ownership validation now uses the focused
 `IdentityEmailOwnerLookup` output port and the application-owned
