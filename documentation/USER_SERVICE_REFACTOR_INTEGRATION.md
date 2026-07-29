@@ -153,7 +153,7 @@ Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
 `fc6425a00bd3faf2eddd303c5ba3138def42b8bd`, which introduces the replica-local
 technical-identity token boundary:
 
-- unit suite: 3,552 tests in 404 reports, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,556 tests in 405 reports, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
   0 errors, and 9 exact environment-bound skips;
 - all 9 skip identities matched the reviewed classification, and every skipped
@@ -163,6 +163,11 @@ technical-identity token boundary:
   Liquibase changesets were applied;
 - 64 parallel technical-token consumers shared one password grant; expiry,
   targeted invalidation, and zero-lifetime behavior were also verified;
+- 64 parallel session-creation service paths crossed real loopback Keycloak and
+  AgencyService HTTP clients with one shared healthy grant and exactly 64
+  accepted credential calls; stale-token recovery used one shared refresh,
+  stayed at or below two attempts per session, and never reused a known rejected
+  refreshed token;
 - healthy two-replica reads: 1,400 requests at concurrency 32, 0 failures,
   77.94 ms p95 and 695.69 requests/second; 900 consultant reads produced exactly
   900 AgencyService attempts, 9.37 ms mean latency and 288.89 average response

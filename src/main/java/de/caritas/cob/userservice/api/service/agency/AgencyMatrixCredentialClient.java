@@ -59,8 +59,8 @@ public class AgencyMatrixCredentialClient {
         }
 
       } catch (HttpClientErrorException.Unauthorized ex) {
+        tokenProvider.invalidate(accessToken);
         if (attempt == 0) {
-          tokenProvider.invalidate(accessToken);
           outboundHttpMetrics.recordRetry("agency-service", "matrix-credentials-auth-refresh");
           continue;
         }

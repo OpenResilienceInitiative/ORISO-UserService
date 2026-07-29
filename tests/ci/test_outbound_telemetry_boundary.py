@@ -123,11 +123,20 @@ class OutboundTelemetryBoundaryContractTest(unittest.TestCase):
 
         self.assertEqual(1, reduction["maxGrantsPerReplicaPerTokenLifetime"])
         self.assertEqual(1, reduction["maxAuthRefreshRetriesPerCall"])
+        self.assertEqual(2, reduction["maxAgencyCredentialAttemptsPerSession"])
+        self.assertTrue(reduction["invalidateEveryUnauthorizedGrant"])
+        self.assertEqual(64, reduction["parallelFullPathSessions"])
         provider = (ROOT / reduction["implementation"]).read_text()
         client = (ROOT / reduction["consumer"]).read_text()
+        full_path_contract = (ROOT / reduction["fullPathContract"]).read_text()
         self.assertIn("synchronized String getAccessToken()", provider)
         self.assertIn("void invalidate(", provider)
         self.assertIn('"matrix-credentials-auth-refresh"', client)
+        self.assertIn("tokenProvider.invalidate(accessToken)", client)
+        self.assertIn("CreateSessionFacade", full_path_contract)
+        self.assertIn("KeycloakAuthClient", full_path_contract)
+        self.assertIn("parallelSessionCreationUsesOneIdentityGrant", full_path_contract)
+        self.assertIn("parallelStaleGrantRefreshIsShared", full_path_contract)
 
 
 if __name__ == "__main__":

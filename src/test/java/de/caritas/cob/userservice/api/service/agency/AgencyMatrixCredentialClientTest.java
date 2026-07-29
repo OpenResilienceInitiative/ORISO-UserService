@@ -159,4 +159,32 @@ class AgencyMatrixCredentialClientTest {
                 .count())
         .isEqualTo(1);
   }
+
+  @Test
+  void rejectedRefreshedGrantIsInvalidatedWithoutThirdAttempt() {
+    when(tokenProvider.getAccessToken()).thenReturn("stale-token", "rejected-fresh-token");
+
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stale-token"))
+        .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer rejected-fresh-token"))
+        .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
+    mockServer.verify();
+    org.mockito.Mockito.verify(tokenProvider).invalidate("stale-token");
+    org.mockito.Mockito.verify(tokenProvider).invalidate("rejected-fresh-token");
+    org.mockito.Mockito.verify(tokenProvider, org.mockito.Mockito.times(2)).getAccessToken();
+    assertThat(
+            meterRegistry
+                .get("userservice.outbound.retries")
+                .tags(
+                    "dependency", "agency-service", "operation", "matrix-credentials-auth-refresh")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
 }

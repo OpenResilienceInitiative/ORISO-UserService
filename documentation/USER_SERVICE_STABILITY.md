@@ -27,28 +27,28 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,552 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,556 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,552 unit plus 860
-integration executions, or 4,412.
+comparable primary current inventory is therefore 3,556 unit plus 860
+integration executions, or 4,416.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,412: 230 fewer unit and 80 fewer integration
+inventory to the current 4,416: 226 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 310-execution net reduction. This is intentional scope
+map one-to-one to the 306-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,552 unit executions.
+gate to all 3,556 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -182,13 +182,18 @@ No password, refresh token or access token is stored in Redis. A downstream
 401 invalidates only the rejected token, schedules at most one fresh grant and
 records
 `userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}`.
-The parallel regression test sends 64 simultaneous callers through the
-provider and proves one identity grant; expiry, zero-lifetime and targeted
-invalidation are covered separately. After warm-up, this removes the observed
-per-session Keycloak roundtrip while preserving the separate AgencyService
-public-agency and secret Matrix-credential boundaries. The implementation and
-its exact inventory were verified at
-`fc6425a00bd3faf2eddd303c5ba3138def42b8bd`.
+The parallel service-path regression sends 64 session creations through the
+real `CreateSessionFacade`, holding-room orchestration, Keycloak auth client and
+AgencyService credential HTTP client. The healthy path produces one shared
+password grant and exactly 64 AgencyService attempts. When the initial token is
+rejected, all requests share one refresh, every successful session still makes
+exactly one accepted AgencyService call, and total attempts remain bounded at
+two per session. A refreshed token rejected again is invalidated without a
+third attempt in the same session and is not reused by the next session.
+Expiry, zero-lifetime and targeted invalidation remain covered separately.
+After warm-up, this removes the observed per-session Keycloak roundtrip while
+preserving the separate AgencyService public-agency and secret
+Matrix-credential boundaries.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.

@@ -129,8 +129,12 @@
       "currentBehavior": "one synchronized in-memory grant per UserService replica and token lifetime",
       "maxGrantsPerReplicaPerTokenLifetime": 1,
       "maxAuthRefreshRetriesPerCall": 1,
+      "maxAgencyCredentialAttemptsPerSession": 2,
+      "invalidateEveryUnauthorizedGrant": true,
+      "parallelFullPathSessions": 64,
       "implementation": "src/main/java/de/caritas/cob/userservice/api/service/identity/TechnicalIdentityTokenProvider.java",
       "consumer": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyMatrixCredentialClient.java",
+      "fullPathContract": "src/test/java/de/caritas/cob/userservice/api/facade/CreateSessionTechnicalIdentityFanOutTest.java",
       "retryMetric": "userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}"
     }
   ],
