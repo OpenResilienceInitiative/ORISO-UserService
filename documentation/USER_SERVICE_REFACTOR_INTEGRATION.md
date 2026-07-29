@@ -117,15 +117,16 @@ the focused replay PRs.
 ## Combined local verification
 
 Executed on 2026-07-29 with Temurin JDK 21 against source commit
-`a040cef702ce3351c667f3ece0dc45753c140a77`:
+`2dfa6c3e586e8fd7bd9765ab9ef0527ebd7252fa`:
 
-- unit suite: 3,426 tests, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,427 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
 - CI and executable architecture contracts: 73 tests passed;
 - OpenAPI contract gate: 8 tests passed;
 - focused identity and Keycloak composition: 170 Java tests passed; all
   25 focused module-boundary tests passed within the 73-test CI suite;
+- focused Matrix-only dead-wiring composition: 98 Java tests passed;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
@@ -138,7 +139,7 @@ Executed on 2026-07-29 with Temurin JDK 21 against source commit
   fix: 80 concurrent upserts and both cross-replica reads passed, followed by 12
   writes and both reads after one replica restart, with one canonical row;
 - package build and Spotless: passed;
-- the latest CodeRabbit review of the adapted #808 diff produced zero findings;
+- the latest CodeRabbit review of the adapted #813 diff produced zero findings;
   exact-head GitHub review remains required after push;
 - `git diff --check`: passed.
 
