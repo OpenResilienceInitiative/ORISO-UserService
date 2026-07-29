@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -23,11 +22,13 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user conversations (sessions). */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AnonymousConversationCreatorService {
 
   private final @NonNull UserService userService;
@@ -35,7 +36,6 @@ public class AnonymousConversationCreatorService {
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
 
@@ -69,7 +69,7 @@ public class AnonymousConversationCreatorService {
               "Could not create session for user %s. %s", user.getUsername(), ex.getMessage()));
     }
 
-    sendNewAnonymousEnquiryLiveEvent(session, consultantAgencies);
+    persistWaitingRoomNotifications(session, consultantAgencies);
 
     return session;
   }
@@ -115,7 +115,7 @@ public class AnonymousConversationCreatorService {
             .build());
   }
 
-  private void sendNewAnonymousEnquiryLiveEvent(
+  private void persistWaitingRoomNotifications(
       Session session, List<ConsultantAgency> consultantAgencies) {
     List<String> consultantIds =
         session.getMainTopicId() != null
@@ -131,12 +131,12 @@ public class AnonymousConversationCreatorService {
               .collect(Collectors.toList());
     }
 
-    liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
-        consultantIds, session.getId());
-
-    // WP-06 Slice 3: persist a `waiting_room.client.joined` timeline card for the same consultants
-    // the live event reaches, so a client entering the live-chat waiting room shows up in the
-    // Activity Timeline. Best-effort — must never break anonymous-conversation creation.
-    eventNotificationService.createWaitingRoomClientJoinedNotifications(session, consultantIds);
+    // WP-06 Slice 3: persist a `waiting_room.client.joined` timeline card for the eligible
+    // consultants. Best-effort — must never break anonymous-conversation creation.
+    try {
+      eventNotificationService.createWaitingRoomClientJoinedNotifications(session, consultantIds);
+    } catch (Exception ex) {
+      log.warn("Could not persist waiting-room notifications for session {}", session.getId(), ex);
+    }
   }
 }
