@@ -902,15 +902,6 @@ public class KeycloakService implements IdentityClient, IdentityEmailOwnerLookup
   }
 
   /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
-   */
-  public void closeSession(String sessionId) {
-    keycloakAuthClient.closeSession(sessionId);
-  }
-
-  /**
    * Deactivates the user account.
    *
    * @param userId the user id to be deactivated

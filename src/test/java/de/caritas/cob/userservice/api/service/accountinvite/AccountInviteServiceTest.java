@@ -3,10 +3,12 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -23,6 +25,11 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,6 +53,8 @@ class AccountInviteServiceTest {
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private TenantService tenantService;
+  @Mock private TenantIdAllocationClient tenantIdAllocationClient;
+  @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
 
   @InjectMocks private AccountInviteService service;
 
@@ -883,5 +892,300 @@ class AccountInviteServiceTest {
 
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
     assertThat(invite.getTenantId()).isEqualTo(9L);
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEN-INV-U3 — tenant/agency ID reservation orchestration (#889)
+  // ---------------------------------------------------------------------------
+
+  private void givenAdminAndPassthroughSave() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+  }
+
+  private void givenTenantIdFreeLocally(long tenantId) {
+    when(tenantService.getRestrictedTenantData(tenantId))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
+            tenantId,
+            AccountInviteTargetRole.TENANT_ADMIN,
+            List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)))
+        .thenReturn(false);
+  }
+
+  @Test
+  void createInvite_Should_ReserveTenantIdAndKeepToken_When_TenantAdminManualId() {
+    givenAdminAndPassthroughSave();
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenReturn(new TenantIdReservation(21L, "res-token-21"));
+    when(tenantIdAllocationClient.getAvailability(21L)).thenReturn(IdAllocationStatus.RESERVED);
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                21L,
+                "owner@example.org",
+                "New",
+                "Owner",
+                null,
+                null,
+                30L,
+                IdAllocationMode.MANUAL,
+                null));
+
+    assertThat(invite.getTenantId()).isEqualTo(21L);
+    assertThat(invite.getTenantIdReservationToken()).isEqualTo("res-token-21");
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void createInvite_Should_AutoReserveSmallestFreeTenantId_When_TenantAdminWithoutTenantId() {
+    givenAdminAndPassthroughSave();
+    when(tenantIdAllocationClient.reserve(null))
+        .thenReturn(new TenantIdReservation(36L, "res-token-36"));
+    when(tenantIdAllocationClient.getAvailability(36L)).thenReturn(IdAllocationStatus.RESERVED);
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                null,
+                "owner@example.org",
+                "New",
+                "Owner",
+                null,
+                null,
+                30L,
+                IdAllocationMode.AUTO,
+                null));
+
+    assertThat(invite.getTenantId()).isEqualTo(36L);
+    assertThat(invite.getTenantIdReservationToken()).isEqualTo("res-token-36");
+  }
+
+  @Test
+  void createInvite_Should_PropagateConflictWithoutSaving_When_TenantIdReservationConflicts() {
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenThrow(new ConflictException("tenantId 21 is already assigned or reserved"));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
+    verify(accountInviteRepository, never()).save(any());
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void createInvite_Should_ReleaseReservation_When_RevalidationBeforeSaveFindsIdNotReserved() {
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenReturn(new TenantIdReservation(21L, "res-token-21"));
+    when(tenantIdAllocationClient.getAvailability(21L)).thenReturn(IdAllocationStatus.ASSIGNED);
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
+    verify(accountInviteRepository, never()).save(any());
+    verify(tenantIdAllocationClient).release(21L);
+  }
+
+  @Test
+  void createInvite_Should_ReleaseReservation_When_SavingTheInviteFails() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenReturn(new TenantIdReservation(21L, "res-token-21"));
+    when(tenantIdAllocationClient.getAvailability(21L)).thenReturn(IdAllocationStatus.RESERVED);
+    when(accountInviteRepository.save(any())).thenThrow(new IllegalStateException("db down"));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(IllegalStateException.class);
+    verify(tenantIdAllocationClient).release(21L);
+  }
+
+  @Test
+  void createInvite_Should_ReserveAgencyIdInAgencyServiceIdSpace_When_AgencyAllocationRequested() {
+    givenAdminAndPassthroughSave();
+    when(tenantIdAllocationClient.reserve(null))
+        .thenReturn(new TenantIdReservation(36L, "res-token-36"));
+    when(tenantIdAllocationClient.getAvailability(36L)).thenReturn(IdAllocationStatus.RESERVED);
+    when(agencyIdAllocationClient.reserve(null, 36L)).thenReturn(5L);
+    when(agencyIdAllocationClient.getAvailability(5L)).thenReturn(IdAllocationStatus.RESERVED);
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.TENANT_ADMIN,
+                null,
+                "owner@example.org",
+                null,
+                null,
+                null,
+                null,
+                null,
+                IdAllocationMode.AUTO,
+                IdAllocationMode.AUTO));
+
+    assertThat(invite.getTenantId()).isEqualTo(36L);
+    assertThat(invite.getAgencyId()).isEqualTo(5L);
+    verify(agencyIdAllocationClient).reserve(null, 36L);
+  }
+
+  @Test
+  void createInvite_Should_ReleaseTenantReservation_When_AgencyReservationConflicts() {
+    givenTenantIdFreeLocally(21L);
+    when(tenantIdAllocationClient.reserve(21L))
+        .thenReturn(new TenantIdReservation(21L, "res-token-21"));
+    when(agencyIdAllocationClient.reserve(9L, 21L))
+        .thenThrow(new ConflictException("agencyId 9 is already assigned or reserved"));
+
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            9L,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            IdAllocationMode.MANUAL);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(ConflictException.class);
+    verify(tenantIdAllocationClient).release(21L);
+    verify(agencyIdAllocationClient, never()).release(anyLong());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_ThrowBadRequest_When_ManualTenantModeWithoutTenantId() {
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            null,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verify(tenantIdAllocationClient, never()).reserve(any());
+  }
+
+  @Test
+  void createInvite_Should_ThrowBadRequest_When_AutoTenantModeWithPinnedTenantId() {
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            21L,
+            "owner@example.org",
+            null,
+            null,
+            null,
+            null,
+            null,
+            IdAllocationMode.AUTO,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verify(tenantIdAllocationClient, never()).reserve(any());
+  }
+
+  @Test
+  void createInvite_Should_NotTouchAllocationServices_When_NonTenantAdminWithoutAgencyMode() {
+    givenAdminAndPassthroughSave();
+
+    service.createInvite(
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "counsellor@example.org",
+            null,
+            null,
+            3L,
+            null,
+            null,
+            null,
+            null));
+
+    verifyNoInteractions(tenantIdAllocationClient);
+    verifyNoInteractions(agencyIdAllocationClient);
+  }
+
+  @Test
+  void resendInvite_Should_CarryReservationTokenToReplacementInvite() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(21L)
+            .tenantIdReservationToken("res-token-21")
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.TENANT_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.resendInvite(
+            new SendInviteCommand(10L, 20L, "https://app.oriso.org/account-invite"));
+
+    assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
+    assertThat(result.invite().getTenantId()).isEqualTo(21L);
   }
 }

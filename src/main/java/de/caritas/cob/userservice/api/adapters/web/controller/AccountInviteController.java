@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryS
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
@@ -61,7 +62,13 @@ public class AccountInviteController {
                 safe.lastName,
                 safe.agencyId,
                 safe.departmentId,
-                safe.expiresInDays));
+                safe.expiresInDays,
+                parseOptionalEnum(
+                    IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
+                parseOptionalEnum(
+                    IdAllocationMode.class,
+                    safe.agencyIdAllocationMode,
+                    "agencyIdAllocationMode")));
 
     if (safe.templateId != null) {
       InviteSendResult result =
@@ -250,6 +257,14 @@ public class AccountInviteController {
     public Long expiresInDays;
     public Long templateId;
     public String acceptBaseUrl;
+
+    /**
+     * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
+     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409.
+     */
+    public String tenantIdAllocationMode;
+
+    public String agencyIdAllocationMode;
   }
 
   public static class SendInviteRequestDTO {

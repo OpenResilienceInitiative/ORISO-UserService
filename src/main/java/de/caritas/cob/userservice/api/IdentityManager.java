@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
@@ -67,6 +68,11 @@ public class IdentityManager implements IdentityManaging {
   }
 
   @Override
+  public boolean isUsernameAvailable(String username) {
+    return identityClient.isUsernameAvailable(username);
+  }
+
+  @Override
   public boolean isEmailAvailableOrOwn(String username, String email) {
     var owner = identityEmailOwnerLookup.findByEmail(email);
     if (owner.isEmpty()) {
@@ -79,5 +85,10 @@ public class IdentityManager implements IdentityManaging {
             || usernameTranscoder
                 .decodeUsername(username)
                 .equals(usernameTranscoder.decodeUsername(ownerUsername)));
+  }
+
+  @Override
+  public boolean hasRole(String userId, UserRole role) {
+    return identityClient.userHasRole(userId, role.getValue());
   }
 }
