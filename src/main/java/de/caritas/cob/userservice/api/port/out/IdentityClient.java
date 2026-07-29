@@ -25,10 +25,6 @@ public interface IdentityClient {
 
   void updateRole(final String userId, final String roleName);
 
-  String updateDummyEmail(final String userId, UserDTO user);
-
-  void updateDummyEmail(String userId);
-
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);

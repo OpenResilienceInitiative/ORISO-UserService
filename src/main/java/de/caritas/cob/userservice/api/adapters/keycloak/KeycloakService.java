@@ -32,6 +32,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -91,6 +93,7 @@ public class KeycloakService
         IdentityAuthentication,
         IdentityClient,
         IdentityDeactivator,
+        IdentityDummyEmailUpdater,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
@@ -220,7 +223,8 @@ public class KeycloakService
 
   @Override
   public void deleteCurrentUserEmail() {
-    updateDummyEmail(authenticatedUser.getUserId());
+    var userId = authenticatedUser.getUserId();
+    updateEmail(userId, userHelper.getDummyEmail(userId));
   }
 
   @Override
@@ -804,28 +808,25 @@ public class KeycloakService
   }
 
   /**
-   * If user didn't provide an email, set to dummy address (userId@online-beratung.de). No *
-   * success/error status possible, because the Keycloak Client doesn't provide one either. *
+   * Replaces a blank email with the configured dummy address.
    *
-   * @param userId Keycloak user ID
-   * @param user {@link UserDTO}
-   * @return the (dummy) email address
+   * @param userId identity-provider user ID
+   * @param identityUpdate provider-neutral identity metadata
+   * @return the dummy email address
    */
-  public String updateDummyEmail(final String userId, UserDTO user) {
-    user.setEmail(userHelper.getDummyEmail(userId));
+  @Override
+  public String updateDummyEmail(
+      final String userId, final IdentityDummyEmailUpdate identityUpdate) {
+    var dummyEmail = userHelper.getDummyEmail(userId);
     var userResource = keycloakClient.getUsersResource().get(userId);
-    userResource.update(getUserRepresentation(user, null, null));
-    log.debug("Set email dummy for {} to {}", userId, userHelper.getDummyEmail(userId));
-    return userHelper.getDummyEmail(userId);
-  }
-
-  /**
-   * Sets a user's dummy email
-   *
-   * @param userId user ID
-   */
-  public void updateDummyEmail(String userId) {
-    updateEmail(userId, userHelper.getDummyEmail(userId));
+    var representation = userResource.toRepresentation();
+    representation.setUsername(usernameTranscoder.decodeUsername(identityUpdate.username()));
+    representation.setEmail(dummyEmail);
+    putUsernameAttributes(identityUpdate.username(), representation);
+    updateTenantId(identityUpdate.tenantId(), representation);
+    userResource.update(representation);
+    log.debug("Set email dummy for {} to {}", userId, dummyEmail);
+    return dummyEmail;
   }
 
   /**

@@ -45,6 +45,7 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -290,10 +291,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteCurrentUserEmail_Should_useServicesCorrectly() {
-    // deleteCurrentUserEmail -> updateDummyEmail(userId) -> updateEmail(...), which now persists
-    // the dummy email to Keycloak (verifyEmail + setEmail + userResource.update). Verify the dummy
-    // email
-    // is resolved and actually written via UserResource#update.
+    // Current-user email deletion remains an email-address operation and writes the configured
+    // dummy address through the existing update path.
     var userId = random(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
     when(userHelper.getDummyEmail(userId)).thenReturn("dummy");
@@ -1011,34 +1010,47 @@ public class KeycloakServiceTest {
 
   @Test
   public void updateDummyMail_id_dto_Should_callServicesCorrectly() {
-    UserResource userResource = mock(UserResource.class);
+    UserResource userResource = givenUserResourceWithRepresentation(new UserRepresentation());
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(this.userHelper.getDummyEmail(anyString())).thenReturn("dummy");
 
-    String dummyMail = this.keycloakService.updateDummyEmail("userId", new UserDTO());
+    String dummyMail =
+        this.keycloakService.updateDummyEmail(
+            "userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).update(any());
     assertThat(dummyMail, is("dummy"));
   }
 
   @Test
-  public void updateDummyMail_id_Should_callServicesCorrectly() {
-    // updateDummyEmail(String) -> updateEmail(...), which now persists the dummy email to Keycloak
-    // (verifyEmail + setEmail + userResource.update). Verify the dummy email is computed and
-    // written
-    // via UserResource#update.
-    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
-    UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
-    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+  public void updateDummyMail_Should_MapProviderNeutralIdentityMetadata() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var existingRepresentation = new UserRepresentation();
+    existingRepresentation.setEnabled(false);
+    existingRepresentation.setEmailVerified(false);
+    existingRepresentation.singleAttribute("unrelated", "preserved");
+    UserResource userResource = givenUserResourceWithRepresentation(existingRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    when(usernameTranscoder.decodeUsername("encoded-user")).thenReturn("decoded-user");
 
-    keycloakService.updateDummyEmail("userId");
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
 
-    verify(userHelper).getDummyEmail("userId");
-    verify(userRepresentation).setEmail("dummy");
-    verify(userResource).update(userRepresentation);
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var representation = representationCaptor.getValue();
+    assertThat(representation.getUsername(), is("decoded-user"));
+    assertThat(representation.getEmail(), is("dummy"));
+    assertThat(representation.getAttributes().get("tenantId").get(0), is("42"));
+    assertThat(representation.getAttributes().get("unrelated").get(0), is("preserved"));
+    assertThat(representation.isEnabled(), is(false));
+    assertThat(representation.isEmailVerified(), is(false));
+    assertThat(representation, is(existingRepresentation));
+    setField(keycloakService, "multiTenancyEnabled", false);
   }
 
   @Test

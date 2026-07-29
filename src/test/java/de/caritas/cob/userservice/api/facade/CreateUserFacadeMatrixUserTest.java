@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -55,6 +56,7 @@ class CreateUserFacadeMatrixUserTest {
 
   @Mock private UserVerifier userVerifier;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private UserService userService;
   @Mock private RollbackFacade rollbackFacade;
