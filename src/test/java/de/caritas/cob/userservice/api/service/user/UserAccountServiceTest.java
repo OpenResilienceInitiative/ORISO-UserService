@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -53,6 +54,7 @@ public class UserAccountServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityDeactivator identityDeactivator;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
@@ -382,7 +384,7 @@ public class UserAccountServiceTest {
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(identityClient, times(1)).deactivateUser(USER.getUserId());
+    verify(identityDeactivator, times(1)).deactivateUser(USER.getUserId());
     verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
     verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));

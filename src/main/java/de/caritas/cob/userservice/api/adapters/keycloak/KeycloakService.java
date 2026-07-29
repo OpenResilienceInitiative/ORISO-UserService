@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -87,6 +88,7 @@ import org.springframework.web.client.RestClientResponseException;
 public class KeycloakService
     implements IdentityAuthentication,
         IdentityClient,
+        IdentityDeactivator,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
@@ -1026,6 +1028,7 @@ public class KeycloakService
    *
    * @param userId the user id to be deactivated
    */
+  @Override
   public void deactivateUser(String userId) {
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
