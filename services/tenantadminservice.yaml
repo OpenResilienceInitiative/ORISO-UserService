@@ -1176,6 +1176,13 @@ components:
           type: string
         updateDate:
           type: string
+        tenantIdReservationToken:
+          type: string
+          maxLength: 36
+          description: Token of an open tenant ID reservation. When creating a tenant with
+            a reserved ID, the matching token proves ownership of the reservation, which is
+            then consumed atomically with the creation. Without a matching token a reserved
+            ID is rejected with a conflict.
         licensing:
           $ref: '#/components/schemas/Licensing'
         theming:

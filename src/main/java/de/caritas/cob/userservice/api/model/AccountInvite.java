@@ -34,7 +34,7 @@ import lombok.ToString;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString(exclude = {"tokenHash", "tenantIdReservationToken"})
+@ToString(exclude = {"tokenHash", "tenantIdReservationToken", "totpPendingSecret"})
 public class AccountInvite {
 
   @Id
@@ -113,6 +113,15 @@ public class AccountInvite {
 
   @Column(name = "superseded_by_invite_id")
   private Long supersededByInviteId;
+
+  /**
+   * TOTP secret issued to the invitee during the public tenant-admin onboarding (#569 chain fix).
+   * The public two-factor endpoint only receives the one-time password, so the secret shown at
+   * registration must be kept server-side until the activation succeeds; it is cleared once the OTP
+   * credential exists. Only ever set for invites onboarded through the public onboarding endpoints.
+   */
+  @Column(name = "totp_pending_secret", length = 64)
+  private String totpPendingSecret;
 
   @Column(name = "two_factor_waived_by", length = 36)
   private String twoFactorWaivedBy;
