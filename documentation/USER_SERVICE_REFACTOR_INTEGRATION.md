@@ -213,6 +213,26 @@ deleted LiveService transport and forwarding controller. The replacement
 contracts cover the dependency-free `410 Gone` tombstone, Matrix-recipient
 push, durable timeline delivery and partial-failure isolation.
 
+### Broad identity-client removal increment
+
+Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
+`554039a0072689d859120922428fc7456338326a`:
+
+- the broad `IdentityClient` interface is deleted and no Java source imports
+  it;
+- `IdentityManager` uses focused password, locale and role ports while
+  preserving password success/failure behavior and one full role-set read;
+- unused Keycloak authority, role and password wrapper methods are removed,
+  and the username-search helper is adapter-internal;
+- shared Spring integration contexts use one compatible `KeycloakService`
+  replacement rather than competing focused mocks;
+- unit suite: 3,554 tests in 406 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 84 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- Spotless and `git diff --check`: passed.
+
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because both the integration
 suite and the exact-head load proof create and clean isolated databases. The
