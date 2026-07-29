@@ -38,6 +38,7 @@ import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -292,7 +293,11 @@ class CreateSessionTechnicalIdentityFanOutTest {
         .thenReturn(new AgencyDTO().id(AGENCY_ID).consultingType(1).teamAgency(false));
 
     var roomService =
-        new AgencyPreAssignmentRoomService(credentialClient, sessionRoomGateway, sessionService);
+        new AgencyPreAssignmentRoomService(
+            credentialClient,
+            sessionRoomGateway,
+            sessionService,
+            mock(AgencySilentMembershipService.class));
 
     return new CreateSessionFacade(
         sessionService,
