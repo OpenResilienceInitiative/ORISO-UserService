@@ -16,8 +16,6 @@ public interface IdentityClient {
   KeycloakCreateUserResponseDTO createKeycloakUser(
       final UserDTO user, final String firstName, final String lastName);
 
-  void removeRoleIfPresent(final String userId, final String roleName);
-
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);

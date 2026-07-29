@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
@@ -41,7 +40,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class ConsultantUpdateService {
 
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityProfileUpdater identityProfileUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultantService consultantService;
@@ -110,7 +108,8 @@ public class ConsultantUpdateService {
     }
     if (updateConsultantDTO.getIsGroupchatConsultant() != null
         && !updateConsultantDTO.getIsGroupchatConsultant()) {
-      identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
+      identityRoleUpdater.removeRolesIfPresent(
+          consultant.getId(), Set.of(GROUP_CHAT_CONSULTANT.getValue()));
     }
 
     // Update Matrix user display name using the admin API (no password needed).

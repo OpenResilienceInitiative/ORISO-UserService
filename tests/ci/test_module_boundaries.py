@@ -1153,11 +1153,37 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             identity_client,
             "The broad identity command client must not own role ensuring",
         )
+        self.assertNotIn(
+            "removeRoleIfPresent(",
+            identity_client,
+            "The broad identity command client must not own role removal",
+        )
         for source in consumers:
             self.assertNotIn(
                 "identityClient.ensureRole(",
                 source.read_text(),
                 f"{source.name} must batch role writes through IdentityRoleUpdater",
+            )
+
+        removal_consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/GrantConsultantIdentityService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "update/ConsultantUpdateService.java",
+        )
+        for source in removal_consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                "identityRoleUpdater.removeRolesIfPresent(",
+                source_text,
+                f"{source.relative_to(ROOT)} must use focused batch role removal",
+            )
+            self.assertNotIn(
+                "identityClient.removeRoleIfPresent(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client role removal",
             )
 
         spring_identity_mocks = [

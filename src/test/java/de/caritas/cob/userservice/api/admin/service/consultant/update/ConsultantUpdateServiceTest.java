@@ -177,8 +177,7 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
-    verify(this.keycloakService, Mockito.never())
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify(this.keycloakService, Mockito.never()).removeRolesIfPresent(any(), any());
 
     ArgumentCaptor<IdentityProfileUpdate> profileCaptor =
         ArgumentCaptor.forClass(IdentityProfileUpdate.class);
@@ -219,7 +218,7 @@ public class ConsultantUpdateServiceTest {
 
     verify(this.keycloakService, Mockito.never()).updateProfile(any(), any());
     verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
-    verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
+    verify(this.keycloakService, Mockito.never()).removeRolesIfPresent(any(), any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
     verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
     verify(this.consultantService, times(1)).saveConsultant(any());
@@ -259,7 +258,8 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService)
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+        .removeRolesIfPresent(
+            consultant.getId(), Set.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
