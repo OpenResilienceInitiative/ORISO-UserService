@@ -122,18 +122,29 @@
       "runtimeProof": "scripts/load/run-seeded-public-read-replicas.sh"
     },
     {
-      "id": "agency-matrix-technical-identity-grant",
+      "id": "technical-identity-grant-amortization",
       "dependency": "Keycloak",
-      "operation": "technical authentication for internal AgencyService Matrix credential reads",
-      "previousBehavior": "one password grant per new agency-held session",
+      "operation": "configured technical authentication for internal service calls",
+      "previousBehavior": "one password grant per AgencyService Matrix credential read, AppointmentService synchronization call, TenantService tenant creation, and uncached operator-DPA lookup",
       "currentBehavior": "one synchronized in-memory grant per UserService replica and token lifetime",
       "maxGrantsPerReplicaPerTokenLifetime": 1,
-      "maxAuthRefreshRetriesPerCall": 1,
+      "agencyCredentialMaxAuthRefreshRetriesPerCall": 1,
       "maxAgencyCredentialAttemptsPerSession": 2,
-      "invalidateEveryUnauthorizedGrant": true,
+      "agencyCredentialInvalidatesEveryUnauthorizedGrant": true,
       "parallelFullPathSessions": 64,
       "implementation": "src/main/java/de/caritas/cob/userservice/api/service/identity/TechnicalIdentityTokenProvider.java",
-      "consumer": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyMatrixCredentialClient.java",
+      "consumers": [
+        "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyMatrixCredentialClient.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/appointment/AppointmentService.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/TenantCreationClient.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/OperatorDpaContentClient.java"
+      ],
+      "interactiveAuthenticationExcluded": [
+        "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
+        "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/anonymous/AnonymousUserCreatorService.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/user/validation/UserAccountValidator.java"
+      ],
+      "agencyCredentialRetryPolicy": "only the AgencyService Matrix-credential read retries once after 401; the other technical consumers reuse the pre-expiry grant but preserve their existing no-retry behavior",
       "fullPathContract": "src/test/java/de/caritas/cob/userservice/api/facade/CreateSessionTechnicalIdentityFanOutTest.java",
       "retryMetric": "userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}"
     }

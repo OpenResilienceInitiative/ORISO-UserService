@@ -135,17 +135,19 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             / "src/main/java/de/caritas/cob/userservice/api/port/out/"
             "IdentityAuthentication.java"
         )
-        consumers = (
+        interactive_consumers = (
             ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
             "anonymous/AnonymousUserCreatorService.java",
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/appointment/"
-            "AppointmentService.java",
-            ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/user/validation/"
             "UserAccountValidator.java",
+        )
+        technical_consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/appointment/"
+            "AppointmentService.java",
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/"
             "TenantCreationClient.java",
@@ -176,7 +178,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
 
         offenders = [
             str(source.relative_to(ROOT))
-            for source in consumers
+            for source in interactive_consumers
             if "IdentityAuthentication" not in source.read_text()
         ]
         self.assertEqual(
@@ -200,6 +202,22 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         self.assertIn("TechnicalIdentityTokenProvider", agency_matrix_client)
         self.assertNotIn("IdentityAuthentication", agency_matrix_client)
         self.assertNotIn("IdentityClientConfig", agency_matrix_client)
+
+        technical_offenders = []
+        for source in technical_consumers:
+            contract = source.read_text()
+            if (
+                "TechnicalIdentityTokenProvider" not in contract
+                or "IdentityAuthentication" in contract
+                or "IdentityClientConfig" in contract
+            ):
+                technical_offenders.append(str(source.relative_to(ROOT)))
+        self.assertEqual(
+            [],
+            technical_offenders,
+            "Configured technical-user consumers must share the bounded token provider:\n"
+            + "\n".join(technical_offenders),
+        )
 
     def test_username_availability_uses_a_focused_provider_neutral_port(self):
         identity_port = (

@@ -173,14 +173,20 @@ checked against `RestTemplateTimeouts`, so the documentation cannot drift from
 the production constants.
 
 The sampled `POST /users/askers/session/new` trace exposed one avoidable
-Keycloak call per new agency-held session. `AgencyMatrixCredentialClient`
-previously performed a new technical-user password grant before every internal
-AgencyService Matrix-credential read. `TechnicalIdentityTokenProvider` now owns
-that identity concern: one synchronized in-memory grant is shared by concurrent
-callers on one UserService replica and reused only until a pre-expiry boundary.
-No password, refresh token or access token is stored in Redis. A downstream
-401 invalidates only the rejected token, schedules at most one fresh grant and
-records
+Keycloak call per new agency-held session. A repository-wide authentication
+consumer audit then found the same per-call technical-user password grant in
+AppointmentService synchronization, TenantService tenant creation and each
+uncached operator-DPA lookup. All four server-to-server consumers now use
+`TechnicalIdentityTokenProvider`: one synchronized in-memory grant is shared by
+concurrent callers on one UserService replica and reused only until a
+pre-expiry boundary. Interactive login, anonymous-account login and explicit
+password verification continue to use `IdentityAuthentication` directly and
+are forbidden from using the technical-token cache by an executable module
+contract. No password, refresh token or access token is stored in Redis.
+
+The AgencyService Matrix-credential boundary retains its stricter recovery
+contract: a downstream 401 invalidates only the rejected token, schedules at
+most one fresh grant and records
 `userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}`.
 The parallel service-path regression sends 64 session creations through the
 real `CreateSessionFacade`, holding-room orchestration, Keycloak auth client and
@@ -191,10 +197,11 @@ exactly one accepted AgencyService call, and total attempts remain bounded at
 two per session. A refreshed token rejected again is invalidated without a
 third attempt in the same session and is not reused by the next session.
 Expiry, zero-lifetime and targeted invalidation remain covered separately.
-After warm-up, this removes the observed per-session Keycloak roundtrip while
-preserving the separate AgencyService public-agency and secret
-Matrix-credential boundaries. The complete service-path increment and exact
-3,556-test unit inventory were verified at
+After warm-up, this removes the observed per-session Keycloak roundtrip and the
+equivalent password-grant fan-out from the three additional technical
+consumers, while preserving their existing downstream retry policies and the
+separate AgencyService public-agency and secret Matrix-credential boundaries.
+The complete session service-path increment and exact 3,556-test unit inventory were verified at
 `45e7cc2d61200e19188cffb933ce488228ddc374`.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,

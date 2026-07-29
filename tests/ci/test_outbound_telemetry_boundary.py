@@ -118,21 +118,32 @@ class OutboundTelemetryBoundaryContractTest(unittest.TestCase):
         reduction = next(
             entry
             for entry in catalog["chattyCallReductions"]
-            if entry["id"] == "agency-matrix-technical-identity-grant"
+            if entry["id"] == "technical-identity-grant-amortization"
         )
 
         self.assertEqual(1, reduction["maxGrantsPerReplicaPerTokenLifetime"])
-        self.assertEqual(1, reduction["maxAuthRefreshRetriesPerCall"])
+        self.assertEqual(
+            1, reduction["agencyCredentialMaxAuthRefreshRetriesPerCall"]
+        )
         self.assertEqual(2, reduction["maxAgencyCredentialAttemptsPerSession"])
-        self.assertTrue(reduction["invalidateEveryUnauthorizedGrant"])
+        self.assertTrue(reduction["agencyCredentialInvalidatesEveryUnauthorizedGrant"])
         self.assertEqual(64, reduction["parallelFullPathSessions"])
         provider = (ROOT / reduction["implementation"]).read_text()
-        client = (ROOT / reduction["consumer"]).read_text()
+        clients = [(ROOT / source).read_text() for source in reduction["consumers"]]
         full_path_contract = (ROOT / reduction["fullPathContract"]).read_text()
         self.assertIn("synchronized String getAccessToken()", provider)
         self.assertIn("void invalidate(", provider)
-        self.assertIn('"matrix-credentials-auth-refresh"', client)
-        self.assertIn("tokenProvider.invalidate(accessToken)", client)
+        self.assertEqual(4, len(clients))
+        for client in clients:
+            self.assertIn("TechnicalIdentityTokenProvider", client)
+            self.assertNotIn("IdentityAuthentication", client)
+            self.assertNotIn("IdentityClientConfig", client)
+        self.assertIn('"matrix-credentials-auth-refresh"', clients[0])
+        self.assertIn("tokenProvider.invalidate(accessToken)", clients[0])
+        for source in reduction["interactiveAuthenticationExcluded"]:
+            interactive_client = (ROOT / source).read_text()
+            self.assertIn("IdentityAuthentication", interactive_client)
+            self.assertNotIn("TechnicalIdentityTokenProvider", interactive_client)
         self.assertIn("CreateSessionFacade", full_path_contract)
         self.assertIn("KeycloakAuthClient", full_path_contract)
         self.assertIn("parallelSessionCreationUsesOneIdentityGrant", full_path_contract)
