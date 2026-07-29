@@ -141,9 +141,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
             "anonymous/AnonymousUserCreatorService.java",
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/agency/"
-            "AgencyMatrixCredentialClient.java",
-            ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/appointment/"
             "AppointmentService.java",
             ROOT
@@ -188,6 +185,21 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "All live production authentication consumers must use the focused port:\n"
             + "\n".join(offenders),
         )
+
+        token_provider = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/identity/"
+            "TechnicalIdentityTokenProvider.java"
+        ).read_text()
+        agency_matrix_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/agency/"
+            "AgencyMatrixCredentialClient.java"
+        ).read_text()
+        self.assertIn("IdentityAuthentication", token_provider)
+        self.assertIn("TechnicalIdentityTokenProvider", agency_matrix_client)
+        self.assertNotIn("IdentityAuthentication", agency_matrix_client)
+        self.assertNotIn("IdentityClientConfig", agency_matrix_client)
 
     def test_username_availability_uses_a_focused_provider_neutral_port(self):
         identity_port = (

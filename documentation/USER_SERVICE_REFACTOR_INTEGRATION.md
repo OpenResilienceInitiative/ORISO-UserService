@@ -147,6 +147,32 @@ Executed on 2026-07-29 with Temurin JDK 21 against source commit
   exact-head GitHub review remains required after push;
 - `git diff --check`: passed.
 
+### Technical-identity fan-out increment
+
+Reverified on 2026-07-29 with Temurin JDK 21 after introducing the
+replica-local technical-identity token boundary:
+
+- unit suite: 3,552 tests in 404 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors, and 9 exact environment-bound skips;
+- all 9 skip identities matched the reviewed classification, and every skipped
+  class executed in its required Redis or MariaDB workflow;
+- focused Redis proof: 5 tests, 0 failures, 0 errors, 0 skipped;
+- fresh MariaDB proof: 8 tests, 0 failures, 0 errors, 0 skipped, after all 103
+  Liquibase changesets were applied;
+- 64 parallel technical-token consumers shared one password grant; expiry,
+  targeted invalidation, and zero-lifetime behavior were also verified;
+- healthy two-replica reads: 1,400 requests at concurrency 32, 0 failures,
+  77.94 ms p95 and 695.69 requests/second; 900 consultant reads produced exactly
+  900 AgencyService attempts, 9.37 ms mean latency and 288.89 average response
+  bytes, with no fallback or threshold violation;
+- AgencyService `503` proof: 1,400 requests, 0 failures and 81.80 ms p95; 900
+  consultant reads produced exactly 900 failed attempts and 900 measured local
+  fallbacks, with no hidden transport retry;
+- authenticated writes: 80 writes plus cross-replica reads passed at 49.97 ms
+  p95; after one replica restart, another 12 writes plus reads passed at 24.56 ms
+  p95, leaving one canonical database row.
+
 Compared with the preceding #886 integration head, the net reduction of 33
 unit tests and two integration tests is the removal of tests that exercised the
 deleted LiveService transport and forwarding controller. The replacement

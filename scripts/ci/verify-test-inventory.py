@@ -18,11 +18,19 @@ def main() -> int:
     pattern = "TEST-*Test.xml" if args.suite == "unit" else "TEST-*IT.xml"
     reports = sorted(args.reports.glob(pattern))
     totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    skipped_test_ids: list[str] = []
 
     for report in reports:
         root = ET.parse(report).getroot()
         for field in totals:
             totals[field] += int(root.attrib.get(field, 0))
+        for test_case in root.iter("testcase"):
+            if test_case.find("skipped") is None:
+                continue
+            skipped_test_ids.append(
+                f"{test_case.attrib.get('classname', '<unknown>')}"
+                f"#{test_case.attrib.get('name', '<unknown>')}"
+            )
 
     print(
         f"{args.suite} inventory: "
@@ -55,6 +63,34 @@ def main() -> int:
             f"found {totals['skipped']}.",
             file=sys.stderr,
         )
+        return 1
+    expected_skipped_test_ids = (
+        sorted(
+            entry["testId"]
+            for entry in current.get("environmentBoundSkippedTests", [])
+        )
+        if args.suite == "integration"
+        else []
+    )
+    actual_skipped_test_ids = sorted(skipped_test_ids)
+    unexpected_skips = sorted(
+        set(actual_skipped_test_ids) - set(expected_skipped_test_ids)
+    )
+    missing_skips = sorted(
+        set(expected_skipped_test_ids) - set(actual_skipped_test_ids)
+    )
+    if unexpected_skips or missing_skips:
+        if unexpected_skips:
+            print(
+                "unexpected skipped tests: " + ", ".join(unexpected_skips),
+                file=sys.stderr,
+            )
+        if missing_skips:
+            print(
+                "missing expected environment-bound skips: "
+                + ", ".join(missing_skips),
+                file=sys.stderr,
+            )
         return 1
     if expected_reports is not None and len(reports) != expected_reports:
         print(

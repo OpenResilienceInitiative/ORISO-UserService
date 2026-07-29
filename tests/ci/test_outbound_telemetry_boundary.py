@@ -91,6 +91,44 @@ class OutboundTelemetryBoundaryContractTest(unittest.TestCase):
         self.assertIn('"agency-service"', fallback_telemetry)
         self.assertIn('"consultant-agency-batch"', fallback_telemetry)
 
+    def test_dependency_catalog_declares_enforced_transport_bounds(self):
+        catalog = json.loads(DEPENDENCY_CATALOG.read_text())
+        policy = catalog["transportPolicies"]["default-http"]
+
+        self.assertEqual(3000, policy["connectTimeoutMs"])
+        self.assertEqual(10000, policy["readTimeoutMs"])
+        self.assertEqual(0, policy["automaticTransportRetries"])
+        self.assertEqual(
+            42000,
+            catalog["transportPolicies"]["matrix-long-poll"]["readTimeoutMs"],
+        )
+        timeout_source = (
+            JAVA_ROOT
+            / "de/caritas/cob/userservice/api/config/RestTemplateTimeouts.java"
+        ).read_text()
+        self.assertIn("CONNECT_TIMEOUT = Duration.ofSeconds(3)", timeout_source)
+        self.assertIn("READ_TIMEOUT = Duration.ofSeconds(10)", timeout_source)
+        self.assertIn(
+            "MATRIX_LONG_POLL_READ_TIMEOUT = Duration.ofSeconds(42)",
+            timeout_source,
+        )
+
+    def test_technical_identity_grant_amortization_is_documented_and_bounded(self):
+        catalog = json.loads(DEPENDENCY_CATALOG.read_text())
+        reduction = next(
+            entry
+            for entry in catalog["chattyCallReductions"]
+            if entry["id"] == "agency-matrix-technical-identity-grant"
+        )
+
+        self.assertEqual(1, reduction["maxGrantsPerReplicaPerTokenLifetime"])
+        self.assertEqual(1, reduction["maxAuthRefreshRetriesPerCall"])
+        provider = (ROOT / reduction["implementation"]).read_text()
+        client = (ROOT / reduction["consumer"]).read_text()
+        self.assertIn("synchronized String getAccessToken()", provider)
+        self.assertIn("void invalidate(", provider)
+        self.assertIn('"matrix-credentials-auth-refresh"', client)
+
 
 if __name__ == "__main__":
     unittest.main()

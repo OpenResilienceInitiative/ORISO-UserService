@@ -27,28 +27,28 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,547 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,552 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,547 unit plus 860
-integration executions, or 4,407.
+comparable primary current inventory is therefore 3,552 unit plus 860
+integration executions, or 4,412.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,407: 235 fewer unit and 80 fewer integration
+inventory to the current 4,412: 230 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 339-execution net reduction. This is intentional scope
+map one-to-one to the 310-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,547 unit executions.
+gate to all 3,552 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -69,6 +69,12 @@ that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
 floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
 disabled or ignored tests. The six environment-gated suites account for nine
 skipped executions in the generic integration job; they are not quarantined.
+The exact identity of all nine executions is versioned in the historical
+classification artifact and checked against Surefire XML. A new skip cannot
+hide behind the same aggregate count: the inventory gate reports both
+unexpected and missing test identities. Every listed execution also names its
+required Redis or MariaDB workflow, and a contract verifies that the workflow
+sets the required environment and selects the corresponding class.
 Redis and MariaDB have their own required service-container/fresh-database jobs
 on branch, pull-request and publish workflows.
 
@@ -159,6 +165,28 @@ actual HTTP attempt; bounded application retries remain explicit through
 slow response timeout, pool-exhaustion timeout, one failed HTTP attempt instead
 of Apache's previous four attempts, and eight concurrent admin reads sharing
 one token acquisition.
+
+The dependency catalog also versions the effective default transport policy:
+three-second connect timeout, ten-second ordinary read timeout, 42-second
+Matrix long-poll timeout and zero automatic transport retries. These values are
+checked against `RestTemplateTimeouts`, so the documentation cannot drift from
+the production constants.
+
+The sampled `POST /users/askers/session/new` trace exposed one avoidable
+Keycloak call per new agency-held session. `AgencyMatrixCredentialClient`
+previously performed a new technical-user password grant before every internal
+AgencyService Matrix-credential read. `TechnicalIdentityTokenProvider` now owns
+that identity concern: one synchronized in-memory grant is shared by concurrent
+callers on one UserService replica and reused only until a pre-expiry boundary.
+No password, refresh token or access token is stored in Redis. A downstream
+401 invalidates only the rejected token, schedules at most one fresh grant and
+records
+`userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}`.
+The parallel regression test sends 64 simultaneous callers through the
+provider and proves one identity grant; expiry, zero-lifetime and targeted
+invalidation are covered separately. After warm-up, this removes the observed
+per-session Keycloak roundtrip while preserving the separate AgencyService
+public-agency and secret Matrix-credential boundaries.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.

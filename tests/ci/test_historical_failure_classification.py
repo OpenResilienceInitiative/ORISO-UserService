@@ -130,14 +130,33 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertEqual(3547, current.get("unitTests"))
-        self.assertEqual(403, current["unitReports"])
+        self.assertEqual(3552, current.get("unitTests"))
+        self.assertEqual(404, current["unitReports"])
         self.assertEqual(84, current["integrationReports"])
         self.assertEqual(860, current["integrationTests"])
         self.assertEqual(0, current["failures"])
         self.assertEqual(0, current["errors"])
         self.assertEqual(9, current["skipped"])
         self.assertFalse(current["quarantine"])
+
+    def test_every_environment_bound_skip_has_a_required_execution_lane(self):
+        current = self.classification["currentRequiredSuite"]
+        environment_bound = current["environmentBoundSkippedTests"]
+
+        self.assertEqual(current["integrationSkipped"], len(environment_bound))
+        self.assertEqual(
+            len(environment_bound),
+            len({entry["testId"] for entry in environment_bound}),
+        )
+        for entry in environment_bound:
+            self.assertTrue(entry["testId"])
+            self.assertTrue(entry["environmentVariable"])
+            workflow = ROOT / entry["requiredWorkflow"]
+            self.assertTrue(workflow.is_file(), workflow)
+            workflow_source = workflow.read_text()
+            test_class = entry["testId"].split("#", 1)[0].rsplit(".", 1)[-1]
+            self.assertIn(test_class, workflow_source)
+            self.assertIn(entry["environmentVariable"], workflow_source)
 
     def test_stability_document_links_the_counted_classification(self):
         stability_document = (

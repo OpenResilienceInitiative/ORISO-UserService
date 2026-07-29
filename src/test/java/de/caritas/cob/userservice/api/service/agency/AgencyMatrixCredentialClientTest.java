@@ -10,16 +10,14 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -37,16 +35,16 @@ class AgencyMatrixCredentialClientTest {
 
   private RestTemplate restTemplate;
   private MockRestServiceServer mockServer;
-  private IdentityAuthentication identityAuthentication;
-  private IdentityClientConfig identityClientConfig;
+  private TechnicalIdentityTokenProvider tokenProvider;
+  private SimpleMeterRegistry meterRegistry;
   private AgencyMatrixCredentialClient agencyMatrixCredentialClient;
 
   @BeforeEach
   void setUp() {
     restTemplate = new RestTemplate();
     mockServer = MockRestServiceServer.bindTo(restTemplate).build();
-    identityAuthentication = mock(IdentityAuthentication.class);
-    identityClientConfig = mock(IdentityClientConfig.class);
+    tokenProvider = mock(TechnicalIdentityTokenProvider.class);
+    meterRegistry = new SimpleMeterRegistry();
 
     var securityHeaderSupplier = new SecurityHeaderSupplier(new AuthenticatedUser());
     ReflectionTestUtils.setField(securityHeaderSupplier, "csrfHeaderProperty", "csrfHeader");
@@ -60,15 +58,15 @@ class AgencyMatrixCredentialClientTest {
             restTemplate,
             securityHeaderSupplier,
             tenantHeaderSupplier,
-            identityAuthentication,
-            identityClientConfig);
+            tokenProvider,
+            new OutboundHttpMetrics(meterRegistry));
     ReflectionTestUtils.setField(
         agencyMatrixCredentialClient, "agencyServiceBaseUrl", AGENCY_SERVICE_URL);
   }
 
   @Test
   void fetchMatrixCredentialsShouldAuthenticateAsTechnicalUser() throws Exception {
-    stubTechnicalUserLogin("technical-access-token");
+    when(tokenProvider.getAccessToken()).thenReturn("technical-access-token");
 
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId("@agency:matrix");
@@ -87,6 +85,7 @@ class AgencyMatrixCredentialClientTest {
 
     assertThat(result).contains(credentials);
     mockServer.verify();
+    org.mockito.Mockito.verify(tokenProvider).getAccessToken();
   }
 
   @Test
@@ -96,13 +95,8 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenTechnicalUserLoginFails() {
-    var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
-
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret"))
-        .thenThrow(new BadRequestException("Keycloak unavailable"));
+    when(tokenProvider.getAccessToken())
+        .thenThrow(new IllegalStateException("Keycloak unavailable"));
 
     assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).isEmpty();
     mockServer.verify();
@@ -110,7 +104,7 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyHasNoMatrixCredentials() {
-    stubTechnicalUserLogin("technical-access-token");
+    when(tokenProvider.getAccessToken()).thenReturn("technical-access-token");
 
     mockServer
         .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
@@ -123,7 +117,7 @@ class AgencyMatrixCredentialClientTest {
 
   @Test
   void fetchMatrixCredentialsShouldReturnEmptyWhenAgencyServiceFails() {
-    stubTechnicalUserLogin("technical-access-token");
+    when(tokenProvider.getAccessToken()).thenReturn("technical-access-token");
 
     mockServer
         .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
@@ -134,14 +128,35 @@ class AgencyMatrixCredentialClientTest {
     mockServer.verify();
   }
 
-  private void stubTechnicalUserLogin(String accessToken) {
-    var technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
+  @Test
+  void unauthorizedCachedGrantIsInvalidatedAndRetriedExactlyOnce() throws Exception {
+    when(tokenProvider.getAccessToken()).thenReturn("stale-token", "fresh-token");
 
-    var loginResponse = new IdentityLogin(accessToken, 0, 0, "refresh-token");
+    var credentials = new AgencyMatrixCredentialsDTO();
+    credentials.setMatrixUserId("@agency:matrix");
+    credentials.setMatrixPassword("matrix-password");
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stale-token"))
+        .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+    mockServer
+        .expect(requestTo(AGENCY_SERVICE_URL + "/internal/agencies/42/matrix-service-account"))
+        .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer fresh-token"))
+        .andRespond(
+            withSuccess(
+                new ObjectMapper().writeValueAsString(credentials), MediaType.APPLICATION_JSON));
 
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    when(identityAuthentication.login("technical", "secret")).thenReturn(loginResponse);
+    assertThat(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
+        .contains(credentials);
+    mockServer.verify();
+    org.mockito.Mockito.verify(tokenProvider).invalidate("stale-token");
+    assertThat(
+            meterRegistry
+                .get("userservice.outbound.retries")
+                .tags(
+                    "dependency", "agency-service", "operation", "matrix-credentials-auth-refresh")
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 }

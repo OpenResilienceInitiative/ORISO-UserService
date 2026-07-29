@@ -1,5 +1,19 @@
 {
   "schemaVersion": 1,
+  "transportPolicies": {
+    "default-http": {
+      "connectTimeoutMs": 3000,
+      "readTimeoutMs": 10000,
+      "automaticTransportRetries": 0,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/config/RestTemplateTimeouts.java"
+    },
+    "matrix-long-poll": {
+      "connectTimeoutMs": 3000,
+      "readTimeoutMs": 42000,
+      "automaticTransportRetries": 0,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/config/RestTemplateTimeouts.java"
+    }
+  },
   "generatedHttpApiFactories": [
     {
       "dependency": "AgencyService admin API",
@@ -98,6 +112,27 @@
     "Jitsi",
     "LiveService",
     "MessageService"
+  ],
+  "chattyCallReductions": [
+    {
+      "id": "consultant-agency-batch",
+      "dependency": "AgencyService",
+      "operation": "public consultant profile read",
+      "bound": "one batched AgencyService call per consultant profile read",
+      "runtimeProof": "scripts/load/run-seeded-public-read-replicas.sh"
+    },
+    {
+      "id": "agency-matrix-technical-identity-grant",
+      "dependency": "Keycloak",
+      "operation": "technical authentication for internal AgencyService Matrix credential reads",
+      "previousBehavior": "one password grant per new agency-held session",
+      "currentBehavior": "one synchronized in-memory grant per UserService replica and token lifetime",
+      "maxGrantsPerReplicaPerTokenLifetime": 1,
+      "maxAuthRefreshRetriesPerCall": 1,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/service/identity/TechnicalIdentityTokenProvider.java",
+      "consumer": "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyMatrixCredentialClient.java",
+      "retryMetric": "userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}"
+    }
   ],
   "measurementPolicy": {
     "callAttempts": "userservice.outbound.http.calls",
