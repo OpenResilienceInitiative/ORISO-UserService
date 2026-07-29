@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -28,7 +29,7 @@ public class ConsultantUpdateServiceBase {
 
   @Autowired protected ConsultantUpdateService consultantUpdateService;
 
-  @MockitoBean(extraInterfaces = IdentityEmailOwnerLookup.class)
+  @MockitoBean(extraInterfaces = {IdentityAuthentication.class, IdentityEmailOwnerLookup.class})
   protected IdentityClient identityClient;
 
   @MockitoBean protected AgencyService agencyService;

@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityAuthentication identityAuthentication;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
@@ -46,7 +48,7 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean validatePasswordIgnoring2fa(String username, String password) {
-    return identityClient.verifyIgnoringOtp(username, password);
+    return identityAuthentication.verifyPasswordIgnoringSecondFactor(username, password);
   }
 
   @Override
