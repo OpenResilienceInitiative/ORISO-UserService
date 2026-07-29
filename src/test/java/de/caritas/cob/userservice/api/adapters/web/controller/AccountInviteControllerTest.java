@@ -23,6 +23,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -76,6 +78,40 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(AccountInviteTargetRole.COUNSELLOR, commandCaptor.getValue().targetRole());
     assertEquals("invitee@example.org", commandCaptor.getValue().recipientEmail());
+  }
+
+  @Test
+  void createInvite_allocationModes_areParsedAndPassedToTheCommand() {
+    // TEN-INV-U3: the composer's AUTO/MANUAL allocation modes reach the orchestration untouched.
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "AUTO";
+    request.agencyIdAllocationMode = "MANUAL";
+    request.agencyId = 9L;
+
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
+    assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_unknownAllocationMode_throwsBadRequest() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "SOMETIMES";
+
+    assertThrows(BadRequestException.class, () -> controller.createInvite(request));
   }
 
   @Test
@@ -146,6 +182,29 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(accountInviteService).acceptInvite("token-1", "user-1");
+    // No pending mandatory 2FA on this invite: the onboarding phase is terminal.
+    assertNotNull(response.getBody());
+    assertEquals("COMPLETED", response.getBody().phase);
+  }
+
+  @Test
+  void acceptInvite_pendingTwoFactor_reportsResumablePhase() {
+    // Resume contract (ORISO-Admin#569): while the mandatory 2FA activation is open, the accept
+    // response tells the client to continue at the 2FA step instead of a terminal state.
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    when(accountInviteService.acceptInvite("token-3", null)).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
+
+    var response = controller.acceptInvite("token-3", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("PENDING_2FA_ACTIVATION", response.getBody().phase);
+    assertEquals(
+        AccountAccessGateStatus.BLOCKED_TWO_FACTOR.name(), response.getBody().accessGateStatus);
   }
 
   @Test

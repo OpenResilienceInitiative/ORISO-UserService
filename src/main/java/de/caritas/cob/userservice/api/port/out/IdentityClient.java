@@ -31,14 +31,10 @@ public interface IdentityClient {
 
   Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
-  Map<String, String> findUserByEmail(String email);
-
   KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
 
   KeycloakCreateUserResponseDTO createKeycloakUser(
       final UserDTO user, final String firstName, final String lastName);
-
-  boolean isUsernameAvailable(String username);
 
   void updateUserRole(final String userId);
 
@@ -71,8 +67,6 @@ public interface IdentityClient {
   List<String> getRealmRoles(String userId);
 
   List<UserRepresentation> findByUsername(String username);
-
-  void closeSession(String sessionId);
 
   void deactivateUser(String userId);
 
