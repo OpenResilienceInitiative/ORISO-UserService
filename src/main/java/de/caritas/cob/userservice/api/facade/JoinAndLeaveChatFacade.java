@@ -5,12 +5,9 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
 import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatRemoveUserFromGroupException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -18,12 +15,10 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -36,7 +31,6 @@ public class JoinAndLeaveChatFacade {
   private final ChatPermissionVerifier chatPermissionVerifier;
   private final ConsultantService consultantService;
   private final UserService userService;
-  private final RocketChatService rocketChatService;
   private final ChatReCreator chatReCreator;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixChatShutdownService matrixChatShutdownService;
@@ -52,28 +46,13 @@ public class JoinAndLeaveChatFacade {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
 
-    if (!isBlank(groupChatMembershipService.resolveMatrixRoomId(chat))) {
-      String matrixUserId = retrieveMatrixUserId(authenticatedUser);
-      if (isBlank(matrixUserId)
-          || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
-        throw new InternalServerErrorException(
-            String.format(
-                "User with id %s could not join the Matrix group chat.",
-                authenticatedUser.getUserId()));
-      }
-      return;
-    }
-
-    String rcUserId = retrieveRcUserId(authenticatedUser);
-    if (isBlank(rcUserId)) {
+    requireMatrixRoom(chat);
+    String matrixUserId = retrieveMatrixUserId(authenticatedUser);
+    if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
       throw new InternalServerErrorException(
-          String.format("User with id %s has no Rocket.Chat-ID.", authenticatedUser.getUserId()));
-    }
-
-    try {
-      rocketChatService.addUserToGroup(rcUserId, chat.getGroupId());
-    } catch (RocketChatAddUserToGroupException e) {
-      throw new InternalServerErrorException(e.getMessage(), LogService::logRocketChatError);
+          String.format(
+              "User with id %s could not join the Matrix group chat.",
+              authenticatedUser.getUserId()));
     }
   }
 
@@ -86,9 +65,7 @@ public class JoinAndLeaveChatFacade {
    * Leave a chat.
    *
    * <p>The "was this the last member?" decision is answered from the Matrix room state via {@link
-   * GroupChatMembershipService}, NOT from Rocket.Chat: with Rocket.Chat disabled (the default,
-   * ADR-004) its member query always returns an empty list, which made every single leave delete
-   * the whole chat for everyone.
+   * GroupChatMembershipService}.
    *
    * @param chatId the id of the chat
    * @param authenticatedUser the authenticated user
@@ -96,6 +73,7 @@ public class JoinAndLeaveChatFacade {
   public void leaveChat(Long chatId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
+    requireMatrixRoom(chat);
 
     Optional<Consultant> leavingConsultant =
         consultantService.getConsultantViaAuthenticatedUser(authenticatedUser);
@@ -108,35 +86,13 @@ public class JoinAndLeaveChatFacade {
             .map(Consultant::getMatrixUserId)
             .or(() -> leavingUser.map(User::getMatrixUserId))
             .orElse(null);
-    boolean matrixChat = !isBlank(groupChatMembershipService.resolveMatrixRoomId(chat));
-
-    if (matrixChat) {
-      if (isBlank(leavingMatrixUserId)) {
-        throw new InternalServerErrorException(
-            String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
-      }
-      if (leavingConsultant.isPresent()) {
-        groupChatRoleService.leaveSeries(chat, leavingConsultant.get());
-      } else {
-        groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
-        leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
-      }
+    if (isBlank(leavingMatrixUserId)) {
+      throw new InternalServerErrorException(
+          String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
+    }
+    if (leavingConsultant.isPresent()) {
+      groupChatRoleService.leaveSeries(chat, leavingConsultant.get());
     } else {
-      String rcUserId =
-          leavingConsultant
-              .map(Consultant::getRocketChatId)
-              .or(() -> leavingUser.map(User::getRcUserId))
-              .orElse(null);
-      if (isBlank(rcUserId)) {
-        throw new InternalServerErrorException(
-            String.format("User with id %s has no Rocket.Chat-ID.", authenticatedUser.getUserId()));
-      }
-      try {
-        rocketChatService.removeUserFromGroup(rcUserId, chat.getGroupId());
-      } catch (RocketChatRemoveUserFromGroupException e) {
-        throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
-      }
-
       groupChatMembershipService.removeLeavingMemberFromRoom(chat, leavingMatrixUserId);
       leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
     }
@@ -145,9 +101,6 @@ public class JoinAndLeaveChatFacade {
       return;
     }
 
-    if (!matrixChat) {
-      deleteMessengerChat(chat.getGroupId());
-    }
     if (chat.isRepetitive()) {
       if (chat.nextStart() != null) {
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
@@ -160,13 +113,6 @@ public class JoinAndLeaveChatFacade {
     } else {
       chatService.deleteChat(chat);
       matrixChatShutdownService.shutdownRoom(chat);
-    }
-  }
-
-  private void deleteMessengerChat(String groupId) {
-    if (!rocketChatService.deleteGroupAsSystemUser(groupId)) {
-      var message = String.format("Could not delete Rocket.Chat group with id %s", groupId);
-      throw new InternalServerErrorException(message);
     }
   }
 
@@ -186,31 +132,22 @@ public class JoinAndLeaveChatFacade {
     return chat;
   }
 
-  private String retrieveRcUserId(AuthenticatedUser authenticatedUser) {
-    final AtomicReference<String> rcUserId = new AtomicReference<>();
-    consultantService
-        .getConsultantViaAuthenticatedUser(authenticatedUser)
-        .ifPresentOrElse(
-            consultant -> rcUserId.set(consultant.getRocketChatId()),
-            () ->
-                userService
-                    .getUserViaAuthenticatedUser(authenticatedUser)
-                    .ifPresent(user -> rcUserId.set(user.getRcUserId())));
-
-    return rcUserId.get();
+  private void requireMatrixRoom(Chat chat) {
+    if (isBlank(groupChatMembershipService.resolveMatrixRoomId(chat))) {
+      throw new InternalServerErrorException(
+          String.format("Chat with id %s has no Matrix room id.", chat.getId()));
+    }
   }
 
   private String retrieveMatrixUserId(AuthenticatedUser authenticatedUser) {
-    final AtomicReference<String> matrixUserId = new AtomicReference<>();
-    consultantService
+    return consultantService
         .getConsultantViaAuthenticatedUser(authenticatedUser)
-        .ifPresentOrElse(
-            consultant -> matrixUserId.set(consultant.getMatrixUserId()),
+        .map(Consultant::getMatrixUserId)
+        .orElseGet(
             () ->
                 userService
                     .getUserViaAuthenticatedUser(authenticatedUser)
-                    .ifPresent(user -> matrixUserId.set(user.getMatrixUserId())));
-
-    return matrixUserId.get();
+                    .map(User::getMatrixUserId)
+                    .orElse(null));
   }
 }

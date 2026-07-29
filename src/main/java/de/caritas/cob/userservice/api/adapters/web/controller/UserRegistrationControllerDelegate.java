@@ -3,12 +3,11 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
@@ -87,9 +86,10 @@ class UserRegistrationControllerDelegate {
     return ResponseEntity.noContent().build();
   }
 
-  ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
+  ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
     return magicLinkLoginService
         .consumeMagicLink(consumeDTO.getToken())
+        .map(MagicLinkSessionResponseDTO::from)
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.badRequest().build());
   }
@@ -139,26 +139,19 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<NewRegistrationResponseDto> registerNewConsultingType(
-      NewRegistrationDto newRegistrationDto, String rcToken, String rcUserId) {
+      NewRegistrationDto newRegistrationDto) {
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
     var registrationResponse =
         createNewSessionFacade.initializeNewSession(
-            newRegistrationDto,
-            user,
-            rocketChatCredentials,
-            Lists.newArrayList(ONE_SESSION_PER_CONSULTING_TYPE));
+            newRegistrationDto, user, Lists.newArrayList(ONE_SESSION_PER_CONSULTING_TYPE));
 
     return new ResponseEntity<>(registrationResponse, registrationResponse.getStatus());
   }
 
   ResponseEntity<NewRegistrationResponseDto> registerNewSession(
-      NewRegistrationDto newRegistrationDto, String rcToken, String rcUserId) {
+      NewRegistrationDto newRegistrationDto) {
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
 
     /* Additional enquiries from the profile page go through the normal
     enquiry pipeline - the consultant is NOT pre-assigned here. The asker
@@ -169,8 +162,7 @@ class UserRegistrationControllerDelegate {
     askers can raise new enquiries even when they already had a past
     session for the same topic+agency. */
     var response =
-        createNewSessionFacade.initializeNewSession(
-            newRegistrationDto, user, rocketChatCredentials, Lists.newArrayList());
+        createNewSessionFacade.initializeNewSession(newRegistrationDto, user, Lists.newArrayList());
 
     return new ResponseEntity<>(response, response.getStatus());
   }
@@ -179,7 +171,7 @@ class UserRegistrationControllerDelegate {
   ResponseEntity<Void> acceptEnquiry(Long sessionId) {
     var session = sessionService.getSessionForUpdate(sessionId);
 
-    // MATRIX MIGRATION: Removed groupId check - Matrix sessions don't have RocketChat groupId
+    // The session id is invalid when no persisted session can be loaded.
     if (session.isEmpty()) {
       log.error("Internal Server Error: Session id {} is invalid, session not found.", sessionId);
       return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
@@ -192,20 +184,12 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
-      Long sessionId, EnquiryMessageDTO enquiryMessage, String rcToken, String rcUserId) {
+      Long sessionId, EnquiryMessageDTO enquiryMessage) {
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
     var language = consultantDtoMapper.languageOf(enquiryMessage.getLanguage());
     var enquiryData =
         new EnquiryData(
-            user,
-            sessionId,
-            enquiryMessage.getMessage(),
-            language,
-            rocketChatCredentials,
-            enquiryMessage.getT(),
-            null);
+            user, sessionId, enquiryMessage.getMessage(), language, enquiryMessage.getT(), null);
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 

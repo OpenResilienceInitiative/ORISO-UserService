@@ -13,9 +13,8 @@ import de.caritas.cob.userservice.api.actions.ActionCommandMockProvider;
 import de.caritas.cob.userservice.api.actions.registry.ActionContainer;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
+import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -63,8 +62,7 @@ class DeactivateAnonymousUserServiceTest {
   private void ensureSessionActionMocks() {
     Stream.of(
             DeactivateSessionActionCommand.class,
-            PostConversationFinishedAliasMessageActionCommand.class,
-            SetRocketChatRoomReadOnlyActionCommand.class,
+            PostMatrixUserLeftMessageActionCommand.class,
             SendFinishedAnonymousConversationEventActionCommand.class)
         .forEach(
             actionClass -> {
@@ -189,12 +187,7 @@ class DeactivateAnonymousUserServiceTest {
     verify(this.commandMockProvider.getActionMock(DeactivateSessionActionCommand.class), never())
         .execute(any(Session.class));
     verify(
-            this.commandMockProvider.getActionMock(
-                PostConversationFinishedAliasMessageActionCommand.class),
-            never())
-        .execute(any(Session.class));
-    verify(
-            this.commandMockProvider.getActionMock(SetRocketChatRoomReadOnlyActionCommand.class),
+            this.commandMockProvider.getActionMock(PostMatrixUserLeftMessageActionCommand.class),
             never())
         .execute(any(Session.class));
     verify(
@@ -246,17 +239,12 @@ class DeactivateAnonymousUserServiceTest {
                   .execute(session);
               verify(
                       this.commandMockProvider.getActionMock(
-                          SetRocketChatRoomReadOnlyActionCommand.class),
-                      times(1))
-                  .execute(session);
-              verify(
-                      this.commandMockProvider.getActionMock(
                           SendFinishedAnonymousConversationEventActionCommand.class),
                       times(1))
                   .execute(session);
               verify(
                       this.commandMockProvider.getActionMock(
-                          PostConversationFinishedAliasMessageActionCommand.class),
+                          PostMatrixUserLeftMessageActionCommand.class),
                       times(1))
                   .execute(session);
             });

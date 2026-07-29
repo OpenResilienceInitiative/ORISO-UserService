@@ -16,8 +16,6 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByEmailAndDeleteDateIsNull(String email);
 
-  Optional<User> findByRcUserIdAndDeleteDateIsNull(String rcUserId);
-
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   List<User> findAllByDeleteDateNotNull();
@@ -52,14 +50,14 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    WHERE u = s1.user "
               + "      AND s1.status > 0 "
               + "      AND s1.enquiryMessageDate IS NOT NULL "
-              + "      AND s1.groupId IS NOT NULL "
+              + "      AND s1.matrixRoomId IS NOT NULL "
               + "  )"
               + "  AND EXISTS ("
               + "    SELECT 1 FROM Session s2 "
               + "      WHERE u = s2.user "
               + "        AND s2.status = 0 "
               + "        AND s2.enquiryMessageDate IS NULL "
-              + "        AND s2.groupId IS NULL "
+              + "        AND s2.matrixRoomId IS NULL "
               + "        AND s2.createDate < ?1 "
               + "  )"
               + "  AND NOT EXISTS ("
@@ -67,7 +65,7 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    WHERE u = s3.user "
               + "    AND s3.status = 0 "
               + "    AND s3.enquiryMessageDate IS NULL "
-              + "    AND s3.groupId IS NULL "
+              + "    AND s3.matrixRoomId IS NULL "
               + "    AND s3.createDate >= ?1"
               + ")")
   List<User> findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(LocalDateTime date);

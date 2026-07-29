@@ -1,19 +1,12 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
-import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
-import static de.caritas.cob.userservice.api.testHelper.AsyncVerification.verifyAsync;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT_WITH_AGENCY;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.U25_SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
-import static java.util.Arrays.asList;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_MATRIX_ID;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,7 +15,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -30,7 +22,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
@@ -39,16 +30,13 @@ import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
@@ -56,13 +44,9 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
-import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -77,15 +61,12 @@ class AssignEnquiryFacadeTest {
 
   @InjectMocks AssignEnquiryFacade assignEnquiryFacade;
   @Mock SessionService sessionService;
-  @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
 
   @Mock
   @SuppressWarnings("unused")
   KeycloakService keycloakService;
 
   @Mock SessionToConsultantVerifier sessionToConsultantVerifier;
-  @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
-  @Mock TenantContextProvider tenantContextProvider;
   @Mock StatisticsService statisticsService;
   @Mock HttpServletRequest httpServletRequest;
   @Mock EmailNotificationFacade emailNotificationFacade;
@@ -100,8 +81,6 @@ class AssignEnquiryFacadeTest {
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
-  private LogbackCaptor logCaptor;
-
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -109,16 +88,14 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
-    logCaptor = LogbackCaptor.attach(LogService.class);
-
     // dev's Matrix migration: assignEnquiry now provisions a Matrix room and reads
     // session.getUser().getMatrixUserId() / consultant.getMatrixUserId(). The shared
     // TestConstants do not set these, so populate them here (reset in tearDown) and stub the
     // MatrixSynapseService happy path so room creation succeeds for every assignment test.
-    USER_WITH_RC_ID.setMatrixUserId(USER_MATRIX_ID);
+    USER_WITH_MATRIX_ID.setMatrixUserId(USER_MATRIX_ID);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(CONSULTANT_MATRIX_ID);
     // Anonymous enquiry constant has no user wired; assignEnquiry now dereferences it.
-    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_RC_ID);
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(USER_WITH_MATRIX_ID);
 
     lenient()
         .when(usernameTranscoder.decodeUsername(anyString()))
@@ -142,15 +119,14 @@ class AssignEnquiryFacadeTest {
         .thenReturn(true);
   }
 
-  @AfterEach
+  @org.junit.jupiter.api.AfterEach
   public void tearDown() {
     // Undo mutations of the shared TestConstants so other test classes are not affected.
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername(USERNAME);
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
-    logCaptor.detach();
     TenantContext.clear();
   }
 
@@ -174,15 +150,14 @@ class AssignEnquiryFacadeTest {
   void assignEnquiry_Should_ProvisionMissingUserMatrixAccountBeforeRoomCreation()
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
     when(sessionRoomGateway.createUser(anyString(), anyString(), anyString()))
         .thenReturn(USER_MATRIX_ID);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
-    verify(userRepository).save(USER_WITH_RC_ID);
-    assertEquals(USER_MATRIX_ID, USER_WITH_RC_ID.getMatrixUserId());
+    verify(userRepository).save(USER_WITH_MATRIX_ID);
+    assertEquals(USER_MATRIX_ID, USER_WITH_MATRIX_ID.getMatrixUserId());
   }
 
   @Test
@@ -191,7 +166,6 @@ class AssignEnquiryFacadeTest {
     // session room must contain the admin or message notifications never fire.
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     CONSULTANT_WITH_AGENCY.setMatrixUserId("@consultant:matrix.example.com");
-    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
@@ -202,17 +176,16 @@ class AssignEnquiryFacadeTest {
   void assignEnquiry_Should_ResolveExistingUserMatrixAccount_WhenCreateFails()
       throws MatrixCreateUserException {
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername("asker");
-    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername("asker");
     when(sessionRoomGateway.createUser(eq("asker"), anyString(), eq("asker")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
     when(sessionRoomGateway.loginAsUser("@asker:matrix.example.com")).thenReturn(MATRIX_TOKEN);
 
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
-    verify(userRepository).save(USER_WITH_RC_ID);
-    assertEquals("@asker:matrix.example.com", USER_WITH_RC_ID.getMatrixUserId());
+    verify(userRepository).save(USER_WITH_MATRIX_ID);
+    assertEquals("@asker:matrix.example.com", USER_WITH_MATRIX_ID.getMatrixUserId());
     verify(sessionRoomGateway, times(1)).createUser(eq("asker"), anyString(), eq("asker"));
   }
 
@@ -227,9 +200,8 @@ class AssignEnquiryFacadeTest {
     // change the MXID.
     TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
     when(sessionRoomGateway.userIdFor("probeuser")).thenReturn("@probeuser:test.example.org");
-    USER_WITH_RC_ID.setMatrixUserId(null);
-    USER_WITH_RC_ID.setUsername("probeuser");
-    lenient().when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
+    USER_WITH_MATRIX_ID.setMatrixUserId(null);
+    USER_WITH_MATRIX_ID.setUsername("probeuser");
     // Force the create path to fail so the MXID-construction fallback branch runs.
     when(sessionRoomGateway.createUser(eq("probeuser"), anyString(), eq("probeuser")))
         .thenThrow(new MatrixCreateUserException("User ID already taken"));
@@ -237,171 +209,19 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     // The constructed candidate MXID must use the configured server name verbatim.
-    assertThat(USER_WITH_RC_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
+    assertThat(USER_WITH_MATRIX_ID.getMatrixUserId()).isEqualTo("@probeuser:test.example.org");
     verify(sessionRoomGateway, atLeastOnce()).loginAsUser("@probeuser:test.example.org");
   }
 
   @Test
-  void assignEnquiry_Should_ReturnOKAndRemoveSystemMessagesFromGroup() {
-    // given
-    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
-    when(sessionAssignmentChatGateway.findMemberIds(anyString())).thenReturn(List.of());
-
-    // when
-    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-
-    // then
-    verifyConsultantAndSessionHaveBeenChecked(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verifyAsync(
-        (a) -> verify(sessionAssignmentChatGateway, times(1)).removeSystemMessages(anyString()));
-    verifyAsync(
-        (a) -> verify(tenantContextProvider).setCurrentTenantContextIfMissing(CURRENT_TENANT_ID));
-  }
-
-  @Test
-  void assignEnquiry_Should_LogError_When_RCRemoveGroupMembersFails() {
-    doThrow(new InternalServerErrorException(""))
-        .when(sessionAssignmentChatGateway)
-        .removeSystemMessages(anyString());
-
-    assignEnquiryFacade.assignRegisteredEnquiry(
-        U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-
-    verifyConsultantAndSessionHaveBeenChecked(
-        U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(sessionService, times(1))
-        .updateConsultantAndStatusForSession(
-            U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
-    verifyAsync((a) -> assertEquals(1, logCaptor.countAtLevel(Level.ERROR)));
-  }
-
-  @Test
-  void assignEnquiry_Should_LogError_WhenRemoveSystemMessagesFromGroupFails() {
-    doThrow(new InternalServerErrorException("error"))
-        .when(sessionAssignmentChatGateway)
-        .removeSystemMessages(Mockito.any());
-
-    assignEnquiryFacade.assignRegisteredEnquiry(
-        U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-
-    verifyConsultantAndSessionHaveBeenChecked(
-        U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verifyAsync((a) -> assertEquals(1, logCaptor.countAtLevel(Level.ERROR)));
-    verify(sessionService, times(1))
-        .updateConsultantAndStatusForSession(
-            U25_SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, IN_PROGRESS);
-  }
-
-  @Test
-  void assignEnquiry_Should_removeAllUnauthorizedMembers_When_sessionIsNotATeamSession() {
-    Session session = new EasyRandom().nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(CURRENT_TENANT_ID);
-    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(CURRENT_TENANT_ID);
-    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("consultantRcId");
-    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
-        .thenReturn(asList("userRcId", "consultantRcId", "otherRcId"));
-    Consultant consultantToRemove = new EasyRandom().nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
-    when(unauthorizedMembersProvider.obtainConsultantsToRemove(any(), any(), any(), any()))
-        .thenReturn(List.of(consultantToRemove));
-
-    this.assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
-
-    verifyConsultantAndSessionHaveBeenChecked(session, consultant);
-    verifyAsync(
-        (a) ->
-            verify(sessionAssignmentChatGateway, times(1))
-                .removeConsultantsIgnoringMissingGroup(session, List.of(consultantToRemove)));
-  }
-
-  @Test
-  void assignEnquiry_ShouldNot_removeTeamMembers_When_sessionIsTeamSession() {
-    Session session = new EasyRandom().nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(CURRENT_TENANT_ID);
-    ConsultantAgency consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(CURRENT_TENANT_ID);
-    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("newConsultantRcId");
-    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
-        .thenReturn(
-            asList(
-                "userRcId",
-                "newConsultantRcId",
-                "otherRcId",
-                "teamConsultantRcId",
-                "teamConsultantRcId2"));
-    Consultant consultantToRemove = new EasyRandom().nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
-    when(unauthorizedMembersProvider.obtainConsultantsToRemove(any(), any(), any(), any()))
-        .thenReturn(List.of(consultantToRemove));
-
-    this.assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
-
-    verifyConsultantAndSessionHaveBeenChecked(session, consultant);
-    verifyAsync(
-        (a) ->
-            verify(sessionAssignmentChatGateway, atLeastOnce())
-                .removeConsultantsIgnoringMissingGroup(session, List.of(consultantToRemove)));
-  }
-
-  @Test
-  void assignAnonymousEnquiry_Should_AddConsultantToGroup_WhenSessionIsAnonymousConversation() {
+  void assignAnonymousEnquiry_Should_ProvisionMatrixRoom_WhenSessionIsAnonymousConversation()
+      throws Exception {
     assignEnquiryFacade.assignAnonymousEnquiry(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
 
     verifyConsultantAndSessionHaveBeenChecked(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(sessionAssignmentChatGateway, times(1))
-        .addUserToGroup(ROCKETCHAT_ID, ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getGroupId());
-  }
-
-  @Test
-  void assignAnonymousEnquiry_Should_RemoveSystemMessagesFromGroup() {
-    assignEnquiryFacade.assignAnonymousEnquiry(
-        ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-
-    verifyConsultantAndSessionHaveBeenChecked(
-        ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(sessionAssignmentChatGateway, times(1)).removeSystemMessages(anyString());
-  }
-
-  @Test
-  void
-      assignAnonymousEnquiry_Should_ReturnInternalServerErrorAndDoARollback_WhenAddConsultantToGroupFails() {
-    doThrow(new InternalServerErrorException(""))
-        .when(sessionAssignmentChatGateway)
-        .addUserToGroup(ROCKETCHAT_ID, RC_GROUP_ID);
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          assignEnquiryFacade.assignAnonymousEnquiry(
-              ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-        });
-
-    verifyConsultantAndSessionHaveBeenChecked(
-        ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
-    verify(sessionService, times(1))
-        .updateConsultantAndStatusForSession(
-            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT,
-            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getConsultant(),
-            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getStatus());
-    verify(sessionService, times(1))
-        .updateConsultantAndStatusForSession(ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, null, NEW);
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -659,22 +479,6 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
-  }
-
-  // ---------------------------------------------------------------------------
-  // updateRocketChatRooms (public method) — exception is re-thrown
-  // ---------------------------------------------------------------------------
-
-  @Test
-  void updateRocketChatRooms_Should_LogAndRethrow_When_MembersFetchFails() {
-    when(sessionAssignmentChatGateway.findMemberIds(anyString()))
-        .thenThrow(new RuntimeException("RC unavailable"));
-
-    assertThrows(
-        RuntimeException.class,
-        () ->
-            assignEnquiryFacade.updateRocketChatRooms(
-                RC_GROUP_ID, SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
   }
 
   // ---------------------------------------------------------------------------

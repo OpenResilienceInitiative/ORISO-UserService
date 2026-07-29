@@ -157,7 +157,7 @@ public class AgencyInviteLinkService {
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
-   * the frontend registration flow. Does not create Keycloak or Rocket.Chat users on the server.
+   * the frontend registration flow. Does not create Keycloak or Matrix users on the server.
    */
   @Transactional
   public RedeemContext redeemWithContext(String token) {

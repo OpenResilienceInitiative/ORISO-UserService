@@ -94,41 +94,6 @@ class SessionToConsultantVerifierTest {
   }
 
   @Test
-  void
-      verifyPreconditionsForAssignment_Should_Not_throwException_When_consultantDoesNotHaveRocketChatIdInDb() {
-    // Since the Matrix migration the Rocket.Chat id verification is intentionally disabled in
-    // SessionToConsultantVerifier (see "MATRIX MIGRATION: Commented out RocketChat ID
-    // verification"). A missing consultant Rocket.Chat id therefore no longer blocks assignment.
-    Session session = mock(Session.class);
-    when(session.getRegistrationType()).thenReturn(RegistrationType.REGISTERED);
-
-    ConsultantSessionDTO consultantSessionDTO =
-        ConsultantSessionDTO.builder().consultant(mock(Consultant.class)).session(session).build();
-
-    assertDoesNotThrow(
-        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
-  }
-
-  @Test
-  void
-      verifyPreconditionsForAssignment_Should_Not_throwException_When_sessionUserHasNoRocketChatId() {
-    // Since the Matrix migration the Rocket.Chat id verification is intentionally disabled in
-    // SessionToConsultantVerifier (see "MATRIX MIGRATION: Commented out RocketChat ID
-    // verification"). A missing session-user Rocket.Chat id therefore no longer blocks assignment.
-    Session sessionWithUser = mock(Session.class);
-    when(sessionWithUser.getRegistrationType()).thenReturn(RegistrationType.REGISTERED);
-
-    ConsultantSessionDTO consultantSessionDTO =
-        ConsultantSessionDTO.builder()
-            .consultant(mock(Consultant.class))
-            .session(sessionWithUser)
-            .build();
-
-    assertDoesNotThrow(
-        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
-  }
-
-  @Test
   void verifyPreconditionsForAssignment_Should_notThrowException_When_anonymousSessionIsValid() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConsultant(null);

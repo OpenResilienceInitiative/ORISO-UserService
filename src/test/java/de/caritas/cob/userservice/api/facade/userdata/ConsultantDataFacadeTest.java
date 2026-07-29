@@ -52,8 +52,7 @@ public class ConsultantDataFacadeTest {
   }
 
   @Test
-  public void
-      saveEnquiryMessageAndRocketChatGroupId_Should_RemoveHtmlCodeAndJsFromMessageForXssProtection() {
+  public void updateConsultantAbsent_Should_RemoveHtmlCodeAndJsFromMessageForXssProtection() {
     when(consultantService.saveConsultant(Mockito.any(Consultant.class))).thenReturn(CONSULTANT);
 
     Consultant consultant =

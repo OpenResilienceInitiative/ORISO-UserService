@@ -5,7 +5,6 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -19,15 +18,12 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
-import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -35,14 +31,12 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
-import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -58,8 +52,6 @@ public class CreateUserFacade {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
-  private final @NonNull CreateSessionFacade createSessionFacade;
-  private final @NonNull SessionService sessionService;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -88,85 +80,72 @@ public class CreateUserFacade {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
+    log.info(
+        "MATRIX: Plain username from ThreadLocal is available={}",
+        plainCreds != null && plainCreds.getUsername() != null);
+
+    userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
+    userVerifier.checkIfUsernameIsAvailable(userDTO);
+    agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+
+    CreatedIdentity response = identityClient.createUser(userDTO);
+    var user =
+        updateIdentityAndCreateAccount(
+            CreatedIdentity.requireUserId(response), userDTO, UserRole.USER);
+
+    // Ensure user is fully persisted before creating session
+    User savedUser = userService.saveUser(user);
+    if (savedUser != null) {
+      user = savedUser;
+    }
+
+    // Create Matrix user with a random local Matrix password that is never persisted.
+    // The plain username is needed for the Matrix localpart. Prefer the value captured during
+    // request deserialization, but fall back to deriving it from the persisted username. The
+    // ThreadLocal is populated by a Jackson deserializer and is not always available by the time
+    // we get here; relying on it alone left some askers without a Matrix account, which later
+    // makes their first enquiry fail with "Could not create Matrix room".
+    String plainUsername;
+    if (plainCreds != null && plainCreds.getUsername() != null) {
+      plainUsername = plainCreds.getUsername();
+    } else if (user != null && user.getUsername() != null) {
+      plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
+    } else {
+      plainUsername = null;
+    }
     try {
-      log.info(
-          "MATRIX: Plain username from ThreadLocal is available={}",
-          plainCreds != null && plainCreds.getUsername() != null);
-
-      userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
-      userVerifier.checkIfUsernameIsAvailable(userDTO);
-      agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
-
-      CreatedIdentity response = identityClient.createUser(userDTO);
-      var user =
-          updateIdentityAndCreateAccount(
-              CreatedIdentity.requireUserId(response), userDTO, UserRole.USER);
-
-      // Ensure user is fully persisted before creating session
-      User savedUser = userService.saveUser(user);
-      if (savedUser != null) {
-        user = savedUser;
-      }
-
-      // Create Matrix user with a random local Matrix password that is never persisted.
-      // The plain username is needed for the Matrix localpart. Prefer the value captured during
-      // request deserialization, but fall back to deriving it from the persisted username. The
-      // ThreadLocal is populated by a Jackson deserializer and is not always available by the time
-      // we get here; relying on it alone left some askers without a Matrix account, which later
-      // makes their first enquiry fail with "Could not create Matrix room".
-      String plainUsername;
-      if (plainCreds != null && plainCreds.getUsername() != null) {
-        plainUsername = plainCreds.getUsername();
-      } else if (user != null && user.getUsername() != null) {
-        plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
-      } else {
-        plainUsername = null;
-      }
-      try {
-        provisionMatrixUser(user, plainUsername);
-      } catch (InternalServerErrorException e) {
-        log.error(
-            "Matrix user creation failed for plain username: {}, but continuing with registration",
-            plainUsername,
-            e);
-      }
-
-      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-
-      NewRegistrationResponseDto registration;
-      try {
-        registration =
-            createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
-      } catch (Exception e) {
-        log.error(
-            "RocketChat integration failed during registration, but user was created successfully",
-            e);
-        // Create a minimal session even if RocketChat fails
-        registration =
-            new NewRegistrationResponseDto()
-                .sessionId(createMinimalSession(userDTO, user, consultingTypeSettings))
-                .status(HttpStatus.CREATED);
-      }
-
-      try {
-        RegistrationStatisticsEvent registrationEvent =
-            new RegistrationStatisticsEvent(
-                userDTO,
-                user,
-                registration.getSessionId(),
-                topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
-                topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
-                getTenantName(),
-                getAgencyName(userDTO));
-        statisticsService.fireEvent(registrationEvent);
-      } catch (Exception e) {
-        log.error("Could not create registration statistics event", e);
-      }
-
-      return registration.getSessionId();
+      provisionMatrixUser(user, plainUsername);
+    } catch (InternalServerErrorException e) {
+      log.error(
+          "Matrix user creation failed for plain username: {}, but continuing with registration",
+          plainUsername,
+          e);
     } finally {
+      // Clean up ThreadLocal to prevent memory leaks
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
+
+    var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
+
+    NewRegistrationResponseDto registration =
+        createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+
+    try {
+      RegistrationStatisticsEvent registrationEvent =
+          new RegistrationStatisticsEvent(
+              userDTO,
+              user,
+              registration.getSessionId(),
+              topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
+              topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
+              getTenantName(),
+              getAgencyName(userDTO));
+      statisticsService.fireEvent(registrationEvent);
+    } catch (Exception e) {
+      log.error("Could not create registration statistics event", e);
+    }
+
+    return registration.getSessionId();
   }
 
   /** Provisions and persists the Matrix identity needed by browser token bootstrap. */
@@ -301,51 +280,6 @@ public class CreateUserFacade {
 
   private ExtendedConsultingTypeResponseDTO obtainConsultingTypeSettings(UserDTO userDTO) {
     return consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
-  }
-
-  private Long createMinimalSession(
-      UserDTO userDTO, User user, ExtendedConsultingTypeResponseDTO consultingTypeSettings) {
-    try {
-      return createSessionFacade.createUserSession(
-          userDTO,
-          user,
-          consultingTypeSettings,
-          Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE));
-    } catch (Exception e) {
-      Long existingSessionId = findExistingSessionId(user, consultingTypeSettings);
-      if (nonNull(existingSessionId)) {
-        log.warn(
-            "Using existing session {} for user {} after registration fallback failed",
-            existingSessionId,
-            user.getUsername());
-        return existingSessionId;
-      }
-      log.error("Could not create minimal session for user {}", user.getUsername(), e);
-      throw new InternalServerErrorException("Could not create session for user", e);
-    }
-  }
-
-  private Long findExistingSessionId(
-      User user, ExtendedConsultingTypeResponseDTO consultingTypeSettings) {
-    if (isNull(user) || isNull(consultingTypeSettings) || isNull(consultingTypeSettings.getId())) {
-      return null;
-    }
-
-    try {
-      List<Session> existingSessions =
-          sessionService.getSessionsForUserByConsultingTypeId(user, consultingTypeSettings.getId());
-      return existingSessions.stream()
-          .filter(session -> nonNull(session.getId()))
-          .findFirst()
-          .map(Session::getId)
-          .orElse(null);
-    } catch (Exception lookupException) {
-      log.warn(
-          "Could not lookup existing session for user {} after registration fallback failed",
-          user.getUsername(),
-          lookupException);
-      return null;
-    }
   }
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {

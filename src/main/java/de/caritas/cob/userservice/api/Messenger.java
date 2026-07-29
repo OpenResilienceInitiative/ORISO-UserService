@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api;
 import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -13,20 +12,15 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.StringConverter;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -38,22 +32,20 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class Messenger implements Messaging {
 
-  private final MessageClient messageClient;
   private final UserRepository userRepository;
   private final ConsultantRepository consultantRepository;
   private final ChatRepository chatRepository;
   private final SessionRepository sessionRepository;
   private final UserServiceMapper mapper;
-  private final StringConverter stringConverter;
-  private final AgencyService agencyService;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixSynapseService matrixSynapseService;
+  private final ConsultantActivityRegistry consultantActivityRegistry;
 
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
 
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
+  @Value("${consultant.availability.activeWindowMs:120000}")
+  private long consultantAvailabilityActiveWindowMs;
 
   @Override
   public boolean banUserFromChat(String adviceSeekerId, long chatId) {
@@ -65,14 +57,13 @@ public class Messenger implements Messaging {
       return banUserFromMatrixRoom(adviceSeeker, chat, matrixRoomId);
     }
 
-    // Legacy Rocket.Chat room (no Matrix room id). With Rocket.Chat disabled this is a no-op.
-    return messageClient.muteUserInChat(adviceSeeker.getUsername(), chat.getGroupId());
+    log.warn("Cannot ban user from chat {}: no Matrix room id", chatId);
+    return false;
   }
 
   /**
    * Bans the adviceseeker from the chat's Matrix room, acting as the chat owner (a consultant with
-   * ban power in the room). A Matrix ban both removes the user and blocks re-join, which is the
-   * Matrix-native replacement for the former Rocket.Chat mute/ban.
+   * ban power in the room). A Matrix ban both removes the user and blocks re-join.
    *
    * @return true when the ban succeeded (or the user was already gone), false when it could not be
    *     performed — the controller maps false to "user not found in chat".
@@ -100,53 +91,19 @@ public class Messenger implements Messaging {
   }
 
   @Override
-  public void unbanUsersInChat(Long chatId, String consultantId) {
-    findChatMetaInfo(chatId, consultantId)
-        .ifPresent(
-            chatMetaInfoMap -> {
-              var chat = chatRepository.findById(chatId).orElseThrow();
-              mapper
-                  .bannedUsernamesOfMap(chatMetaInfoMap)
-                  .forEach(username -> messageClient.unmuteUserInChat(username, chat.getGroupId()));
-            });
-  }
-
-  @Override
   public void setAvailability(String consultantId, boolean available) {
-    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
-    var status = mapper.statusOf(available);
-    var userChatId = consultant.getRocketChatId();
-
-    messageClient.setUserPresence(userChatId, status);
+    if (available) {
+      consultantActivityRegistry.markAvailable(consultantId);
+    } else {
+      consultantActivityRegistry.markUnavailable(consultantId);
+    }
   }
 
   @Override
   public boolean getAvailability(String consultantId) {
-    if (!rocketChatEnabled) {
-      return true;
-    }
-
-    return consultantRepository
-        .findByIdAndDeleteDateIsNull(consultantId)
-        .flatMap(consultant -> messageClient.isAvailable(consultant.getRocketChatId()))
-        .orElse(false);
-  }
-
-  @Override
-  public Set<String> findAvailableConsultants(int consultingTypeId) {
-    var presentUserIds = messageClient.findAllAvailableUserIds();
-
-    if (!presentUserIds.isEmpty()) {
-      var agencyIds =
-          agencyService.getAgenciesByConsultingType(consultingTypeId).stream()
-              .map(AgencyDTO::getId)
-              .collect(Collectors.toSet());
-
-      var consultantIdsInType = consultantRepository.findAllByAgencyIds(agencyIds);
-      presentUserIds.retainAll(consultantIdsInType);
-    }
-
-    return presentUserIds;
+    return consultantActivityRegistry
+        .filterActive(List.of(consultantId), consultantAvailabilityActiveWindowMs)
+        .contains(consultantId);
   }
 
   @Override
@@ -167,58 +124,18 @@ public class Messenger implements Messaging {
   }
 
   @Override
-  public Boolean updateE2eKeys(String chatUserId, String publicKey) {
-    var allUpdated = new AtomicReference<>(true);
-
-    messageClient
-        .findAllChats(chatUserId)
-        .ifPresent(
-            chats -> {
-              var masterKey = stringConverter.hashOf(chatUserId);
-              for (var chat : chats) {
-                var userId = mapper.userIdOf(chat);
-                var roomId = mapper.roomIdOf(chat);
-                if (mapper.e2eKeyOf(chat).isPresent()) {
-                  var roomKeyId = mapper.e2eKeyOf(chat).orElseThrow();
-                  var updatedE2eKey = createE2eKey(publicKey, masterKey, roomKeyId);
-                  if (!messageClient.updateChatE2eKey(userId, roomId, updatedE2eKey)) {
-                    allUpdated.set(false);
-                    break;
-                  }
-                } else {
-                  log.info("Ignoring non-temp chat ({}) of user ({})", roomId, userId);
-                }
-              }
-            });
-
-    return allUpdated.get();
-  }
-
-  private String createE2eKey(String publicKey, String masterKey, String roomKeyId) {
-    var keyId = roomKeyId.substring(4, 16);
-    var encryptedRoomKey = roomKeyId.substring(16);
-    var roomKey = stringConverter.aesDecrypt(encryptedRoomKey, masterKey);
-    var rsaEncrypted = stringConverter.rsaEncrypt(roomKey, publicKey);
-    var intArray = stringConverter.int8Array(rsaEncrypted);
-    var jsonStringified = stringConverter.jsonStringify(intArray);
-
-    return keyId + stringConverter.base64AsciiEncode(jsonStringified);
-  }
-
-  @Override
-  public boolean removeUserFromSession(String chatUserId, String chatId) {
-    var session = sessionRepository.findByGroupId(chatId).orElseThrow();
-    var consultant =
-        consultantRepository.findByRocketChatIdAndDeleteDateIsNull(chatUserId).orElseThrow();
-    var removedOrIgnored = new AtomicBoolean(true);
+  public boolean removeConsultantFromSession(Long sessionId, String consultantId) {
+    var session = sessionRepository.findById(sessionId).orElseThrow();
+    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
 
     if (!session.isAdvisedBy(consultant) && !isResponsible(session, consultant)) {
       if (isInChat(session, consultant)) {
-        removedOrIgnored.set(messageClient.removeUserFromSession(chatUserId, chatId));
+        var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(session);
+        groupChatMembershipService.removeMemberFromRoom(matrixRoomId, consultant.getMatrixUserId());
       }
     }
 
-    return removedOrIgnored.get();
+    return true;
   }
 
   private boolean isResponsible(Session session, Consultant consultant) {
@@ -228,10 +145,7 @@ public class Messenger implements Messaging {
   /**
    * Whether the consultant is currently a member of the session's chat room.
    *
-   * <p>Membership comes from the session's Matrix room (the only chat backend since Rocket.Chat was
-   * disabled, ADR-004). Previously this read Rocket.Chat members via {@code
-   * findMembers(...).orElseThrow()}, which threw once Rocket.Chat returned nothing — breaking the
-   * remove-from-session path entirely.
+   * <p>Membership comes from the session's Matrix room.
    *
    * <p>Fail-safe: when the room state cannot be determined we return {@code false}, so an uncertain
    * lookup never triggers the downstream removal.
@@ -242,29 +156,12 @@ public class Messenger implements Messaging {
     }
     var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(session);
     if (isNull(matrixRoomId) || isNull(consultant.getMatrixUserId())) {
-      return isInChatLegacy(session.getGroupId(), consultant.getRocketChatId());
+      return false;
     }
 
     return groupChatMembershipService.resolveHumanMembers(matrixRoomId).stream()
         .map(ResolvedRoomMember::matrixUserId)
         .anyMatch(id -> id.equals(consultant.getMatrixUserId()));
-  }
-
-  /**
-   * Legacy Rocket.Chat membership check retained for chats that never gained a Matrix room. With
-   * Rocket.Chat disabled {@code findMembers} is empty; we treat that as "not a member" (fail-safe)
-   * instead of throwing.
-   */
-  private boolean isInChatLegacy(String groupId, String rcUserId) {
-    if (isNull(groupId)) {
-      return false;
-    }
-    var groupMembers = messageClient.findMembers(groupId);
-    if (groupMembers.isEmpty()) {
-      return false;
-    }
-    var chatUserIds = mapper.chatUserIdOf(groupMembers.get());
-    return chatUserIds.contains(rcUserId);
   }
 
   @Override
@@ -295,23 +192,5 @@ public class Messenger implements Messaging {
   @Override
   public Optional<Chat> findChat(long chatId) {
     return chatRepository.findById(chatId);
-  }
-
-  @Override
-  public Optional<Map<String, Object>> findChatMetaInfo(long chatId, String userId) {
-    var chat = findChat(chatId).orElseThrow();
-    String groupId = chat.getGroupId();
-
-    // MATRIX MIGRATION: Check if this is a Matrix room (starts with ! or contains :)
-    boolean isMatrixRoom = groupId != null && (groupId.startsWith("!") || groupId.contains(":"));
-
-    if (isMatrixRoom) {
-      log.info("MATRIX: Skipping RocketChat metadata for Matrix room: {}", groupId);
-      // For Matrix rooms, return empty - banned users will be handled by Matrix API
-      return Optional.empty();
-    }
-
-    // Legacy RocketChat rooms
-    return messageClient.getChatInfo(groupId);
   }
 }

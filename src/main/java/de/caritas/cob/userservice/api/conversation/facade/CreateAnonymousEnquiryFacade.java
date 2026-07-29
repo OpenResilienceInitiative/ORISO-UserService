@@ -58,7 +58,6 @@ public class CreateAnonymousEnquiryFacade {
     AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
     var session =
         anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
-    var rocketChatCredentials = credentials.getRocketChatCredentials();
 
     return new CreateAnonymousEnquiryResponseDTO()
         .userName(userDto.getUsername())
@@ -66,10 +65,6 @@ public class CreateAnonymousEnquiryFacade {
         .refreshToken(credentials.getRefreshToken())
         .expiresIn(credentials.getExpiresIn())
         .refreshExpiresIn(credentials.getRefreshExpiresIn())
-        .rcUserId(
-            rocketChatCredentials != null ? rocketChatCredentials.getRocketChatUserId() : null)
-        .rcToken(rocketChatCredentials != null ? rocketChatCredentials.getRocketChatToken() : null)
-        .rcGroupId(session.getGroupId())
         .sessionId(session.getId());
   }
 

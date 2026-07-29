@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
@@ -12,7 +11,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.E2eKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
@@ -21,9 +19,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.NewMessageNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.OccurrenceOverrideRequest;
@@ -33,7 +31,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.RocketChatGroupIdDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RoleRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TransferOwnershipRequest;
@@ -94,7 +91,6 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -177,7 +173,7 @@ public class UserController implements UsersApi {
   }
 
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/consume")
-  public ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(
+  public ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(
       @Valid @RequestBody MagicLinkConsumeDTO consumeDTO) {
     return userRegistrationControllerDelegate.consumeMagicLink(consumeDTO);
   }
@@ -211,65 +207,47 @@ public class UserController implements UsersApi {
   /**
    * Creates a new session or chat-agency relation depending on the provided consulting type.
    *
-   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
-   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param newRegistrationDto {@link NewRegistrationDto}
    * @return {@link ResponseEntity} containing {@link NewRegistrationResponseDto}
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewConsultingType(
-      @RequestBody NewRegistrationDto newRegistrationDto,
-      @RequestHeader(value = "RCToken", required = false) String rcToken,
-      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.registerNewConsultingType(
-        newRegistrationDto, rcToken, rcUserId);
+      @RequestBody NewRegistrationDto newRegistrationDto) {
+    return userRegistrationControllerDelegate.registerNewConsultingType(newRegistrationDto);
   }
 
   /**
    * Creates a new session or chat-agency relation depending on the provided topic.
    *
-   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
-   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param newRegistrationDto {@link NewRegistrationDto}
    * @return {@link ResponseEntity} containing {@link NewRegistrationResponseDto}
    */
   @Override
   public ResponseEntity<NewRegistrationResponseDto> registerNewSession(
-      NewRegistrationDto newRegistrationDto,
-      @RequestHeader(value = "RCToken", required = false) String rcToken,
-      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.registerNewSession(
-        newRegistrationDto, rcToken, rcUserId);
+      NewRegistrationDto newRegistrationDto) {
+    return userRegistrationControllerDelegate.registerNewSession(newRegistrationDto);
   }
 
   /**
    * Assigns the given session to the calling consultant.
    *
    * @param sessionId Session ID (required)
-   * @param rcUserId Rocket.Chat user ID (optional - not used in Matrix migration)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> acceptEnquiry(
-      @PathVariable Long sessionId, @RequestHeader(required = false) String rcUserId) {
+  public ResponseEntity<Void> acceptEnquiry(@PathVariable Long sessionId) {
     return userRegistrationControllerDelegate.acceptEnquiry(sessionId);
   }
 
   /**
    * @param sessionId Session Id (required)
-   * @param rcToken Rocket.Chat token (optional for Matrix-backed sessions)
-   * @param rcUserId Rocket.Chat user ID (optional for Matrix-backed sessions)
    * @param enquiryMessage Enquiry message (required)
    * @return {@link ResponseEntity} containing {@link CreateEnquiryMessageResponseDTO}
    */
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
-      @PathVariable Long sessionId,
-      @RequestBody EnquiryMessageDTO enquiryMessage,
-      @RequestHeader(value = "RCToken", required = false) String rcToken,
-      @RequestHeader(value = "RCUserId", required = false) String rcUserId) {
-    return userRegistrationControllerDelegate.createEnquiryMessage(
-        sessionId, enquiryMessage, rcToken, rcUserId);
+      @PathVariable Long sessionId, @RequestBody EnquiryMessageDTO enquiryMessage) {
+    return userRegistrationControllerDelegate.createEnquiryMessage(sessionId, enquiryMessage);
   }
 
   @Override
@@ -280,26 +258,24 @@ public class UserController implements UsersApi {
   /**
    * Returns a list of sessions for the currently authenticated/logged in user.
    *
-   * @param rcToken Rocket.Chat token (optional)
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
-  public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser(
-      @RequestHeader(required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionsForAuthenticatedUser(rcToken);
+  public ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser() {
+    return userSessionControllerDelegate.getSessionsForAuthenticatedUser();
   }
 
   /**
-   * Returns a list of sessions for the currently authenticated/logged in user and given RocketChat
-   * group IDs.
+   * Returns a list of sessions for the currently authenticated/logged in user and given Matrix room
+   * IDs.
    *
-   * @param rcToken Rocket.Chat token (required)
+   * @param roomIds Matrix room IDs
    * @return {@link ResponseEntity} of {@link UserSessionListResponseDTO}
    */
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForGroupIds(
-      @RequestParam List<String> rcGroupIds, @RequestHeader(required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionsForGroupIds(rcGroupIds, rcToken);
+  public ResponseEntity<GroupSessionListResponseDTO> getSessionsForRoomIds(
+      @RequestParam List<String> roomIds) {
+    return userSessionControllerDelegate.getSessionsForRoomIds(roomIds);
   }
 
   // MATRIX MIGRATION: Added manual mapping since generated interface hasn't updated yet
@@ -307,15 +283,13 @@ public class UserController implements UsersApi {
   @GetMapping(
       value = {"/users/sessions/room/{sessionId}", "/service/users/sessions/room/{sessionId}"},
       produces = MediaType.APPLICATION_JSON_VALUE)
-  public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(
-      @PathVariable Long sessionId,
-      @RequestHeader(value = "RCToken", required = false) String rcToken) {
-    return userSessionControllerDelegate.getSessionForId(sessionId, rcToken);
+  public ResponseEntity<GroupSessionListResponseDTO> getSessionForId(@PathVariable Long sessionId) {
+    return userSessionControllerDelegate.getSessionForId(sessionId);
   }
 
   @Override
-  public ResponseEntity<GroupSessionListResponseDTO> getChatById(String rcToken, Long chatId) {
-    return userSessionControllerDelegate.getChatById(rcToken, chatId);
+  public ResponseEntity<GroupSessionListResponseDTO> getChatById(Long chatId) {
+    return userSessionControllerDelegate.getChatById(chatId);
   }
 
   /**
@@ -369,7 +343,6 @@ public class UserController implements UsersApi {
    * Returns a list of sessions for the currently authenticated consultant depending on the
    * submitted sessionStatus.
    *
-   * @param rcToken Rocket.Chat token (required, provided by RocketChatConfig as dummy if missing)
    * @param offset Number of items where to start in the query (0 = first item) (required)
    * @param count Number of items which are being returned (required)
    * @param filter Information on how to filter the list (required)
@@ -378,19 +351,14 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getSessionsForAuthenticatedConsultant(
-      @RequestHeader String rcToken,
-      Integer offset,
-      Integer count,
-      @RequestParam String filter,
-      @RequestParam Integer status) {
+      Integer offset, Integer count, @RequestParam String filter, @RequestParam Integer status) {
     return userSessionControllerDelegate.getSessionsForAuthenticatedConsultant(
-        rcToken, offset, count, filter, status);
+        offset, count, filter, status);
   }
 
   /**
    * Returns a list of team consulting sessions for the currently authenticated consultant.
    *
-   * @param rcToken Rocket.Chat token (required)
    * @param offset Number of items where to start in the query (0 = first item) (required)
    * @param count Number of items which are being returned (required)
    * @param filter Information on how to filter the list (required)
@@ -398,9 +366,9 @@ public class UserController implements UsersApi {
    */
   @Override
   public ResponseEntity<ConsultantSessionListResponseDTO> getTeamSessionsForAuthenticatedConsultant(
-      @RequestHeader String rcToken, Integer offset, Integer count, @RequestParam String filter) {
+      Integer offset, Integer count, @RequestParam String filter) {
     return userSessionControllerDelegate.getTeamSessionsForAuthenticatedConsultant(
-        rcToken, offset, count, filter);
+        offset, count, filter);
   }
 
   /**
@@ -411,40 +379,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> importConsultants() {
     return userSupportControllerDelegate.importConsultants();
-  }
-
-  /**
-   * Imports a file list of askers. Technical user authorization required.
-   *
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> importAskers() {
-    return userSupportControllerDelegate.importAskers();
-  }
-
-  /**
-   * Imports a file list of askers without a session. Technical user authorization required.
-   *
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> importAskersWithoutSession() {
-    return userSupportControllerDelegate.importAskersWithoutSession();
-  }
-
-  /**
-   * Sends email notifications to the user(s) if there has been a new answer. Uses the provided
-   * Keycloak authorization token for user verification (user role). This means that the user that
-   * wrote the answer should also call this method.
-   *
-   * @param newMessageNotificationDTO (required)
-   * @return {@link ResponseEntity} containing {@link HttpStatus}
-   */
-  @Override
-  public ResponseEntity<Void> sendNewMessageNotification(
-      @RequestBody NewMessageNotificationDTO newMessageNotificationDTO) {
-    return userSupportControllerDelegate.sendNewMessageNotification(newMessageNotificationDTO);
   }
 
   /**
@@ -516,11 +450,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateKey(@RequestBody MasterKeyDTO masterKey) {
     return userAccountControllerDelegate.updateKey(masterKey);
-  }
-
-  @Override
-  public ResponseEntity<Void> updateE2eInChats(E2eKeyDTO e2eKeyDTO) {
-    return userAccountControllerDelegate.updateE2eInChats(e2eKeyDTO);
   }
 
   /**
@@ -654,14 +583,14 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Assign a chat, resolved using the group id.
+   * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
-   * @param groupId the rocket chat group uuid part (required)
+   * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(String groupId) {
-    return userChatControllerDelegate.assignChat(groupId);
+  public ResponseEntity<Void> assignChat(String matrixRoomId) {
+    return userChatControllerDelegate.assignChat(matrixRoomId);
   }
 
   /**
@@ -681,8 +610,7 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Stops the given chat (chatId). Deletes all users and messages from the Rocket.Chat room
-   * (repetitive chat) or deletes the whole room (singular chat).
+   * Stops the given chat and closes its Matrix room.
    *
    * @param chatId Chat Id (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
@@ -728,8 +656,8 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<Void> banFromChat(String token, String chatUserId, Long chatId) {
-    return userChatControllerDelegate.banFromChat(chatUserId, chatId);
+  public ResponseEntity<Void> banFromChat(String matrixUserId, Long chatId) {
+    return userChatControllerDelegate.banFromChat(matrixUserId, chatId);
   }
 
   /**
@@ -885,11 +813,5 @@ public class UserController implements UsersApi {
         consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
 
     return new ResponseEntity<>(consultantDto, HttpStatus.OK);
-  }
-
-  @Override
-  public ResponseEntity<RocketChatGroupIdDTO> getRocketChatGroupId(
-      String consultantId, String askerId) {
-    return userSupportControllerDelegate.getRocketChatGroupId(consultantId, askerId);
   }
 }

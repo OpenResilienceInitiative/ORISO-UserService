@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -17,7 +16,6 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -32,11 +30,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort.Direction;
@@ -56,8 +52,6 @@ public class AccountManager implements AccountManaging {
 
   private final UserServiceMapper userServiceMapper;
 
-  private final MessageClient messageClient;
-
   private final UsernameTranscoder usernameTranscoder;
 
   private final AgencyService agencyService;
@@ -75,9 +69,6 @@ public class AccountManager implements AccountManaging {
   private final PatchConsultantSaga patchConsultantSaga;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
-
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
 
   @Override
   public Optional<Map<String, Object>> findConsultant(String id) {
@@ -237,8 +228,8 @@ public class AccountManager implements AccountManaging {
   }
 
   @Override
-  public Optional<User> findAdviceSeekerByChatUserId(String chatUserId) {
-    return userRepository.findByRcUserIdAndDeleteDateIsNull(chatUserId);
+  public Optional<User> findAdviceSeekerByMatrixUserId(String matrixUserId) {
+    return userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {
@@ -254,25 +245,7 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> findByDbConsultant(Consultant dbConsultant) {
-    if (!rocketChatEnabled) {
-      return userServiceMapper.mapOf(dbConsultant, Map.of());
-    }
-
-    var chatUser =
-        messageClient
-            .findUser(dbConsultant.getRocketChatId())
-            .orElseThrow(
-                throwPersistenceConflict(dbConsultant.getId(), dbConsultant.getRocketChatId()));
-    return userServiceMapper.mapOf(dbConsultant, chatUser);
-  }
-
-  private Supplier<InternalServerErrorException> throwPersistenceConflict(
-      String dbUserId, String chatUserId) {
-    var message =
-        String.format(
-            "User (%s) found in database but not in Rocket.Chat (%s)", dbUserId, chatUserId);
-
-    return () -> new InternalServerErrorException(message);
+    return userServiceMapper.mapOf(dbConsultant, Map.of());
   }
 
   /**

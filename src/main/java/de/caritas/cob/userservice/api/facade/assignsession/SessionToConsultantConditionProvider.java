@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
 import static java.util.Objects.isNull;
-import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -67,24 +66,6 @@ public class SessionToConsultantConditionProvider {
   public boolean isSessionAlreadyAssignedToConsultant(Consultant consultant, Session session) {
     return isSessionInProgress(session)
         && session.getConsultant().getId().equals(consultant.getId());
-  }
-
-  /**
-   * checks if the {@link Session} has a User without rocked.chat id.
-   *
-   * @return true if the {@link Session} has a User without rocked.chat id
-   */
-  public boolean hasSessionUserNoRcId(Session session) {
-    return nonNull(session.getUser()) && isBlank(session.getUser().getRcUserId());
-  }
-
-  /**
-   * checks if the {@link Consultant} has no rocket.chat id.
-   *
-   * @return true if the {@link Consultant} has no rocket.chat id
-   */
-  public boolean hasConsultantNoRcId(Consultant consultant) {
-    return isBlank(consultant.getRocketChatId());
   }
 
   /**

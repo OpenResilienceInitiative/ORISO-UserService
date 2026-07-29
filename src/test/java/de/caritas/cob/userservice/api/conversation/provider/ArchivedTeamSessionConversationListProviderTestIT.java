@@ -5,9 +5,9 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGI
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_OFFENDER;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
@@ -27,9 +27,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -111,7 +113,7 @@ class ArchivedTeamSessionConversationListProviderTestIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }
@@ -139,8 +141,11 @@ class ArchivedTeamSessionConversationListProviderTestIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 5).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(REGISTERED);
           session.setConsultant(consultant2);
           session.setUser(user);
@@ -152,6 +157,9 @@ class ArchivedTeamSessionConversationListProviderTestIT {
           session.setStatus(SessionStatus.IN_ARCHIVE);
           session.setAgencyId(1L);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
+          session.setUpdateDate(orderedDate);
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);

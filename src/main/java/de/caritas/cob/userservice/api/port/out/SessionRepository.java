@@ -19,6 +19,13 @@ import org.springframework.data.repository.query.Param;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
+  interface AgencyConsultingTypeProjection {
+
+    Long getAgencyId();
+
+    Integer getConsultingTypeId();
+  }
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
@@ -135,14 +142,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Page<Session> findByUserUserId(String userId, Pageable pageable);
 
   /**
-   * Find the {@link Session} by Rocket.Chat group id.
-   *
-   * @param groupId the rocket chat group id
-   * @return an {@link Optional} of the session
-   */
-  Optional<Session> findByGroupId(String groupId);
-
-  /**
    * Find the {@link Session} by Matrix room ID.
    *
    * @param matrixRoomId the Matrix room ID
@@ -151,9 +150,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Optional<Session> findByMatrixRoomId(String matrixRoomId);
 
   @Query(
-      value = "SELECT * " + "FROM session s " + "WHERE s.rc_group_id IN :group_ids",
+      value = "SELECT * " + "FROM session s " + "WHERE s.matrix_room_id IN :room_ids",
       nativeQuery = true)
-  List<Session> findByGroupIds(@Param(value = "group_ids") Set<String> groupIds);
+  List<Session> findByMatrixRoomIdIn(@Param(value = "room_ids") Set<String> matrixRoomIds);
 
   /**
    * Find all {@link Session}s by an agency ID and SessionStatus where consultant is null.
@@ -403,8 +402,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param user the user
    * @return an {@link List} of the result
    */
-  List<Session> findByConsultantAndUser(Consultant consultant, User user);
-
   List<Session> findByUserAndMainTopicId(User user, Long topicId);
 
   /**
@@ -429,4 +426,10 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       "SELECT DISTINCT s.consultingTypeId FROM Session s WHERE s.agencyId = :agencyId ORDER BY s.consultingTypeId")
   List<Integer> findDistinctConsultingTypeIdsByAgencyId(
       @Param("agencyId") Long agencyId, Pageable pageable);
+
+  @Query(
+      "SELECT s.agencyId AS agencyId, MIN(s.consultingTypeId) AS consultingTypeId "
+          + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
+  List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
+      @Param("agencyIds") Set<Long> agencyIds);
 }

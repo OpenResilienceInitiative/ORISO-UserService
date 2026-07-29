@@ -1,11 +1,9 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
-import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USER_ALREADY_REGISTERED_TO_CONSULTING_TYPE;
 import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITHOUT_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
@@ -46,12 +44,10 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -59,7 +55,6 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
-import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -90,10 +85,6 @@ public class CreateUserFacadeTest {
   @Mock private AgencyService agencyService;
 
   @Mock private ApplicationSettingsService applicationSettingsService;
-
-  @Mock private CreateSessionFacade createSessionFacade;
-
-  @Mock private SessionService sessionService;
 
   @Mock private MatrixSynapseService matrixSynapseService;
 
@@ -149,8 +140,7 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_AbortBeforeDependentWrites_When_IdentityProviderReturnsNoUserId() {
-    PlainCredentialsHolder.set("plain-user", null);
+      createUserAccountWithInitializedConsultingType_Should_RejectIdentityResponseWithoutUserId() {
     when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITHOUT_USER_ID);
 
     assertThrows(
@@ -158,15 +148,12 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(createNewSessionFacade, never())
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
-    verify(rollbackFacade, never()).rollBackUserAccount(any());
-    assertThat(PlainCredentialsHolder.get(), nullValue());
+    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
   }
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_LogOutFromRocketChat_When_ConsultingTypeIsKreuzbundAndRocketChatLoginSucceeded() {
+      createUserAccountWithInitializedConsultingType_Should_Complete_When_ConsultingTypeIsKreuzbund() {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
@@ -207,44 +194,6 @@ public class CreateUserFacadeTest {
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
     verify(rollbackFacade, times(0)).rollBackUserAccount(any());
     verify(statisticsService, times(1)).fireEvent(any());
-  }
-
-  @Test
-  public void
-      createUserAccountWithInitializedConsultingType_Should_ReturnExistingSession_When_FallbackFindsPartiallyCreatedSession() {
-    var existingSessionId = 123L;
-    var user =
-        new User(USER_ID, null, USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getEmail(), false);
-    var existingSession =
-        Session.builder()
-            .id(existingSessionId)
-            .user(user)
-            .consultingTypeId(CONSULTING_TYPE_SETTINGS_SUCHT.getId())
-            .registrationType(Session.RegistrationType.REGISTERED)
-            .postcode(USER_DTO_SUCHT.getPostcode())
-            .status(Session.SessionStatus.NEW)
-            .build();
-
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(user);
-    when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenThrow(new InternalServerErrorException("session data failed"));
-    when(createSessionFacade.createUserSession(any(), any(), any(), any()))
-        .thenThrow(
-            new CustomValidationHttpStatusException(
-                USER_ALREADY_REGISTERED_TO_CONSULTING_TYPE, HttpStatus.CONFLICT));
-    when(sessionService.getSessionsForUserByConsultingTypeId(
-            any(), eq(CONSULTING_TYPE_SETTINGS_SUCHT.getId())))
-        .thenReturn(List.of(existingSession));
-
-    Long sessionId =
-        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
-
-    assertThat(sessionId, is(existingSessionId));
   }
 
   @Test
@@ -425,20 +374,19 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_CreateMinimalSession_When_InitializeNewSessionThrows() {
+      createUserAccountWithInitializedConsultingType_Should_PropagateSessionInitializationFailure() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenThrow(new RuntimeException("rc down"));
-    when(createSessionFacade.createUserSession(any(), any(), any(), any())).thenReturn(42L);
+        .thenThrow(new RuntimeException("Matrix room initialization failed"));
 
-    Long sessionId =
-        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
-
-    assertThat(sessionId, is(42L));
-    verify(createSessionFacade, times(1)).createUserSession(any(), any(), any(), any());
+    var exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    assertThat(exception.getMessage(), is("Matrix room initialization failed"));
   }
 
   @Test

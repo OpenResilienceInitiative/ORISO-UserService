@@ -2,11 +2,12 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -31,6 +32,10 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import io.micrometer.common.KeyValue;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +46,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -855,6 +861,114 @@ class MatrixEventListenerServiceTest {
                     && e.getFormattedMessage().contains("Matrix sync failed"));
   }
 
+  @Test
+  void observedSyncCycle_shouldKeepOneObservationActiveThroughSyncAndProcessing() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newServiceWithSyncExecutor();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var syncObservation = new AtomicReference<Observation>();
+    var processingObservation = new AtomicReference<Observation>();
+    when(matrixSynapseService.makeMatrixRequest(
+            eq("https://matrix.example/_matrix/client/r0/sync?timeout=30000"),
+            eq("GET"),
+            eq("admin-token"),
+            eq(null)))
+        .thenAnswer(
+            ignored -> {
+              syncObservation.set(registry.getCurrentObservation());
+              var result =
+                  new HashMap<String, Object>(
+                      syncResultWithEvents(
+                          MATRIX_ROOM_ID,
+                          List.of(
+                              messageEvent(
+                                  CONSULTANT_MATRIX_ID, "m.text", "observed", "$observed"))));
+              result.put("next_batch", "batch-observed");
+              return result;
+            });
+    doAnswer(
+            ignored -> {
+              processingObservation.set(registry.getCurrentObservation());
+              return null;
+            })
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+
+    Object result = ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+    assertThat(result).hasToString("SUCCESS");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("batch-observed");
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(syncObservation.get()).isNotNull();
+    assertThat(processingObservation.get()).isSameAs(syncObservation.get());
+    assertThat(handler.stopCount).isEqualTo(1);
+    assertThat(handler.stoppedContext.getName()).isEqualTo("userservice.matrix.sync");
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("success");
+    assertThat(handler.stoppedContext.getError()).isNull();
+  }
+
+  @Test
+  void observedSyncCycle_shouldRecordSoftFailureWithoutSensitiveAttributes() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newService();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenThrow(new IllegalStateException("matrix unavailable"));
+
+    Object result = ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+    assertThat(result).hasToString("SOFT_FAILURE");
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("soft_failure");
+    assertThat(handler.stoppedContext.getLowCardinalityKeyValues())
+        .extracting(KeyValue::getKey)
+        .containsExactly("result");
+    assertThat(handler.stoppedContext.getHighCardinalityKeyValues()).isEmpty();
+    assertThat(handler.stoppedContext.getError()).isNull();
+  }
+
+  @Test
+  void observedSyncCycle_shouldRecordAndRethrowUnexpectedProcessingFailure() {
+    var registry = ObservationRegistry.create();
+    var handler = new CapturingObservationHandler();
+    registry.observationConfig().observationHandler(handler);
+    var service = newService();
+    ReflectionTestUtils.setField(service, "observationRegistry", registry);
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(syncResultWithEvents(MATRIX_ROOM_ID, List.of()));
+    when(sessionRepository.findByMatrixRoomId(MATRIX_ROOM_ID))
+        .thenThrow(new IllegalStateException("repository unavailable"));
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("repository unavailable");
+
+    assertThat(registry.getCurrentObservation()).isNull();
+    assertThat(lowCardinalityValue(handler.stoppedContext, "result")).isEqualTo("exception");
+    assertThat(handler.stoppedContext.getError())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("repository unavailable");
+  }
+
   // ── processMatrixSyncEvents ────────────────────────────────────────────────
 
   @Test
@@ -910,10 +1024,10 @@ class MatrixEventListenerServiceTest {
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
-            anyString(), any(), anyString(), anyBoolean(), any());
+            anyString(), any(), anyString(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
   }
 
@@ -944,10 +1058,9 @@ class MatrixEventListenerServiceTest {
             eq(MATRIX_ROOM_ID),
             eq(ASKER_DOMAIN_ID),
             eq("$root-thread"),
-            eq(true),
             any(PrivacyEnvelope.class));
     verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 
@@ -997,7 +1110,7 @@ class MatrixEventListenerServiceTest {
 
     verify(liveEventNotificationService, never()).sendLiveDirectMessageEventToUsers(anyString());
     verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(anyString(), any(), anyBoolean(), any());
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
   }
 
   @Test
@@ -1206,7 +1319,7 @@ class MatrixEventListenerServiceTest {
 
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 33L);
   }
 
@@ -1293,7 +1406,7 @@ class MatrixEventListenerServiceTest {
     verify(liveEventNotificationService).sendLiveDirectMessageEventToUsers(MATRIX_ROOM_ID);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq(true), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
   }
 
   @Test
@@ -1396,6 +1509,32 @@ class MatrixEventListenerServiceTest {
 
   private static String invokeClassifyContent(MatrixEventListenerService service, String msgtype) {
     return (String) ReflectionTestUtils.invokeMethod(service, "classifyContent", msgtype);
+  }
+
+  private static String lowCardinalityValue(Observation.Context context, String expectedKey) {
+    return context.getLowCardinalityKeyValues().stream()
+        .filter(keyValue -> keyValue.getKey().equals(expectedKey))
+        .map(KeyValue::getValue)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static final class CapturingObservationHandler
+      implements ObservationHandler<Observation.Context> {
+
+    private Observation.Context stoppedContext;
+    private int stopCount;
+
+    @Override
+    public void onStop(Observation.Context context) {
+      stoppedContext = context;
+      stopCount++;
+    }
+
+    @Override
+    public boolean supportsContext(Observation.Context context) {
+      return true;
+    }
   }
 
   private static String invokeExtractThreadRootId(

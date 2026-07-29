@@ -9,13 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-/**
- * Provider to observe all assigned chat user ids instead of initiator.
- *
- * <p>Live events for a group chat reach everyone currently in the chat's Matrix room. Rocket.Chat
- * membership is no longer consulted (it is disabled since ADR-004, so it always returned nobody and
- * live updates silently reached no one).
- */
+/** Provider to observe all assigned chat user ids instead of the initiator. */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -27,20 +21,19 @@ public class RelevantUserAccountIdsByChatProvider implements UserIdsProvider {
   /**
    * Collects all relevant user account ids of a chat from its Matrix room membership.
    *
-   * @param groupId the chat group id (Matrix room id, or a legacy Rocket.Chat group id whose chat
-   *     carries a Matrix room id)
+   * @param matrixRoomId Matrix room ID
    * @return a {@link List} containing all account ids to be notified; empty when the room state
    *     cannot be determined
    */
   @Override
-  public List<String> collectUserIds(String groupId) {
-    var matrixRoomId =
+  public List<String> collectUserIds(String matrixRoomId) {
+    var resolvedRoomId =
         chatRepository
-            .findByGroupId(groupId)
+            .findByMatrixRoomId(matrixRoomId)
             .map(groupChatMembershipService::resolveMatrixRoomId)
-            .orElse(groupId);
+            .orElse(matrixRoomId);
 
-    return groupChatMembershipService.resolveHumanMembers(matrixRoomId).stream()
+    return groupChatMembershipService.resolveHumanMembers(resolvedRoomId).stream()
         .map(ResolvedRoomMember::accountId)
         .toList();
   }

@@ -19,14 +19,12 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
@@ -39,12 +37,9 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull RocketChatAsyncHelper rocketChatAsyncHelper;
+  private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
-
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -125,18 +120,14 @@ public class ConsultantAgencyRelationCreatorService {
       consultantRepository.save(consultant);
     }
 
-    if (rocketChatEnabled) {
-      rocketChatAsyncHelper.addConsultantToSessions(
-          consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    if (persistedRelation == null) {
+      // Legacy two-step callers do not carry the prepared relation across requests.
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, agency);
     } else {
-      if (persistedRelation == null) {
-        // Legacy two-step callers do not carry the prepared relation across requests.
-        rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, agency);
-      } else {
-        // The atomic create path already owns the persisted row. Carry it forward instead of
-        // relying on an immediate read-after-write query that may not see the row yet.
-        rocketChatAsyncHelper.finalizeConsultantAgencyRelation(consultant, persistedRelation);
-      }
+      // The atomic create path already owns the persisted row. Carry it forward instead of
+      // relying on an immediate read-after-write query that may not see the row yet.
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(
+          consultant, persistedRelation);
     }
 
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
@@ -180,7 +171,7 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private AgencyDTO retrieveAgency(Long agencyId) {
-    var agencyDto = this.agencyService.getAgencyWithoutCaching(agencyId);
+    var agencyDto = this.agencyService.getAgency(agencyId);
     return Optional.ofNullable(agencyDto)
         .orElseThrow(
             () ->

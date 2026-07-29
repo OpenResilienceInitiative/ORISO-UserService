@@ -1,43 +1,21 @@
 package de.caritas.cob.userservice.api.service.sessionlist;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ATTACHMENT_DTO;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.FILE_DTO;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.MESSAGES_READ_MAP_WITHOUT_UNREADS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.MESSAGES_READ_MAP_WITH_UNREADS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID_2;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID_3;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID_4;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID_5;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_LAST_MESSAGE_DTO_MAP;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_UPDATE_DTO_LIST;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT_FOR_CHAT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ATTACHMENT_DTO_RECEIVED;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERS_EMPTY_ROOMS_LIST;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERS_ROOMS_LIST;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_CHAT_RESPONSE_DTO_LIST;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSION_RESPONSE_DTO_LIST;
-import static java.util.Collections.emptyMap;
-import static java.util.Objects.nonNull;
-import static org.jsoup.helper.Validate.fail;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
-import de.caritas.cob.userservice.api.container.RocketChatRoomInformation;
-import de.caritas.cob.userservice.api.facade.sessionlist.RocketChatRoomInformationProvider;
-import de.caritas.cob.userservice.api.helper.Helper;
-import de.caritas.cob.userservice.api.helper.SessionListAnalyser;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import java.util.Collections;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,470 +23,144 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class UserSessionListServiceTest {
 
+  private static final String USER_ID = "user-id";
+
   @InjectMocks private UserSessionListService userSessionListService;
   @Mock private SessionService sessionService;
   @Mock private ChatService chatService;
-  @Mock private RocketChatRoomInformationProvider rocketChatRoomInformationProvider;
-  @Mock private SessionListAnalyser sessionListAnalyser;
-
+  @Mock private MatrixRoomMembershipProvider matrixRoomMembershipProvider;
   @Mock private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @BeforeEach
-  public void setUp() {
+  void setUp() {
     ReflectionTestUtils.setField(userSessionListService, "featureTopicsEnabled", false);
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnValidSessionListWithSessionMessagesReadTrue_WhenThereAreNoUnreadMessages() {
-
-    ReflectionTestUtils.setField(userSessionListService, "featureTopicsEnabled", true);
     userSessionListService.setSessionTopicEnrichmentService(sessionTopicEnrichmentService);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(USER_SESSION_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .groupIdToLastMessageFallbackDate(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID))
-        .thenReturn(true);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_2))
-        .thenReturn(true);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_3))
-        .thenReturn(true);
-
-    assertTrue(
-        userSessionListService
-            .retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS)
-            .get(0)
-            .getSession()
-            .getMessagesRead());
-
-    verify(sessionTopicEnrichmentService, Mockito.times(USER_SESSION_RESPONSE_DTO_LIST.size()))
-        .enrichSessionWithTopicData(Mockito.any());
+    lenient()
+        .when(matrixRoomMembershipProvider.joinedRoomsForAccount(USER_ID))
+        .thenReturn(Set.of());
   }
 
   @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnValidSessionListWithChatMessagesReadTrue_WhenThereAreNoUnreadMessages() {
+  void mergesDatabaseSessionsAndChatsWithMatrixMembership() {
+    var session = sessionResponse("!session:matrix.example", 1_700_000_000L);
+    var chatStart = LocalDateTime.of(2026, 7, 26, 10, 15);
+    var chat = chatResponse(1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, chatStart);
+    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
+    when(matrixRoomMembershipProvider.joinedRoomsForAccount(USER_ID))
+        .thenReturn(Set.of("!chat:matrix.example"));
 
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_4))
-        .thenReturn(true);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_5))
-        .thenReturn(true);
+    var result = userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID);
 
-    assertTrue(
-        userSessionListService
-            .retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS)
-            .get(0)
-            .getChat()
-            .isMessagesRead());
+    assertThat(result).containsExactly(session, chat);
+    assertThat(session.getSession().getMessagesRead()).isTrue();
+    assertThat(session.getLatestMessage()).hasTime(1_700_000_000_000L);
+    assertThat(chat.getChat().isMessagesRead()).isTrue();
+    assertThat(chat.getChat().isSubscribed()).isTrue();
+    assertThat(chat.getLatestMessage()).isEqualTo(Timestamp.valueOf(chatStart));
   }
 
   @Test
-  void retrieveSessionsForAuthenticatedUser_Should_NotEnrichNullSessionForGroupChat() {
+  void marksChatAsNotSubscribedWhenUserDidNotJoinTheMatrixRoom() {
+    var chat =
+        chatResponse(
+            1L, "!not-joined:matrix.example", ConversationType.INTERNAL_GROUP, LocalDateTime.now());
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
+
+    userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID);
+
+    assertThat(chat.getChat().isSubscribed()).isFalse();
+  }
+
+  @Test
+  void enrichesOnlySessionEntriesWithTopicsWhenEnabled() {
     ReflectionTestUtils.setField(userSessionListService, "featureTopicsEnabled", true);
-    userSessionListService.setSessionTopicEnrichmentService(sessionTopicEnrichmentService);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    var roomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(roomInformation);
+    var session = sessionResponse("!session:matrix.example", 1_700_000_000L);
+    var chat =
+        chatResponse(
+            1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, LocalDateTime.now());
+    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
 
-    var result =
-        assertDoesNotThrow(
-            () ->
-                userSessionListService.retrieveSessionsForAuthenticatedUser(
-                    USER_ID, RC_CREDENTIALS));
+    userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID);
 
-    assertEquals(USER_CHAT_RESPONSE_DTO_LIST.size(), result.size());
-    verify(sessionTopicEnrichmentService, Mockito.never()).enrichSessionWithTopicData(null);
+    verify(sessionTopicEnrichmentService).enrichSessionWithTopicData(session.getSession());
   }
 
   @Test
-  void retrieveSessionsForGroupIds_Should_NotLoadSystemSessionForKnownChatRoom() {
-    var chatResponse = USER_CHAT_RESPONSE_DTO_LIST.getFirst();
-    when(chatService.getChatSessionsByGroupIds(Set.of(RC_GROUP_ID_4)))
-        .thenReturn(List.of(chatResponse));
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chatResponse));
-    var roomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(roomInformation);
+  void knownChatRoomDoesNotTriggerASecondSessionLookup() {
+    var chat =
+        chatResponse(
+            1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, LocalDateTime.now());
+    when(chatService.getChatSessionsByRoomIds(Set.of("!chat:matrix.example")))
+        .thenReturn(List.of(chat));
+    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
 
     var result =
-        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
-            USER_ID, List.of(RC_GROUP_ID_4), RC_CREDENTIALS, Set.of("user"));
+        userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
+            USER_ID, List.of("!chat:matrix.example"), Set.of("user"));
 
-    assertEquals(List.of(chatResponse), result);
-    verify(sessionService, Mockito.never())
-        .getSessionsByUserAndGroupIds(Mockito.anyString(), Mockito.anySet(), Mockito.anySet());
+    assertThat(result).containsExactly(chat);
+    verify(sessionService, never())
+        .getSessionsByUserAndRoomIds(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anySet(),
+            org.mockito.ArgumentMatchers.anySet());
   }
 
   @Test
-  void retrieveSessionsForGroupIds_Should_NotExposeUnassignedInternalChat() {
-    var internalChat = new UserChatDTO();
-    internalChat.setId(1087L);
-    internalChat.setGroupId("!internal:matrix.example");
-    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
-    internalChat.setStartDateWithTime(java.time.LocalDateTime.now());
-    var internalResponse = new UserSessionResponseDTO();
-    internalResponse.setChat(internalChat);
-    when(chatService.getChatSessionsByGroupIds(Set.of("!internal:matrix.example")))
-        .thenReturn(List.of(internalResponse));
+  void unassignedInternalChatIsNotExposedByRoomOrChatId() {
+    var chat =
+        chatResponse(
+            1087L,
+            "!internal:matrix.example",
+            ConversationType.INTERNAL_GROUP,
+            LocalDateTime.now());
+    when(chatService.getChatSessionsByRoomIds(Set.of("!internal:matrix.example")))
+        .thenReturn(List.of(chat));
+    when(chatService.getChatSessionsByIds(Set.of(1087L))).thenReturn(List.of(chat));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(
-            RocketChatRoomInformation.builder()
-                .userRooms(List.of())
-                .readMessages(emptyMap())
-                .lastMessagesRoom(emptyMap())
-                .build());
 
-    var result =
-        userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
-            USER_ID, List.of("!internal:matrix.example"), RC_CREDENTIALS, Set.of("user"));
-
-    assertTrue(result.isEmpty());
+    assertThat(
+            userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
+                USER_ID, List.of("!internal:matrix.example"), Set.of("user")))
+        .isEmpty();
+    assertThat(userSessionListService.retrieveChatsForUserAndChatIds(USER_ID, List.of(1087L)))
+        .isEmpty();
   }
 
   @Test
-  void retrieveChatsForUserAndChatIds_Should_NotExposeUnassignedInternalChat() {
-    var internalChat = new UserChatDTO();
-    internalChat.setId(1087L);
-    internalChat.setGroupId("!internal:matrix.example");
-    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
-    var internalResponse = new UserSessionResponseDTO();
-    internalResponse.setChat(internalChat);
-    when(chatService.getChatSessionsByIds(Set.of(1087L))).thenReturn(List.of(internalResponse));
+  void publicSelfHelpChatCanBeResolvedByDeepLinkWithoutAssignment() {
+    var chat =
+        chatResponse(
+            1088L, "!self-help:matrix.example", ConversationType.SELF_HELP, LocalDateTime.now());
+    when(chatService.getChatSessionsByIds(Set.of(1088L))).thenReturn(List.of(chat));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(RocketChatRoomInformation.builder().build());
 
-    var result =
-        userSessionListService.retrieveChatsForUserAndChatIds(
-            USER_ID, List.of(1087L), RC_CREDENTIALS);
-
-    assertTrue(result.isEmpty());
+    assertThat(userSessionListService.retrieveChatsForUserAndChatIds(USER_ID, List.of(1088L)))
+        .containsExactly(chat);
   }
 
-  @Test
-  void retrieveChatsForUserAndChatIds_Should_KeepPublicSelfHelpDeepLink() {
-    var selfHelpChat = new UserChatDTO();
-    selfHelpChat.setId(1088L);
-    selfHelpChat.setGroupId("!self-help:matrix.example");
-    selfHelpChat.setConversationType(ConversationType.SELF_HELP);
-    selfHelpChat.setStartDateWithTime(java.time.LocalDateTime.now());
-    var selfHelpResponse = new UserSessionResponseDTO();
-    selfHelpResponse.setChat(selfHelpChat);
-    when(chatService.getChatSessionsByIds(Set.of(1088L))).thenReturn(List.of(selfHelpResponse));
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of());
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(
-            RocketChatRoomInformation.builder()
-                .userRooms(List.of())
-                .readMessages(emptyMap())
-                .lastMessagesRoom(emptyMap())
-                .build());
-
-    var result =
-        userSessionListService.retrieveChatsForUserAndChatIds(
-            USER_ID, List.of(1088L), RC_CREDENTIALS);
-
-    assertEquals(List.of(selfHelpResponse), result);
+  private UserSessionResponseDTO sessionResponse(String roomId, long messageDate) {
+    return new UserSessionResponseDTO()
+        .session(
+            new SessionDTO().matrixRoomId(roomId).messageDate(messageDate).messagesRead(false));
   }
 
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnValidSessionListWithSessionMessagesReadFalse_WhenThereAreUnreadMessages() {
-
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(USER_SESSION_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .groupIdToLastMessageFallbackDate(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID))
-        .thenReturn(false);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_2))
-        .thenReturn(false);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_3))
-        .thenReturn(false);
-
-    assertFalse(
-        userSessionListService
-            .retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS)
-            .get(0)
-            .getSession()
-            .getMessagesRead());
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnValidSessionListWithChatMessagesReadFalse_WhenThereAreUnreadMessages() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITH_UNREADS)
-            .lastMessagesRoom(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_4))
-        .thenReturn(false);
-    when(sessionListAnalyser.areMessagesForRocketChatGroupReadByUser(
-            rocketChatRoomInformation.getReadMessages(), RC_GROUP_ID_5))
-        .thenReturn(false);
-
-    assertFalse(
-        userSessionListService
-            .retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS)
-            .get(0)
-            .getChat()
-            .isMessagesRead());
-  }
-
-  @Test
-  void retrieveSessionsForAuthenticatedUser_Should_SetCorrectChatMessageDate() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertEquals(
-        Helper.getUnixTimestampFromDate(
-            ROOMS_UPDATE_DTO_LIST.get(0).getLastMessage().getTimestamp()),
-        result.get(0).getChat().getMessageDate());
-  }
-
-  @Test
-  void retrieveSessionsForAuthenticatedUser_Should_SetCorrectSessionMessageDate() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(USER_SESSION_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertEquals(
-        Helper.getUnixTimestampFromDate(ROOMS_UPDATE_DTO_LIST.get(0).getLastMessageDate()),
-        result.get(0).getSession().getMessageDate());
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnCorrectFileTypeAndImagePreviewForSession() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(USER_SESSION_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.getAttachmentFromRocketChatMessageIfAvailable(
-            Mockito.eq(RC_CREDENTIALS.getRocketChatUserId()), Mockito.any()))
-        .thenReturn(SESSION_ATTACHMENT_DTO_RECEIVED);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertEquals(FILE_DTO.getType(), result.get(0).getSession().getAttachment().getFileType());
-    assertEquals(
-        ATTACHMENT_DTO.getImagePreview(),
-        result.get(0).getSession().getAttachment().getImagePreview());
-  }
-
-  @Test
-  void retrieveSessionsForAuthenticatedUser_Should_ReturnCorrectFileTypeAndImagePreviewForChat() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT_FOR_CHAT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .groupIdToLastMessageFallbackDate(emptyMap())
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-    when(sessionListAnalyser.getAttachmentFromRocketChatMessageIfAvailable(
-            Mockito.eq(RC_CREDENTIALS.getRocketChatUserId()), Mockito.any()))
-        .thenReturn(SESSION_ATTACHMENT_DTO_RECEIVED);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertEquals(FILE_DTO.getType(), result.get(0).getChat().getAttachment().getFileType());
-    assertEquals(
-        ATTACHMENT_DTO.getImagePreview(),
-        result.get(0).getChat().getAttachment().getImagePreview());
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_ReturnEmptyList_WhenSessionAndChatListAreEmpty() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertNotNull(result);
-    assertTrue(result.isEmpty());
-  }
-
-  @Test
-  void retrieveSessionsForAuthenticatedUser_Should_MergeSessionsAndChats() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(USER_SESSION_RESPONSE_DTO_LIST);
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST_WITH_ATTACHMENT)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    assertNotNull(result);
-    assertEquals(
-        result.size(), USER_CHAT_RESPONSE_DTO_LIST.size() + USER_SESSION_RESPONSE_DTO_LIST.size());
-
-    for (UserSessionResponseDTO userSessionResponseDTO : USER_CHAT_RESPONSE_DTO_LIST) {
-      boolean containsChat = false;
-      for (UserSessionResponseDTO dto : result) {
-        if (nonNull(dto.getChat()) && dto.getChat().equals(userSessionResponseDTO.getChat())) {
-          containsChat = true;
-          break;
-        }
-      }
-      if (!containsChat) {
-        fail("ResponseList does not contain all expected chats");
-      }
-    }
-
-    for (UserSessionResponseDTO userSessionResponseDTO : USER_SESSION_RESPONSE_DTO_LIST) {
-      boolean containsSession = false;
-      for (UserSessionResponseDTO dto : result) {
-        if (nonNull(dto.getSession())
-            && dto.getSession().equals(userSessionResponseDTO.getSession())) {
-          containsSession = true;
-          break;
-        }
-      }
-      if (!containsSession) {
-        fail("ResponseList does not contain all expected sessions");
-      }
-    }
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_SetSubscribedFlagToTrue_WhenUserIsAttendeeOfAChat() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .userRooms(USERS_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    for (UserSessionResponseDTO userSessionResponseDTO : result) {
-      assertTrue(userSessionResponseDTO.getChat().isSubscribed());
-    }
-  }
-
-  @Test
-  void
-      retrieveSessionsForAuthenticatedUser_Should_SetSubscribedFlagToFalse_WhenUserIsNotAttendeeOfAChat() {
-
-    when(chatService.getChatsForUserId(USER_ID)).thenReturn(USER_CHAT_RESPONSE_DTO_LIST);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(Collections.emptyList());
-    RocketChatRoomInformation rocketChatRoomInformation =
-        RocketChatRoomInformation.builder()
-            .readMessages(MESSAGES_READ_MAP_WITHOUT_UNREADS)
-            .roomsForUpdate(ROOMS_UPDATE_DTO_LIST)
-            .lastMessagesRoom(ROOMS_LAST_MESSAGE_DTO_MAP)
-            .userRooms(USERS_EMPTY_ROOMS_LIST)
-            .build();
-    when(rocketChatRoomInformationProvider.retrieveRocketChatInformation(RC_CREDENTIALS))
-        .thenReturn(rocketChatRoomInformation);
-
-    List<UserSessionResponseDTO> result =
-        userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
-
-    for (UserSessionResponseDTO userSessionResponseDTO : result) {
-      assertFalse(userSessionResponseDTO.getChat().isSubscribed());
-    }
+  private UserSessionResponseDTO chatResponse(
+      long id, String roomId, ConversationType conversationType, LocalDateTime start) {
+    var chat = new UserChatDTO();
+    chat.setId(id);
+    chat.setMatrixRoomId(roomId);
+    chat.setConversationType(conversationType);
+    chat.setStartDateWithTime(start);
+    chat.setMessagesRead(false);
+    return new UserSessionResponseDTO().chat(chat);
   }
 }

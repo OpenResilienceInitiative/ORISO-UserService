@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,26 +61,25 @@ class ConversationControllerTest {
     // Business reason: archived sessions list must respect pagination values from UI requests.
     var result = new ConsultantSessionListResponseDTO();
     when(conversationListResolver.resolveConversations(
-            0, 10, ConversationListType.ARCHIVED_SESSION, "rc-token"))
+            0, 10, ConversationListType.ARCHIVED_SESSION))
         .thenReturn(result);
 
-    var response = controller.getArchivedSessions(0, 10, "rc-token");
+    var response = controller.getArchivedSessions(0, 10);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(result, response.getBody());
     verify(conversationListResolver)
-        .resolveConversations(0, 10, ConversationListType.ARCHIVED_SESSION, "rc-token");
+        .resolveConversations(0, 10, ConversationListType.ARCHIVED_SESSION);
   }
 
   @Test
   void getArchivedSessions_emptyResult_returnsNonNullBody() {
     // Business reason: clients expect stable object payloads even when no archived sessions exist.
     var empty = new ConsultantSessionListResponseDTO();
-    when(conversationListResolver.resolveConversations(
-            1, 5, ConversationListType.ARCHIVED_SESSION, "rc-token"))
+    when(conversationListResolver.resolveConversations(1, 5, ConversationListType.ARCHIVED_SESSION))
         .thenReturn(empty);
 
-    var response = controller.getArchivedSessions(1, 5, "rc-token");
+    var response = controller.getArchivedSessions(1, 5);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
@@ -90,14 +90,14 @@ class ConversationControllerTest {
     // Business reason: archived team-session query must route to team-specific resolver path.
     var result = new ConsultantSessionListResponseDTO();
     when(conversationListResolver.resolveConversations(
-            0, 10, ConversationListType.ARCHIVED_TEAM_SESSION, "rc-token"))
+            0, 10, ConversationListType.ARCHIVED_TEAM_SESSION))
         .thenReturn(result);
 
-    var response = controller.getArchivedTeamSessions(0, 10, "rc-token");
+    var response = controller.getArchivedTeamSessions(0, 10);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(conversationListResolver)
-        .resolveConversations(0, 10, ConversationListType.ARCHIVED_TEAM_SESSION, "rc-token");
+        .resolveConversations(0, 10, ConversationListType.ARCHIVED_TEAM_SESSION);
   }
 
   @Test
@@ -127,8 +127,7 @@ class ConversationControllerTest {
 
   @Test
   void getAnonymousEnquiryDetails_nullTopicAndNullConsultingType_handlesGracefully() {
-    // Business reason: legacy sessions without topic/type metadata should still return details
-    // safely.
+    // Business reason: sessions without topic/type metadata should still return details safely.
     Map<String, Object> sessionMap = Map.of("status", "NEW");
     var enquiry = new AnonymousEnquiry();
     LocalDateTime createdAt = LocalDateTime.now();
@@ -146,6 +145,6 @@ class ConversationControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(enquiry, response.getBody());
-    verify(messenger, never()).findAvailableConsultants(3);
+    verify(topicConsultantRoutingService, never()).findAvailableConsultantIds(any());
   }
 }

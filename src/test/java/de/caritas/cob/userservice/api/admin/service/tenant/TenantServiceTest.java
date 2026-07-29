@@ -66,6 +66,14 @@ class TenantServiceTest {
     assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(1);
   }
 
+  @Test
+  void getRestrictedTenantData_technicalTenantId_rejectsBeforeApiCall() {
+    assertThatThrownBy(() -> tenantService.getRestrictedTenantData(0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Concrete tenant id required");
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
   // Callers such as HttpTenantFilter rely on upstream errors surfacing unchanged.
   @Test
   void getRestrictedTenantData_subdomainApiFailure_propagatesRestClientException() {
@@ -251,7 +259,7 @@ class TenantServiceTest {
     }
 
     @Override
-    public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain) {
+    public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain, Long tenantId) {
       subdomainCalls.incrementAndGet();
       awaitLatch();
       if (subdomainException != null) {

@@ -2,10 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
@@ -25,28 +22,9 @@ abstract class DeleteRoomsAndSessionAction {
 
   protected final @NonNull SessionRepository sessionRepository;
   protected final @NonNull SessionDataRepository sessionDataRepository;
-  protected final @NonNull RocketChatService rocketChatService;
   protected final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   protected final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   protected final @NonNull SessionTopicRepository sessionTopicRepository;
-
-  void deleteRocketChatGroup(String rcGroupId, List<DeletionWorkflowError> workflowErrors) {
-    if (isNotBlank(rcGroupId)) {
-      try {
-        this.rocketChatService.deleteGroupAsTechnicalUser(rcGroupId);
-      } catch (RocketChatDeleteGroupException e) {
-        log.error("UserService delete workflow error: ", e);
-        workflowErrors.add(
-            DeletionWorkflowError.builder()
-                .deletionSourceType(ASKER)
-                .deletionTargetType(DeletionTargetType.ROCKET_CHAT)
-                .identifier(rcGroupId)
-                .reason("Deletion of Rocket.Chat group failed")
-                .timestamp(nowInUtc())
-                .build());
-      }
-    }
-  }
 
   void deleteSessionData(Session session, List<DeletionWorkflowError> workflowErrors) {
     try {
@@ -131,7 +109,6 @@ abstract class DeleteRoomsAndSessionAction {
 
   void performSessionDeletion(Session session, List<DeletionWorkflowError> workflowErrors) {
 
-    deleteRocketChatGroup(session.getGroupId(), workflowErrors);
     deleteSessionData(session, workflowErrors);
     deleteSessionSupervisors(session, workflowErrors);
     deleteSessionTopics(session, workflowErrors);

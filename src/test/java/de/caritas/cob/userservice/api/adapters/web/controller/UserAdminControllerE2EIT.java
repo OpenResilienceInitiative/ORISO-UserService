@@ -20,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -94,8 +93,6 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockitoBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
-
   @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
@@ -108,10 +105,6 @@ class UserAdminControllerE2EIT {
   @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
-
-  @MockitoBean
-  @Qualifier("rocketChatRestTemplate")
-  private RestTemplate rocketChatRestTemplate;
 
   @MockitoBean
   @Qualifier("topicControllerApiPrimary")

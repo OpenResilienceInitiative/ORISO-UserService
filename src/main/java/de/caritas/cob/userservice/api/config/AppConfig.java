@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import java.time.Clock;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
@@ -35,19 +37,29 @@ public class AppConfig {
   // RestTemplate Bean
   @Bean
   @Primary
-  public RestTemplate restTemplate(RestTemplateBuilder builder) {
-    return builder
-        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
-        .build();
+  public RestTemplate restTemplate(
+      RestTemplateBuilder builder, OutboundHttpMetrics outboundHttpMetrics) {
+    var restTemplate =
+        builder
+            .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
+            .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+            .readTimeout(RestTemplateTimeouts.READ_TIMEOUT)
+            .build();
+    outboundHttpMetrics.customize(restTemplate);
+    return restTemplate;
   }
 
   @Bean("matrixLongPollRestTemplate")
-  public RestTemplate matrixLongPollRestTemplate(RestTemplateBuilder builder) {
-    return builder
-        .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
-        .readTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
-        .build();
+  public RestTemplate matrixLongPollRestTemplate(
+      RestTemplateBuilder builder, OutboundHttpMetrics outboundHttpMetrics) {
+    var restTemplate =
+        builder
+            .requestFactoryBuilder(ClientHttpRequestFactoryBuilder.jdk())
+            .connectTimeout(RestTemplateTimeouts.CONNECT_TIMEOUT)
+            .readTimeout(RestTemplateTimeouts.MATRIX_LONG_POLL_READ_TIMEOUT)
+            .build();
+    outboundHttpMetrics.customize(restTemplate);
+    return restTemplate;
   }
 
   @Bean

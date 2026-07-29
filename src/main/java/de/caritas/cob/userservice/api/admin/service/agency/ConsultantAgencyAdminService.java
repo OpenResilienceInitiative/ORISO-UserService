@@ -39,7 +39,7 @@ public class ConsultantAgencyAdminService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull RemoveConsultantFromRocketChatService removeFromRocketChatService;
+  private final @NonNull RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
@@ -174,9 +174,9 @@ public class ConsultantAgencyAdminService {
   }
 
   /**
-   * Removes the consultant from all Rocket.Chat rooms where he is not directly assigned, changes
-   * regarding sessions to non team sessions and removes the team consultant identifier when
-   * consultant has no other team agency assigned.
+   * Removes the consultant from all session rooms where they are not directly assigned, changes the
+   * sessions to non-team sessions and removes the team-consultant identifier when the consultant
+   * has no other team agency assigned.
    *
    * @param agencyId the id of the agency
    */
@@ -185,7 +185,7 @@ public class ConsultantAgencyAdminService {
         this.sessionRepository.findByAgencyIdAndStatusAndTeamSessionIsTrue(
             agencyId, SessionStatus.IN_PROGRESS);
 
-    this.removeFromRocketChatService.removeConsultantFromSessions(teamSessionsInProgress);
+    this.removeFromSessionRoomsService.removeConsultantFromSessions(teamSessionsInProgress);
     teamSessionsInProgress.forEach(this::changeSessionToNonTeamSession);
 
     this.consultantRepository

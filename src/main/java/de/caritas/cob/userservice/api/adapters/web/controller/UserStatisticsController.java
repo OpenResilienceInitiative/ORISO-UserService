@@ -19,16 +19,17 @@ public class UserStatisticsController implements UserstatisticsApi {
   private final @NonNull SessionStatisticsService sessionStatisticsService;
 
   /**
-   * Retrieve a session via session id or Rocket.Chat group id.
+   * Retrieve a session via session ID or Matrix room ID.
    *
    * @param sessionId The id of the session.
-   * @param rcGroupId The rc group id of the session. if the session id is also passed, the query is
-   *     done via it.
+   * @param matrixRoomId Matrix room ID of the session. If the session ID is also passed, the query
+   *     uses it.
    * @return a {@link SessionStatisticsResultDTO} instance
    */
   @Override
-  public ResponseEntity<SessionStatisticsResultDTO> getSession(Long sessionId, String rcGroupId) {
+  public ResponseEntity<SessionStatisticsResultDTO> getSession(
+      Long sessionId, String matrixRoomId) {
     return new ResponseEntity<>(
-        sessionStatisticsService.retrieveSession(sessionId, rcGroupId), HttpStatus.OK);
+        sessionStatisticsService.retrieveSession(sessionId, matrixRoomId), HttpStatus.OK);
   }
 }

@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.MessageClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
@@ -38,7 +37,6 @@ public class UserAccountService {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull MessageClient messageClient;
   private final @NonNull UserHelper userHelper;
 
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -124,7 +122,8 @@ public class UserAccountService {
   }
 
   /**
-   * Updates the email address of current authenticated user in Keycloak, Rocket.Chat and database.
+   * Updates the email address of the current authenticated user in Keycloak and the ORISO data
+   * stores.
    *
    * @param optionalEmail the new email address, potentially empty
    */
@@ -172,33 +171,11 @@ public class UserAccountService {
   }
 
   private void updateConsultantEmail(Consultant consultant, String email) {
-    try {
-      this.messageClient.updateUserEmail(consultant.getRocketChatId(), email);
-    } catch (Exception ex) {
-      log.warn(
-          "Skipping Rocket.Chat consultant email update for consultant {} due to error: {}",
-          consultant.getId(),
-          ex.getMessage());
-    }
-
     consultant.setEmail(email);
     this.consultantService.saveConsultant(consultant);
   }
 
   void updateUserEmail(User user, String email) {
-    if (user.getRcUserId() != null) {
-      try {
-        this.messageClient.updateUserEmail(user.getRcUserId(), email);
-      } catch (Exception ex) {
-        log.warn(
-            "Skipping Rocket.Chat user email update for user {} due to error: {}",
-            user.getUserId(),
-            ex.getMessage());
-      }
-    } else {
-      log.warn(
-          "Skip update user email in RocketChat because user does not have rcUserId (maybe a newly registered user?)");
-    }
     this.appointmentService.updateAskerEmail(user.getUserId(), email);
     setInitialEmailNotificationsSettingsForNewEmailAddress(user, email);
     user.setEmail(email);

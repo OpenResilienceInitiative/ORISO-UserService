@@ -29,15 +29,15 @@ class UserStatisticsControllerTest {
   }
 
   @Test
-  void getSession_rcGroupIdOnly_returnsOk() {
-    // Business reason: statistics endpoint must support lookup by Rocket.Chat group id.
+  void getSession_matrixRoomIdOnly_returnsOk() {
+    // Business reason: statistics endpoint must support lookup by Matrix room id.
     when(sessionStatisticsService.retrieveSession(null, "group-1"))
-        .thenReturn(new SessionStatisticsResultDTO().id(10L).rcGroupId("group-1"));
+        .thenReturn(new SessionStatisticsResultDTO().id(10L).matrixRoomId("group-1"));
 
     var response = controller.getSession(null, "group-1");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    assertEquals("group-1", response.getBody().getRcGroupId());
+    assertEquals("group-1", response.getBody().getMatrixRoomId());
   }
 
   @Test
@@ -57,7 +57,7 @@ class UserStatisticsControllerTest {
     // Business reason: controller must preserve full query context for service-side precedence
     // logic.
     when(sessionStatisticsService.retrieveSession(33L, "group-33"))
-        .thenReturn(new SessionStatisticsResultDTO().id(33L).rcGroupId("group-33"));
+        .thenReturn(new SessionStatisticsResultDTO().id(33L).matrixRoomId("group-33"));
 
     var response = controller.getSession(33L, "group-33");
 
@@ -74,7 +74,7 @@ class UserStatisticsControllerTest {
   void getSession_missingBothParams_throwsBadRequestFromService() {
     // Business reason: incomplete request must be rejected to avoid ambiguous statistics queries.
     when(sessionStatisticsService.retrieveSession(null, null))
-        .thenThrow(new BadRequestException("sessionId or rcGroupId required"));
+        .thenThrow(new BadRequestException("sessionId or matrixRoomId required"));
 
     assertThrows(BadRequestException.class, () -> controller.getSession(null, null));
   }

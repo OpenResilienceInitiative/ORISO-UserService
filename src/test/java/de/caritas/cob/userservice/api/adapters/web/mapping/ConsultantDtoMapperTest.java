@@ -219,7 +219,7 @@ class ConsultantDtoMapperTest {
     Consultant consultant =
         Consultant.builder()
             .id("consultantId")
-            .rocketChatId("rcId")
+            .matrixUserId("rcId")
             .username("username")
             .firstName("Firstname")
             .lastName("Lastname")
@@ -249,7 +249,7 @@ class ConsultantDtoMapperTest {
     Consultant consultant =
         Consultant.builder()
             .id("consultantId")
-            .rocketChatId("rcId")
+            .matrixUserId("rcId")
             .username("username")
             .firstName("Firstname")
             .lastName("Lastname")
@@ -267,7 +267,7 @@ class ConsultantDtoMapperTest {
     Consultant consultant =
         Consultant.builder()
             .id("consultantId")
-            .rocketChatId("rcId")
+            .matrixUserId("rcId")
             .username("username")
             .firstName("Firstname")
             .lastName("Lastname")
@@ -291,7 +291,7 @@ class ConsultantDtoMapperTest {
     Consultant consultant =
         Consultant.builder()
             .id("consultantId")
-            .rocketChatId("rcId")
+            .matrixUserId("rcId")
             .username("username")
             .firstName("Firstname")
             .lastName("Lastname")
