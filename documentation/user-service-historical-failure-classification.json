@@ -196,19 +196,19 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "a174fab7e6715027d316ea8744f8bf26df055806",
-      "unit": 3445,
-      "integration": 857,
-      "primaryTotal": 4302,
+      "verifiedApplicationHead": "7460be8361c7d0b8fe92673241c9bb653d0dc070",
+      "unit": 3523,
+      "integration": 860,
+      "primaryTotal": 4383,
       "localEvidence": [
         "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
         "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
       ]
     },
     "sinceCutoverDelta": {
-      "unit": 72,
-      "integration": 17,
-      "primaryTotal": 89
+      "unit": 150,
+      "integration": 20,
+      "primaryTotal": 170
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -217,15 +217,15 @@
       "addedJUnitTestClasses": 29,
       "deletedLegacyNamedClasses": 33
     },
-    "note": "matrixOnlyCutover preserves the first post-cutover inventory. verifiedCurrent is the exact application-head inventory confirmed by the linked GitHub jobs. Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
+    "note": "matrixOnlyCutover preserves the first post-cutover inventory. verifiedCurrent is the exact application-head inventory confirmed locally before exact-head GitHub validation. Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "unitTests": 3445,
-    "unitReports": 394,
+    "unitTests": 3523,
+    "unitReports": 401,
     "unitSkipped": 0,
-    "integrationReports": 83,
-    "integrationTests": 857,
+    "integrationReports": 84,
+    "integrationTests": 860,
     "integrationSkipped": 9,
     "failures": 0,
     "errors": 0,
