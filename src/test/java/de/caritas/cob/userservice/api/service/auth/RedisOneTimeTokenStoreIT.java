@@ -69,16 +69,20 @@ class RedisOneTimeTokenStoreIT {
 
   @Test
   void claimCanBeRestoredOnlyForItsRemainingTtl() {
-    Instant expiresAt = Instant.ofEpochMilli(Instant.now().plusMillis(800).toEpochMilli());
+    Instant expiresAt = Instant.ofEpochMilli(Instant.now().plusSeconds(5).toEpochMilli());
     firstInstance.store("reset", "retry-token", "account-a", expiresAt, true);
     OneTimeTokenStore.TokenClaim claim = secondInstance.claim("reset", "retry-token").orElseThrow();
 
-    secondInstance.restore("reset", "retry-token", claim, true);
+    await()
+        .atMost(Duration.ofSeconds(4))
+        .until(() -> !Instant.now().isBefore(expiresAt.minusSeconds(2)));
+
+    assertThat(secondInstance.restore("reset", "retry-token", claim, true)).isTrue();
     assertThat(firstInstance.claim("reset", "retry-token")).contains(claim);
 
-    firstInstance.restore("reset", "retry-token", claim, true);
+    assertThat(firstInstance.restore("reset", "retry-token", claim, true)).isTrue();
     await()
-        .atMost(Duration.ofSeconds(2))
+        .atMost(Duration.ofSeconds(3))
         .untilAsserted(() -> assertThat(secondInstance.claim("reset", "retry-token")).isEmpty());
   }
 
