@@ -240,7 +240,7 @@ on 2026-07-29 with Temurin JDK 21 against integrated application head
 ### Admin web-composition increment
 
 Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
-application head `5fb2370fb68a667d0cb008d5a23969266968433b`:
+application head `ba44b12be7aaa146847334110e711378e9e79c61`:
 
 - `UserAdminController` now composes four package-local web delegates for
   query/report, consultant/identity, asker and admin-account operations;
@@ -250,6 +250,8 @@ application head `5fb2370fb68a667d0cb008d5a23969266968433b`:
 - an executable architecture contract prevents the generated API adapter from
   directly importing application services, facades, mapping or
   authenticated-user state;
+- admin and consultant email normalization uses `Locale.ROOT`, including
+  agency-admin creation, with a Turkish-default-locale regression test;
 - 48 focused controller and routing tests plus all 37 MVC integration tests
   preserve the existing HTTP behavior;
 - unit suite: 3,564 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
