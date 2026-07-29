@@ -100,6 +100,59 @@ class OperatorDpaContentClientTest {
   }
 
   @Test
+  void fetchPublishedDpaReturnsContentAndVersionOfTheNewestPublishedEntry() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(
+            List.of(
+                new DpaVersionDTO().activationDate("2026-07-20T10:00").content(DPA_JSON),
+                new DpaVersionDTO()
+                    .activationDate("2026-01-02T10:00")
+                    .content("{\"de\":\"old\"}")));
+
+    var dpa = clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa();
+
+    assertEquals(DPA_JSON, dpa.content());
+    assertEquals("2026-07-20T10:00", dpa.version());
+  }
+
+  /**
+   * The recorded signature must name the version whose wording was shown, so content and version
+   * always come from the same entry — never the newest date paired with an older text.
+   */
+  @Test
+  void fetchPublishedDpaTakesContentAndVersionFromTheSameEntry() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(
+            List.of(
+                new DpaVersionDTO().activationDate("2026-07-20T10:00").content("   "),
+                new DpaVersionDTO().activationDate("2026-01-02T10:00").content(DPA_JSON)));
+
+    var dpa = clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa();
+
+    assertEquals(DPA_JSON, dpa.content());
+    assertEquals("2026-01-02T10:00", dpa.version());
+  }
+
+  @Test
+  void fetchPublishedDpaReturnsNullVersionWhenUpstreamServesNone() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(List.of(new DpaVersionDTO().content(DPA_JSON)));
+
+    var dpa = clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa();
+
+    assertEquals(DPA_JSON, dpa.content());
+    assertNull(dpa.version());
+  }
+
+  @Test
+  void fetchPublishedDpaReturnsNullWhenNothingIsPublished() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(List.of());
+
+    assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());
+  }
+
+  @Test
   void fetchPublishedDpaContentReturnsNullWhenTheOperatorTenantPublishedNothing() {
     when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
         .thenReturn(List.of());
