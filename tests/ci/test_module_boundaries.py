@@ -113,6 +113,56 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "instead of concrete chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_session_access_policy_has_a_focused_application_boundary(self):
+        session_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/session"
+        )
+        access_service = session_module / "SessionAccessService.java"
+        session_service = (session_module / "SessionService.java").read_text()
+        matrix_controllers = (
+            CONTROLLERS / "MatrixMessageController.java",
+            CONTROLLERS / "MatrixSyncController.java",
+        )
+
+        self.assertTrue(
+            access_service.exists(),
+            "Session access lookup and policy must live in SessionAccessService",
+        )
+        self.assertIn(
+            "SessionAccessService sessionAccessService",
+            session_service,
+            "SessionService must delegate access decisions to the focused boundary",
+        )
+        self.assertNotIn(
+            "public Session assertUserHasAccess(",
+            session_service,
+            "SessionService must not own authenticated session access policy",
+        )
+        self.assertNotIn(
+            "private final @NonNull ConsultantService consultantService;",
+            session_service,
+            "SessionService must not load consultants solely for caller authorization",
+        )
+
+        for controller_source in matrix_controllers:
+            controller = controller_source.read_text()
+            self.assertIn(
+                "SessionAccessService",
+                controller,
+                f"{controller_source.name} must use the focused session access boundary",
+            )
+            self.assertIn(
+                "sessionAccessService.assertUserHasAccess(",
+                controller,
+                f"{controller_source.name} must authorize through SessionAccessService",
+            )
+            self.assertNotIn(
+                "sessionService.assertUserHasAccess(",
+                controller,
+                f"{controller_source.name} must not authorize through SessionService",
+            )
+
     def test_identity_profile_module_depends_on_ports_not_identity_or_chat_adapters(self):
         application_roots = (
             ROOT

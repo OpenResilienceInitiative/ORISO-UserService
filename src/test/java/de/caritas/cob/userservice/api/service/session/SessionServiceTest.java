@@ -87,7 +87,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -189,7 +188,8 @@ class SessionServiceTest {
           null,
           null);
 
-  @InjectMocks private SessionService sessionService;
+  private SessionAccessService sessionAccessService;
+  private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
@@ -203,6 +203,24 @@ class SessionServiceTest {
 
   @BeforeEach
   public void setUp() {
+    sessionAccessService =
+        new SessionAccessService(
+            sessionRepository,
+            consultantTopicRepository,
+            agencyService,
+            consultantService,
+            sessionSupervisorRepository);
+    sessionService =
+        new SessionService(
+            sessionRepository,
+            consultantTopicRepository,
+            groupChatParticipantRepository,
+            agencyService,
+            sessionAccessService,
+            userService,
+            consultingTypeManager,
+            null,
+            sessionSupervisorRepository);
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
   }
 
@@ -465,7 +483,7 @@ class SessionServiceTest {
     when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
     Session result =
-        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES);
+        sessionAccessService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -479,7 +497,8 @@ class SessionServiceTest {
         .thenReturn(Optional.of(session.getConsultant()));
 
     Session result =
-        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
+        sessionAccessService.getSessionByMatrixRoomIdAndUser(
+            MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -497,7 +516,8 @@ class SessionServiceTest {
         .forEach(consultantAgency -> consultantAgency.setAgencyId(AGENCY_ID));
 
     Session result =
-        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
+        sessionAccessService.getSessionByMatrixRoomIdAndUser(
+            MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -509,7 +529,7 @@ class SessionServiceTest {
     assertThrows(
         NotFoundException.class,
         () ->
-            sessionService.getSessionByMatrixRoomIdAndUser(
+            sessionAccessService.getSessionByMatrixRoomIdAndUser(
                 MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
@@ -520,7 +540,9 @@ class SessionServiceTest {
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES));
+        () ->
+            sessionAccessService.getSessionByMatrixRoomIdAndUser(
+                MATRIX_ROOM_ID, USER_ID, USER_ROLES));
   }
 
   @Test
@@ -535,7 +557,7 @@ class SessionServiceTest {
     assertThrows(
         ForbiddenException.class,
         () ->
-            sessionService.getSessionByMatrixRoomIdAndUser(
+            sessionAccessService.getSessionByMatrixRoomIdAndUser(
                 MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
@@ -547,7 +569,7 @@ class SessionServiceTest {
     var roles = new HashSet<>(singletonList("no-role"));
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, roles));
+        () -> sessionAccessService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, roles));
   }
 
   /** method: getTeamSessionsForConsultant */
@@ -1006,7 +1028,7 @@ class SessionServiceTest {
 
     assertThrows(
         NotFoundException.class,
-        () -> sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser));
+        () -> sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser));
   }
 
   @Test
@@ -1018,7 +1040,7 @@ class SessionServiceTest {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(authenticatedUser.getRoles()).thenReturn(USER_ROLES);
 
-    Session result = sessionService.assertUserHasAccess(session.getId(), authenticatedUser);
+    Session result = sessionAccessService.assertUserHasAccess(session.getId(), authenticatedUser);
 
     assertThat(result).isEqualTo(session);
   }
@@ -1033,7 +1055,7 @@ class SessionServiceTest {
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.assertUserHasAccess(session.getId(), authenticatedUser));
+        () -> sessionAccessService.assertUserHasAccess(session.getId(), authenticatedUser));
   }
 
   // ---------------------------------------------------------------------------

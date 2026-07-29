@@ -10,17 +10,15 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
-class SessionServiceAccessTest {
+class SessionAccessServiceTest {
 
   private static final Long SESSION_ID = 42L;
   private static final String OWNER_ID = "owner-id";
@@ -40,28 +38,20 @@ class SessionServiceAccessTest {
 
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
-  @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
-  @Mock private UserService userService;
-  @Mock private ConsultingTypeManager consultingTypeManager;
-  @Mock private ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
-  private SessionService sessionService;
+  private SessionAccessService sessionAccessService;
 
   @BeforeEach
   void setUp() {
-    sessionService =
-        new SessionService(
+    sessionAccessService =
+        new SessionAccessService(
             sessionRepository,
             consultantTopicRepository,
-            groupChatParticipantRepository,
             agencyService,
             consultantService,
-            userService,
-            consultingTypeManager,
-            sessionTopicEnrichmentService,
             sessionSupervisorRepository);
 
     lenient()
@@ -76,7 +66,7 @@ class SessionServiceAccessTest {
     var session = sessionOwnedBy(OWNER_ID);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
 
-    var result = sessionService.assertUserHasAccess(SESSION_ID, user(OWNER_ID));
+    var result = sessionAccessService.assertUserHasAccess(SESSION_ID, user(OWNER_ID));
 
     assertEquals(session, result);
   }
@@ -87,7 +77,7 @@ class SessionServiceAccessTest {
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.assertUserHasAccess(SESSION_ID, user(OTHER_USER_ID)));
+        () -> sessionAccessService.assertUserHasAccess(SESSION_ID, user(OTHER_USER_ID)));
   }
 
   @Test
@@ -98,7 +88,8 @@ class SessionServiceAccessTest {
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
 
-    var result = sessionService.assertUserHasAccess(SESSION_ID, consultantUser(CONSULTANT_ID));
+    var result =
+        sessionAccessService.assertUserHasAccess(SESSION_ID, consultantUser(CONSULTANT_ID));
 
     assertEquals(session, result);
   }
@@ -114,7 +105,28 @@ class SessionServiceAccessTest {
     assertThrows(
         ForbiddenException.class,
         () ->
-            sessionService.assertUserHasAccess(
+            sessionAccessService.assertUserHasAccess(
+                SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
+  }
+
+  @Test
+  void assertUserHasAccess_ShouldNotUseBroaderQueuePermission_ForNewNonTeamAgencySession() {
+    var session = sessionOwnedBy(OWNER_ID);
+    session.setStatus(Session.SessionStatus.NEW);
+    session.setTeamSession(false);
+    session.setAgencyId(23L);
+    var consultant = consultant(UNASSIGNED_CONSULTANT_ID);
+    var consultantAgency = new ConsultantAgency();
+    consultantAgency.setAgencyId(23L);
+    consultant.setConsultantAgencies(Set.of(consultantAgency));
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant(UNASSIGNED_CONSULTANT_ID))
+        .thenReturn(Optional.of(consultant));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            sessionAccessService.assertUserHasAccess(
                 SESSION_ID, consultantUser(UNASSIGNED_CONSULTANT_ID)));
   }
 
