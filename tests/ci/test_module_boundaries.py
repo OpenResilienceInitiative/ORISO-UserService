@@ -61,9 +61,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
         forbidden_import_prefixes = (
             "import de.caritas.cob.userservice.api.admin.",
+            "import de.caritas.cob.userservice.api.facade.",
             "import de.caritas.cob.userservice.api.helper.AuthenticatedUser;",
             "import de.caritas.cob.userservice.api.service.",
-            "import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;",
+            "import de.caritas.cob.userservice.api.adapters.web.mapping.",
         )
 
         missing_delegates = [

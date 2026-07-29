@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -31,11 +32,12 @@ class UserAdminAccountControllerDelegate {
   private final @NonNull AdminDtoMapper adminDtoMapper;
 
   ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAdminDTO) {
-    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase());
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(adminUserFacade.createNewTenantAdmin(createAdminDTO));
   }
 
   ResponseEntity<AdminResponseDTO> createAgencyAdmin(CreateAdminDTO createAdminDTO) {
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(adminUserFacade.createNewAgencyAdmin(createAdminDTO));
   }
 
@@ -73,13 +75,13 @@ class UserAdminAccountControllerDelegate {
 
   ResponseEntity<AdminResponseDTO> updateAgencyAdmin(
       String adminId, UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase());
+    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(adminUserFacade.updateAgencyAdmin(adminId, updateAgencyAdminDTO));
   }
 
   ResponseEntity<AdminResponseDTO> updateTenantAdmin(
       String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
-    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase());
+    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(adminUserFacade.updateTenantAdmin(adminId, updateTenantAdminDTO));
   }
 

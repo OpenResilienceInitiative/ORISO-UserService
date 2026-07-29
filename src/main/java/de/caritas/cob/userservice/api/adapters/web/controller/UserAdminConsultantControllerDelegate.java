@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.util.List;
+import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -38,7 +39,7 @@ class UserAdminConsultantControllerDelegate {
   ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
       CreateConsultantDTO createConsultantDTO) {
     PlainCredentialsHolder.set(createConsultantDTO.getUsername(), null);
-    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase());
+    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(consultantAdminFacade.createNewConsultant(createConsultantDTO));
   }
 
@@ -91,7 +92,7 @@ class UserAdminConsultantControllerDelegate {
   ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     if (updateConsultantDTO.getEmail() != null) {
-      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
+      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     }
     return ResponseEntity.ok(
         consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO));
