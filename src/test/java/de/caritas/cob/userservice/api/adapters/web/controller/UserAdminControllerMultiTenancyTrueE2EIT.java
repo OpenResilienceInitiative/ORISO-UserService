@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
@@ -20,20 +21,6 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -75,26 +62,9 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountCreator.class,
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityProfileLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class,
-        IdentitySecondFactor.class
-      })
-  IdentityClient identityClient;
+  @MockitoBean KeycloakService identityClient;
 
   private IdentityAccountCreator identityAccountCreator;
-  @MockitoBean IdentityRoleUpdater identityRoleUpdater;
-  @MockitoBean IdentityProfileUpdater identityProfileUpdater;
 
   @MockitoBean TenantService tenantService;
 

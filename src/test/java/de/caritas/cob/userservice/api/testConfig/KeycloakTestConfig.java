@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import java.util.Collection;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -48,12 +50,7 @@ public class KeycloakTestConfig {
         userHelper,
         keycloakAuthClient) {
       @Override
-      public boolean changePassword(String userId, String password) {
-        return super.changePassword(userId, password);
-      }
-
-      @Override
-      public void changeLanguage(String userId, String locale) {
+      public void updateLocale(String userId, String locale) {
         UserResource userResource = keycloakClient.getUsersResource().get(userId);
         UserRepresentation user = getUserRepresentationAndCreateNewUserIfNotExist(userResource);
         super.changeLanguageForTheUser(locale, userResource, user);
@@ -129,8 +126,8 @@ public class KeycloakTestConfig {
       public void deactivateUser(String userId) {}
 
       @Override
-      public boolean userHasRole(String userId, String userRole) {
-        return true;
+      public List<String> findAllByUserId(String userId) {
+        return java.util.Arrays.stream(UserRole.values()).map(UserRole::getValue).toList();
       }
     };
   }

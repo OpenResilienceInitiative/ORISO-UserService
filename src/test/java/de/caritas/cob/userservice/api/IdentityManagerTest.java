@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,12 +11,15 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,10 +35,12 @@ class IdentityManagerTest {
   private static final String ENCODED_USERNAME = "enc.MNXW443VNR2GC3TUGJTGC...";
   private static final String EMAIL = "consultant@example.org";
 
-  @Mock private IdentityClient identityClient;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdentityAuthentication identityAuthentication;
+  @Mock private IdentityLocaleUpdater identityLocaleUpdater;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleLookup identityRoleLookup;
   @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -153,12 +159,43 @@ class IdentityManagerTest {
   }
 
   @Test
-  void hasRoleShouldDelegateTheApplicationRoleValueToIdentityClient() {
-    when(identityClient.userHasRole("consultant-id", "group-chat-consultant")).thenReturn(true);
+  void changePasswordShouldReturnTrueWhenFocusedUpdateSucceeds() {
+    assertThat(identityManager.changePassword("user-id", "new-password")).isTrue();
+
+    verify(identityPasswordUpdater).updatePassword("user-id", "new-password");
+  }
+
+  @Test
+  void changePasswordShouldReturnFalseWhenFocusedUpdateFails() {
+    doThrow(new RuntimeException("provider unavailable"))
+        .when(identityPasswordUpdater)
+        .updatePassword("user-id", "new-password");
+
+    assertThat(identityManager.changePassword("user-id", "new-password")).isFalse();
+  }
+
+  @Test
+  void changeLanguageShouldDelegateToFocusedLocalePort() {
+    identityManager.changeLanguage("user-id", "de");
+
+    verify(identityLocaleUpdater).updateLocale("user-id", "de");
+  }
+
+  @Test
+  void hasRoleShouldReadTheCompleteFocusedRoleSetOnce() {
+    when(identityRoleLookup.findAllByUserId("consultant-id"))
+        .thenReturn(List.of("user", "group-chat-consultant"));
 
     assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
 
-    verify(identityClient).userHasRole("consultant-id", "group-chat-consultant");
+    verify(identityRoleLookup).findAllByUserId("consultant-id");
+  }
+
+  @Test
+  void hasRoleShouldRejectRoleMissingFromFocusedRoleSet() {
+    when(identityRoleLookup.findAllByUserId("consultant-id")).thenReturn(List.of("user"));
+
+    assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isFalse();
   }
 
   @Test

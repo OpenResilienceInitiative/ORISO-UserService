@@ -7,9 +7,11 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import lombok.RequiredArgsConstructor;
@@ -21,10 +23,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class IdentityManager implements IdentityManaging {
 
-  private final IdentityClient identityClient;
   private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentityAuthentication identityAuthentication;
+  private final IdentityLocaleUpdater identityLocaleUpdater;
+  private final IdentityPasswordUpdater identityPasswordUpdater;
+  private final IdentityRoleLookup identityRoleLookup;
   private final IdentitySecondFactor identitySecondFactor;
   private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
@@ -58,12 +62,18 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean changePassword(String userId, String password) {
-    return identityClient.changePassword(userId, password);
+    try {
+      identityPasswordUpdater.updatePassword(userId, password);
+      return true;
+    } catch (Exception ex) {
+      log.info("Could not change password for user with id {}", userId);
+      return false;
+    }
   }
 
   @Override
   public void changeLanguage(String userId, String language) {
-    identityClient.changeLanguage(userId, language);
+    identityLocaleUpdater.updateLocale(userId, language);
   }
 
   @Override
@@ -98,6 +108,6 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean hasRole(String userId, UserRole role) {
-    return identityClient.userHasRole(userId, role.getValue());
+    return identityRoleLookup.findAllByUserId(userId).contains(role.getValue());
   }
 }

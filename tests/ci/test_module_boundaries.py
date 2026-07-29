@@ -15,6 +15,10 @@ WEB_MAPPINGS = (
 USERDATA_FACADES = ROOT / "src/main/java/de/caritas/cob/userservice/api/facade/userdata"
 
 
+def read_if_exists(source: Path) -> str:
+    return source.read_text() if source.exists() else ""
+
+
 class ModuleBoundaryContractTest(unittest.TestCase):
     def test_user_and_appointment_web_slices_depend_on_input_ports(self):
         sources = [
@@ -97,10 +101,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
 
     def test_identity_email_owner_lookup_uses_a_focused_typed_port(self):
-        identity_port = (
+        identity_port = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         identity_manager = (
             ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
         ).read_text()
@@ -127,10 +131,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
 
     def test_identity_authentication_uses_a_focused_provider_neutral_port(self):
-        identity_port = (
+        identity_port = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         authentication_port = (
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/"
@@ -221,10 +225,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
 
     def test_username_availability_uses_a_focused_provider_neutral_port(self):
-        identity_port = (
+        identity_port = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         availability_port = (
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/"
@@ -271,10 +275,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
 
     def test_second_factor_verification_uses_typed_application_boundaries(self):
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         second_factor_port = (
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/"
@@ -482,10 +486,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             for source in USERDATA_FACADES.glob("*.java")
             if broad_client_import in source.read_text()
         ]
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
 
         self.assertEqual(
             [],
@@ -564,7 +568,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{source.name} must write profiles through the focused port",
             )
 
-        identity_client = (port_root / "IdentityClient.java").read_text()
+        identity_client = read_if_exists(port_root / "IdentityClient.java")
         self.assertNotIn(
             "updateUserData(",
             identity_client,
@@ -608,10 +612,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         ]
         user_identities_service = consumers[1].read_text()
         agency_relation_service = consumers[0].read_text()
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
 
         self.assertEqual(
             [],
@@ -660,10 +664,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             / "src/main/java/de/caritas/cob/userservice/api/service/user/"
             "UserAccountService.java"
         ).read_text()
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         keycloak_adapter = (
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
@@ -724,7 +728,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         offenders = [
             str(source.relative_to(ROOT))
             for source in sources
-            if "closeSession(" in source.read_text()
+            if source.exists() and "closeSession(" in source.read_text()
         ]
         self.assertEqual(
             [],
@@ -837,10 +841,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{source.relative_to(ROOT)} must not use broad-client password mutation",
             )
 
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         self.assertNotIn(
             "updatePassword(",
             identity_client,
@@ -920,10 +924,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{source.relative_to(ROOT)} must not use broad-client deactivation",
             )
 
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         self.assertNotIn(
             "deactivateUser(",
             identity_client,
@@ -1027,10 +1031,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{source.relative_to(ROOT)} must not use broad-client rollback",
             )
 
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         self.assertNotIn(
             "deleteUser(",
             identity_client,
@@ -1102,10 +1106,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
         self.assertNotIn("identityClient.updateDummyEmail(", registration)
 
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
         self.assertNotIn(
             "updateDummyEmail(",
             identity_client,
@@ -1174,10 +1178,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             for source in consumers
             if focused_updater_import not in source.read_text()
         ]
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
 
         self.assertEqual(
             [],
@@ -1263,10 +1267,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             for source in consumers
             if focused_updater_import not in source.read_text()
         ]
-        identity_client = (
+        identity_client = read_if_exists(
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
-        ).read_text()
+        )
 
         self.assertEqual(
             [],
@@ -1310,7 +1314,7 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         creator = port_root / "IdentityAccountCreator.java"
         request = port_root / "IdentityAccountCreation.java"
         result = port_root / "IdentityAccountCreated.java"
-        identity_client = (port_root / "IdentityClient.java").read_text()
+        identity_client = read_if_exists(port_root / "IdentityClient.java")
 
         self.assertTrue(
             creator.exists(),
@@ -1413,6 +1417,73 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "Spring contexts must not replace the shared KeycloakService mock with a "
             "competing account-creator mock:\n"
             + "\n".join(competing_spring_mocks),
+        )
+
+    def test_identity_manager_uses_only_focused_identity_ports(self):
+        port_root = ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out"
+        broad_client = port_root / "IdentityClient.java"
+        locale_updater = port_root / "IdentityLocaleUpdater.java"
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        )
+        keycloak_service = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        )
+
+        self.assertFalse(
+            broad_client.exists(),
+            "The broad IdentityClient must be removed after its remaining application "
+            "operations move to focused ports",
+        )
+        self.assertTrue(
+            locale_updater.exists(),
+            "Identity locale mutation needs a focused provider-neutral output port",
+        )
+        if not locale_updater.exists():
+            return
+
+        locale_contract = locale_updater.read_text()
+        self.assertIn("void updateLocale(String userId, String locale);", locale_contract)
+        for provider_transport in ("Keycloak", "org.keycloak.", ".adapters.web."):
+            self.assertNotIn(
+                provider_transport,
+                locale_contract,
+                "The locale boundary must remain provider neutral",
+            )
+
+        manager_contract = identity_manager.read_text()
+        for focused_dependency in (
+            "IdentityLocaleUpdater identityLocaleUpdater",
+            "IdentityPasswordUpdater identityPasswordUpdater",
+            "IdentityRoleLookup identityRoleLookup",
+        ):
+            self.assertIn(
+                focused_dependency,
+                manager_contract,
+                f"IdentityManager must depend on {focused_dependency}",
+            )
+        self.assertNotIn("IdentityClient", manager_contract)
+        self.assertIn(
+            "IdentityLocaleUpdater,",
+            keycloak_service.read_text(),
+            "The Keycloak adapter must implement the focused locale port",
+        )
+
+        broad_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in (ROOT / "src").rglob("*.java")
+            if broad_import in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            offenders,
+            "No production or test source may restore the deleted broad identity port:\n"
+            + "\n".join(offenders),
         )
 
 if __name__ == "__main__":

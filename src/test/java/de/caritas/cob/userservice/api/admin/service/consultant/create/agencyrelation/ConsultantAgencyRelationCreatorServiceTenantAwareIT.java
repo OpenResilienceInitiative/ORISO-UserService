@@ -4,15 +4,15 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -25,21 +25,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -88,25 +73,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @MockitoBean private AgencyService agencyService;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountCreator.class,
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityProfileLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class,
-        IdentitySecondFactor.class
-      })
-  private IdentityClient identityClient;
-
-  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
-  @MockitoBean private IdentityProfileUpdater identityProfileUpdater;
+  @MockitoBean private KeycloakService identityClient;
 
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
@@ -128,7 +95,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     createConsultantAgencyDTO.setAgencyId(15L);
     createConsultantAgencyDTO.setRoleSetKey("valid-role-set");
 
-    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
+    when(identityClient.findAllByUserId(consultant.getId()))
+        .thenReturn(List.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     AgencyDTO agencyDTO = new AgencyDTO();
     agencyDTO.setId(15L);
@@ -172,7 +140,8 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
-    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
+    when(identityClient.findAllByUserId(consultant.getId()))
+        .thenReturn(List.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
     AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));

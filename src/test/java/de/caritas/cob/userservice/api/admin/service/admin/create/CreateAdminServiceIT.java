@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -22,20 +23,8 @@ import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -63,26 +52,10 @@ class CreateAdminServiceIT {
 
   @Autowired private CreateAdminService createAdminService;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountCreator.class,
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityProfileLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class,
-        IdentitySecondFactor.class
-      })
-  private IdentityClient identityClient;
+  @MockitoBean private KeycloakService identityClient;
 
   private IdentityAccountCreator identityAccountCreator;
-  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
-  @MockitoBean private IdentityProfileUpdater identityProfileUpdater;
+  private IdentityRoleUpdater identityRoleUpdater;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<IdentityAccountCreation> accountCreationCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
@@ -91,6 +64,7 @@ class CreateAdminServiceIT {
   void setUp() {
     MockitoAnnotations.openMocks(this);
     identityAccountCreator = (IdentityAccountCreator) identityClient;
+    identityRoleUpdater = (IdentityRoleUpdater) identityClient;
   }
 
   @AfterEach

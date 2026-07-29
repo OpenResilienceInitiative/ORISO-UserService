@@ -9,25 +9,11 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -41,25 +27,7 @@ public class ConsultantUpdateServiceBase {
 
   @Autowired protected ConsultantUpdateService consultantUpdateService;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountCreator.class,
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityProfileLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityUsernameAvailability.class,
-        IdentitySecondFactor.class
-      })
-  protected IdentityClient identityClient;
-
-  @MockitoBean protected IdentityRoleUpdater identityRoleUpdater;
-  @MockitoBean protected IdentityProfileUpdater identityProfileUpdater;
+  @MockitoBean protected KeycloakService identityClient;
 
   @MockitoBean protected AgencyService agencyService;
 

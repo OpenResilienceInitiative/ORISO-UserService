@@ -10,8 +10,6 @@ import static java.util.Objects.nonNull;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -30,7 +28,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
@@ -38,6 +35,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -93,11 +91,11 @@ public class KeycloakService
     implements IdentityAccountCreator,
         IdentityAccountRemover,
         IdentityAuthentication,
-        IdentityClient,
         IdentityDeactivator,
         IdentityDummyEmailUpdater,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
+        IdentityLocaleUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
         IdentityPasswordUpdater,
@@ -140,25 +138,8 @@ public class KeycloakService
     this.outboundHttpMetrics = outboundHttpMetrics;
   }
 
-  /**
-   * Changes the (Keycloak) password of a user and returns true on success.
-   *
-   * @param userId Keycloak user ID
-   * @param password Keycloak password
-   * @return true if password change was successful
-   */
-  public boolean changePassword(final String userId, final String password) {
-    try {
-      updatePassword(userId, password);
-    } catch (Exception ex) {
-      log.info("Could not change password for user with id {}", userId);
-      return false;
-    }
-
-    return true;
-  }
-
-  public void changeLanguage(final String userId, final String locale) {
+  @Override
+  public void updateLocale(final String userId, final String locale) {
     UserResource userResource = keycloakClient.getUsersResource().get(userId);
     var user = userResource.toRepresentation();
 
@@ -897,50 +878,6 @@ public class KeycloakService
   }
 
   /**
-   * Returns true if the given user has the provided authority.
-   *
-   * @param userId Keycloak user ID
-   * @param authority Keycloak authority
-   * @return true if user hast provided authority
-   */
-  public boolean userHasAuthority(String userId, String authority) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(role -> UserRole.getRoleByValue(role.getName()))
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(Authority::getAuthoritiesByUserRole)
-          .anyMatch(currentAuthority -> currentAuthority.contains(authority));
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided role.
-   *
-   * @param userId Keycloak user ID
-   * @param userRole Keycloak role
-   * @return true if user hast provided role
-   */
-  public boolean userHasRole(String userId, String userRole) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(this::toUserRole)
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(UserRole::getValue)
-          .anyMatch(userRole::equals);
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
    * Returns the names of all realm roles currently assigned to the given user.
    *
    * @param userId Keycloak user ID
@@ -959,10 +896,6 @@ public class KeycloakService
     }
   }
 
-  private Optional<UserRole> toUserRole(RoleRepresentation roleRepresentation) {
-    return UserRole.getRoleByValue(roleRepresentation.getName());
-  }
-
   private List<RoleRepresentation> getUserRoles(String userId) {
     return keycloakClient.getUsersResource().get(userId).roles().realmLevel().listAll();
   }
@@ -974,7 +907,7 @@ public class KeycloakService
    * @param username Keycloak user name
    * @return {@link List} of found users
    */
-  public List<UserRepresentation> findByUsername(String username) {
+  List<UserRepresentation> findByUsername(String username) {
     try {
       return keycloakClient.getUsersResource().search(username);
     } catch (NotAuthorizedException e) {
