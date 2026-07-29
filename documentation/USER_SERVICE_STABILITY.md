@@ -193,7 +193,9 @@ third attempt in the same session and is not reused by the next session.
 Expiry, zero-lifetime and targeted invalidation remain covered separately.
 After warm-up, this removes the observed per-session Keycloak roundtrip while
 preserving the separate AgencyService public-agency and secret
-Matrix-credential boundaries.
+Matrix-credential boundaries. The complete service-path increment and exact
+3,556-test unit inventory were verified at
+`45e7cc2d61200e19188cffb933ce488228ddc374`.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.

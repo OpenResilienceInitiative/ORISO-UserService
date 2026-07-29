@@ -150,7 +150,7 @@ Executed on 2026-07-29 with Temurin JDK 21 against source commit
 ### Technical-identity fan-out increment
 
 Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
-`fc6425a00bd3faf2eddd303c5ba3138def42b8bd`, which introduces the replica-local
+`45e7cc2d61200e19188cffb933ce488228ddc374`, which contains the replica-local
 technical-identity token boundary:
 
 - unit suite: 3,556 tests in 405 reports, 0 failures, 0 errors, 0 skipped;
