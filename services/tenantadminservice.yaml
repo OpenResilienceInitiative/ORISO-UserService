@@ -1191,6 +1191,46 @@ components:
           $ref: '#/components/schemas/MultilingualContent'
         settings:
           $ref: '#/components/schemas/Settings'
+        onboardingDpaAcceptance:
+          $ref: '#/components/schemas/OnboardingDpaAcceptanceDTO'
+    OnboardingDpaAcceptanceDTO:
+      type: object
+      description: 'Creation-only: the data processing agreement acceptance a tenant admin gave
+        while onboarding through a public invite link (TEN-INV-U9/#569). TenantService persists it
+        append-only as the tenant''s admin signature in the SAME unit of work as the tenant
+        creation, so a tenant never exists without the acceptance that created it.'
+      required:
+        - accepted
+        - signerUserId
+        - signerName
+      properties:
+        accepted:
+          type: boolean
+        signerUserId:
+          type: string
+          maxLength: 255
+        signerUsername:
+          type: string
+          maxLength: 255
+        signerName:
+          type: string
+          maxLength: 255
+        signerPosition:
+          type: string
+          maxLength: 255
+        signerEmail:
+          type: string
+          maxLength: 255
+        signerOrganisation:
+          type: string
+          maxLength: 255
+        language:
+          type: string
+          maxLength: 10
+        dpaVersion:
+          type: string
+          description: Activation timestamp of the operator DPA version that was actually shown
+            to the signer (as served by DpaVersionDTO.activationDate).
     BasicTenantLicensingDTO:
       type: object
       required:

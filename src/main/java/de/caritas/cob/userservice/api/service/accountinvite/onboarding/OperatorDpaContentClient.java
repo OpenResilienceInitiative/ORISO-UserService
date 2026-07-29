@@ -72,26 +72,36 @@ public class OperatorDpaContentClient {
   }
 
   /**
-   * The operator's newest published DPA content — the stored language -&gt; HTML JSON map the Admin
-   * panel renders read-only — or {@code null} when nothing is published, the lookup is disabled or
-   * TenantService could not be read.
+   * The operator's newest published DPA: the stored language -&gt; HTML JSON map the Admin panel
+   * renders read-only PLUS the activation timestamp identifying that version. {@code null} when
+   * nothing is published, the lookup is disabled or TenantService could not be read.
+   *
+   * <p>The version travels with the content on purpose (#569): the acceptance the invitee gives is
+   * recorded as a signature against exactly the version that was rendered here, never against
+   * whatever happens to be current when the registration lands.
    */
-  public String fetchPublishedDpaContent() {
+  public OperatorDpa fetchPublishedDpa() {
     if (operatorTenantId <= 0) {
       return null;
     }
     CachedContent cached = cache.get();
     if (cached != null && !cached.isExpired()) {
-      return cached.content();
+      return cached.dpa();
     }
-    String content = readNewestPublishedContent();
-    if (content != null) {
-      cache.set(new CachedContent(content, System.nanoTime() + CACHE_TTL.toNanos()));
+    OperatorDpa dpa = readNewestPublished();
+    if (dpa != null) {
+      cache.set(new CachedContent(dpa, System.nanoTime() + CACHE_TTL.toNanos()));
     }
-    return content;
+    return dpa;
   }
 
-  private String readNewestPublishedContent() {
+  /** Content-only convenience for the resolve step, which renders but does not sign. */
+  public String fetchPublishedDpaContent() {
+    OperatorDpa dpa = fetchPublishedDpa();
+    return dpa == null ? null : dpa.content();
+  }
+
+  private OperatorDpa readNewestPublished() {
     List<DpaVersionDTO> versions;
     try {
       versions = createControllerApi().getDataProcessingAgreementVersions(operatorTenantId);
@@ -110,13 +120,31 @@ public class OperatorDpaContentClient {
           operatorTenantId);
       return null;
     }
-    // TenantService lists the versions newest first; skip empty snapshots defensively.
+    // TenantService lists the versions newest first; skip empty snapshots defensively. Content and
+    // version must come from the SAME entry, otherwise the recorded signature would name a version
+    // whose wording was never shown.
     return versions.stream()
-        .map(DpaVersionDTO::getContent)
-        .filter(content -> content != null && !content.trim().isEmpty())
+        .filter(version -> isNotBlank(version.getContent()))
         .findFirst()
+        .map(
+            version ->
+                new OperatorDpa(version.getContent(), trimToNull(version.getActivationDate())))
         .orElse(null);
   }
+
+  private static boolean isNotBlank(String value) {
+    return value != null && !value.trim().isEmpty();
+  }
+
+  private static String trimToNull(String value) {
+    return isNotBlank(value) ? value.trim() : null;
+  }
+
+  /**
+   * The governing operator DPA as shown to an invitee: the multilingual content snapshot and the
+   * activation timestamp identifying the version ({@code null} when TenantService served none).
+   */
+  public record OperatorDpa(String content, String version) {}
 
   private TenantControllerApi createControllerApi() {
     var controllerApi = tenantAdminServiceApiControllerFactory.createControllerApi();
@@ -132,7 +160,7 @@ public class OperatorDpaContentClient {
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 
-  private record CachedContent(String content, long expiresAtNanos) {
+  private record CachedContent(OperatorDpa dpa, long expiresAtNanos) {
     boolean isExpired() {
       return System.nanoTime() - expiresAtNanos >= 0;
     }
