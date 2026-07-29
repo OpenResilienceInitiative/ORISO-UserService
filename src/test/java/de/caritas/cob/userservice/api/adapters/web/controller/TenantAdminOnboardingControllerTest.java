@@ -33,6 +33,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 @ExtendWith(MockitoExtension.class)
 class TenantAdminOnboardingControllerTest {
 
+  private static final String OPERATOR_DPA_JSON =
+      "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
+
   @Mock private TenantAdminOnboardingService onboardingService;
 
   private TenantAdminOnboardingController controller;
@@ -60,7 +63,7 @@ class TenantAdminOnboardingControllerTest {
   @Test
   void resolveOnboardingInvite_plainState_mapsInviteFieldsWithoutPhase() {
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(invite(), false));
+        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON));
 
     var response = controller.resolveOnboardingInvite("tok");
 
@@ -73,8 +76,22 @@ class TenantAdminOnboardingControllerTest {
     assertEquals(21L, body.reservedTenantId);
     assertEquals("reservation-token", body.tenantIdReservationToken);
     assertEquals(LocalDateTime.of(2026, 8, 30, 12, 0), body.expiresAt);
+    // The DPA step must render the operator's contract text (and its anchor/TOC navigation),
+    // never a placeholder while the invitee ticks the acceptance box.
+    assertEquals(OPERATOR_DPA_JSON, body.dpaContent);
     assertNull(body.phase);
     assertNull(body.twoFactor);
+  }
+
+  @Test
+  void resolveOnboardingInvite_withoutPublishedOperatorDpa_answersWithNullDpaContent() {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(invite(), false, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertNull(body.dpaContent);
   }
 
   @Test
@@ -83,7 +100,7 @@ class TenantAdminOnboardingControllerTest {
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     resumable.setTotpPendingSecret("STOREDSECRET");
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(resumable, true));
+        .thenReturn(new OnboardingInviteState(resumable, true, null));
 
     var body = controller.resolveOnboardingInvite("tok").getBody();
 
@@ -99,7 +116,7 @@ class TenantAdminOnboardingControllerTest {
     AccountInvite resumable = invite();
     resumable.setStatus(AccountInviteStatus.ACCEPTED);
     when(onboardingService.resolveOnboardingInvite("tok"))
-        .thenReturn(new OnboardingInviteState(resumable, true));
+        .thenReturn(new OnboardingInviteState(resumable, true, null));
 
     var body = controller.resolveOnboardingInvite("tok").getBody();
 

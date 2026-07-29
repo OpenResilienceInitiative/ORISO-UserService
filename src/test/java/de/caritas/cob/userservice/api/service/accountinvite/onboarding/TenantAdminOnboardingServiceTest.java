@@ -50,6 +50,8 @@ class TenantAdminOnboardingServiceTest {
   private static final String RAW_TOKEN = "raw-invite-token";
   private static final String TOKEN_HASH = AccountInviteService.hash(RAW_TOKEN);
   private static final String RESERVATION_TOKEN = "3f2c6d1e-8b1a-4b8e-9f47-1234567890ab";
+  private static final String OPERATOR_DPA_JSON =
+      "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
   private static final Long RESERVED_TENANT_ID = 21L;
 
   @Mock private AccountInviteRepository accountInviteRepository;
@@ -57,6 +59,7 @@ class TenantAdminOnboardingServiceTest {
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
   @Mock private TenantCreationClient tenantCreationClient;
+  @Mock private OperatorDpaContentClient operatorDpaContentClient;
 
   private TenantAdminOnboardingService service;
 
@@ -69,6 +72,7 @@ class TenantAdminOnboardingServiceTest {
             createAdminService,
             identityClient,
             tenantCreationClient,
+            operatorDpaContentClient,
             new UsernameTranscoder());
   }
 
@@ -139,6 +143,29 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void resolveOnboardingInvite_deliverableInvite_carriesTheOperatorDpaText() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(OPERATOR_DPA_JSON);
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(OPERATOR_DPA_JSON, state.dpaContent());
+  }
+
+  @Test
+  void resolveOnboardingInvite_deliverableInviteWithoutPublishedDpa_resolvesWithoutText() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(null);
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(invite, state.invite());
+    assertNull(state.dpaContent());
+  }
+
+  @Test
   void resolveOnboardingInvite_expiredDeliverableInvite_marksExpiredAndThrows() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     invite.setExpiresAt(LocalDateTime.now().minusMinutes(5));
@@ -163,6 +190,9 @@ class TenantAdminOnboardingServiceTest {
 
     assertTrue(state.pendingTwoFactorResume());
     assertEquals("STOREDSECRET", state.invite().getTotpPendingSecret());
+    // The resume path re-enters at the 2FA step, which shows no contract — no upstream lookup.
+    assertNull(state.dpaContent());
+    verify(operatorDpaContentClient, never()).fetchPublishedDpaContent();
   }
 
   @Test
