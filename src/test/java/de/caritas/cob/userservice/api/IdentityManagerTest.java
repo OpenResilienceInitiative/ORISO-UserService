@@ -100,4 +100,13 @@ class IdentityManagerTest {
 
     assertThat(identityManager.isEmailAvailableOrOwn(ENCODED_USERNAME, EMAIL)).isFalse();
   }
+
+  @Test
+  void isUsernameAvailableShouldDelegateToIdentityClient() {
+    when(identityClient.isUsernameAvailable(RAW_USERNAME)).thenReturn(true);
+
+    assertThat(identityManager.isUsernameAvailable(RAW_USERNAME)).isTrue();
+
+    verify(identityClient).isUsernameAvailable(RAW_USERNAME);
+  }
 }
