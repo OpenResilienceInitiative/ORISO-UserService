@@ -200,6 +200,17 @@
       "status": "bounded"
     },
     {
+      "id": "operator-dpa-content-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/OperatorDpaContentClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": ["cache"],
+      "decision": "Retain locally with the existing TTL; a miss re-reads TenantService without losing correctness.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
       "id": "appointment-cleanup-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
       "kind": "scheduler",

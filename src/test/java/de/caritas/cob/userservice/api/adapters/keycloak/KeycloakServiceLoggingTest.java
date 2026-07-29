@@ -54,8 +54,7 @@ class KeycloakServiceLoggingTest {
   @BeforeEach
   void setUp() {
     var keycloakAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
     setField(keycloakAuthClient, "keycloakClientId", "app");
     keycloakService =
         new KeycloakService(
