@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
@@ -38,7 +37,6 @@ public class UserAccountService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final @NonNull UserHelper userHelper;

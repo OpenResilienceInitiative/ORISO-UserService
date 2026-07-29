@@ -21,7 +21,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
@@ -55,7 +54,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock private AgencyService agencyService;
 
-  @Mock private IdentityClient identityClient;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private IdentityRoleLookup identityRoleLookup;
@@ -228,7 +226,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
                 LogService::logInfo));
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService, never()).saveConsultantAgency(any());
   }
 
@@ -267,7 +264,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         LogService::logInfo);
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 

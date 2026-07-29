@@ -540,6 +540,16 @@ address, resolves the target identity once and performs one update. The former
 asker-import consumer no longer exists on the Matrix-only baseline; current-user
 email deletion remains on the existing email-address operation.
 
+The current Matrix-only graph also removes unused broad `IdentityClient`
+constructor dependencies from `SessionSupervisorFacade`,
+`ConsultantAgencyRelationCreatorService` and `UserAccountService`. None of
+those services performed an identity call. Their Matrix supervision,
+consultant-agency relation and account-lifecycle behavior is therefore
+unchanged, while the application graph no longer advertises nonexistent
+provider coupling. An executable removal contract covers all three consumers
+and also keeps the deleted Rocket.Chat adapter, MessageService and LiveService
+transport from returning.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
 source. The next safe sequence is the remaining identity create-user DTO

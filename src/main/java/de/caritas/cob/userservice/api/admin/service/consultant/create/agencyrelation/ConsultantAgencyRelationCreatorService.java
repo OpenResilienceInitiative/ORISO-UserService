@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
@@ -38,7 +37,6 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyService agencyService;
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityRoleLookup identityRoleLookup;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultingTypeManager consultingTypeManager;

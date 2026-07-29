@@ -192,6 +192,21 @@ class RocketChatAdapterRemovedContractTest {
   }
 
   @Test
+  void matrixOnlyServicesMustNotRetainDeadLegacyIdentityClientWiring() throws IOException {
+    for (var source :
+        new String[] {
+          "src/main/java/de/caritas/cob/userservice/api/facade/SessionSupervisorFacade.java",
+          "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/create/"
+              + "agencyrelation/ConsultantAgencyRelationCreatorService.java",
+          "src/main/java/de/caritas/cob/userservice/api/service/user/UserAccountService.java"
+        }) {
+      assertThat(Files.readString(Path.of(source)))
+          .as(source)
+          .doesNotContainPattern("\\bIdentityClient\\b");
+    }
+  }
+
+  @Test
   void currentSqlFixturesMustNotUseDroppedRocketChatColumns() throws IOException {
     var userServiceDatabase =
         Files.readString(Path.of("src/test/resources/database/UserServiceDatabase.sql"));

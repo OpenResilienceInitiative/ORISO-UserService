@@ -23,7 +23,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
@@ -53,7 +52,6 @@ public class UserAccountServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private IdentityClient identityClient;
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private UserHelper userHelper;

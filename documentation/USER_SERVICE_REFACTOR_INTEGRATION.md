@@ -32,6 +32,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity role writes | [#894](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/894) | Consultant role writes use a focused batch port, deduplicate roles and bound provider reads, writes, visibility checks and retries |
 | Identity provisioning role writes | [#806](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/806) | Adapted onto the Matrix-only graph so every active admin, consultant and user provisioning path uses the focused batch role port without restoring the removed asker-import path |
 | Identity role removals | [#808](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/808) | Adapted onto the Matrix-only graph so consultant rollback and group-role disablement use one focused, idempotent removal batch without restoring legacy chat dependencies |
+| Dead broad identity wiring | [#813](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/813) | Adapted onto the current Matrix-only graph so session supervision, consultant-agency relations and user-account handling no longer require an unused broad identity client; no deleted Rocket.Chat source is restored |
 | Identity profile writes | [#895](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/895) | Admin and consultant profile mutations use a focused five-field provider-neutral port with explicit lookup, availability-check, update and retry bounds |
 | Identity password writes | [#897](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/897) | Admin provisioning, consultant provisioning and imports, user registration, and self-service reset use a focused password port with one target resolution, one reset attempt, and no automatic retry |
 | Identity deactivation | [#898](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/898) | Account, asker, consultant, and anonymous-user deactivation use a focused port with one target resolution, one read, at most one update, and no retry |
@@ -40,11 +41,11 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 | Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
-Every row except #806 and #808 is represented by a separate merge commit so the
-original PR head and its review history remain traceable. #806 and #808 are
-represented by explicit adapted replay commits because their original stack
-depended on chat paths that are absent from the Matrix-only graph; each source
-commit records the corresponding original head.
+Every row except #806, #808 and #813 is represented by a separate merge commit
+so the original PR head and its review history remain traceable. #806, #808 and
+#813 are represented by explicit adapted replay commits because their original
+stack depended on chat paths that are absent from the Matrix-only graph; each
+source commit records the corresponding original head.
 
 The #881 and #833 merges compose the username path as web adapter →
 `IdentityManaging` → `IdentityUsernameAvailability`, so web code cannot bypass
@@ -70,7 +71,13 @@ It deduplicates each requested set, performs one complete assigned-role read and
 at most one removal write per attempt, and retries the complete batch once after
 one unauthorized-session refresh. It removes role deletion from the broad
 identity client and deliberately restores none of the original stack's legacy
-chat collaborators. The #895 merge
+chat collaborators. The adapted #813 replay removes the remaining unused broad
+identity-client constructor dependencies from the Matrix session-supervision
+facade, consultant-agency relation creation and current-user account service.
+Its original Rocket.Chat services and adapters are already absent from the
+current source graph and are deliberately not restored. A Matrix-only
+regression contract prevents those three dead dependencies from returning.
+The #895 merge
 moves admin and consultant profile writes out of the broad client and keeps
 username, email, tenant ID, first name and last name provider-neutral. An
 unchanged email skips the availability search; a changed email performs one
