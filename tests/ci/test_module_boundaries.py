@@ -231,7 +231,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             identity_manager,
             "Application code must not interpret Keycloak adapter map keys",
         )
->>>>>>> origin/pre-dev
 
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
