@@ -279,6 +279,74 @@ test proves that both outbound boundaries remain untouched. Runtime
 confirmation still requires the repaired branch image to be merged, deployed
 and traced.
 
+### Read-only PreDev refresh on 2026-07-29
+
+A later read-only audit at approximately 10:10 CEST observed the same immutable
+UserService digest and pod described above. It still does not contain this
+integration branch. The pod had been running for about ten hours and exported
+6,043 outbound attempts while the server metric recorded 472 inbound requests.
+Those totals must not be divided into a per-request fan-out ratio because they
+include Matrix sync and deletion schedulers.
+
+The cumulative dependency measurements on that pod included:
+
+| Dependency/operation | Attempts | Outcome | Mean latency | Known request bytes/call |
+| --- | ---: | --- | ---: | ---: |
+| Matrix GET | 1,831 | 2xx | 19.86 s | n/a |
+| Matrix POST | 1,530 | 2xx | 28.48 ms | n/a |
+| Matrix DELETE | 778 | 2xx | 7.31 ms | n/a |
+| Keycloak DELETE | 1,589 | 4xx | 2.64 ms | n/a |
+| removed LiveService POST | 76 | asynchronous error | 9.27 ms | 139.78 |
+| AgencyService GET | 15 | 2xx | 35.33 ms | 0 |
+
+The Matrix GET mean remains dominated by the expected sync long-poll. The
+Keycloak DELETE count is a real repeat loop rather than user traffic: ten
+failed anonymous-deletion scheduler runs produced 1,583 idempotent
+"already absent" warnings covering 162 distinct deletion targets. Thirty
+database errors collapsed to three distinct stale `Session` references. The
+workflow removed external identities, then hit those stale database relations,
+poisoned the transaction and retried the external deletions in the next run.
+This independently confirms the failure shape addressed by the per-user
+transaction boundary below.
+
+Sampled request traces also supplied direct fan-out evidence:
+
+| Incoming operation | Sampled requests | Client spans/request | Mean request latency | Observed targets |
+| --- | ---: | ---: | ---: | --- |
+| `POST /users/askers/session/new` | 1 | 8 | 1,056.41 ms | Matrix 5, AgencyService 2, Keycloak 1 |
+| `GET /users/sessions/room` | 3 | 2 | 99.06 ms | Matrix 2 |
+| `GET /users/sessions/askers` | 2 | 2 | 118.84 ms | Matrix 2 |
+| `GET /users/data` | 1 | 1 | 24.06 ms | Keycloak 1 |
+| `GET /users/consultants/search` | 1 | 1 | 50.99 ms | AgencyService 1 |
+| `GET /useradmin/tenantadmins` | 30 | 0 | 5.01 ms | none |
+
+The low sample count is stated deliberately; it identifies concrete fan-out
+without pretending to be a statistically complete route profile. Background
+scheduler traces on the old image contained only their root span, so their
+dependency calls could be counted but not joined to the root operation. The
+reviewed branch must still be deployed before its improved attribution can be
+verified.
+
+The infrastructure cutover also remains incomplete. No Rocket.Chat or Jitsi
+workload is running, but `rocketchat` Service and `rocketchat-ingress` still
+exist with zero endpoints, and Rocket.Chat/Mongo configuration keys are still
+injected through the active UserService and AgencyService ConfigMaps. MongoDB
+therefore remains a shared workload. The final Matrix-only proof must remove
+that routing and configuration residue while preserving the target stack:
+ORISO-owned frontend, ORISO-controlled Element Call/MatrixRTC fork and LiveKit.
+
+The deterministic E2E contract declares J01 through J08, and its contract,
+managed-actor and trace-context tests pass. The implementation inventory still
+fails closed because only J01/J02 exist on the staged E2E branch; J03 through
+J08 have no executable journey files yet. A browser run against this stale
+deployment cannot satisfy the full release gate.
+
+Current `pre-dev` also acquired a separate test-context merge regression:
+`IdentityUsernameAvailability` disappeared from eight shared Keycloak mocks
+when the authentication-port change was reconciled. PR #912 restores only that
+test contract. Its local 3,543-unit/858-integration/54-CI checks and all GitHub
+checks pass, but it remains a separate review item and is not runtime evidence.
+
 ### Anonymous-deletion repeat loop
 
 Trace grouping identified one concrete chatty-call cause in
