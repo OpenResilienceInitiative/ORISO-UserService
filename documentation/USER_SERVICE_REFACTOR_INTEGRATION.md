@@ -365,6 +365,40 @@ The integration suite created and cleaned its isolated database state, so no
 manual or shared database reset was needed. This evidence does not represent a
 merge, deployment or PreDev runtime claim.
 
+### Consultant session detail boundary
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `e9f0fca87f04d072fdd628e6d3953f0dac61b46e`:
+
+- `ConsultantSessionDetailService` now owns the authorized consultant-facing
+  detail read and its response mapping;
+- the detail path performs one repository lookup and one consultant
+  access-policy check;
+- main-topic and topic-list enrichment now share one
+  `TopicService.getAllTopicsMap()` call per response;
+- responses without topic identifiers make no TopicService call, and the two
+  old public single-enrichment APIs were removed so the double-lookup path
+  cannot return;
+- `UserSessionControllerDelegate` calls the focused detail boundary directly;
+- `SessionService` no longer owns consultant detail mapping, consultant access
+  policy or topic enrichment and is reduced from 320 to 255 lines and from four
+  to two constructor collaborators;
+- 117 focused unit tests and 135 focused Spring/controller tests passed;
+- unit suite: 3,571 tests in 408 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 89 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- package build, Spotless and `git diff --check`: passed.
+
+The independent review covered all 13 changed files, identified one missing
+feature-property default, and reported zero findings after that fix. The final
+mechanical removal of the two unused split APIs was manually reviewed and
+covered by the full gates; an additional review request was rate-limited rather
+than returning a finding. The integration suite created and cleaned its
+isolated database state, so no manual or shared database reset was needed.
+This evidence does not represent a merge, deployment or PreDev runtime claim.
+
 ## Problems addressed
 
 - process-local and scheduler state was too easy to mistake for replica safety;
