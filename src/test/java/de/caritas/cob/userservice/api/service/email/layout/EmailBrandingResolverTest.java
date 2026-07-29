@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -8,10 +9,8 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
-import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -31,7 +30,7 @@ class EmailBrandingResolverTest {
   }
 
   private void givenNoTemplateAttributes() {
-    lenient().when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of());
+    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn(null);
   }
 
   private static RestrictedTenantDTO tenant(String name, Theming theming) {
@@ -172,27 +171,51 @@ class EmailBrandingResolverTest {
   // --- footer ---------------------------------------------------------------------------
 
   @Test
-  void resolve_Should_reuseTheImprintAndPrivacyUrlsFromTheTenantTemplateSupplier() {
-    when(tenantTemplateSupplier.getTemplateAttributes())
-        .thenReturn(
-            List.of(
-                new TemplateDataDTO()
-                    .key("tenant_urlimpressum")
-                    .value("https://nord.org/impressum"),
-                new TemplateDataDTO()
-                    .key("tenant_urldatenschutz")
-                    .value("https://nord.org/datenschutz")));
+  void resolve_Should_buildTheImprintAndPrivacyUrlsFromTheResolvedTenantsOwnBaseUrl() {
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
 
-    EmailBranding branding = resolver("").resolve(null);
+    EmailBranding branding = resolver("").resolve(7L);
 
     assertThat(branding.imprintUrl()).isEqualTo("https://nord.org/impressum");
     assertThat(branding.privacyUrl()).isEqualTo("https://nord.org/datenschutz");
   }
 
+  /**
+   * Reproduces ORISO-UserService#915's follow-up bug: a super-admin invites a counsellor for tenant
+   * 42. The ambient {@link de.caritas.cob.userservice.api.tenant.TenantContext} stays in the
+   * super-admin's own (tenant-less) context throughout, but the footer must still carry tenant 42's
+   * own imprint/privacy — not the technical context's, and not another tenant's — because it is
+   * rendered together with tenant 42's name, logo and accent.
+   */
   @Test
-  void resolve_Should_fallBackToTheApplicationBaseUrl_When_TemplateSupplierFails() {
-    when(tenantTemplateSupplier.getTemplateAttributes())
-        .thenThrow(new IllegalStateException("no tenant context"));
+  void resolve_Should_useTheRequestedTenantsFooter_Even_WhenTheAmbientContextIsTechnical() {
+    RestrictedTenantDTO tenant42 = tenant("Tenant42", null);
+    when(tenantService.getRestrictedTenantData(42L)).thenReturn(tenant42);
+    when(tenantTemplateSupplier.getTenantBaseUrl(tenant42)).thenReturn("https://tenant42.org");
+
+    EmailBranding branding = resolver("").resolve(42L);
+
+    assertThat(branding.brandName()).isEqualTo("Tenant42");
+    assertThat(branding.imprintUrl()).isEqualTo("https://tenant42.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://tenant42.org/datenschutz");
+  }
+
+  @Test
+  void resolve_Should_fallBackToTheApplicationBaseUrl_When_TheTenantHasNoOwnBaseUrl() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", null));
+
+    EmailBranding branding = resolver("").resolve(7L);
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+  }
+
+  @Test
+  void resolve_Should_fallBackToTheApplicationBaseUrl_When_NoTenantIdIsKnown() {
+    givenNoTemplateAttributes();
 
     EmailBranding branding = resolver("").resolve(null);
 

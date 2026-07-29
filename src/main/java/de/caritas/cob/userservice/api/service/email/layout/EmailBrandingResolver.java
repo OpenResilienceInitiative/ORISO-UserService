@@ -5,13 +5,9 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,8 +29,9 @@ import org.springframework.stereotype.Component;
  *       EmailColors#PLATFORM_ACCENT_DARK}. Contrast-safe foregrounds are derived from it in {@link
  *       EmailBranding}, so a light theme colour never yields light-on-light text. See {@link
  *       #resolveAccentColor} for why the chain is exactly two steps long.
- *   <li><b>Footer</b> — the imprint/privacy URLs already computed by {@link TenantTemplateSupplier}
- *       (reused, not re-derived) → the configured application base URL.
+ *   <li><b>Footer</b> — the imprint/privacy URLs built from the same tenant resolved above (via
+ *       {@link TenantTemplateSupplier#getTenantBaseUrl(RestrictedTenantDTO)}, never from the
+ *       ambient {@link TenantContext}) → the configured application base URL.
  * </ul>
  *
  * <p>Every remote lookup is best-effort. A tenant-admin invite is sent <em>before</em> the tenant
@@ -44,9 +41,6 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 public class EmailBrandingResolver {
-
-  private static final String IMPRINT_KEY = "tenant_urlimpressum";
-  private static final String PRIVACY_KEY = "tenant_urldatenschutz";
 
   private final TenantService tenantService;
   private final TenantTemplateSupplier tenantTemplateSupplier;
@@ -83,8 +77,8 @@ public class EmailBrandingResolver {
         brandName,
         resolveLogoUrl(theming),
         resolveAccentColor(theming),
-        resolveFooterUrl(IMPRINT_KEY, "/impressum"),
-        resolveFooterUrl(PRIVACY_KEY, "/datenschutz"));
+        resolveFooterUrl(tenant, "/impressum"),
+        resolveFooterUrl(tenant, "/datenschutz"));
   }
 
   private String resolveLogoUrl(Theming theming) {
@@ -135,37 +129,16 @@ public class EmailBrandingResolver {
     return color == null ? EmailColors.PLATFORM_ACCENT_DARK : color;
   }
 
-  private String resolveFooterUrl(String templateKey, String fallbackPath) {
-    String fromTemplateSupplier = tenantTemplateAttributes().get(templateKey);
-    String absolute = firstAbsoluteUrl(fromTemplateSupplier);
-    if (absolute != null) {
-      return absolute;
+  private String resolveFooterUrl(RestrictedTenantDTO tenant, String fallbackPath) {
+    if (tenant != null) {
+      String tenantBaseUrl = tenantTemplateSupplier.getTenantBaseUrl(tenant);
+      String tenantUrl = isBlank(tenantBaseUrl) ? null : tenantBaseUrl + fallbackPath;
+      String absolute = firstAbsoluteUrl(tenantUrl);
+      if (absolute != null) {
+        return absolute;
+      }
     }
     return isBlank(applicationBaseUrl) ? null : firstAbsoluteUrl(applicationBaseUrl + fallbackPath);
-  }
-
-  /**
-   * Reuses the imprint/privacy URLs {@link TenantTemplateSupplier} already derives for the
-   * MailService templates instead of deriving them a second time. It depends on {@link
-   * TenantContext}, which is not populated on every code path, so failures degrade to an empty map.
-   */
-  private Map<String, String> tenantTemplateAttributes() {
-    try {
-      List<TemplateDataDTO> attributes = tenantTemplateSupplier.getTemplateAttributes();
-      if (attributes == null) {
-        return Map.of();
-      }
-      return attributes.stream()
-          .filter(attribute -> attribute.getKey() != null && attribute.getValue() != null)
-          .collect(
-              Collectors.toMap(
-                  TemplateDataDTO::getKey, TemplateDataDTO::getValue, (first, second) -> first));
-    } catch (RuntimeException exception) {
-      log.debug(
-          "Could not resolve tenant template attributes for mail branding ({})",
-          exception.getClass().getSimpleName());
-      return Map.of();
-    }
   }
 
   private RestrictedTenantDTO loadTenantQuietly(Long tenantId) {
