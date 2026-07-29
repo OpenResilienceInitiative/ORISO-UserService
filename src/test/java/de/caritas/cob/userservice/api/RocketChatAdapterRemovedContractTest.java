@@ -130,8 +130,6 @@ class RocketChatAdapterRemovedContractTest {
     assertThat(Files.readString(Path.of("api/userstatisticsservice.yaml")))
         .doesNotContain("rcGroupId")
         .contains("matrixRoomId");
-    assertThat(Files.readString(Path.of("services/liveservice.yaml")))
-        .doesNotContain("rcGroupId", "initiatorRcUserId", "Rocket.Chat");
     assertThat(Files.readString(Path.of("services/statisticsservice.yaml")))
         .doesNotContain("rcGroupId", "Rocket.Chat")
         .contains("matrixRoomId");
@@ -153,6 +151,34 @@ class RocketChatAdapterRemovedContractTest {
                     "src/main/resources/db/changelog/changeset/"
                         + "0075_remove_rocket_chat_feedback_room_id/0075_changeSet.xml")))
         .contains("dropColumn tableName=\"session\" columnName=\"rc_feedback_group_id\"");
+  }
+
+  @Test
+  void legacyLiveServiceTransportMustRemainRemoved() throws IOException {
+    assertThat(Path.of("services/liveservice.yaml")).doesNotExist();
+    assertThat(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/adapters/live/"
+                    + "LiveServiceEventGateway.java"))
+        .doesNotExist();
+    assertThat(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller/"
+                    + "LiveProxyController.java"))
+        .doesNotExist();
+    assertThat(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/service/liveevents/"
+                    + "LiveEventNotificationService.java"))
+        .doesNotExist();
+
+    assertThat(Files.readString(Path.of("pom.xml")))
+        .doesNotContain("liveservice-client-model", "services/liveservice.yaml");
+    assertThat(Files.readString(USER_SERVICE_API))
+        .contains("/liveproxy/send:", "deprecated: true", "410:")
+        .doesNotContain("Send a live notification event");
+    assertThat(Files.readString(Path.of("src/main/resources/application.properties")))
+        .doesNotContain("LIVE_SERVICE_API_URL", "live.service.api.url");
   }
 
   @Test

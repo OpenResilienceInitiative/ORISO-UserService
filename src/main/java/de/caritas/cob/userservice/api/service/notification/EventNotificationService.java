@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -50,7 +49,6 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
@@ -620,9 +618,6 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
-    // Real-time backbone: nudge the recipient's client to refresh the Activity Timeline now
-    // instead of on the next 15s poll. Best-effort; carries only the recipient id (no content).
-    liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
@@ -660,8 +655,6 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
-      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
-      liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
