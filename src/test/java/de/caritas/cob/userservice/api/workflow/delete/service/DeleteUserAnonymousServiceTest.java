@@ -54,7 +54,7 @@ class DeleteUserAnonymousServiceTest {
   }
 
   @Test
-  void deleteInactiveAnonymousUsers_Should_notReplayBatch_When_notificationFails() {
+  void deleteInactiveAnonymousUsers_Should_notReplayBatchOrFail_When_notificationFails() {
     var error = org.mockito.Mockito.mock(DeletionWorkflowError.class);
     when(deletionBatch.deleteOverdueUsers()).thenReturn(List.of(error));
     org.mockito.Mockito.doThrow(new IllegalStateException("tenant unavailable"))
