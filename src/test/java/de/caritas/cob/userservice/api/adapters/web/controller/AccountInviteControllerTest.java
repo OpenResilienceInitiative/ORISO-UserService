@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -76,6 +77,40 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(AccountInviteTargetRole.COUNSELLOR, commandCaptor.getValue().targetRole());
     assertEquals("invitee@example.org", commandCaptor.getValue().recipientEmail());
+  }
+
+  @Test
+  void createInvite_allocationModes_areParsedAndPassedToTheCommand() {
+    // TEN-INV-U3: the composer's AUTO/MANUAL allocation modes reach the orchestration untouched.
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "AUTO";
+    request.agencyIdAllocationMode = "MANUAL";
+    request.agencyId = 9L;
+
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
+    assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_unknownAllocationMode_throwsBadRequest() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "SOMETIMES";
+
+    assertThrows(BadRequestException.class, () -> controller.createInvite(request));
   }
 
   @Test

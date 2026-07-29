@@ -11,6 +11,11 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -44,6 +49,8 @@ public class AccountInviteService {
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull TenantService tenantService;
+  private final @NonNull TenantIdAllocationClient tenantIdAllocationClient;
+  private final @NonNull AgencyIdAllocationClient agencyIdAllocationClient;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -56,6 +63,7 @@ public class AccountInviteService {
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
     }
+    validateAllocationModes(command);
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
@@ -63,26 +71,96 @@ public class AccountInviteService {
       throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
     }
 
-    LocalDateTime now = LocalDateTime.now();
-    AccountInvite invite =
-        AccountInvite.builder()
-            .targetRole(command.targetRole())
-            .tenantId(command.tenantId())
-            .recipientEmail(command.recipientEmail().trim())
-            .firstName(trimToNull(command.firstName()))
-            .lastName(trimToNull(command.lastName()))
-            .agencyId(command.agencyId())
-            .departmentId(command.departmentId())
-            .expiresAt(resolveExpiry(now, command.expiresInDays()))
-            .status(AccountInviteStatus.DRAFT)
-            .emailVerificationStatus(EmailVerificationStatus.PENDING)
-            .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
-            .createdByUserId(authenticatedUser.getUserId())
-            .createdByUsername(authenticatedUser.getUsername())
-            .createDate(now)
-            .updateDate(now)
-            .build();
-    return accountInviteRepository.save(invite);
+    // TEN-INV-U3 (#889): tenant-admin invites hold an authoritative TenantService reservation;
+    // agency IDs are reserved in AgencyService's own ID space (U2 decision, AS#214). The green
+    // UI state alone grants nothing — the reservation plus the re-validation below decide.
+    TenantIdReservation tenantReservation = null;
+    Long reservedAgencyId = null;
+    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN) {
+      tenantReservation = tenantIdAllocationClient.reserve(command.tenantId());
+    }
+    try {
+      if (command.agencyIdAllocationMode() != null) {
+        Long tenantIdForAgency =
+            tenantReservation != null ? tenantReservation.tenantId() : command.tenantId();
+        reservedAgencyId = agencyIdAllocationClient.reserve(command.agencyId(), tenantIdForAgency);
+      }
+      revalidateReservations(tenantReservation, reservedAgencyId);
+
+      LocalDateTime now = LocalDateTime.now();
+      AccountInvite invite =
+          AccountInvite.builder()
+              .targetRole(command.targetRole())
+              .tenantId(
+                  tenantReservation != null ? tenantReservation.tenantId() : command.tenantId())
+              .tenantIdReservationToken(
+                  tenantReservation != null ? tenantReservation.token() : null)
+              .recipientEmail(command.recipientEmail().trim())
+              .firstName(trimToNull(command.firstName()))
+              .lastName(trimToNull(command.lastName()))
+              .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
+              .departmentId(command.departmentId())
+              .expiresAt(resolveExpiry(now, command.expiresInDays()))
+              .status(AccountInviteStatus.DRAFT)
+              .emailVerificationStatus(EmailVerificationStatus.PENDING)
+              .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
+              .createdByUserId(authenticatedUser.getUserId())
+              .createdByUsername(authenticatedUser.getUsername())
+              .createDate(now)
+              .updateDate(now)
+              .build();
+      return accountInviteRepository.save(invite);
+    } catch (RuntimeException exception) {
+      // Compensation: a failed creation must not leave orphaned reservations behind.
+      if (reservedAgencyId != null) {
+        agencyIdAllocationClient.release(reservedAgencyId);
+      }
+      if (tenantReservation != null) {
+        tenantIdAllocationClient.release(tenantReservation.tenantId());
+      }
+      throw exception;
+    }
+  }
+
+  private static void validateAllocationModes(CreateAccountInviteCommand command) {
+    if (command.tenantIdAllocationMode() == IdAllocationMode.MANUAL && command.tenantId() == null) {
+      throw new BadRequestException("tenantId is required in MANUAL tenant allocation mode");
+    }
+    if (command.tenantIdAllocationMode() == IdAllocationMode.AUTO && command.tenantId() != null) {
+      throw new BadRequestException("tenantId must be omitted in AUTO tenant allocation mode");
+    }
+    if (command.tenantIdAllocationMode() != null
+        && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
+      throw new BadRequestException(
+          "tenantIdAllocationMode is only supported for TENANT_ADMIN invites");
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.MANUAL && command.agencyId() == null) {
+      throw new BadRequestException("agencyId is required in MANUAL agency allocation mode");
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.AUTO && command.agencyId() != null) {
+      throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
+    }
+  }
+
+  /**
+   * Re-validates the reservations immediately before saving: the owning services must still report
+   * RESERVED for the held IDs. The server-side check is authoritative — a stale UI state or a lost
+   * reservation never produces a duplicate ID.
+   */
+  private void revalidateReservations(
+      TenantIdReservation tenantReservation, Long reservedAgencyId) {
+    if (tenantReservation != null
+        && tenantIdAllocationClient.getAvailability(tenantReservation.tenantId())
+            != IdAllocationStatus.RESERVED) {
+      throw new ConflictException(
+          "tenantId " + tenantReservation.tenantId() + " is no longer reserved for this invite");
+    }
+    if (reservedAgencyId != null
+        && agencyIdAllocationClient.getAvailability(reservedAgencyId)
+            != IdAllocationStatus.RESERVED) {
+      throw new ConflictException(
+          "agencyId " + reservedAgencyId + " is no longer reserved for this invite");
+    }
   }
 
   @Transactional(readOnly = true)
@@ -124,6 +202,9 @@ public class AccountInviteService {
         AccountInvite.builder()
             .targetRole(oldInvite.getTargetRole())
             .tenantId(oldInvite.getTenantId())
+            // The reservation follows the invite chain: the replacement keeps the reserved
+            // tenant ID, so it must also keep the token that consumes the reservation.
+            .tenantIdReservationToken(oldInvite.getTenantIdReservationToken())
             .recipientEmail(oldInvite.getRecipientEmail())
             .firstName(oldInvite.getFirstName())
             .lastName(oldInvite.getLastName())
@@ -424,7 +505,33 @@ public class AccountInviteService {
       String lastName,
       Long agencyId,
       Long departmentId,
-      Long expiresInDays) {}
+      Long expiresInDays,
+      IdAllocationMode tenantIdAllocationMode,
+      IdAllocationMode agencyIdAllocationMode) {
+
+    /** Convenience for callers without ID-allocation semantics (no reservation modes). */
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          null,
+          null);
+    }
+  }
 
   public record SendInviteCommand(Long inviteId, Long templateId, String acceptBaseUrl) {}
 
