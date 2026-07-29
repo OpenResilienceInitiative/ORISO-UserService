@@ -261,6 +261,28 @@ application head `ba44b12be7aaa146847334110e711378e9e79c61`:
 - OpenAPI contract gate: 8 tests passed;
 - Spotless and `git diff --check`: passed.
 
+### Session access policy increment
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `c1db4b5decce8b8ea4a4a57ecc0698368ca60e17`:
+
+- the focused `SessionAccessService` now owns authenticated session lookup and
+  the distinct owner, assigned-consultant, supervisor, agency, team and topic
+  access policies;
+- Matrix message and sync controllers authorize through the focused access
+  boundary instead of the broad `SessionService`;
+- `SessionService` delegates access decisions and no longer loads consultant
+  caller identities directly;
+- direct session access remains deliberately narrower than queue/list
+  visibility, protected by a regression test for new non-team agency sessions;
+- 105 focused session and Matrix-controller tests passed;
+- unit suite: 3,565 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 86 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- Spotless and `git diff --check`: passed.
+
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because both the integration
 suite and the exact-head load proof create and clean isolated databases. The
