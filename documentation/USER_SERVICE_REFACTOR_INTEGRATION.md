@@ -33,6 +33,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity profile writes | [#895](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/895) | Admin and consultant profile mutations use a focused five-field provider-neutral port with explicit lookup, availability-check, update and retry bounds |
 | Identity password writes | [#897](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/897) | Admin provisioning, consultant provisioning and imports, user registration, and self-service reset use a focused password port with one target resolution, one reset attempt, and no automatic retry |
 | Identity deactivation | [#898](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/898) | Account, asker, consultant, and anonymous-user deactivation use a focused port with one target resolution, one read, at most one update, and no retry |
+| Identity account removal | [#899](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/899) | Strict deletion and best-effort rollback use a focused port with one normal lookup/remove attempt and at most one complete retry after one session refresh |
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 | Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
@@ -65,7 +66,11 @@ remain application policies. A write resolves the target identity once,
 performs one provider reset, and has no automatic retry. The #898 merge moves
 all four active deactivation paths out of the broad identity client. The adapter
 retains the bounded read-modify-write operation, while best-effort anonymous
-cleanup and strict deletion sequencing remain unchanged. The #886 merge removes
+cleanup and strict deletion sequencing remain unchanged. The #899 merge moves
+strict deletion and best-effort provisioning rollback out of the broad client.
+It also expands admin-provisioning compensation to cover a created identity
+whose response validation fails, while retaining the original exception
+mappings and skipping rollback when no usable identity ID exists. The #886 merge removes
 the unused session-close command while
 preserving the active refresh-token logout flow. The #902 merge deletes the
 unreachable LiveService dependency while keeping Matrix push and durable
@@ -86,13 +91,13 @@ the focused replay PRs.
 
 Executed on 2026-07-29 with Temurin JDK 21:
 
-- unit suite: 3,420 tests, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,421 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 70 tests passed;
+- CI and executable architecture contracts: 71 tests passed;
 - OpenAPI contract gate: 8 tests passed;
-- focused deactivation and Keycloak composition: 137 Java tests passed; all 22
-  focused module-boundary tests passed within the 70-test CI suite;
+- focused account-removal and Keycloak composition: 121 Java tests passed; all
+  23 focused module-boundary tests passed within the 71-test CI suite;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
@@ -105,6 +110,9 @@ Executed on 2026-07-29 with Temurin JDK 21:
   fix: 80 concurrent upserts and both cross-replica reads passed, followed by 12
   writes and both reads after one replica restart, with one canonical row;
 - package build and Spotless: passed;
+- CodeRabbit combined-diff review produced one major and one minor finding; both
+  were fixed and the focused suites passed. The immediate verification review
+  hit the service's 14-minute usage limit, so no second clean-review claim is made;
 - `git diff --check`: passed.
 
 Compared with the preceding #886 integration head, the net reduction of 33
