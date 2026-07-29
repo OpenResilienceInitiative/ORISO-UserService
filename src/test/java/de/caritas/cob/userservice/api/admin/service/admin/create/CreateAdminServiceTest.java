@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -45,6 +46,7 @@ class CreateAdminServiceTest {
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
 
@@ -83,8 +85,8 @@ class CreateAdminServiceTest {
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     doThrow(new RuntimeException("role assignment failed"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
 
     CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername("valid_username");
@@ -125,8 +127,8 @@ class CreateAdminServiceTest {
     when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
         .thenReturn(keycloakResponse);
     doThrow(new NotFoundException("HTTP 404 Not Found"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
 
     CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername("valid_username");

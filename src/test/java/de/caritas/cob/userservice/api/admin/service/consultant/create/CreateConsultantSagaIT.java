@@ -14,7 +14,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -88,7 +87,7 @@ public class CreateConsultantSagaIT {
         this.createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     ConsultantDTO consultant = consultantAdminResponseDTO.getEmbedded();
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
+    verify(keycloakService).assignRoles(anyString(), eq(asSet(CONSULTANT.getValue())));
 
     assertThat(consultant, notNullValue());
     assertThat(consultant.getId(), notNullValue());
@@ -120,8 +119,7 @@ public class CreateConsultantSagaIT {
           ex.getCustomHttpHeaders().get("X-Reason").get(0),
           is(
               "DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE"));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-      verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
+      verify(keycloakService).assignRoles(anyString(), eq(asSet(CONSULTANT.getValue())));
       verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
     }
   }
@@ -143,7 +141,7 @@ public class CreateConsultantSagaIT {
       fail("Exception should be thrown");
     } catch (CustomValidationHttpStatusException ex) {
       assertThat(ex.getCustomHttpHeaders().get("X-Reason").get(0), is("PASSWORD_NOT_VALID"));
-      verify(keycloakService, Mockito.never()).updateRole(anyString(), eq(CONSULTANT.getValue()));
+      verify(keycloakService, Mockito.never()).assignRoles(anyString(), any());
       verify(rollbackFacade).rollbackConsultantAccount(Mockito.any(Consultant.class));
     }
   }
@@ -152,7 +150,7 @@ public class CreateConsultantSagaIT {
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdateRoleThrowsException() {
     when(keycloakService.createKeycloakUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
-    doThrow(BadRequestException.class).when(keycloakService).updateRole(anyString(), anyString());
+    doThrow(BadRequestException.class).when(keycloakService).assignRoles(anyString(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -188,9 +186,9 @@ public class CreateConsultantSagaIT {
     var consultantAdminResponseDTO = createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     // then
-    verify(keycloakService, times(2)).updateRole(anyString(), anyString());
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-    verify(keycloakService).updateRole(anyString(), eq(GROUP_CHAT_CONSULTANT.getValue()));
+    verify(keycloakService)
+        .assignRoles(
+            anyString(), eq(asSet(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue())));
 
     assertThat(consultantAdminResponseDTO.getEmbedded(), notNullValue());
     assertThat(consultantAdminResponseDTO.getEmbedded().getId(), notNullValue());
@@ -211,6 +209,7 @@ public class CreateConsultantSagaIT {
     assertThat(consultant, notNullValue());
     assertThat(consultant.getId(), notNullValue());
     assertThat(consultant.getMatrixUserId(), is((String) null));
+    verify(keycloakService).assignRoles(anyString(), eq(asSet(CONSULTANT.getValue())));
     assertThat(consultant.getAbsenceMessage(), notNullValue());
     assertThat(consultant.getCreateDate(), notNullValue());
     assertThat(consultant.getUpdateDate(), notNullValue());

@@ -362,16 +362,17 @@ repeat loop is narrowed to the cases this branch removes, not closed.
   port, the Keycloak facade and its authentication collaborator. Repository-wide
   tracing found no production consumer, so the removed path has an exact
   zero-call bound. The active refresh-token logout flow remains unchanged.
-- Consultant role assignment uses the focused `IdentityRoleUpdater` batch
+- All active admin, consultant and user provisioning role assignments use the
+  focused `IdentityRoleUpdater` batch
   port. Empty requests cause no identity traffic. Each non-empty attempt makes
-  one assigned-role list request, deduplicates the requested roles and skips
-  already assigned roles. For `M` missing roles, the adapter performs `M`
-  targeted role-representation lookups, one batch add and one complete-set
-  visibility read; visibility may be read at most three more times under the
-  existing bounded retry policy. An unauthorized admin session refreshes once
-  and retries the complete idempotent attempt once. This replaces one complete
-  add-and-visibility sequence per requested role while documenting the
-  remaining provider lookups instead of claiming a constant total call count.
+  one role-representation lookup per distinct requested role, one batch add and
+  one complete-set visibility read; visibility may be read at most three more
+  times under the existing bounded retry policy. The add itself is therefore
+  one call per attempt independent of role count. Existing consultant
+  group-role enablement retains the read-before-write `ensureRoles` behavior,
+  which skips roles already assigned. An unauthorized admin session refreshes
+  once and retries the complete attempt once. The broad identity client no
+  longer exposes a role-assignment command.
 - Admin and consultant profile mutations use the focused
   `IdentityProfileUpdater` with exactly five provider-neutral values: username,
   email, tenant ID, first name and last name. Every mutation resolves the target
@@ -413,7 +414,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port and value. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Consultant role writers use the focused batch `IdentityRoleUpdater`; the broad identity command client no longer owns role ensuring. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port and value. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. All active admin, consultant and user provisioning role writers use the focused batch `IdentityRoleUpdater`; the broad identity command client owns neither role ensuring nor role assignment. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -495,9 +496,10 @@ lookup. Lowercase normalization uses the locale-independent root locale.
 External APIs, schemas and configuration remain unchanged. These are
 source-and-local-test guarantees until the branch is merged, deployed and
 verified on PreDev.
-The role-write contract requires both active consultant role writers and shared
-Spring identity mocks to use the focused batch port, and prevents singular role
-ensuring from returning to the broad identity client.
+The role-write contract requires all six active admin, consultant and user role
+writers plus shared Spring identity mocks to use the focused batch port, and
+prevents role ensuring or assignment from returning to the broad identity
+client. The removed Matrix-only AskerImport path is not restored.
 The profile-write contract keeps web and Keycloak transport types out of the
 focused value, requires both active application writers and shared Spring mocks
 to use the port, and removes profile writes from the broad identity client.

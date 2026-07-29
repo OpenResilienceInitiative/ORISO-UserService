@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -63,6 +64,7 @@ public class CreateConsultantSaga {
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
@@ -317,7 +319,7 @@ public class CreateConsultantSaga {
   private void updateKeyloakRolesOrRollback(
       Set<String> roles, String keycloakUserId, ConsultantCreationInput consultantCreationInput) {
     try {
-      roles.forEach(roleName -> identityClient.updateRole(keycloakUserId, roleName));
+      identityRoleUpdater.assignRoles(keycloakUserId, roles);
     } catch (Exception e) {
       log.error(
           "Unable to update roles for user with keycloak id {}. Initiating user rollback.",

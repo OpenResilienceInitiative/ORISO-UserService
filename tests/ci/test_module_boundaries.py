@@ -1178,5 +1178,67 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+    def test_provisioning_role_assignments_use_the_focused_batch_identity_port(self):
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/CreateConsultantSaga.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin"
+            / "create/CreateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "update/ConsultantUpdateService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Provisioning role writers must use the focused batch role port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            "updateUserRole(",
+            identity_client,
+            "The broad identity command client must not own default role assignment",
+        )
+        self.assertNotIn(
+            "updateRole(",
+            identity_client,
+            "The broad identity command client must not own role assignment",
+        )
+        expected_calls = {
+            "CreateConsultantSaga.java": "identityRoleUpdater.assignRoles(",
+            "CreateAdminService.java": "identityRoleUpdater.assignRoles(",
+            "ConsultantUpdateService.java": "identityRoleUpdater.ensureRoles(",
+            "CreateUserFacade.java": "identityRoleUpdater.assignRoles(",
+        }
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                expected_calls[source.name],
+                source_text,
+                f"{source.name} must invoke the focused batch role port",
+            )
+            self.assertNotIn(
+                "identityClient.updateRole(",
+                source_text,
+                f"{source.name} must batch role writes through IdentityRoleUpdater",
+            )
+
 if __name__ == "__main__":
     unittest.main()

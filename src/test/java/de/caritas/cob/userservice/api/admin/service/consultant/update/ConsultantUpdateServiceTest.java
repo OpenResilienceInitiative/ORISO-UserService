@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -175,8 +176,7 @@ public class ConsultantUpdateServiceTest {
 
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
-    verify(this.keycloakService, Mockito.never())
-        .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
     verify(this.keycloakService, Mockito.never())
         .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
 
@@ -218,7 +218,7 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant(consultant.getId(), updateConsultant, false);
 
     verify(this.keycloakService, Mockito.never()).updateProfile(any(), any());
-    verify(this.keycloakService, Mockito.never()).updateRole(any(), any(String.class));
+    verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
     verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
     verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
@@ -238,7 +238,7 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService)
-        .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+        .ensureRoles(consultant.getId(), Set.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));

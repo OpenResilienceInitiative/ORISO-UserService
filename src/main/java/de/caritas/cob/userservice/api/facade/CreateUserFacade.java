@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -34,6 +35,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +54,7 @@ public class CreateUserFacade {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserService userService;
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
@@ -287,7 +290,7 @@ public class CreateUserFacade {
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
     checkIfUserIdNotNull(userId, userDTO);
-    identityClient.updateRole(userId, role);
+    identityRoleUpdater.assignRoles(userId, List.of(role.getValue()));
     identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 

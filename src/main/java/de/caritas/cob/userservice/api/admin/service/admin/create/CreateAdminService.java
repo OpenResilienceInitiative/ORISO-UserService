@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
@@ -44,6 +45,7 @@ public class CreateAdminService {
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull UserHelper userHelper;
   private final @NonNull AdminRepository adminRepository;
@@ -103,7 +105,8 @@ public class CreateAdminService {
     try {
       userAccountInputValidator.validateKeycloakResponse(keycloakResponse);
       identityPasswordUpdater.updatePassword(keycloakUserId, password);
-      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      identityRoleUpdater.assignRoles(
+          keycloakUserId, getDefaultRoles(adminType).stream().map(UserRole::getValue).toList());
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
       rollbackUserIfAvailable(keycloakUserId);

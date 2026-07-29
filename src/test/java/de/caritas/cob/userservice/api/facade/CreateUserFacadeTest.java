@@ -196,7 +196,7 @@ public class CreateUserFacadeTest {
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
     verify(keycloakService, times(1)).createKeycloakUser(any(UserDTO.class));
-    verify(keycloakService, times(1)).updateRole(any(), any(UserRole.class));
+    verify(keycloakService, times(1)).assignRoles(any(), any());
     verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
@@ -213,7 +213,7 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(keycloakService, times(1)).updateRole(any(), any(UserRole.class));
+    verify(keycloakService, times(1)).assignRoles(any(), any());
     verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
     verify(rollbackFacade, times(0)).rollBackUserAccount(any());
   }
@@ -240,9 +240,7 @@ public class CreateUserFacadeTest {
     // logged and swallowed, and the database user account is still created.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doThrow(new RuntimeException())
-        .when(keycloakService)
-        .updateRole(anyString(), any(UserRole.class));
+    doThrow(new RuntimeException()).when(keycloakService).assignRoles(anyString(), any());
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
@@ -463,9 +461,7 @@ public class CreateUserFacadeTest {
   @Test
   void
       updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
-    doThrow(new RuntimeException("kc down"))
-        .when(keycloakService)
-        .updateRole(anyString(), any(UserRole.class));
+    doThrow(new RuntimeException("kc down")).when(keycloakService).assignRoles(anyString(), any());
 
     assertThrows(
         InternalServerErrorException.class,

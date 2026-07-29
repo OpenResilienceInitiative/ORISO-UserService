@@ -8,12 +8,12 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import java.util.Collection;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -119,13 +119,7 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void updateUserRole(String userId) {}
-
-      @Override
-      public void updateRole(String userId, UserRole role) {}
-
-      @Override
-      public void updateRole(String userId, String roleName) {}
+      public void assignRoles(String userId, Collection<String> roleNames) {}
 
       @Override
       public void removeRoleIfPresent(String userId, String roleName) {}
