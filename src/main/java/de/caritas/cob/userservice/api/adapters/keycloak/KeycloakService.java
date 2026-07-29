@@ -69,8 +69,7 @@ import org.springframework.web.client.RestClientResponseException;
 @Slf4j
 @RequiredArgsConstructor
 public class KeycloakService
-    implements
-        IdentityAuthentication,
+    implements IdentityAuthentication,
         IdentityClient,
         IdentityEmailOwnerLookup,
         IdentityUsernameAvailability {
