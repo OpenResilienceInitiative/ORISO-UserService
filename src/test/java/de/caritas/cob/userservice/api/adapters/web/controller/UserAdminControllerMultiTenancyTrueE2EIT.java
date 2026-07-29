@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -63,7 +64,12 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockitoBean(extraInterfaces = {IdentityAuthentication.class, IdentityEmailOwnerLookup.class})
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAuthentication.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityUsernameAvailability.class
+      })
   IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;
