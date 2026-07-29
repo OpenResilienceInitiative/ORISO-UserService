@@ -12,7 +12,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -30,7 +30,7 @@ public class UpdateAdminServiceIT {
 
   @Autowired private UpdateAdminService updateAdminService;
 
-  @MockitoBean(extraInterfaces = IdentityUsernameAvailability.class)
+  @MockitoBean(extraInterfaces = IdentityEmailOwnerLookup.class)
   private IdentityClient identityClient;
 
   @Autowired private RetrieveAdminService retrieveAdminService;

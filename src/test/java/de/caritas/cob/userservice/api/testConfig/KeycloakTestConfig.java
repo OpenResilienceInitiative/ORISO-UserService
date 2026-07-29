@@ -37,8 +37,7 @@ public class KeycloakTestConfig {
       UserHelper userHelper) {
 
     var keycloakAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
 
     return new KeycloakService(
         authenticatedUser,

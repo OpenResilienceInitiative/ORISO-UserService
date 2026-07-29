@@ -26,6 +26,8 @@ import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
@@ -64,7 +66,8 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient, IdentityUsernameAvailability {
+public class KeycloakService
+    implements IdentityClient, IdentityEmailOwnerLookup, IdentityUsernameAvailability {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -193,12 +196,11 @@ public class KeycloakService implements IdentityClient, IdentityUsernameAvailabi
   }
 
   @Override
-  public Map<String, String> findUserByEmail(String email) {
+  public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> userRepresentation.getEmail().equals(email))
+        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
         .findFirst()
-        .map(keycloakMapper::mapOf)
-        .orElseGet(Map::of);
+        .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
 
   @Override
@@ -899,15 +901,6 @@ public class KeycloakService implements IdentityClient, IdentityUsernameAvailabi
       throw new KeycloakException("User with id not found in keycloak: " + userId);
     }
     return userResource.toRepresentation();
-  }
-
-  /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
-   */
-  public void closeSession(String sessionId) {
-    keycloakAuthClient.closeSession(sessionId);
   }
 
   /**
