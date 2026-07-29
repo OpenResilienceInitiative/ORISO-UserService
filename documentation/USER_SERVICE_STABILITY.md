@@ -297,11 +297,11 @@ context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
 Measured on integration source commit
-`567d6424009c4d6c433d225c6ff91a05993aa0f1`: 3,420 unit executions across
+`0a9362e34e028c1dda7200b7cd7d3854ffadf151`: 3,420 unit executions across
 393 reports with zero failures, zero errors and no skips, and 854 required
 integration executions across 82 reports with zero failures, zero errors and
-nine skips. The 69-test CI/architecture suite, 8-test OpenAPI contract suite,
-focused 153-test password/Keycloak composition and formatting gate also pass.
+nine skips. The 70-test CI/architecture suite, 8-test OpenAPI contract suite,
+focused 137-test deactivation/Keycloak composition and formatting gate also pass.
 
 #### Measured limit of this repair
 

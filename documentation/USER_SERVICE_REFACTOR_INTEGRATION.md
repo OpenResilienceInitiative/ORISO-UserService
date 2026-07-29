@@ -32,6 +32,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity role writes | [#894](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/894) | Consultant role writes use a focused batch port, deduplicate roles and bound provider reads, writes, visibility checks and retries |
 | Identity profile writes | [#895](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/895) | Admin and consultant profile mutations use a focused five-field provider-neutral port with explicit lookup, availability-check, update and retry bounds |
 | Identity password writes | [#897](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/897) | Admin provisioning, consultant provisioning and imports, user registration, and self-service reset use a focused password port with one target resolution, one reset attempt, and no automatic retry |
+| Identity deactivation | [#898](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/898) | Account, asker, consultant, and anonymous-user deactivation use a focused port with one target resolution, one read, at most one update, and no retry |
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 | Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
@@ -61,7 +62,10 @@ search before the single update; the adapter does not retry profile writes. The
 The Keycloak adapter retains credential construction and password-policy
 translation, while password-reset token restoration and provisioning rollback
 remain application policies. A write resolves the target identity once,
-performs one provider reset, and has no automatic retry. The #886 merge removes
+performs one provider reset, and has no automatic retry. The #898 merge moves
+all four active deactivation paths out of the broad identity client. The adapter
+retains the bounded read-modify-write operation, while best-effort anonymous
+cleanup and strict deletion sequencing remain unchanged. The #886 merge removes
 the unused session-close command while
 preserving the active refresh-token logout flow. The #902 merge deletes the
 unreachable LiveService dependency while keeping Matrix push and durable
@@ -85,10 +89,10 @@ Executed on 2026-07-29 with Temurin JDK 21:
 - unit suite: 3,420 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 69 tests passed;
+- CI and executable architecture contracts: 70 tests passed;
 - OpenAPI contract gate: 8 tests passed;
-- focused password and Keycloak composition: 153 Java tests passed; all 21
-  focused module-boundary tests passed within the 69-test CI suite;
+- focused deactivation and Keycloak composition: 137 Java tests passed; all 22
+  focused module-boundary tests passed within the 70-test CI suite;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
