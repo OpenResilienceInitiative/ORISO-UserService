@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import jakarta.mail.internet.MimeMultipart;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +49,31 @@ class JakartaInviteMailTransportTest {
     assertThat(properties.getProperty("mail.smtp.connectiontimeout")).isEqualTo("10000");
     assertThat(properties.getProperty("mail.smtp.timeout")).isEqualTo("10000");
     assertThat(properties.getProperty("mail.smtp.writetimeout")).isEqualTo("10000");
+  }
+
+  /**
+   * #914: a branded mail ships as multipart/alternative. RFC 2046 declares the last part the
+   * richest, so the plain-text part must come first for clients to prefer the HTML version.
+   */
+  @Test
+  void buildAlternativeContent_Should_putPlainTextFirstAndHtmlLast() throws Exception {
+    MimeMultipart multipart = JakartaInviteMailTransport.buildAlternativeContent("<p>hi</p>", "hi");
+
+    assertThat(multipart.getContentType()).contains("multipart/alternative");
+    assertThat(multipart.getCount()).isEqualTo(2);
+    assertThat(multipart.getBodyPart(0).getContentType()).contains("text/plain");
+    assertThat(multipart.getBodyPart(0).getContent()).isEqualTo("hi");
+    assertThat(multipart.getBodyPart(1).getContentType()).contains("text/html");
+    assertThat(multipart.getBodyPart(1).getContent()).isEqualTo("<p>hi</p>");
+  }
+
+  @Test
+  void buildAlternativeContent_Should_useUtf8ForBothParts() throws Exception {
+    MimeMultipart multipart =
+        JakartaInviteMailTransport.buildAlternativeContent("<p>Grüße</p>", "Grüße");
+
+    assertThat(multipart.getBodyPart(0).getContentType()).containsIgnoringCase("utf-8");
+    assertThat(multipart.getBodyPart(1).getContentType()).containsIgnoringCase("utf-8");
   }
 
   private static InviteSmtpSettings insecureSettings() {

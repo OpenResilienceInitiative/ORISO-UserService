@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="{{LANG}}" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<title>{{SUBJECT}}</title>
+<style type="text/css">
+  :root { color-scheme: light only; supported-color-schemes: light only; }
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+  .oriso-body a { color: {{LINK_COLOR}}; }
+  @media only screen and (max-width: 620px) {
+    .oriso-container { width: 100% !important; max-width: 100% !important; }
+    .oriso-pad { padding-left: 16px !important; padding-right: 16px !important; }
+    .oriso-cta { display: block !important; width: auto !important; }
+  }
+</style>
+</head>
+<body class="oriso-body" bgcolor="#f6f7fb" style="margin:0;padding:0;background-color:#f6f7fb;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{{PREHEADER}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f6f7fb" style="background-color:#f6f7fb;">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
+      <table role="presentation" class="oriso-container" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
+        <tr>
+          <td bgcolor="{{ACCENT_COLOR}}" height="6" style="background-color:{{ACCENT_COLOR}};height:6px;line-height:6px;font-size:6px;border-top-left-radius:12px;border-top-right-radius:12px;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td class="oriso-pad" align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:24px 32px 8px 32px;">{{HEADER}}</td>
+        </tr>
+        <tr>
+          <td class="oriso-pad" align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:8px 32px 4px 32px;color:#111827;font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:30px;font-weight:bold;">{{SUBJECT}}</td>
+        </tr>
+        <tr>
+          <td class="oriso-pad" align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:8px 32px 8px 32px;color:#374151;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;">{{CONTENT}}</td>
+        </tr>
+        {{CTA}}
+        <tr>
+          <td class="oriso-pad" align="left" bgcolor="#f0f1f5" style="background-color:#f0f1f5;padding:20px 32px;color:#4b5563;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:20px;border-top:1px solid #e5e7eb;border-bottom-left-radius:12px;border-bottom-right-radius:12px;">
+            <strong style="color:#374151;">{{BRAND_NAME}}</strong><br>
+            {{FOOTER_LINKS}}
+            {{FOOTER_NOTE}}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

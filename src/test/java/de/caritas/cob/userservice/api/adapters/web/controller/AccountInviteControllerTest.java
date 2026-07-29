@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
@@ -47,13 +48,15 @@ class AccountInviteControllerTest {
   @Mock private AccountInviteService accountInviteService;
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
+  @Mock private InviteEmailPreviewService previewService;
 
   private AccountInviteController controller;
 
   @BeforeEach
   void setUp() {
     controller =
-        new AccountInviteController(accountInviteService, templateService, deliveryRepository);
+        new AccountInviteController(
+            accountInviteService, templateService, deliveryRepository, previewService);
   }
 
   @Test
