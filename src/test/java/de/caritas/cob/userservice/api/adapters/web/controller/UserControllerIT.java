@@ -44,6 +44,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.manager.consultingtype.registration.mandatoryfields.MandatoryFields;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -407,6 +408,36 @@ class UserControllerIT {
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isNoContent());
+  }
+
+  @Test
+  void consumeMagicLinkShouldPreservePublicSnakeCaseSessionContract() throws Exception {
+    when(magicLinkLoginService.consumeMagicLink("one-time-token"))
+        .thenReturn(
+            Optional.of(
+                new IdentitySession(
+                    "access-token",
+                    300,
+                    600,
+                    "refresh-token",
+                    "Bearer",
+                    "session-state",
+                    "openid profile")));
+
+    mvc.perform(
+            post("/users/magic-link/consume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"one-time-token\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.access_token").value("access-token"))
+        .andExpect(jsonPath("$.expires_in").value(300))
+        .andExpect(jsonPath("$.refresh_expires_in").value(600))
+        .andExpect(jsonPath("$.refresh_token").value("refresh-token"))
+        .andExpect(jsonPath("$.token_type").value("Bearer"))
+        .andExpect(jsonPath("$.session_state").value("session-state"))
+        .andExpect(jsonPath("$.scope").value("openid profile"))
+        .andExpect(jsonPath("$.accessToken").doesNotExist())
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
   }
 
   @Test

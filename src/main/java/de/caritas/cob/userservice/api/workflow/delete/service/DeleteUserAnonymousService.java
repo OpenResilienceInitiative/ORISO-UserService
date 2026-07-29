@@ -16,6 +16,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 /** Service to trigger deletion of anonymous users. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DeleteUserAnonymousService {
 
   private final @NonNull SessionRepository sessionRepository;
@@ -38,7 +40,14 @@ public class DeleteUserAnonymousService {
     List<DeletionWorkflowError> workflowErrors = deleteAnonymousUsersWithOverdueSessions();
 
     if (isNotEmpty(workflowErrors)) {
-      this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      try {
+        this.workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      } catch (RuntimeException exception) {
+        log.error(
+            "Deletion workflow error notification failed; completed deletion results are retained. "
+                + "Failure type: {}",
+            exception.getClass().getSimpleName());
+      }
     }
   }
 

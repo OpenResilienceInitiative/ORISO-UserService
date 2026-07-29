@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
@@ -20,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
@@ -171,7 +171,7 @@ public class UserController implements UsersApi {
   }
 
   @org.springframework.web.bind.annotation.PostMapping("/users/magic-link/consume")
-  public ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(
+  public ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(
       @Valid @RequestBody MagicLinkConsumeDTO consumeDTO) {
     return userRegistrationControllerDelegate.consumeMagicLink(consumeDTO);
   }
@@ -581,9 +581,9 @@ public class UserController implements UsersApi {
   }
 
   /**
-   * Assign a chat, resolved using its Matrix room ID.
+   * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
-   * @param matrixRoomId Matrix room ID (required)
+   * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override

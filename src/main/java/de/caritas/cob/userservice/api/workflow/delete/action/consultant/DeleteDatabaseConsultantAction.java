@@ -8,8 +8,10 @@ import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -28,10 +30,20 @@ public class DeleteDatabaseConsultantAction
 
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull ConsultantMobileTokenRepository consultantMobileTokenRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
 
   /**
-   * Deletes the given {@link Consultant} in database.
+   * Deletes the given {@link Consultant} in database, together with the dependencies that hold a
+   * restricting foreign key on it.
+   *
+   * <p>{@code session_supervisor} references the consultant through both {@code
+   * supervisor_consultant_id} and {@code added_by_consultant_id}, and both columns are {@code NOT
+   * NULL}. A supervision row therefore cannot outlive either consultant it points at, so the row is
+   * deleted rather than detached. Where the deleted consultant was only the one who <em>added</em>
+   * a supervision performed by somebody else, that supervision is lost as collateral — making
+   * {@code added_by_consultant_id} nullable in a migration would allow it to survive.
    *
    * @param actionTarget the {@link ConsultantDeletionWorkflowDTO} with the {@link Consultant} to
    *     delete
@@ -50,6 +62,23 @@ public class DeleteDatabaseConsultantAction
           actionTarget,
           e,
           "Unable to unassign consultant from his sessions with state NEW or INITIAL");
+      return;
+    }
+
+    try {
+      this.sessionSupervisorRepository.deleteAllByConsultantId(
+          actionTarget.getConsultant().getId());
+    } catch (Exception e) {
+      handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant supervisions");
+      return;
+    }
+
+    try {
+      var mobileTokens =
+          this.consultantMobileTokenRepository.findByConsultant(actionTarget.getConsultant());
+      this.consultantMobileTokenRepository.deleteAll(mobileTokens);
+    } catch (Exception e) {
+      handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant mobile tokens");
       return;
     }
 

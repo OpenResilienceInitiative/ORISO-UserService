@@ -27,8 +27,8 @@ import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.util.Collections;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -48,8 +48,8 @@ class NewEnquiryEmailSupplierTest {
 
   @Mock private ReleaseToggleService releaseToggleService;
 
-  @Mock private Logger log;
-
+  private Logger logger;
+  private Level originalLogLevel;
   private TestLogAppender testAppender;
 
   @BeforeEach
@@ -60,10 +60,24 @@ class NewEnquiryEmailSupplierTest {
     this.newEnquiryEmailSupplier.setCurrentSession(session);
 
     // Attach a custom appender to the logger
-    Logger logger = (Logger) LoggerFactory.getLogger(NewEnquiryEmailSupplier.class);
+    logger = (Logger) LoggerFactory.getLogger(NewEnquiryEmailSupplier.class);
+    originalLogLevel = logger.getLevel();
+    logger.setLevel(Level.DEBUG);
     testAppender = new TestLogAppender();
+    testAppender.setContext(logger.getLoggerContext());
     testAppender.start();
     logger.addAppender(testAppender);
+  }
+
+  @AfterEach
+  void tearDownTestAppender() {
+    if (testAppender != null) {
+      logger.detachAppender(testAppender);
+      testAppender.stop();
+    }
+    if (logger != null) {
+      logger.setLevel(originalLogLevel);
+    }
   }
 
   @Test
@@ -172,7 +186,6 @@ class NewEnquiryEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_ConsultantIsNull() {
     // given
     ConsultantAgency consultantAgency = new ConsultantAgency();
@@ -188,7 +201,6 @@ class NewEnquiryEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_ConsultantEmailIsBlank() {
     // given
     Consultant consultant = new Consultant();
@@ -209,7 +221,6 @@ class NewEnquiryEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_ConsultantIsAbsent() {
     // given
     Consultant consultant = new Consultant();
@@ -231,7 +242,6 @@ class NewEnquiryEmailSupplierTest {
   }
 
   @Test
-  @Disabled("TODO this is passing locally but failing in mvn. Fix in CARITAS-285")
   void generateEmails_Should_LogDebugMessage_When_NotificationsAreEnabledAndConsultantAbsent() {
     // given
     Consultant consultant = new Consultant();

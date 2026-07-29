@@ -2730,7 +2730,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_user_or_consultant_authority()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
+            get("/users/sessions/room?roomIds%5B%5D=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2744,7 +2744,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
+            get("/users/sessions/room?roomIds%5B%5D=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))

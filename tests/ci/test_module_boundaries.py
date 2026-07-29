@@ -112,6 +112,51 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
+        sources = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
+            "MagicLinkLoginService.java",
+            CONTROLLERS / "UserController.java",
+            CONTROLLERS / "UserRegistrationControllerDelegate.java",
+        )
+        forbidden_prefix = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak."
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)} imports {line}"
+            for source in sources
+            for line in source.read_text().splitlines()
+            if line.startswith(forbidden_prefix)
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "Magic-link application and web boundaries must expose "
+            "application-owned sessions instead of Keycloak transport DTOs:\n"
+            + "\n".join(offenders),
+        )
+
+    def test_magic_link_web_response_does_not_depend_on_output_port_models(self):
+        response_dto = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/web/dto/"
+            "MagicLinkSessionResponseDTO.java"
+        )
+        offenders = [
+            line
+            for line in response_dto.read_text().splitlines()
+            if line.startswith("import de.caritas.cob.userservice.api.port.out.")
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The magic-link web response must map an application/domain model, "
+            "not expose the outbound-port package:\n" + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (
@@ -155,6 +200,23 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The session-assignment application module must use outbound ports "
             "instead of concrete chat adapters or admin implementation services:\n"
             + "\n".join(offenders),
+        )
+
+    def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
+        source = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/ConsultantAgencyService.java"
+        ).read_text()
+
+        self.assertNotIn(
+            "agencyService.getAgencyWithoutCaching(",
+            source,
+            "A failed agency batch must not trigger one outbound retry per agency",
+        )
+        self.assertNotIn(
+            "findDistinctConsultingTypeIdsByAgencyId(",
+            source,
+            "Fallback consulting types must be loaded in one local batch query",
         )
 
 

@@ -19,14 +19,13 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -200,7 +199,7 @@ public class ConsultantAgencyService {
             "AgencyService returned no agencies for consultant {} and ids {}. Falling back to local topic assignments",
             consultantId,
             agencyIds);
-        return agenciesWithLocalTopicAssignments(consultantId, agencyIds);
+        return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
       }
       return enrichAgenciesWithConsultantTopicIds(agencies, consultantTopicIds);
     } catch (RuntimeException exception) {
@@ -208,7 +207,7 @@ public class ConsultantAgencyService {
           "Could not load agencies for consultant {} from AgencyService, falling back to local topic assignments",
           consultantId,
           exception);
-      return agenciesWithLocalTopicAssignments(consultantId, agencyIds);
+      return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
     }
   }
 
@@ -234,43 +233,24 @@ public class ConsultantAgencyService {
   }
 
   private List<AgencyDTO> agenciesWithLocalTopicAssignments(
-      String consultantId, List<Long> agencyIds) {
-    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultantId);
+      List<Long> agencyIds, List<Long> topicIds) {
+    Map<Long, Integer> consultingTypesByAgency =
+        sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.copyOf(agencyIds)).stream()
+            .collect(
+                Collectors.toMap(
+                    SessionRepository.AgencyConsultingTypeProjection::getAgencyId,
+                    SessionRepository.AgencyConsultingTypeProjection::getConsultingTypeId));
+
     return agencyIds.stream()
-        .map(agencyId -> resolveAgencyWithLocalFallback(agencyId, topicIds))
+        .map(
+            agencyId ->
+                new AgencyDTO()
+                    .id(agencyId)
+                    .offline(false)
+                    .topicIds(topicIds)
+                    .consultingType(
+                        consultingTypesByAgency.getOrDefault(
+                            agencyId, registrationAgencyFallbackConsultingTypeId)))
         .collect(Collectors.toList());
-  }
-
-  private AgencyDTO resolveAgencyWithLocalFallback(Long agencyId, List<Long> topicIds) {
-    try {
-      AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-      if (agency != null) {
-        if (agency.getTopicIds() == null || agency.getTopicIds().isEmpty()) {
-          agency.setTopicIds(topicIds);
-        }
-        if (agency.getConsultingType() != null) {
-          return agency;
-        }
-      }
-    } catch (RuntimeException exception) {
-      log.debug(
-          "Could not load agency {} individually from AgencyService during consultant fallback",
-          agencyId,
-          exception);
-    }
-
-    AgencyDTO fallbackAgency = new AgencyDTO().id(agencyId).offline(false).topicIds(topicIds);
-    resolveConsultingTypeForFallback(agencyId).ifPresent(fallbackAgency::setConsultingType);
-    return fallbackAgency;
-  }
-
-  private Optional<Integer> resolveConsultingTypeForFallback(Long agencyId) {
-    var consultingTypesFromSessions =
-        sessionRepository.findDistinctConsultingTypeIdsByAgencyId(agencyId, PageRequest.of(0, 1));
-    if (!consultingTypesFromSessions.isEmpty()) {
-      return Optional.of(consultingTypesFromSessions.get(0));
-    }
-
-    return Optional.ofNullable(registrationAgencyFallbackConsultingTypeId);
   }
 }
