@@ -19,7 +19,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -29,6 +28,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings;
@@ -76,8 +76,8 @@ public class CreateConsultantSagaIT {
 
   @Test
   public void createNewConsultant_Should_returnExpectedCreatedConsultant_When_inputDataIsCorrect() {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -104,8 +104,8 @@ public class CreateConsultantSagaIT {
   public void createNewConsultant_Should_callRollback_When_AppointmentServiceThrowsException() {
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
     doThrow(BadRequestException.class).when(appointmentService).createConsultant(any());
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
     createConsultantDTO.setEmail(VALID_EMAILADDRESS);
@@ -126,8 +126,8 @@ public class CreateConsultantSagaIT {
 
   @Test
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdatePasswordThrowsException() {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(keycloakService)
         .updatePassword(any(), any());
@@ -148,8 +148,8 @@ public class CreateConsultantSagaIT {
 
   @Test
   public void createNewConsultant_Should_callRollback_When_KeycloakUpdateRoleThrowsException() {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     doThrow(BadRequestException.class).when(keycloakService).assignRoles(anyString(), any());
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setUsername(VALID_USERNAME);
@@ -171,8 +171,8 @@ public class CreateConsultantSagaIT {
   public void
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant = new TenantDTO().settings(new Settings().featureGroupChatV2Enabled(false));
     when(tenantAdminService.getTenantById((long) TENANT_ID)).thenReturn(tenant);
 
@@ -197,8 +197,8 @@ public class CreateConsultantSagaIT {
   @Test
   public void
       createNewConsultant_Should_returnExpectedCreatedConsultant_When_inputDataIsCorrectImportRecord() {
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     ImportRecord importRecord = this.easyRandom.nextObject(ImportRecord.class);
     importRecord.setUsername(VALID_USERNAME);
     importRecord.setEmail(VALID_EMAILADDRESS);
@@ -226,11 +226,7 @@ public class CreateConsultantSagaIT {
     assertThrows(
         CustomValidationHttpStatusException.class,
         () -> {
-          KeycloakCreateUserResponseDTO keycloakResponse =
-              easyRandom.nextObject(KeycloakCreateUserResponseDTO.class);
-          keycloakResponse.setUserId(null);
-          when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-              .thenReturn(keycloakResponse);
+          when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(null));
           CreateConsultantDTO createConsultantDTO =
               this.easyRandom.nextObject(CreateConsultantDTO.class);
 

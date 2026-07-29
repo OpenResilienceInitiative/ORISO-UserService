@@ -6,12 +6,12 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import jakarta.validation.Validator;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -72,13 +72,13 @@ public class UserAccountInputValidator {
   }
 
   /**
-   * Validates the created keycloak object.
+   * Validates the created identity object.
    *
-   * @param keycloakResponse the keycloak response object to be validated
+   * @param createdIdentity the identity creation result to be validated
    */
-  public void validateKeycloakResponse(KeycloakCreateUserResponseDTO keycloakResponse) {
-    if (isNull(keycloakResponse.getUserId())) {
-      throw new KeycloakException("ERROR: Keycloak user id is missing");
+  public void validateIdentityAccountCreated(IdentityAccountCreated createdIdentity) {
+    if (isNull(createdIdentity) || isNull(createdIdentity.userId())) {
+      throw new KeycloakException("ERROR: Identity user id is missing");
     }
   }
 }

@@ -11,15 +11,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,18 +32,17 @@ class AnonymousUserCreatorServiceTest {
 
   @InjectMocks private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private CreateUserFacade createUserFacade;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountCreator identityAccountCreator;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private RollbackFacade rollbackFacade;
 
   @Test
   void createAnonymousUserCreatesIdentityAccountAndMatrixUser() {
-    var createdIdentity = new KeycloakCreateUserResponseDTO();
-    createdIdentity.setUserId("user-id");
+    var createdIdentity = new IdentityAccountCreated("user-id");
     var identityLogin = new IdentityLogin("access-token", 300, 600, "refresh-token");
     var user = new User();
 
-    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
@@ -62,11 +61,10 @@ class AnonymousUserCreatorServiceTest {
 
   @Test
   void createAnonymousUserRollsBackWhenMatrixProvisioningFails() {
-    var createdIdentity = new KeycloakCreateUserResponseDTO();
-    createdIdentity.setUserId("user-id");
+    var createdIdentity = new IdentityAccountCreated("user-id");
     var user = new User();
 
-    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     doThrow(new InternalServerErrorException("Matrix provisioning failed"))
@@ -82,11 +80,10 @@ class AnonymousUserCreatorServiceTest {
 
   @Test
   void createAnonymousUserRollsBackWhenIdentityLoginFails() {
-    var createdIdentity = new KeycloakCreateUserResponseDTO();
-    createdIdentity.setUserId("user-id");
+    var createdIdentity = new IdentityAccountCreated("user-id");
     var user = new User();
 
-    when(identityClient.createKeycloakUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
     when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))

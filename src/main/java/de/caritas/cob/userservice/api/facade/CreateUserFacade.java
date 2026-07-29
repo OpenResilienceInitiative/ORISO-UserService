@@ -5,7 +5,6 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -20,7 +19,8 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
@@ -51,7 +51,7 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountCreator identityAccountCreator;
   private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
@@ -96,8 +96,18 @@ public class CreateUserFacade {
     userVerifier.checkIfUsernameIsAvailable(userDTO);
     agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
 
-    KeycloakCreateUserResponseDTO response = identityClient.createKeycloakUser(userDTO);
-    var user = updateIdentityAndCreateAccount(response.getUserId(), userDTO, UserRole.USER);
+    var createdIdentity =
+        identityAccountCreator.createAccount(
+            new IdentityAccountCreation(
+                userDTO.getUsername(),
+                userDTO.getEmail(),
+                userDTO.getTenantId(),
+                null,
+                null,
+                isNull(userDTO.getPreferredLanguage())
+                    ? null
+                    : userDTO.getPreferredLanguage().toString()));
+    var user = updateIdentityAndCreateAccount(createdIdentity.userId(), userDTO, UserRole.USER);
 
     // Ensure user is fully persisted before creating session
     User savedUser = userService.saveUser(user);

@@ -20,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -36,6 +35,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -133,6 +134,7 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountCreator.class,
         IdentityAccountRemover.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
@@ -147,6 +149,7 @@ class UserAdminControllerE2EIT {
       })
   IdentityClient identityClient;
 
+  private IdentityAccountCreator identityAccountCreator;
   @MockitoBean IdentityRoleUpdater identityRoleUpdater;
   @MockitoBean IdentityProfileUpdater identityProfileUpdater;
 
@@ -161,6 +164,7 @@ class UserAdminControllerE2EIT {
 
   @BeforeEach
   public void setUp() {
+    identityAccountCreator = (IdentityAccountCreator) identityClient;
     when(consultingTypeControllerApi.getApiClient()).thenReturn(new ApiClient(restTemplate));
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
@@ -171,10 +175,8 @@ class UserAdminControllerE2EIT {
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(keycloakResponse);
+    when(identityAccountCreator.createAccount(Mockito.any()))
+        .thenReturn(new IdentityAccountCreated(new EasyRandom().nextObject(String.class)));
   }
 
   @Test

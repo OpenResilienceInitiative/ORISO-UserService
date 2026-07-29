@@ -17,7 +17,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -32,7 +31,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
@@ -68,7 +68,7 @@ class CreateConsultantSagaTest {
 
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountCreator identityAccountCreator;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
@@ -147,7 +147,7 @@ class CreateConsultantSagaTest {
 
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
-    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+    verify(identityAccountCreator, never()).createAccount(any());
   }
 
   @Test
@@ -332,7 +332,7 @@ class CreateConsultantSagaTest {
 
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0), is(NUMBER_OF_LICENSES_EXCEEDED.name()));
-    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+    verify(identityAccountCreator, never()).createAccount(any());
   }
 
   @Test
@@ -399,13 +399,11 @@ class CreateConsultantSagaTest {
   }
 
   private void stubKeycloakUserCreation() {
-    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
+    when(identityAccountCreator.createAccount(any()))
         .thenAnswer(
             invocation -> {
               PlainCredentialsHolder.set(VALID_USERNAME, null);
-              KeycloakCreateUserResponseDTO response = new KeycloakCreateUserResponseDTO();
-              response.setUserId(KEYCLOAK_USER_ID);
-              return response;
+              return new IdentityAccountCreated(KEYCLOAK_USER_ID);
             });
   }
 

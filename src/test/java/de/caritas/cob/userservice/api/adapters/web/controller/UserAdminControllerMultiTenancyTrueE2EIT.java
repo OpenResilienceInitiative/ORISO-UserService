@@ -12,13 +12,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -76,6 +77,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountCreator.class,
         IdentityAccountRemover.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
@@ -90,6 +92,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
       })
   IdentityClient identityClient;
 
+  private IdentityAccountCreator identityAccountCreator;
   @MockitoBean IdentityRoleUpdater identityRoleUpdater;
   @MockitoBean IdentityProfileUpdater identityProfileUpdater;
 
@@ -108,11 +111,9 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @BeforeEach
   public void setUp() {
-
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
-    keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(keycloakResponse);
+    identityAccountCreator = (IdentityAccountCreator) identityClient;
+    when(identityAccountCreator.createAccount(Mockito.any()))
+        .thenReturn(new IdentityAccountCreated(new EasyRandom().nextObject(String.class)));
   }
 
   @Test

@@ -1,8 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
@@ -44,6 +42,7 @@ import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -143,8 +142,7 @@ public class CreateUserFacadeTest {
       createUserAccountWithInitializedConsultingType_Should_StillCreateAccountAndNotRollback_When_CreateKeycloakUserReturnsNoUserId() {
     // Matrix migration: a missing Keycloak user id no longer aborts registration for registered
     // users; the Keycloak failure is swallowed and the database user account is still created.
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITHOUT_USER_ID);
+    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(null));
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(createNewSessionFacade.initializeNewSession(
@@ -163,8 +161,7 @@ public class CreateUserFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
     doNothing().when(keycloakService).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
@@ -182,8 +179,7 @@ public class CreateUserFacadeTest {
     TenantContext.setCurrentTenant(1L);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
     doNothing().when(keycloakService).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
@@ -195,7 +191,7 @@ public class CreateUserFacadeTest {
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
-    verify(keycloakService, times(1)).createKeycloakUser(any(UserDTO.class));
+    verify(keycloakService, times(1)).createAccount(any());
     verify(keycloakService, times(1)).assignRoles(any(), any());
     verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
@@ -285,8 +281,7 @@ public class CreateUserFacadeTest {
   private void givenBasicRegistrationStubs() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
@@ -384,8 +379,7 @@ public class CreateUserFacadeTest {
       createUserAccountWithInitializedConsultingType_Should_PropagateSessionInitializationFailure() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new RuntimeException("Matrix room initialization failed"));

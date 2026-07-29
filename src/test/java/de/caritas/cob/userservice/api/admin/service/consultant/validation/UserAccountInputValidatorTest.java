@@ -12,10 +12,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import jakarta.validation.Path;
 import jakarta.validation.Validator;
 import org.hibernate.validator.internal.engine.ConstraintViolationImpl;
@@ -77,26 +77,24 @@ public class UserAccountInputValidatorTest {
   }
 
   @Test
-  public void validateKeycloakResponse_ShouldNot_throwException_When_keycloakResponseDTOIsValid() {
-    KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
-    responseDTO.setUserId("userId");
+  public void
+      validateIdentityAccountCreated_ShouldNot_throwException_When_createdIdentityIsValid() {
+    var createdIdentity = new IdentityAccountCreated("userId");
 
     try {
-      this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
+      this.userAccountInputValidator.validateIdentityAccountCreated(createdIdentity);
     } catch (Exception e) {
       fail("Exception should not be thrown");
     }
   }
 
   @Test
-  public void validateKeycloakResponse_Should_throwKeycloakException_When_userIdIsNull() {
+  public void validateIdentityAccountCreated_Should_throwKeycloakException_When_userIdIsNull() {
     assertThrows(
         KeycloakException.class,
-        () -> {
-          KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
-
-          this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
-        });
+        () ->
+            this.userAccountInputValidator.validateIdentityAccountCreated(
+                new IdentityAccountCreated(null)));
   }
 
   @Test

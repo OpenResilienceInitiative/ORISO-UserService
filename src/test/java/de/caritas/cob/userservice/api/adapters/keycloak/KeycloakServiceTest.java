@@ -27,7 +27,6 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import ch.qos.logback.classic.Level;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -44,6 +43,8 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -501,11 +502,11 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    IdentityAccountCreated createdIdentity =
+        this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity, notNullValue());
+    assertThat(createdIdentity.userId(), is(USER_ID));
   }
 
   @Test
@@ -526,10 +527,10 @@ public class KeycloakServiceTest {
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    IdentityAccountCreated createdIdentity =
+        this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(createdIdentity, notNullValue());
 
     ArgumentCaptor<UserRepresentation> argumentCaptor =
         ArgumentCaptor.forClass(UserRepresentation.class);
@@ -565,9 +566,9 @@ public class KeycloakServiceTest {
     when(userResource.toRepresentation()).thenReturn(storedRepresentation);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    var createdIdentity = this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity.userId(), is(USER_ID));
 
     var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(userResource).update(representationCaptor.capture());
@@ -594,9 +595,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var createdIdentity = keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(createdIdentity.userId(), is(USER_ID));
 
     var argumentCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(usersResource).create(argumentCaptor.capture());
@@ -635,7 +636,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(e.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -658,7 +659,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -682,7 +683,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -709,7 +710,7 @@ public class KeycloakServiceTest {
           when(keycloakClient.getUsersResource()).thenReturn(usersResource);
           UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
 
-          this.keycloakService.createKeycloakUser(userDTO);
+          this.keycloakService.createAccount(accountCreation(userDTO));
         });
   }
 
@@ -732,7 +733,7 @@ public class KeycloakServiceTest {
     CustomValidationHttpStatusException exception =
         assertThrows(
             CustomValidationHttpStatusException.class,
-            () -> this.keycloakService.createKeycloakUser(userDTO));
+            () -> this.keycloakService.createAccount(accountCreation(userDTO)));
 
     assertThat(
         exception.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -753,7 +754,8 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     assertThrows(
-        InternalServerErrorException.class, () -> this.keycloakService.createKeycloakUser(userDTO));
+        InternalServerErrorException.class,
+        () -> this.keycloakService.createAccount(accountCreation(userDTO)));
   }
 
   @Test
@@ -2156,10 +2158,20 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var createdIdentity = keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(createdIdentity.userId(), is(USER_ID));
     setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  private IdentityAccountCreation accountCreation(UserDTO userDTO) {
+    return new IdentityAccountCreation(
+        userDTO.getUsername(),
+        userDTO.getEmail(),
+        userDTO.getTenantId(),
+        null,
+        null,
+        userDTO.getPreferredLanguage() == null ? null : userDTO.getPreferredLanguage().toString());
   }
 
   @Test

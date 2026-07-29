@@ -8,9 +8,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -27,6 +25,9 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -89,7 +90,8 @@ import org.springframework.web.client.RestClientResponseException;
 @Slf4j
 @RequiredArgsConstructor
 public class KeycloakService
-    implements IdentityAccountRemover,
+    implements IdentityAccountCreator,
+        IdentityAccountRemover,
         IdentityAuthentication,
         IdentityClient,
         IdentityDeactivator,
@@ -342,34 +344,16 @@ public class KeycloakService
     }
   }
 
-  /**
-   * Creates a user in Keycloak and returns its Keycloak user ID.
-   *
-   * @param user {@link UserDTO}
-   * @return {@link KeycloakCreateUserResponseDTO}
-   */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user) {
-    return createKeycloakUser(user, null, null);
-  }
-
-  /**
-   * Creates a user with firstname and lastname in Keycloak and returns its Keycloak user ID.
-   *
-   * @param user {@link UserDTO}
-   * @param firstName first name of user
-   * @param lastName last name of user
-   * @return {@link KeycloakCreateUserResponseDTO}
-   */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(
-      final UserDTO user, final String firstName, final String lastName) {
-    var locale =
-        isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
-    var kcUser = getUserRepresentation(user, firstName, lastName, locale);
+  /** Creates an identity account and returns its provider-neutral identifier. */
+  @Override
+  public IdentityAccountCreated createAccount(IdentityAccountCreation account) {
+    var locale = isNull(account.locale()) ? "de" : account.locale();
+    var kcUser = getUserRepresentation(account, locale);
     try (var response = keycloakClient.getUsersResource().create(kcUser)) {
       if (response.getStatus() == HttpStatus.CREATED.value()) {
         final String createdUserId = getCreatedUserId(response.getLocation());
         try {
-          updateIdentityAttributesAfterCreate(user, createdUserId);
+          updateIdentityAttributesAfterCreate(account, createdUserId);
         } catch (Exception exception) {
           log.error(
               "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
@@ -382,13 +366,14 @@ public class KeycloakService
                   createdUserId),
               exception);
         }
-        return new KeycloakCreateUserResponseDTO(createdUserId);
+        return new IdentityAccountCreated(createdUserId);
       }
       handleCreateKeycloakUserError(response);
     }
     throw new InternalServerErrorException(
         String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, keycloakError));
+            "Could not create Keycloak account for: %s %nKeycloak error: %s",
+            account.username(), keycloakError));
   }
 
   private void handleCreateKeycloakUserError(Response response) {
@@ -470,14 +455,14 @@ public class KeycloakService
   }
 
   private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName) {
-    return getUserRepresentation(user, firstName, lastName, null);
-  }
-
-  private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName, final String locale) {
+      final IdentityAccountCreation account, final String locale) {
     return getUserRepresentation(
-        user.getUsername(), user.getEmail(), user.getTenantId(), firstName, lastName, locale);
+        account.username(),
+        account.email(),
+        account.tenantId(),
+        account.firstName(),
+        account.lastName(),
+        locale);
   }
 
   private UserRepresentation getUserRepresentation(final IdentityProfileUpdate profile) {
@@ -541,7 +526,8 @@ public class KeycloakService
     }
   }
 
-  private void updateIdentityAttributesAfterCreate(UserDTO userDTO, String keycloakUserId) {
+  private void updateIdentityAttributesAfterCreate(
+      IdentityAccountCreation account, String keycloakUserId) {
     var userResource = keycloakClient.getUsersResource().get(keycloakUserId);
     var representation = userResource.toRepresentation();
     Map<String, List<String>> attributes =
@@ -550,20 +536,16 @@ public class KeycloakService
             : new LinkedHashMap<>(representation.getAttributes());
 
     attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
-    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    var decodedUsername = usernameTranscoder.decodeUsername(account.username());
     attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    var tenantId = resolveTenantId(userDTO);
+    var tenantId = resolveTenantId(account.tenantId());
     if (tenantId != null) {
       attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
     }
 
     representation.setAttributes(attributes);
     userResource.update(representation);
-  }
-
-  private Long resolveTenantId(UserDTO userDTO) {
-    return resolveTenantId(userDTO.getTenantId());
   }
 
   private Long resolveTenantId(Long configuredTenantId) {

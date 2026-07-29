@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -1301,6 +1302,118 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 source_text,
                 f"{source.name} must batch role writes through IdentityRoleUpdater",
             )
+
+    def test_account_creation_uses_a_provider_neutral_focused_port(self):
+        port_root = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out"
+        )
+        creator = port_root / "IdentityAccountCreator.java"
+        request = port_root / "IdentityAccountCreation.java"
+        result = port_root / "IdentityAccountCreated.java"
+        identity_client = (port_root / "IdentityClient.java").read_text()
+
+        self.assertTrue(
+            creator.exists(),
+            "Identity account creation needs a focused provider-neutral output port",
+        )
+        self.assertTrue(
+            request.exists() and result.exists(),
+            "Identity account creation needs provider-neutral request and result values",
+        )
+        if not creator.exists() or not request.exists() or not result.exists():
+            return
+
+        focused_contract = creator.read_text() + request.read_text() + result.read_text()
+        for provider_transport in (
+            "Keycloak",
+            "org.keycloak.",
+            ".adapters.web.",
+            "HttpStatus",
+        ):
+            self.assertNotIn(
+                provider_transport,
+                focused_contract,
+                "The focused creation boundary must not expose provider or web transports",
+            )
+
+        self.assertNotIn(
+            "createKeycloakUser(",
+            identity_client,
+            "The broad identity client must not own account creation",
+        )
+        self.assertNotIn(
+            "KeycloakCreateUserResponseDTO",
+            identity_client,
+            "The broad identity client must not expose a Keycloak response DTO",
+        )
+        self.assertNotIn(
+            "UserDTO",
+            identity_client,
+            "The broad identity client must not expose a generated web DTO",
+        )
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/"
+            "CreateUserFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
+            "anonymous/AnonymousUserCreatorService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/create/"
+            "CreateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/create/"
+            "CreateConsultantSaga.java",
+        )
+        offenders = []
+        for source in consumers:
+            source_text = source.read_text()
+            if (
+                "IdentityAccountCreator" not in source_text
+                or "identityAccountCreator.createAccount(" not in source_text
+                or "createKeycloakUser(" in source_text
+                or "KeycloakCreateUserResponseDTO" in source_text
+                or "identityClient.createKeycloakUser(" in source_text
+            ):
+                offenders.append(str(source.relative_to(ROOT)))
+        self.assertEqual(
+            [],
+            offenders,
+            "All active account creators must use the focused provider-neutral port:\n"
+            + "\n".join(offenders),
+        )
+
+        incompatible_spring_mocks = []
+        competing_spring_mocks = []
+        for source in (ROOT / "src/test/java").rglob("*.java"):
+            source_text = source.read_text()
+            if (
+                "IdentityClient identityClient" in source_text
+                and "@MockitoBean" in source_text
+                and "IdentityAccountCreator.class" not in source_text
+            ):
+                incompatible_spring_mocks.append(str(source.relative_to(ROOT)))
+            if re.search(
+                r"@MockitoBean\s+(?:private\s+)?IdentityAccountCreator\s+"
+                r"identityAccountCreator",
+                source_text,
+            ):
+                competing_spring_mocks.append(str(source.relative_to(ROOT)))
+        self.assertEqual(
+            [],
+            incompatible_spring_mocks,
+            "Spring mocks replacing KeycloakService through IdentityClient must retain "
+            "the focused account-creation interface:\n"
+            + "\n".join(incompatible_spring_mocks),
+        )
+        self.assertEqual(
+            [],
+            competing_spring_mocks,
+            "Spring contexts must not replace the shared KeycloakService mock with a "
+            "competing account-creator mock:\n"
+            + "\n".join(competing_spring_mocks),
+        )
 
 if __name__ == "__main__":
     unittest.main()

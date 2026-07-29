@@ -11,7 +11,6 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -34,7 +33,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -62,7 +62,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountCreator identityAccountCreator;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultantService consultantService;
@@ -214,7 +214,7 @@ public class CreateConsultantSaga {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
-    String keycloakUserId = createKeycloakUser(consultantCreationInput);
+    String keycloakUserId = createIdentityAccount(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
     if ((password == null || password.isEmpty())
@@ -387,7 +387,7 @@ public class CreateConsultantSaga {
     }
   }
 
-  private String createKeycloakUser(ConsultantCreationInput consultantCreationInput) {
+  private String createIdentityAccount(ConsultantCreationInput consultantCreationInput) {
     // MATRIX MIGRATION: Use PLAIN username for Keycloak (Keycloak rejects encrypted usernames)
     String plainUsername = consultantCreationInput.getUserName();
 
@@ -402,13 +402,19 @@ public class CreateConsultantSaga {
 
     this.userAccountInputValidator.validateUserDTO(userDto);
 
-    KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
-            userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
+    var createdIdentity =
+        identityAccountCreator.createAccount(
+            new IdentityAccountCreation(
+                userDto.getUsername(),
+                userDto.getEmail(),
+                userDto.getTenantId(),
+                consultantCreationInput.getFirstName(),
+                consultantCreationInput.getLastName(),
+                null));
 
-    this.userAccountInputValidator.validateKeycloakResponse(response);
+    this.userAccountInputValidator.validateIdentityAccountCreated(createdIdentity);
 
-    return response.getUserId();
+    return createdIdentity.userId();
   }
 
   private static Consultant buildConsultantDataForRollback(

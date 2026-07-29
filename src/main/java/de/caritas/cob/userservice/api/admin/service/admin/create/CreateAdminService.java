@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static org.apache.commons.lang3.Validate.notNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -17,8 +16,10 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -42,7 +43,7 @@ public class CreateAdminService {
   @Value("${feature.multitenancy.with.single.domain.enabled}")
   private boolean multitenancyWithSingleDomain;
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountCreator identityAccountCreator;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
@@ -96,14 +97,14 @@ public class CreateAdminService {
   }
 
   private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
-    final KeycloakCreateUserResponseDTO keycloakResponse = createKeycloakUser(createAdminDTO);
-    final String keycloakUserId = keycloakResponse == null ? null : keycloakResponse.getUserId();
+    final IdentityAccountCreated createdIdentity = createIdentityAccount(createAdminDTO);
+    final String keycloakUserId = createdIdentity == null ? null : createdIdentity.userId();
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
     try {
-      userAccountInputValidator.validateKeycloakResponse(keycloakResponse);
+      userAccountInputValidator.validateIdentityAccountCreated(createdIdentity);
       identityPasswordUpdater.updatePassword(keycloakUserId, password);
       identityRoleUpdater.assignRoles(
           keycloakUserId, getDefaultRoles(adminType).stream().map(UserRole::getValue).toList());
@@ -130,12 +131,17 @@ public class CreateAdminService {
     }
   }
 
-  private KeycloakCreateUserResponseDTO createKeycloakUser(
-      final CreateAdminDTO createAgencyAdminDTO) {
+  private IdentityAccountCreated createIdentityAccount(final CreateAdminDTO createAgencyAdminDTO) {
     final UserDTO userDto = buildValidatedUserDTO(createAgencyAdminDTO);
 
-    return identityClient.createKeycloakUser(
-        userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
+    return identityAccountCreator.createAccount(
+        new IdentityAccountCreation(
+            userDto.getUsername(),
+            userDto.getEmail(),
+            userDto.getTenantId(),
+            createAgencyAdminDTO.getFirstname(),
+            createAgencyAdminDTO.getLastname(),
+            null));
   }
 
   private UserDTO buildValidatedUserDTO(final CreateAdminDTO createAdminDTO) {
