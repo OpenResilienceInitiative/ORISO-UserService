@@ -9,11 +9,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
@@ -45,7 +45,7 @@ class OperatorDpaContentClientTest {
       "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
 
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityClientConfig identityClientConfig;
   @Mock private TenantAdminServiceApiControllerFactory controllerFactory;
   @Mock private TenantControllerApi tenantControllerApi;
@@ -57,9 +57,8 @@ class OperatorDpaContentClientTest {
     technicalUser.setUsername("technical");
     technicalUser.setPassword("secret");
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    KeycloakLoginResponseDTO keycloakLogin = new KeycloakLoginResponseDTO();
-    keycloakLogin.setAccessToken("token");
-    when(identityClient.loginUser(anyString(), anyString())).thenReturn(keycloakLogin);
+    IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
+    when(identityAuthentication.login(anyString(), anyString())).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
         .thenReturn(new HttpHeaders());
     when(controllerFactory.createControllerApi()).thenReturn(tenantControllerApi);
@@ -69,7 +68,7 @@ class OperatorDpaContentClientTest {
   private OperatorDpaContentClient clientFor(long operatorTenantId) {
     return new OperatorDpaContentClient(
         securityHeaderSupplier,
-        identityClient,
+        identityAuthentication,
         identityClientConfig,
         controllerFactory,
         operatorTenantId);
@@ -165,7 +164,7 @@ class OperatorDpaContentClientTest {
     assertNull(clientFor(0L).fetchPublishedDpaContent());
 
     verifyNoInteractions(controllerFactory);
-    verifyNoInteractions(identityClient);
+    verifyNoInteractions(identityAuthentication);
   }
 
   @Test
@@ -219,7 +218,7 @@ class OperatorDpaContentClientTest {
 
     clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent();
 
-    verify(identityClient).loginUser("technical", "secret");
+    verify(identityAuthentication).login("technical", "secret");
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("token");
   }
 }

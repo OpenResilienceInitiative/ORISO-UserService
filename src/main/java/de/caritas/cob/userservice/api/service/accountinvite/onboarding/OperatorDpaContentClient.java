@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
@@ -48,7 +48,7 @@ public class OperatorDpaContentClient {
   static final Duration CACHE_TTL = Duration.ofMinutes(5);
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
   private final @NonNull TenantAdminServiceApiControllerFactory
@@ -60,12 +60,12 @@ public class OperatorDpaContentClient {
 
   public OperatorDpaContentClient(
       @NonNull SecurityHeaderSupplier securityHeaderSupplier,
-      @NonNull IdentityClient identityClient,
+      @NonNull IdentityAuthentication identityAuthentication,
       @NonNull IdentityClientConfig identityClientConfig,
       @NonNull TenantAdminServiceApiControllerFactory tenantAdminServiceApiControllerFactory,
       @Value("${account.invite.onboarding.operator-dpa.tenant-id:1}") long operatorTenantId) {
     this.securityHeaderSupplier = securityHeaderSupplier;
-    this.identityClient = identityClient;
+    this.identityAuthentication = identityAuthentication;
     this.identityClientConfig = identityClientConfig;
     this.tenantAdminServiceApiControllerFactory = tenantAdminServiceApiControllerFactory;
     this.operatorTenantId = operatorTenantId;
@@ -154,9 +154,10 @@ public class OperatorDpaContentClient {
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
     var techUser = identityClientConfig.getTechnicalUser();
-    var keycloakLogin = identityClient.loginUser(techUser.getUsername(), techUser.getPassword());
+    var identityLogin =
+        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
     HttpHeaders headers =
-        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(keycloakLogin.getAccessToken());
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 
