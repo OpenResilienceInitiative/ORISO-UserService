@@ -12,8 +12,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.api.service.session.UserSessionQueryService;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,7 +32,7 @@ class UserSessionListServiceTest {
   private static final String USER_ID = "user-id";
 
   @InjectMocks private UserSessionListService userSessionListService;
-  @Mock private SessionService sessionService;
+  @Mock private UserSessionQueryService userSessionQueryService;
   @Mock private ChatService chatService;
   @Mock private MatrixRoomMembershipProvider matrixRoomMembershipProvider;
   @Mock private SessionTopicEnrichmentService sessionTopicEnrichmentService;
@@ -51,7 +51,7 @@ class UserSessionListServiceTest {
     var session = sessionResponse("!session:matrix.example", 1_700_000_000L);
     var chatStart = LocalDateTime.of(2026, 7, 26, 10, 15);
     var chat = chatResponse(1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, chatStart);
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
+    when(userSessionQueryService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
     when(matrixRoomMembershipProvider.joinedRoomsForAccount(USER_ID))
         .thenReturn(Set.of("!chat:matrix.example"));
@@ -85,7 +85,7 @@ class UserSessionListServiceTest {
     var chat =
         chatResponse(
             1L, "!chat:matrix.example", ConversationType.INTERNAL_GROUP, LocalDateTime.now());
-    when(sessionService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
+    when(userSessionQueryService.getSessionsForUserId(USER_ID)).thenReturn(List.of(session));
     when(chatService.getChatsForUserId(USER_ID)).thenReturn(List.of(chat));
 
     userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID);
@@ -107,7 +107,7 @@ class UserSessionListServiceTest {
             USER_ID, List.of("!chat:matrix.example"), Set.of("user"));
 
     assertThat(result).containsExactly(chat);
-    verify(sessionService, never())
+    verify(userSessionQueryService, never())
         .getSessionsByUserAndRoomIds(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anySet(),

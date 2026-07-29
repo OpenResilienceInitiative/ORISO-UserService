@@ -42,6 +42,8 @@ class SessionServiceIT {
 
   @Autowired private SessionService sessionService;
 
+  @Autowired private UserSessionQueryService userSessionQueryService;
+
   @Autowired private SessionRepository sessionRepository;
 
   @Autowired private ConsultantRepository consultantRepository;
@@ -87,7 +89,7 @@ class SessionServiceIT {
     assertThrows(
         ForbiddenException.class,
         () ->
-            sessionService.getSessionsByUserAndRoomIds(
+            userSessionQueryService.getSessionsByUserAndRoomIds(
                 "9c4057d0-05ad-4e86-a47c-dc5bdeec03b9",
                 Set.of("9faSTWZ5gurHLXy4R"),
                 Collections.emptySet()));

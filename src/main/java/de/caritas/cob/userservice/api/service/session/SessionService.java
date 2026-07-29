@@ -4,16 +4,12 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static java.util.Collections.emptyList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
 import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -25,34 +21,25 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 
 /** Service for sessions */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class SessionService {
 
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull AgencyService agencyService;
   private final @NonNull SessionAccessService sessionAccessService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
@@ -110,28 +97,6 @@ public class SessionService {
     session.setConsultant(consultant);
     session.setStatus(status);
     saveSession(session);
-  }
-
-  /**
-   * Returns a list of current sessions (no matter if an enquiry message has been written or not)
-   * for the provided user ID.
-   *
-   * @param userId Keycloak/MariaDB user ID
-   * @return {@link List} of {@link UserSessionResponseDTO}
-   */
-  public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
-    List<UserSessionResponseDTO> sessionResponseDTOs = new ArrayList<>();
-    List<Session> sessions = sessionRepository.findByUserUserId(userId);
-    if (isNotEmpty(sessions)) {
-      List<Long> agencyIds =
-          sessions.stream()
-              .map(Session::getAgencyId)
-              .filter(Objects::nonNull)
-              .collect(Collectors.toList());
-      List<AgencyDTO> agencies = getAgenciesSafely(agencyIds, "user " + userId);
-      sessionResponseDTOs = convertToUserSessionResponseDTO(sessions, agencies);
-    }
-    return sessionResponseDTOs;
   }
 
   /**
@@ -257,36 +222,6 @@ public class SessionService {
     return sessionRepository.save(session);
   }
 
-  private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(
-      List<Session> sessions, List<AgencyDTO> agencies) {
-    return sessions.stream()
-        .map(session -> buildUserSessionDTO(session, agencies))
-        .collect(Collectors.toList());
-  }
-
-  private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
-    return new UserSessionResponseDTO()
-        .session(new SessionMapper().convertToSessionDTO(session))
-        .agency(
-            agencies.stream()
-                .filter(agency -> agency.getId().longValue() == session.getAgencyId().longValue())
-                .findAny()
-                .orElse(null))
-        .consultant(
-            nonNull(session.getConsultant())
-                ? convertToSessionConsultantForUserDTO(session.getConsultant())
-                : null);
-  }
-
-  private SessionConsultantForUserDTO convertToSessionConsultantForUserDTO(Consultant consultant) {
-    return new SessionConsultantForUserDTO(
-        consultant.getId(),
-        consultant.getUsername(),
-        consultant.isAbsent(),
-        consultant.getAbsenceMessage(),
-        null);
-  }
-
   /**
    * Delete a {@link Session}
    *
@@ -294,66 +229,6 @@ public class SessionService {
    */
   public void deleteSession(Session session) {
     sessionRepository.delete(session);
-  }
-
-  /**
-   * Retrieves user sessions by user ID and Matrix room IDs.
-   *
-   * @param userId the user ID
-   * @param matrixRoomIds Matrix room IDs
-   * @param roles the roles of the given user
-   * @return {@link UserSessionResponseDTO}
-   */
-  public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
-      String userId, Set<String> matrixRoomIds, Set<String> roles) {
-    sessionAccessService.checkForAskerRoles(roles);
-    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
-    sessions.forEach(
-        session -> sessionAccessService.checkAskerPermissionForSession(session, userId, roles));
-    List<AgencyDTO> agencies = fetchAgencies(sessions);
-    return convertToUserSessionResponseDTO(sessions, agencies);
-  }
-
-  /**
-   * Retrieves user sessions by user ID and session IDs
-   *
-   * @param userId the user ID
-   * @param sessionIds the session IDs
-   * @param roles the roles of the given user
-   * @return {@link UserSessionResponseDTO}
-   */
-  public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
-      String userId, Set<Long> sessionIds, Set<String> roles) {
-    sessionAccessService.checkForAskerRoles(roles);
-    var sessions =
-        StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
-            .collect(Collectors.toList());
-    sessions.forEach(
-        session -> sessionAccessService.checkAskerPermissionForSession(session, userId, roles));
-    List<AgencyDTO> agencies = fetchAgencies(sessions);
-    return convertToUserSessionResponseDTO(sessions, agencies);
-  }
-
-  private List<AgencyDTO> fetchAgencies(List<Session> sessions) {
-    Set<Long> agencyIds =
-        sessions.stream()
-            .map(Session::getAgencyId)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toSet());
-    return getAgenciesSafely(new ArrayList<>(agencyIds), "session list lookup");
-  }
-
-  private List<AgencyDTO> getAgenciesSafely(List<Long> agencyIds, String context) {
-    if (agencyIds == null || agencyIds.isEmpty()) {
-      return emptyList();
-    }
-    try {
-      return agencyService.getAgencies(agencyIds);
-    } catch (HttpClientErrorException.Forbidden e) {
-      // Do not break login/session bootstrap when agency service denies access for this token.
-      log.warn("Forbidden while loading agencies for {}: {}", context, e.getMessage());
-      return emptyList();
-    }
   }
 
   public Session getSessionByMatrixRoomId(String matrixRoomId) {

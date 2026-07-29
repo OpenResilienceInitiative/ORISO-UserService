@@ -189,6 +189,7 @@ class SessionServiceTest {
 
   private SessionAccessService sessionAccessService;
   private ConsultantSessionQueryService consultantSessionQueryService;
+  private UserSessionQueryService userSessionQueryService;
   private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
@@ -215,9 +216,10 @@ class SessionServiceTest {
             groupChatParticipantRepository,
             sessionAccessService,
             sessionSupervisorRepository);
+    userSessionQueryService =
+        new UserSessionQueryService(sessionRepository, agencyService, sessionAccessService);
     sessionService =
-        new SessionService(
-            sessionRepository, agencyService, sessionAccessService, consultingTypeManager, null);
+        new SessionService(sessionRepository, sessionAccessService, consultingTypeManager, null);
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
   }
 
@@ -360,7 +362,7 @@ class SessionServiceTest {
     when(agencyService.getAgencies(any())).thenThrow(new InternalServerErrorException(""));
 
     try {
-      sessionService.getSessionsForUserId(USER_ID);
+      userSessionQueryService.getSessionsForUserId(USER_ID);
       fail("Expected exception: InternalServerErrorException");
     } catch (InternalServerErrorException serviceException) {
       // As expected
@@ -377,8 +379,42 @@ class SessionServiceTest {
     when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
 
     assertThat(
-        sessionService.getSessionsForUserId(USER_ID),
+        userSessionQueryService.getSessionsForUserId(USER_ID),
         everyItem(instanceOf(UserSessionResponseDTO.class)));
+  }
+
+  @Test
+  void getSessionsForUserId_Should_LoadEachAgencyOnlyOnce() {
+    when(sessionRepository.findByUserUserId(USER_ID))
+        .thenReturn(List.of(ACCEPTED_SESSION, ACCEPTED_SESSION));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    userSessionQueryService.getSessionsForUserId(USER_ID);
+
+    verify(agencyService).getAgencies(singletonList(ACCEPTED_SESSION.getAgencyId()));
+  }
+
+  @Test
+  void getSessionsForUserId_Should_NotLoadAgenciesWithoutSessions() {
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of());
+
+    assertThat(userSessionQueryService.getSessionsForUserId(USER_ID)).isEmpty();
+
+    verifyNoInteractions(agencyService);
+  }
+
+  @Test
+  void getSessionsForUserId_Should_MapMixedSessionsWithoutAnAgency() {
+    Session sessionWithoutAgency = easyRandom.nextObject(Session.class);
+    sessionWithoutAgency.setAgencyId(null);
+    when(sessionRepository.findByUserUserId(USER_ID))
+        .thenReturn(List.of(ACCEPTED_SESSION, sessionWithoutAgency));
+    when(agencyService.getAgencies(any())).thenReturn(AGENCY_DTO_LIST);
+
+    List<UserSessionResponseDTO> result = userSessionQueryService.getSessionsForUserId(USER_ID);
+
+    assertThat(result).hasSize(2);
+    assertThat(result.get(1).getAgency()).isNull();
   }
 
   @Test
@@ -810,7 +846,8 @@ class SessionServiceTest {
     session.setAgencyId(null);
     when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
 
-    List<UserSessionResponseDTO> sessionsForUserId = sessionService.getSessionsForUserId(USER_ID);
+    List<UserSessionResponseDTO> sessionsForUserId =
+        userSessionQueryService.getSessionsForUserId(USER_ID);
 
     assertNull(sessionsForUserId.iterator().next().getAgency());
   }
@@ -941,7 +978,7 @@ class SessionServiceTest {
   }
 
   private List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(String someOtherId) {
-    return sessionService.getSessionsByUserAndRoomIds(
+    return userSessionQueryService.getSessionsByUserAndRoomIds(
         someOtherId, singleton("matrixRoomId"), singleton(UserRole.ANONYMOUS.getValue()));
   }
 
@@ -970,7 +1007,7 @@ class SessionServiceTest {
   }
 
   private List<UserSessionResponseDTO> getSomeUserId(String someUserId, Session anonymousEnquiry) {
-    return sessionService.getSessionsByUserAndSessionIds(
+    return userSessionQueryService.getSessionsByUserAndSessionIds(
         someUserId, singleton(anonymousEnquiry.getId()), singleton(UserRole.ANONYMOUS.getValue()));
   }
 
@@ -1107,7 +1144,7 @@ class SessionServiceTest {
         .thenThrow(
             HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
 
-    List<UserSessionResponseDTO> result = sessionService.getSessionsForUserId(USER_ID);
+    List<UserSessionResponseDTO> result = userSessionQueryService.getSessionsForUserId(USER_ID);
 
     // 403 from agency service is swallowed; sessions still returned, agency field is null
     assertThat(result).hasSize(1);

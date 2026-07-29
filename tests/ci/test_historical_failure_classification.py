@@ -130,7 +130,7 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertEqual(3565, current.get("unitTests"))
+        self.assertEqual(3568, current.get("unitTests"))
         self.assertEqual(407, current["unitReports"])
         self.assertEqual(84, current["integrationReports"])
         self.assertEqual(860, current["integrationTests"])

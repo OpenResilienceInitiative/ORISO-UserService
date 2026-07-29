@@ -230,6 +230,50 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"{consumer_source.name} must not use the broad SessionService for queries",
             )
 
+    def test_user_session_queries_have_a_focused_application_boundary(self):
+        session_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/session"
+        )
+        query_service = session_module / "UserSessionQueryService.java"
+        session_service = (session_module / "SessionService.java").read_text()
+        list_service = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/sessionlist/"
+            "UserSessionListService.java"
+        ).read_text()
+
+        self.assertTrue(
+            query_service.exists(),
+            "User-facing session reads must live in UserSessionQueryService",
+        )
+        self.assertNotIn(
+            "AgencyService agencyService",
+            session_service,
+            "SessionService must not retain the agency lookup used by user query mapping",
+        )
+        for method in (
+            "getSessionsForUserId(",
+            "getSessionsByUserAndRoomIds(",
+            "getSessionsByUserAndSessionIds(",
+        ):
+            self.assertNotIn(
+                f"public List<UserSessionResponseDTO> {method}",
+                session_service,
+                f"SessionService must not own user query method {method}",
+            )
+
+        self.assertIn(
+            "UserSessionQueryService",
+            list_service,
+            "UserSessionListService must use the focused user query boundary",
+        )
+        self.assertNotIn(
+            "SessionService",
+            list_service,
+            "UserSessionListService must not use the broad SessionService for queries",
+        )
+
     def test_identity_profile_module_depends_on_ports_not_identity_or_chat_adapters(self):
         application_roots = (
             ROOT
