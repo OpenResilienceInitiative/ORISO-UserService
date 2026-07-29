@@ -490,12 +490,12 @@ data is rejected safely.
 A separate authentication boundary contract removes login, logout and
 password verification from the broad `IdentityClient`. The five live
 consumers—`IdentityManager`, anonymous-user creation, the agency Matrix
-credential client, appointment synchronization and account validation—now use
-`IdentityAuthentication`. `KeycloakService` alone maps the provider response to
-`IdentityLogin`. This changes ownership and transport coupling, not call count:
-each login, logout or password-verification operation still performs exactly
-one outbound Keycloak operation. The removed legacy alias-message consumer is
-not restored.
+credential client, appointment synchronization, account validation and both
+technical-user onboarding clients—now use `IdentityAuthentication`.
+`KeycloakService` alone maps the provider response to `IdentityLogin`. This
+changes ownership and transport coupling, not call count: each login, logout or
+password-verification operation still performs exactly one outbound Keycloak
+operation. The removed legacy alias-message consumer is not restored.
 
 The username-availability boundary reflects the actual current PreDev source,
 not the older stacked change: its four direct consumer classes are

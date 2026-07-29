@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -16,7 +17,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkExc
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
@@ -51,6 +54,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull IdentitySecondFactor identitySecondFactor;
   private final @NonNull TenantCreationClient tenantCreationClient;
+  private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
@@ -59,6 +63,11 @@ public class TenantAdminOnboardingService {
    * mandatory 2FA activation is still open and whose link is unexpired resolves with a pending
    * two-factor resume; every other state maps to the distinct link-death reasons (410 body {@code
    * reason}, unknown tokens 404).
+   *
+   * <p>A plainly resolving invite carries the operator's published DPA/AVV text: the onboarding
+   * step asks the invitee to confirm the agreement on behalf of their organisation, so the wording
+   * must be on screen and navigable (anchor/TOC) rather than replaced by a placeholder hint. The
+   * resume path skips the lookup — it re-enters at the 2FA step, which shows no contract.
    */
   @Transactional
   public OnboardingInviteState resolveOnboardingInvite(String rawToken) {
@@ -67,10 +76,11 @@ public class TenantAdminOnboardingService {
 
     if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
       expireIfPastExpiry(invite, now);
-      return new OnboardingInviteState(invite, false);
+      return new OnboardingInviteState(
+          invite, false, operatorDpaContentClient.fetchPublishedDpaContent());
     }
     if (isResumableAtTwoFactorStep(invite, now)) {
-      return new OnboardingInviteState(invite, true);
+      return new OnboardingInviteState(invite, true, null);
     }
     throw linkDeathException(invite);
   }
@@ -81,6 +91,19 @@ public class TenantAdminOnboardingService {
    * effects compensable: the invite is claimed first (rolls back with the transaction), then the
    * Keycloak account is created (compensated via {@code rollbackUser} on any later failure), and
    * the TenantService creation — the irreversible reservation consumption — runs last.
+   *
+   * <p>The DPA acceptance travels WITH that creation call (#569). There is exactly one data
+   * processing agreement relationship, platform operator &lt;-&gt; tenant, and the acceptance the
+   * invitee gives here IS the tenant's signature on the operator's current version — so it is
+   * recorded through the U9 admin-signature contract for the tenant being created, against the
+   * version that was actually shown. Handing it to TenantService inside the creation is what makes
+   * it consistent: tenant and signature are committed together or rolled back together (including
+   * the ID reservation), so the flow can neither report success for an unrecorded acceptance nor
+   * leave behind a tenant whose admin walks into a non-actionable DPA blocker on first login.
+   *
+   * <p>Consequence: without a published operator DPA there is nothing to accept, and the
+   * registration is refused up front — before the invite is claimed, so the link stays usable once
+   * the operator publishes.
    */
   @Transactional
   public TenantAdminRegistrationResult registerTenantAdmin(
@@ -104,6 +127,19 @@ public class TenantAdminOnboardingService {
         || !invite.getTenantIdReservationToken().equals(command.tenantIdReservationToken())) {
       // The echoed reservation pair must prove ownership; a mismatch is an unusable link (404).
       throw new NotFoundException("Reservation does not match this invite");
+    }
+
+    OperatorDpa operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
+    if (operatorDpa == null) {
+      // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
+      // straight into the non-actionable DPA blocker. Refuse before touching the invite.
+      log.error(
+          "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
+              + " published no data processing agreement, so the acceptance cannot be recorded",
+          invite.getId());
+      throw new InternalServerErrorException(
+          "No data processing agreement is published by the platform operator — publish it before"
+              + " tenant admins can complete the onboarding");
     }
 
     int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
@@ -135,15 +171,14 @@ public class TenantAdminOnboardingService {
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 
-      // DPA acceptance snapshot: the wording is rendered read-only by the Admin panel; full
-      // signature persistence in TenantService is the U9 follow-up. Log for the audit trail.
-      log.info(
-          "Tenant-admin onboarding registration accepted the DPA (invite {}, signer '{}')",
-          invite.getId(),
-          command.dpaSignerName());
-
       MultilingualTenantDTO created =
-          tenantCreationClient.createTenant(buildTenantDto(invite, command));
+          tenantCreationClient.createTenant(
+              buildTenantDto(invite, command, buildDpaAcceptance(command, admin, operatorDpa)));
+      log.info(
+          "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
+              + " version {}",
+          invite.getId(),
+          operatorDpa.version());
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
@@ -282,14 +317,38 @@ public class TenantAdminOnboardingService {
   }
 
   private static MultilingualTenantDTO buildTenantDto(
-      AccountInvite invite, RegisterTenantAdminCommand command) {
+      AccountInvite invite,
+      RegisterTenantAdminCommand command,
+      OnboardingDpaAcceptanceDTO dpaAcceptance) {
     return new MultilingualTenantDTO()
         .id(invite.getTenantId())
         .name(command.organisationName().trim())
         .subdomain(trimToNull(command.subdomain()))
         .address(trimToNull(command.address()))
         .adminEmails(List.of(invite.getRecipientEmail()))
-        .tenantIdReservationToken(invite.getTenantIdReservationToken());
+        .tenantIdReservationToken(invite.getTenantIdReservationToken())
+        .onboardingDpaAcceptance(dpaAcceptance);
+  }
+
+  /**
+   * The invitee's acceptance in the shape TenantService persists as the tenant's append-only admin
+   * signature (U9). The signer is the tenant-admin account just created — not the technical user
+   * carrying the call — and the version is the operator DPA that was rendered to them.
+   */
+  private static OnboardingDpaAcceptanceDTO buildDpaAcceptance(
+      RegisterTenantAdminCommand command, Admin admin, OperatorDpa operatorDpa) {
+    return new OnboardingDpaAcceptanceDTO()
+        .accepted(true)
+        .signerUserId(admin.getId())
+        .signerUsername(admin.getUsername())
+        .signerName(
+            isBlank(command.dpaSignerName())
+                ? admin.getFirstName() + " " + admin.getLastName()
+                : command.dpaSignerName().trim())
+        .signerPosition(trimToNull(command.dpaSignerPosition()))
+        .signerEmail(trimToNull(command.dpaSignerEmail()))
+        .signerOrganisation(trimToNull(command.dpaSignerOrganisation()))
+        .dpaVersion(operatorDpa.version());
   }
 
   private static boolean isBlank(String value) {
@@ -301,10 +360,13 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Resolved onboarding state: the invite plus whether the flow re-enters at the 2FA step (#569
-   * resume contract) instead of the registration step.
+   * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
+   * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
+   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
+   * published or the lookup is unavailable.
    */
-  public record OnboardingInviteState(AccountInvite invite, boolean pendingTwoFactorResume) {}
+  public record OnboardingInviteState(
+      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
 
   /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
   public record RegisterTenantAdminCommand(

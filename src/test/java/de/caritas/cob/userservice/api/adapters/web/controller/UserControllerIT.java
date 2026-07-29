@@ -406,10 +406,6 @@ class UserControllerIT {
     TenantContext.clear();
   }
 
-  private IdentityUsernameAvailability identityUsernameAvailability() {
-    return (IdentityUsernameAvailability) identityClient;
-  }
-
   @Test
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */

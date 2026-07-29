@@ -149,6 +149,12 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/user/validation/"
             "UserAccountValidator.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/"
+            "TenantCreationClient.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/"
+            "OperatorDpaContentClient.java",
         )
 
         self.assertTrue(

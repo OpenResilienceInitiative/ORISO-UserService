@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,6 +36,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import java.time.LocalDateTime;
@@ -52,6 +54,8 @@ class TenantAdminOnboardingServiceTest {
   private static final String RAW_TOKEN = "raw-invite-token";
   private static final String TOKEN_HASH = AccountInviteService.hash(RAW_TOKEN);
   private static final String RESERVATION_TOKEN = "3f2c6d1e-8b1a-4b8e-9f47-1234567890ab";
+  private static final String OPERATOR_DPA_JSON =
+      "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
   private static final Long RESERVED_TENANT_ID = 21L;
 
   @Mock private AccountInviteRepository accountInviteRepository;
@@ -61,6 +65,7 @@ class TenantAdminOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private TenantCreationClient tenantCreationClient;
+  @Mock private OperatorDpaContentClient operatorDpaContentClient;
 
   private TenantAdminOnboardingService service;
 
@@ -75,6 +80,7 @@ class TenantAdminOnboardingServiceTest {
             identityProfileLookup,
             identitySecondFactor,
             tenantCreationClient,
+            operatorDpaContentClient,
             new UsernameTranscoder());
   }
 
@@ -93,6 +99,14 @@ class TenantAdminOnboardingServiceTest {
         .expiresAt(LocalDateTime.now().plusDays(10))
         .createDate(LocalDateTime.now().minusDays(1))
         .build();
+  }
+
+  private static final OperatorDpa OPERATOR_DPA =
+      new OperatorDpa(OPERATOR_DPA_JSON, "2026-07-20T10:00");
+
+  /** The governing operator DPA the invitee is shown and accepts (#569). */
+  private void givenPublishedOperatorDpa() {
+    when(operatorDpaContentClient.fetchPublishedDpa()).thenReturn(OPERATOR_DPA);
   }
 
   private static RegisterTenantAdminCommand validCommand() {
@@ -145,6 +159,29 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void resolveOnboardingInvite_deliverableInvite_carriesTheOperatorDpaText() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(OPERATOR_DPA_JSON);
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(OPERATOR_DPA_JSON, state.dpaContent());
+  }
+
+  @Test
+  void resolveOnboardingInvite_deliverableInviteWithoutPublishedDpa_resolvesWithoutText() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(null);
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(invite, state.invite());
+    assertNull(state.dpaContent());
+  }
+
+  @Test
   void resolveOnboardingInvite_expiredDeliverableInvite_marksExpiredAndThrows() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     invite.setExpiresAt(LocalDateTime.now().minusMinutes(5));
@@ -169,6 +206,9 @@ class TenantAdminOnboardingServiceTest {
 
     assertTrue(state.pendingTwoFactorResume());
     assertEquals("STOREDSECRET", state.invite().getTotpPendingSecret());
+    // The resume path re-enters at the 2FA step, which shows no contract — no upstream lookup.
+    assertNull(state.dpaContent());
+    verify(operatorDpaContentClient, never()).fetchPublishedDpaContent();
   }
 
   @Test
@@ -201,6 +241,7 @@ class TenantAdminOnboardingServiceTest {
   @Test
   void registerTenantAdmin_happyPath_createsAdminAndTenantAndReturnsTotpMaterial() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
@@ -243,6 +284,108 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("kc-user-1", invite.getAcceptedByUserId());
     assertEquals("TOTPSECRET", invite.getTotpPendingSecret());
     verify(accountInviteRepository).save(invite);
+  }
+
+  /**
+   * #569 defect 2 (compliance): the acceptance must become an auditable U9 admin signature for the
+   * tenant being created — signer identity, the operator DPA version actually shown and the form
+   * data — instead of a log line. Defect 1 follows from it: with that signature the tenant's DPA
+   * status resolves to VALID, so the first login is not blocked.
+   */
+  @Test
+  void registerTenantAdmin_recordsTheDpaAcceptanceAsTheTenantsAdminSignature() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    var acceptance = tenantCaptor.getValue().getOnboardingDpaAcceptance();
+    assertNotNull(acceptance);
+    assertTrue(acceptance.getAccepted());
+    assertEquals("kc-user-1", acceptance.getSignerUserId());
+    assertEquals("tenant.admin@example.org", acceptance.getSignerUsername());
+    assertEquals("Erika Beispiel", acceptance.getSignerName());
+    assertEquals("CEO", acceptance.getSignerPosition());
+    assertEquals("tenant.admin@example.org", acceptance.getSignerEmail());
+    assertEquals("Beispiel gGmbH", acceptance.getSignerOrganisation());
+    assertEquals("2026-07-20T10:00", acceptance.getDpaVersion());
+  }
+
+  /**
+   * No governing DPA published means there is nothing the invitee could validly accept, and the
+   * tenant would be created straight into the non-actionable blocker. The registration is refused
+   * BEFORE the single-use link is claimed, so it stays usable once the operator publishes.
+   */
+  @Test
+  void registerTenantAdmin_noOperatorDpaPublished_refusesBeforeConsumingAnything() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.fetchPublishedDpa()).thenReturn(null);
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
+
+    verify(accountInviteRepository, never()).claimForAcceptance(anyLong(), any(), any());
+    verify(createAdminService, never()).createNewTenantAdmin(any());
+    verify(tenantCreationClient, never()).createTenant(any());
+  }
+
+  /** A signature the invitee left nameless still names a human: the invited admin. */
+  @Test
+  void registerTenantAdmin_blankSignerName_fallsBackToTheOnboardedAdminsName() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+    var command =
+        new RegisterTenantAdminCommand(
+            "Beispiel gGmbH",
+            "beispiel",
+            null,
+            true,
+            "  ",
+            null,
+            null,
+            null,
+            "s3cretPassword",
+            RESERVED_TENANT_ID,
+            RESERVATION_TOKEN);
+
+    service.registerTenantAdmin(RAW_TOKEN, command);
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    assertEquals(
+        "Erika Beispiel", tenantCaptor.getValue().getOnboardingDpaAcceptance().getSignerName());
+  }
+
+  private static Admin onboardedAdmin() {
+    return Admin.builder()
+        .id("kc-user-1")
+        .username("tenant.admin@example.org")
+        .email("tenant.admin@example.org")
+        .firstName("Erika")
+        .lastName("Beispiel")
+        .build();
   }
 
   @Test
@@ -333,6 +476,7 @@ class TenantAdminOnboardingServiceTest {
   @Test
   void registerTenantAdmin_lostClaimRace_reportsWinnersState() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(0);
     AccountInvite winner = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
@@ -350,6 +494,7 @@ class TenantAdminOnboardingServiceTest {
   @Test
   void registerTenantAdmin_tenantCreationFails_rollsBackKeycloakUserAndRethrows() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
@@ -376,6 +521,7 @@ class TenantAdminOnboardingServiceTest {
   @Test
   void registerTenantAdmin_missingTotpMaterial_rollsBackKeycloakUser() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     Admin admin =

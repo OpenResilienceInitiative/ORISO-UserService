@@ -151,9 +151,11 @@ public class TenantAdminOnboardingController {
     public LocalDateTime expiresAt;
 
     /**
-     * Published DPA/AVV text (JSON language -> HTML map). Not yet sourced server-side — the
-     * operator-DPA lookup is the U9 follow-up; the Admin panel renders the step without the preview
-     * text when null.
+     * The platform operator's published DPA/AVV text (stored JSON language -> HTML map, same format
+     * as the legal settings), rendered read-only on the onboarding DPA step so the invitee sees —
+     * and can navigate via the anchor/TOC — the contract they confirm. Null only when the operator
+     * published no DPA or the lookup was unavailable; the Admin panel then falls back to its "text
+     * will be provided by the platform operator" hint.
      */
     public String dpaContent;
 
@@ -172,7 +174,7 @@ public class TenantAdminOnboardingController {
       dto.reservedTenantId = invite.getTenantId();
       dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
       dto.expiresAt = invite.getExpiresAt();
-      dto.dpaContent = null;
+      dto.dpaContent = state.dpaContent();
       if (state.pendingTwoFactorResume()) {
         dto.phase = PHASE_PENDING_2FA_ACTIVATION;
         if (invite.getTotpPendingSecret() != null) {

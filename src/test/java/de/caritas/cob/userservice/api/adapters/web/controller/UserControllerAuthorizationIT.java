@@ -244,10 +244,6 @@ class UserControllerAuthorizationIT {
     verifyNoInteractions(identityManager);
   }
 
-  private IdentityUsernameAvailability identityUsernameAvailability() {
-    return (IdentityUsernameAvailability) identityClient;
-  }
-
   @Test
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
