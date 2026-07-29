@@ -201,8 +201,15 @@ After warm-up, this removes the observed per-session Keycloak roundtrip and the
 equivalent password-grant fan-out from the three additional technical
 consumers, while preserving their existing downstream retry policies and the
 separate AgencyService public-agency and secret Matrix-credential boundaries.
-The complete session service-path increment and exact 3,556-test unit inventory were verified at
-`45e7cc2d61200e19188cffb933ce488228ddc374`.
+The complete session service-path increment and exact 3,556-test unit
+inventory were verified at `45e7cc2d61200e19188cffb933ce488228ddc374`.
+
+The follow-up repository-wide consumer cut at
+`a4135a0c487e1966863ebbff02e939539c1fb8c3` extends that same provider to the
+AppointmentService, tenant-creation and operator-DPA clients. Its focused
+client tests and executable technical-versus-interactive authentication seam
+pass, and the complete unit inventory is 3,558 tests in 406 reports with zero
+failures, errors or skips.
 
 Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.

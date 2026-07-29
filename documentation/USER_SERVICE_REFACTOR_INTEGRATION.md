@@ -163,6 +163,14 @@ technical-identity token boundary:
   Liquibase changesets were applied;
 - 64 parallel technical-token consumers shared one password grant; expiry,
   targeted invalidation, and zero-lifetime behavior were also verified;
+- follow-up consumer audit at
+  `a4135a0c487e1966863ebbff02e939539c1fb8c3` moved AppointmentService,
+  TenantService tenant creation and operator-DPA reads onto that same shared
+  technical-token provider;
+- the executable module boundary keeps interactive login, anonymous-account
+  login and explicit password validation outside the technical-token cache;
+- the follow-up complete unit inventory is 3,558 tests in 406 reports with
+  zero failures, errors or skips;
 - 64 parallel session-creation service paths crossed real loopback Keycloak and
   AgencyService HTTP clients with one shared healthy grant and exactly 64
   accepted credential calls; stale-token recovery used one shared refresh,
