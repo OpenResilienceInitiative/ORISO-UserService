@@ -7,6 +7,10 @@ CONTROLLERS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller"
 )
+WEB_MAPPINGS = (
+    ROOT
+    / "src/main/java/de/caritas/cob/userservice/api/adapters/web/mapping"
+)
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
@@ -135,27 +139,21 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "not expose the outbound-port package:\n" + "\n".join(offenders),
         )
 
-    def test_identity_boundary_has_no_unused_session_close_command(self):
-        sources = [
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
-            "KeycloakService.java",
-            ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
-            "KeycloakAuthClient.java",
-        ]
+    def test_user_web_mappers_do_not_import_outbound_identity_client(self):
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
         offenders = [
             str(source.relative_to(ROOT))
-            for source in sources
-            if "closeSession(" in source.read_text()
+            for source in WEB_MAPPINGS.glob("*.java")
+            if forbidden_import in source.read_text()
         ]
+
         self.assertEqual(
             [],
             offenders,
-            "The unused identity session-close command must not remain on production surfaces:\n"
-            + "\n".join(offenders),
+            "User web mappers must ask the identity input port instead of calling "
+            "the outbound identity client:\n" + "\n".join(offenders),
         )
 
     def test_admin_module_depends_on_ports_not_chat_adapters(self):

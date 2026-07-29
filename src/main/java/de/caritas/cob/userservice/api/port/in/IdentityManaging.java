@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.in;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import java.util.Map;
 import java.util.Optional;
@@ -24,4 +25,6 @@ public interface IdentityManaging {
   OtpInfoDTO getOtpCredential(String username);
 
   boolean isEmailAvailableOrOwn(String username, String email);
+
+  boolean hasRole(String userId, UserRole role);
 }
