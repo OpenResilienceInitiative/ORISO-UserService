@@ -237,6 +237,28 @@ on 2026-07-29 with Temurin JDK 21 against integrated application head
 - OpenAPI contract gate: 8 tests passed;
 - Spotless and `git diff --check`: passed.
 
+### Admin web-composition increment
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `5fb2370fb68a667d0cb008d5a23969266968433b`:
+
+- `UserAdminController` now composes four package-local web delegates for
+  query/report, consultant/identity, asker and admin-account operations;
+- direct controller dependencies were reduced from ten application
+  collaborators to four focused delegates, and the unused
+  `AppointmentService` dependency was removed;
+- an executable architecture contract prevents the generated API adapter from
+  directly importing application services, facades, mapping or
+  authenticated-user state;
+- 48 focused controller and routing tests plus all 37 MVC integration tests
+  preserve the existing HTTP behavior;
+- unit suite: 3,564 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 85 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- Spotless and `git diff --check`: passed.
+
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because both the integration
 suite and the exact-head load proof create and clean isolated databases. The

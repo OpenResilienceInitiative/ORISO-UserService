@@ -576,7 +576,7 @@ whole codebase as modular:
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
 | Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing an outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use `IdentityAccountRemover`. Registration-time dummy-email replacement uses `IdentityDummyEmailUpdater`. All active registration, anonymous-user, admin and consultant provisioning paths create provider accounts through `IdentityAccountCreator` with provider-neutral request and result values. Account email writes use `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing. Realm-role reads use `IdentityRoleLookup`; consultant role-set validation and `IdentityManager` role decisions each perform one full read. All active role writers use the focused batch `IdentityRoleUpdater`. Interactive and technical-user authentication use `IdentityAuthentication` and provider-neutral `IdentityLogin`. Username availability is isolated behind `IdentityUsernameAvailability`. OTP credential management and email verification use `IdentitySecondFactor`. Locale changes use `IdentityLocaleUpdater`. The broad `IdentityClient` contract is deleted, and no production or test Java source imports it. | `KeycloakService` remains a large adapter implementing several focused capabilities; application composition should keep consuming the narrow ports rather than the concrete adapter. |
-| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters, and identity account creation no longer exposes a Keycloak response DTO. | The large admin controller still composes many services. |
+| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters, and identity account creation no longer exposes a Keycloak response DTO. The generated admin API adapter composes four focused web delegates for query/report, consultant/identity, asker and admin-account operations instead of directly injecting application services, facades, mapping and authenticated-user state. | The focused delegates still call the existing broad admin facades and services; those application boundaries can be narrowed independently without changing the generated HTTP contract. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -589,6 +589,9 @@ Rocket.Chat production packages, configuration, DTOs and schema fields from
 returning. A dead-surface contract prevents the unused identity session-close
 command or the deleted broad identity interface from returning. The
 appointment deletion repair stays behind `Organizing` and `AppointmentRepository`.
+The admin-controller contract additionally requires all four focused web
+delegates and rejects direct application-service, facade, mapper or
+authenticated-user imports in `UserAdminController`.
 
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
@@ -724,10 +727,10 @@ transport from returning.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source, and the broad identity transport contract is now removed. The next safe
-sequence is the Admin controller composition boundary, then smaller Session
-orchestration boundaries. Each step must add a failing boundary contract before
-moving dependencies.
+source, the broad identity transport contract is removed and the generated
+Admin HTTP adapter now has a focused composition boundary. The next safe
+sequence is smaller Session orchestration boundaries. Each step must add a
+failing boundary contract before moving dependencies.
 
 ## Microservice decision
 
