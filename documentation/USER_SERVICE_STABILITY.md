@@ -27,27 +27,27 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,414 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,415 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 854 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,414 unit plus 854
-integration executions, or 4,268.
+comparable primary current inventory is therefore 3,415 unit plus 854
+integration executions, or 4,269.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,268: 368 fewer unit and 86 fewer integration
+inventory to the current 4,269: 367 fewer unit and 86 fewer integration
 executions. The source diff for that same pre-cutover-to-current interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 454-execution net reduction. This is intentional scope
+map one-to-one to the 453-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -59,7 +59,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 854 executions in 82 reports. The unit workflow applies the same exact-count
-gate to all 3,414 unit executions.
+gate to all 3,415 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -296,7 +296,7 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,414 unit executions with
+Measured on this branch after merging `pre-dev`: 3,415 unit executions with
 zero failures, zero errors and no skips, and 854 required integration
 executions across 82 reports with zero failures, zero errors and nine skips.
 The focused supplier test and formatting gate also pass.
@@ -345,6 +345,13 @@ repeat loop is narrowed to the cases this branch removes, not closed.
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
+- Authenticated user-data profile lookup now uses one focused
+  `IdentityProfileLookup` call and exposes only five provider-neutral fields
+  across the application seam: ID, username, first name, last name and email.
+  The Keycloak adapter still performs exactly one user-resource resolution and
+  one representation read, with no retry. Provider not-found becomes absence;
+  other provider failures retain the token-based facade fallback. This bounds
+  the internal payload but does not claim a smaller Keycloak network response.
 - Consultant role-set validation reads the user's complete realm-role list once
   and performs the requested-set intersection in-process. The code-level bound
   is therefore zero identity calls for an empty role set and exactly one for a
@@ -385,7 +392,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -403,6 +410,9 @@ appointment deletion repair stays behind `Organizing` and `AppointmentRepository
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+A dedicated profile-read contract keeps user-data facades off the broad
+identity client, removes profile lookup from that client and requires shared
+Spring identity mocks to provide the focused port.
 The role-read contract keeps full realm-role reads behind the focused
 `IdentityRoleLookup` port and prevents per-candidate role checks from returning
 to consultant-agency validation.

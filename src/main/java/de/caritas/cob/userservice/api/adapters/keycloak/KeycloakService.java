@@ -34,6 +34,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
@@ -80,6 +82,7 @@ public class KeycloakService
         IdentityClient,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
+        IdentityProfileLookup,
         IdentityRoleLookup,
         IdentityUsernameAvailability,
         IdentitySecondFactor {
@@ -923,13 +926,27 @@ public class KeycloakService
     }
   }
 
-  public UserRepresentation getById(String userId) {
-    UserResource userResource = keycloakClient.getUsersResource().get(userId);
-    if (userResource == null) {
-      log.error("Could not get user with id {} from keycloak", userId);
-      throw new KeycloakException("User with id not found in keycloak: " + userId);
+  @Override
+  public Optional<IdentityProfile> findById(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return Optional.empty();
+      }
+      var user = userResource.toRepresentation();
+      if (user == null) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          new IdentityProfile(
+              user.getId(),
+              user.getUsername(),
+              user.getFirstName(),
+              user.getLastName(),
+              user.getEmail()));
+    } catch (NotFoundException ex) {
+      return Optional.empty();
     }
-    return userResource.toRepresentation();
   }
 
   /**
