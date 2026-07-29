@@ -117,10 +117,10 @@ the focused replay PRs.
 ## Combined local verification
 
 Executed on 2026-07-29 with Temurin JDK 21 against source commit
-`2dfa6c3e586e8fd7bd9765ab9ef0527ebd7252fa`:
+`a174fab7e6715027d316ea8744f8bf26df055806`:
 
-- unit suite: 3,427 tests, 0 failures, 0 errors, 0 skipped;
-- required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
+- unit suite: 3,445 tests, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 857 tests in 83 reports, 0 failures,
   0 errors, 9 environment-gated skips;
 - CI and executable architecture contracts: 73 tests passed;
 - OpenAPI contract gate: 8 tests passed;
