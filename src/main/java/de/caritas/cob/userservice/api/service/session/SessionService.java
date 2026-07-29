@@ -7,8 +7,6 @@ import static java.util.Objects.nonNull;
 
 import com.google.api.client.util.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -30,8 +28,6 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 /** Service for sessions */
@@ -40,12 +36,7 @@ import org.springframework.stereotype.Service;
 public class SessionService {
 
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull SessionAccessService sessionAccessService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
-
-  @Value("${feature.topics.enabled}")
-  private boolean topicsFeatureEnabled;
 
   /**
    * Returns the sessions for a user
@@ -236,62 +227,6 @@ public class SessionService {
         .findByMatrixRoomId(matrixRoomId)
         .orElseThrow(
             () -> new NotFoundException("Session with Matrix room ID %s not found.", matrixRoomId));
-  }
-
-  /**
-   * Returns a {@link ConsultantSessionDTO} for a specific session.
-   *
-   * @param sessionId the session ID to fetch
-   * @param consultant the calling consultant
-   * @return {@link ConsultantSessionDTO} entity for the specific session
-   */
-  public ConsultantSessionDTO fetchSessionForConsultant(
-      @NonNull Long sessionId, @NonNull Consultant consultant) {
-
-    var session =
-        getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
-
-    sessionAccessService.checkPermissionForConsultantSession(session, consultant);
-    return toConsultantSessionDTO(session);
-  }
-
-  private ConsultantSessionDTO toConsultantSessionDTO(Session session) {
-
-    var consultantSessionDTO =
-        new ConsultantSessionDTO()
-            .isTeamSession(session.isTeamSession())
-            .agencyId(session.getAgencyId())
-            .consultingType(session.getConsultingTypeId())
-            .id(session.getId())
-            .status(session.getStatus().getValue())
-            .askerId(session.getUser().getUserId())
-            .askerMatrixUserId(session.getUser().getMatrixUserId())
-            .askerUserName(session.getUser().getUsername())
-            .matrixRoomId(session.getMatrixRoomId())
-            .postcode(session.getPostcode())
-            .consultantId(nonNull(session.getConsultant()) ? session.getConsultant().getId() : null)
-            .consultantMatrixUserId(
-                nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
-            .age(session.getUserAge())
-            .gender(session.getUserGender())
-            .counsellingRelation(session.getCounsellingRelation())
-            .referer(session.getReferer());
-
-    if (topicsFeatureEnabled) {
-      consultantSessionDTO
-          .mainTopic(new SessionTopicDTO().id(session.getMainTopicId()))
-          .topics(
-              session.getSessionTopics().stream()
-                  .map(topic -> new SessionTopicDTO().id(topic.getTopicId()))
-                  .collect(Collectors.toList()));
-      sessionTopicEnrichmentService.enrichSessionWithMainTopicData(consultantSessionDTO);
-      sessionTopicEnrichmentService.enrichSessionWithTopicsData(consultantSessionDTO);
-    } else {
-      consultantSessionDTO.topics(null);
-    }
-
-    return consultantSessionDTO;
   }
 
   /**

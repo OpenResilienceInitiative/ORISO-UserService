@@ -42,6 +42,8 @@ class SessionServiceIT {
 
   @Autowired private SessionService sessionService;
 
+  @Autowired private ConsultantSessionDetailService consultantSessionDetailService;
+
   @Autowired private UserSessionQueryService userSessionQueryService;
 
   @Autowired private SessionRepository sessionRepository;
@@ -70,7 +72,8 @@ class SessionServiceIT {
   @Test
   void fetchSessionForConsultant_Should_ThrowNotFoundException_When_SessionIsNotFound() {
     assertThrows(
-        NotFoundException.class, () -> sessionService.fetchSessionForConsultant(-1L, CONSULTANT));
+        NotFoundException.class,
+        () -> consultantSessionDetailService.fetchSessionForConsultant(-1L, CONSULTANT));
   }
 
   @Test
@@ -81,7 +84,8 @@ class SessionServiceIT {
             .get();
 
     assertThrows(
-        ForbiddenException.class, () -> sessionService.fetchSessionForConsultant(1L, consultant));
+        ForbiddenException.class,
+        () -> consultantSessionDetailService.fetchSessionForConsultant(1L, consultant));
   }
 
   @Test
@@ -106,7 +110,8 @@ class SessionServiceIT {
             .get();
     Session session = sessionRepository.findById(1216L).get();
 
-    ConsultantSessionDTO result = sessionService.fetchSessionForConsultant(1216L, consultant);
+    ConsultantSessionDTO result =
+        consultantSessionDetailService.fetchSessionForConsultant(1216L, consultant);
 
     assertNotNull(result);
     assertEquals(session.getId(), result.getId());
@@ -150,7 +155,7 @@ class SessionServiceIT {
         consultantRepository
             .findByIdAndDeleteDateIsNull("e2f20d3a-1ca7-4cb5-9fac-8e26033416b3")
             .get();
-    assertNotNull(sessionService.fetchSessionForConsultant(2L, consultant));
+    assertNotNull(consultantSessionDetailService.fetchSessionForConsultant(2L, consultant));
   }
 
   private void givenAValidTopicServiceResponse() {

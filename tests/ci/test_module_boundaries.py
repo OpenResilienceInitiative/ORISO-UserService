@@ -120,6 +120,9 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
         access_service = session_module / "SessionAccessService.java"
         session_service = (session_module / "SessionService.java").read_text()
+        detail_service = read_if_exists(
+            session_module / "ConsultantSessionDetailService.java"
+        )
         matrix_controllers = (
             CONTROLLERS / "MatrixMessageController.java",
             CONTROLLERS / "MatrixSyncController.java",
@@ -131,8 +134,13 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         )
         self.assertIn(
             "SessionAccessService sessionAccessService",
+            detail_service,
+            "Consultant session details must delegate access decisions to the focused boundary",
+        )
+        self.assertNotIn(
+            "SessionAccessService sessionAccessService",
             session_service,
-            "SessionService must delegate access decisions to the focused boundary",
+            "The broad SessionService must not retain consultant access decisions",
         )
         self.assertNotIn(
             "public Session assertUserHasAccess(",
@@ -273,6 +281,68 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             list_service,
             "UserSessionListService must not use the broad SessionService for queries",
         )
+
+    def test_consultant_session_detail_has_a_focused_application_boundary(self):
+        session_module = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/session"
+        )
+        detail_service = session_module / "ConsultantSessionDetailService.java"
+        enrichment_service = (
+            session_module / "ConsultantSessionTopicEnrichmentService.java"
+        ).read_text()
+        session_service = (session_module / "SessionService.java").read_text()
+        controller = (
+            CONTROLLERS / "UserSessionControllerDelegate.java"
+        ).read_text()
+
+        self.assertTrue(
+            detail_service.exists(),
+            "Authorized consultant detail reads must live in ConsultantSessionDetailService",
+        )
+        for collaborator in (
+            "SessionAccessService sessionAccessService",
+            "ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService",
+        ):
+            self.assertNotIn(
+                collaborator,
+                session_service,
+                f"SessionService must not retain consultant detail collaborator {collaborator}",
+            )
+        self.assertNotIn(
+            "fetchSessionForConsultant(",
+            session_service,
+            "SessionService must not own the consultant detail query",
+        )
+        self.assertNotIn(
+            "ConsultantSessionDTO",
+            session_service,
+            "SessionService must not own consultant detail response mapping",
+        )
+        self.assertIn(
+            "ConsultantSessionDetailService",
+            controller,
+            "The web delegate must route consultant detail reads through the focused boundary",
+        )
+        self.assertIn(
+            "consultantSessionDetailService.fetchSessionForConsultant(",
+            controller,
+            "The web delegate must call the focused consultant detail boundary",
+        )
+        self.assertIn(
+            "enrichSessionWithTopicData(",
+            detail_service.read_text() if detail_service.exists() else "",
+            "Consultant detail enrichment must use the single batch topic lookup",
+        )
+        for split_method in (
+            "public ConsultantSessionDTO enrichSessionWithMainTopicData(",
+            "public ConsultantSessionDTO enrichSessionWithTopicsData(",
+        ):
+            self.assertNotIn(
+                split_method,
+                enrichment_service,
+                "The split topic APIs would allow two dependency lookups for one response",
+            )
 
     def test_identity_profile_module_depends_on_ports_not_identity_or_chat_adapters(self):
         application_roots = (

@@ -64,6 +64,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionDetailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -262,6 +263,8 @@ class UserControllerIT {
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
   @MockitoBean private GroupChatRoleService groupChatRoleService;
   @MockitoBean private SessionService sessionService;
+
+  @MockitoBean private ConsultantSessionDetailService consultantSessionDetailService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
@@ -1940,7 +1943,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(sessionService, atLeastOnce()).fetchSessionForConsultant(Mockito.any(), Mockito.any());
+    verify(consultantSessionDetailService, atLeastOnce())
+        .fetchSessionForConsultant(Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -1957,7 +1961,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
 
-    verify(sessionService, never()).fetchSessionForConsultant(Mockito.any(), Mockito.any());
+    verify(consultantSessionDetailService, never())
+        .fetchSessionForConsultant(Mockito.any(), Mockito.any());
   }
 
   @Test

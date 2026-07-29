@@ -189,6 +189,7 @@ class SessionServiceTest {
 
   private SessionAccessService sessionAccessService;
   private ConsultantSessionQueryService consultantSessionQueryService;
+  private ConsultantSessionDetailService consultantSessionDetailService;
   private UserSessionQueryService userSessionQueryService;
   private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
@@ -218,8 +219,9 @@ class SessionServiceTest {
             sessionSupervisorRepository);
     userSessionQueryService =
         new UserSessionQueryService(sessionRepository, agencyService, sessionAccessService);
-    sessionService =
-        new SessionService(sessionRepository, sessionAccessService, consultingTypeManager, null);
+    consultantSessionDetailService =
+        new ConsultantSessionDetailService(sessionRepository, sessionAccessService, null);
+    sessionService = new SessionService(sessionRepository, consultingTypeManager);
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
   }
 
@@ -670,7 +672,7 @@ class SessionServiceTest {
 
     assertThrows(
         NotFoundException.class,
-        () -> sessionService.fetchSessionForConsultant(SESSION_ID, CONSULTANT));
+        () -> consultantSessionDetailService.fetchSessionForConsultant(SESSION_ID, CONSULTANT));
   }
 
   @Test
@@ -682,7 +684,8 @@ class SessionServiceTest {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
-        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
+        consultantSessionDetailService.fetchSessionForConsultant(
+            session.getId(), CONSULTANT_WITH_AGENCY);
 
     assertEquals(session.getId(), result.getId());
     assertEquals(session.isTeamSession(), result.getIsTeamSession());
@@ -705,8 +708,9 @@ class SessionServiceTest {
   void
       fetchSessionForConsultant_Should_NotEnrichTopicsData_When_TopicsFeatureEnabledIsNotEnabled() {
     var sessionTopicEnrichmentService = mock(ConsultantSessionTopicEnrichmentService.class);
-    ReflectionTestUtils.setField(
-        sessionService, "sessionTopicEnrichmentService", sessionTopicEnrichmentService);
+    consultantSessionDetailService =
+        new ConsultantSessionDetailService(
+            sessionRepository, sessionAccessService, sessionTopicEnrichmentService);
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
@@ -714,7 +718,8 @@ class SessionServiceTest {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
-        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
+        consultantSessionDetailService.fetchSessionForConsultant(
+            session.getId(), CONSULTANT_WITH_AGENCY);
 
     assertEquals(session.getId(), result.getId());
 
@@ -726,24 +731,22 @@ class SessionServiceTest {
   @Test
   void
       fetchSessionForConsultant_Should_CallSessionTopicEnrichmentService_When_TopicsFeatureEnabledIsEnabled() {
-    ReflectionTestUtils.setField(sessionService, "topicsFeatureEnabled", true);
     var sessionTopicEnrichmentService = mock(ConsultantSessionTopicEnrichmentService.class);
-    ReflectionTestUtils.setField(
-        sessionService, "sessionTopicEnrichmentService", sessionTopicEnrichmentService);
+    consultantSessionDetailService =
+        new ConsultantSessionDetailService(
+            sessionRepository, sessionAccessService, sessionTopicEnrichmentService);
+    ReflectionTestUtils.setField(consultantSessionDetailService, "topicsFeatureEnabled", true);
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
     session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
-    sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
+    consultantSessionDetailService.fetchSessionForConsultant(
+        session.getId(), CONSULTANT_WITH_AGENCY);
 
     verify(sessionTopicEnrichmentService)
-        .enrichSessionWithTopicsData(Mockito.any(ConsultantSessionDTO.class));
-    verify(sessionTopicEnrichmentService)
-        .enrichSessionWithTopicsData(Mockito.any(ConsultantSessionDTO.class));
-
-    ReflectionTestUtils.setField(sessionService, "topicsFeatureEnabled", false);
+        .enrichSessionWithTopicData(Mockito.any(ConsultantSessionDTO.class));
   }
 
   @Test
@@ -759,7 +762,9 @@ class SessionServiceTest {
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.fetchSessionForConsultant(sessionId, CONSULTANT_WITH_AGENCY));
+        () ->
+            consultantSessionDetailService.fetchSessionForConsultant(
+                sessionId, CONSULTANT_WITH_AGENCY));
   }
 
   @Test
@@ -773,7 +778,8 @@ class SessionServiceTest {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     assertNotNull(
-        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
+        consultantSessionDetailService.fetchSessionForConsultant(
+            session.getId(), CONSULTANT_WITH_AGENCY));
   }
 
   @Test
@@ -789,7 +795,8 @@ class SessionServiceTest {
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     assertNotNull(
-        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
+        consultantSessionDetailService.fetchSessionForConsultant(
+            session.getId(), CONSULTANT_WITH_AGENCY));
   }
 
   @ParameterizedTest
