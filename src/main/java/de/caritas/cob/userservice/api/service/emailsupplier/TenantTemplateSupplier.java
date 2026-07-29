@@ -36,6 +36,9 @@ public class TenantTemplateSupplier {
   private boolean multitenancyWithSingleDomain;
 
   public List<TemplateDataDTO> getTemplateAttributes() {
+    if (TenantContext.isTechnicalOrSuperAdminContext()) {
+      return List.of(new TemplateDataDTO().key("url").value(applicationBaseUrl));
+    }
 
     List<TemplateDataDTO> templateAttributes = new ArrayList<>();
     RestrictedTenantDTO tenantData = getRestrictedTenantDTO();

@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,16 +54,14 @@ class DeleteUserAnonymousServiceTest {
   }
 
   @Test
-  void deleteInactiveAnonymousUsers_Should_notReplayBatch_When_notificationFails() {
+  void deleteInactiveAnonymousUsers_Should_notReplayBatchOrFail_When_notificationFails() {
     var error = org.mockito.Mockito.mock(DeletionWorkflowError.class);
     when(deletionBatch.deleteOverdueUsers()).thenReturn(List.of(error));
     org.mockito.Mockito.doThrow(new IllegalStateException("tenant unavailable"))
         .when(workflowErrorMailService)
         .buildAndSendErrorMail(List.of(error));
 
-    assertThatThrownBy(deletionService::deleteInactiveAnonymousUsers)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("tenant unavailable");
+    assertThatCode(deletionService::deleteInactiveAnonymousUsers).doesNotThrowAnyException();
 
     verify(deletionBatch).deleteOverdueUsers();
   }

@@ -20,6 +20,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
@@ -301,11 +302,15 @@ public class KeycloakServiceTest {
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
   public void getOtpCredential_Should_Return_Response_When_RequestWasSuccessful() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
     when(this.keycloakClient.get(anyString(), any(), any())).thenReturn(entity);
 
     assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+
+    verifyNoInteractions(outboundHttpMetrics);
   }
 
   @Test
@@ -324,6 +329,8 @@ public class KeycloakServiceTest {
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
   public void getOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
@@ -335,10 +342,13 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
   }
 
   @Test
   public void getOtpCredential_Should_RetryOnlyOnce_When_BothRequestsAreUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
@@ -350,10 +360,13 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).get(any(), any(), any());
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
   }
 
   @Test
   public void getOtpCredential_Should_NotRefreshAdminSession_When_RequestFailsWithNon401() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var badRequest =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.BAD_REQUEST);
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
@@ -365,6 +378,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient, never()).refreshAdminSession();
     verify(keycloakClient).get(any(), any(), any());
+    verifyNoInteractions(outboundHttpMetrics);
   }
 
   @Test
