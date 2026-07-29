@@ -27,21 +27,21 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,556 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,558 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,556 unit plus 860
-integration executions, or 4,416.
+comparable primary current inventory is therefore 3,558 unit plus 860
+integration executions, or 4,418.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,416: 226 fewer unit and 80 fewer integration
+inventory to the current 4,418: 224 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,556 unit executions.
+gate to all 3,558 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -575,8 +575,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port and value. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. All active admin, consultant and user provisioning role writers plus consultant rollback and group-role disablement use the focused batch `IdentityRoleUpdater`; the broad identity command client owns neither role ensuring, assignment nor removal. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
-| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port and value. All active registration, anonymous-user, admin and consultant provisioning paths create provider accounts through `IdentityAccountCreator` with provider-neutral request and result values; the broad identity client no longer accepts web-layer user DTOs for account creation. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. All active admin, consultant and user provisioning role writers plus consultant rollback and group-role disablement use the focused batch `IdentityRoleUpdater`; the broad identity command client owns neither role ensuring, assignment nor removal. Interactive and technical-user authentication use the focused `IdentityAuthentication` port and provider-neutral `IdentityLogin` value. Username availability is isolated behind the provider-neutral `IdentityUsernameAvailability` output port. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. The unused session-close command is absent from the broad port and both Keycloak wrappers. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters, and identity account creation no longer exposes a Keycloak response DTO. | The large admin controller still composes many services. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -692,6 +692,17 @@ address, resolves the target identity once and performs one update. The former
 asker-import consumer no longer exists on the Matrix-only baseline; current-user
 email deletion remains on the existing email-address operation.
 
+Identity account creation now uses the focused `IdentityAccountCreator` output
+port for public registration, anonymous-user creation, admin creation and
+consultant creation. The application passes only username, email, tenant,
+optional names and locale through provider-neutral values. Keycloak user
+representations, status handling and mandatory post-create attributes remain in
+the adapter; the former Keycloak response DTO and the web `UserDTO` creation
+methods are absent from the broad `IdentityClient`. The provider call sequence
+and rollback behavior are unchanged. A Spring-mock contract requires every
+shared Keycloak test replacement to retain the focused interface and prevents
+a competing mock from silently replacing the other identity capabilities.
+
 The current Matrix-only graph also removes unused broad `IdentityClient`
 constructor dependencies from `SessionSupervisorFacade`,
 `ConsultantAgencyRelationCreatorService` and `UserAccountService`. None of
@@ -704,11 +715,10 @@ transport from returning.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source. The next safe sequence is the remaining identity create-user DTO
-decoupling and further non-authentication identity transport cleanup, then the
-Admin controller composition boundary, then smaller Session orchestration
-boundaries. Each step must add a failing boundary contract before moving
-dependencies.
+source. The next safe sequence is further non-authentication identity transport
+cleanup, then the Admin controller composition boundary, then smaller Session
+orchestration boundaries. Each step must add a failing boundary contract before
+moving dependencies.
 
 ## Microservice decision
 

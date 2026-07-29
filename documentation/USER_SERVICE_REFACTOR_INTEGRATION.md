@@ -187,6 +187,26 @@ technical-identity token boundary:
   p95; after one replica restart, another 12 writes plus reads passed at 24.56 ms
   p95, leaving one canonical database row.
 
+### Identity-account-creation increment
+
+Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
+`b214db6274ead55ae894246c3694057a929ab3a4`:
+
+- public registration, anonymous-user creation, admin creation and consultant
+  creation use the focused provider-neutral `IdentityAccountCreator` port;
+- the broad `IdentityClient` no longer exposes web `UserDTO` creation methods,
+  and the Keycloak-specific create-user response DTO is deleted;
+- Keycloak representation mapping, status translation, mandatory attribute
+  writes and rollback remain adapter-owned with unchanged behavior;
+- shared Spring identity mocks retain all focused interfaces through one
+  compatible Keycloak replacement, enforced by the architecture contract;
+- unit suite: 3,558 tests in 406 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 83 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- package build, Spotless and `git diff --check`: passed.
+
 Compared with the preceding #886 integration head, the net reduction of 33
 unit tests and two integration tests is the removal of tests that exercised the
 deleted LiveService transport and forwarding controller. The replacement
