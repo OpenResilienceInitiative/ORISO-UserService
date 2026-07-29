@@ -685,6 +685,74 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "Fallback consulting types must be loaded in one local batch query",
         )
 
+    def test_role_write_consumers_use_the_focused_batch_identity_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityRoleUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Consultant role writes need a focused provider-neutral batch port",
+        )
+
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/GrantConsultantIdentityService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Realm-role writers must depend on the focused batch role-write port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            "ensureRole(",
+            identity_client,
+            "The broad identity command client must not own role ensuring",
+        )
+        for source in consumers:
+            self.assertNotIn(
+                "identityClient.ensureRole(",
+                source.read_text(),
+                f"{source.name} must batch role writes through IdentityRoleUpdater",
+            )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityRoleUpdater" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused role-write port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

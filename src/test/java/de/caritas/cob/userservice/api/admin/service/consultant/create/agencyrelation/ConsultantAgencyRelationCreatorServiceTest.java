@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -55,6 +56,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   @Mock private AgencyService agencyService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private IdentityRoleLookup identityRoleLookup;
 
@@ -304,7 +306,9 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         .thenReturn(Optional.of(consultant));
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(0))
-        .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
+        .thenReturn(
+            givenConsultingTypeWithRoles(
+                "main", List.of("consultant-role", "u25-consultant", "consultant-role")));
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("main").agencyId(15L);
@@ -312,7 +316,31 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         "consultant Id", createConsultantAgencyDTO);
 
-    verify(identityClient).ensureRole("consultant Id", "consultant-role");
+    verify(identityRoleUpdater)
+        .ensureRoles("consultant Id", Set.of("consultant-role", "u25-consultant"));
+    verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
+  }
+
+  @Test
+  public void createNewConsultantAgency_Should_notCallIdentityUpdater_When_roleSetIsUnmapped() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(1L);
+    AgencyDTO agencyDTO = new AgencyDTO().consultingType(0).id(15L);
+
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
+
+    CreateConsultantAgencyDTO createConsultantAgencyDTO =
+        new CreateConsultantAgencyDTO().roleSetKey("unmapped").agencyId(15L);
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        "consultant Id", createConsultantAgencyDTO);
+
+    verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 

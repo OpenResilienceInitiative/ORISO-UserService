@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ public class UpdateAdminServiceIT {
       })
   private IdentityClient identityClient;
 
+  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
   @Autowired private RetrieveAdminService retrieveAdminService;
 
   @Test

@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -68,6 +69,7 @@ class CreateAdminServiceIT {
       })
   private IdentityClient identityClient;
 
+  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
