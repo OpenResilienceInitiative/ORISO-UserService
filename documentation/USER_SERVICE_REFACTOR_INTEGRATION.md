@@ -30,6 +30,7 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Identity email mutations | [#885](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/885) | Current-account and post-verification email writes use a focused output port with explicit no-op and provider-call bounds |
 | Identity profile reads | [#891](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/891) | Authenticated user-data mapping uses a focused lookup and a five-field provider-neutral profile |
 | Identity role writes | [#894](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/894) | Consultant role writes use a focused batch port, deduplicate roles and bound provider reads, writes, visibility checks and retries |
+| Identity provisioning role writes | [#806](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/806) | Adapted onto the Matrix-only graph so every active admin, consultant and user provisioning path uses the focused batch role port without restoring the removed asker-import path |
 | Identity profile writes | [#895](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/895) | Admin and consultant profile mutations use a focused five-field provider-neutral port with explicit lookup, availability-check, update and retry bounds |
 | Identity password writes | [#897](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/897) | Admin provisioning, consultant provisioning and imports, user registration, and self-service reset use a focused password port with one target resolution, one reset attempt, and no automatic retry |
 | Identity deactivation | [#898](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/898) | Account, asker, consultant, and anonymous-user deactivation use a focused port with one target resolution, one read, at most one update, and no retry |
@@ -38,8 +39,10 @@ not authorize deployment, and does not prove PreDev runtime behavior.
 | Dead identity session close | [#886](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/886) | The unused command and both forwarding layers are removed with an executable zero-call boundary |
 | Dead LiveService transport | [#902](https://github.com/OpenResilienceInitiative/ORISO-UserService/pull/902) | The unreachable transport and retry path are removed; the deprecated route is a dependency-free `410 Gone` tombstone |
 
-Every row is represented by a separate merge commit so the original PR head and
-its review history remain traceable.
+Every row except #806 is represented by a separate merge commit so the original
+PR head and its review history remain traceable. #806 is represented by an
+explicit adapted replay commit because its original stack depended on a removed
+asker-import path; the source commit records the original head.
 
 The #881 and #833 merges compose the username path as web adapter →
 `IdentityManaging` → `IdentityUsernameAvailability`, so web code cannot bypass
@@ -55,7 +58,11 @@ representations from the broad client and composes its lookup into the same
 shared Spring test doubles without weakening any earlier focused port. The #894
 merge moves consultant role writes out of the broad client, batches missing
 roles in one add operation per attempt, skips empty and case-equivalent role
-sets, and retains bounded visibility and admin-session retries. The #895 merge
+sets, and retains bounded visibility and admin-session retries. The adapted
+#806 replay extends that focused port to all remaining active admin, consultant
+and user provisioning writers, batches each writer's complete role set and
+removes role-assignment commands from the broad identity client. It deliberately
+does not restore the obsolete asker-import consumer. The #895 merge
 moves admin and consultant profile writes out of the broad client and keeps
 username, email, tenant ID, first name and last name provider-neutral. An
 unchanged email skips the availability search; a changed email performs one
@@ -95,15 +102,15 @@ the focused replay PRs.
 ## Combined local verification
 
 Executed on 2026-07-29 with Temurin JDK 21 against source commit
-`03f11ebbb41f2b2290356267724f3ad11057715a`:
+`9d833aa6288c3828b8fed96ebc45d6556e390e33`:
 
-- unit suite: 3,421 tests, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,423 tests, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 854 tests in 82 reports, 0 failures,
   0 errors, 9 environment-gated skips;
-- CI and executable architecture contracts: 72 tests passed;
+- CI and executable architecture contracts: 73 tests passed;
 - OpenAPI contract gate: 8 tests passed;
-- focused identity and Keycloak composition: 130 Java tests passed; all
-  24 focused module-boundary tests passed within the 72-test CI suite;
+- focused identity and Keycloak composition: 167 Java tests passed; all
+  25 focused module-boundary tests passed within the 73-test CI suite;
 - focused Matrix push, durable-notification and LiveService-removal composition:
   154 tests passed;
 - local two-replica mixed-read proof: 1,400 requests at concurrency 32, 0
@@ -116,8 +123,9 @@ Executed on 2026-07-29 with Temurin JDK 21 against source commit
   fix: 80 concurrent upserts and both cross-replica reads passed, followed by 12
   writes and both reads after one replica restart, with one canonical row;
 - package build and Spotless: passed;
-- CodeRabbit combined-diff review produced two major findings; both were fixed.
-  The verification review completed with zero findings;
+- CodeRabbit combined-diff review produced two findings; both were fixed. The
+  verification retry was rate-limited because the GitHub organization has no
+  assigned CodeRabbit CLI seat, so exact-head GitHub review remains required;
 - `git diff --check`: passed.
 
 Compared with the preceding #886 integration head, the net reduction of 33

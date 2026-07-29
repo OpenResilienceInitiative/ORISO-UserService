@@ -196,19 +196,19 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "03f11ebbb41f2b2290356267724f3ad11057715a",
-      "unit": 3421,
+      "verifiedApplicationHead": "9d833aa6288c3828b8fed96ebc45d6556e390e33",
+      "unit": 3423,
       "integration": 854,
-      "primaryTotal": 4275,
+      "primaryTotal": 4277,
       "localEvidence": [
         "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
         "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
       ]
     },
     "sinceCutoverDelta": {
-      "unit": 48,
+      "unit": 50,
       "integration": 14,
-      "primaryTotal": 62
+      "primaryTotal": 64
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -221,7 +221,7 @@
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "unitTests": 3421,
+    "unitTests": 3423,
     "unitReports": 393,
     "unitSkipped": 0,
     "integrationReports": 82,
