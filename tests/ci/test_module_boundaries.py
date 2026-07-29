@@ -479,6 +479,79 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+    def test_profile_write_consumers_use_the_focused_identity_profile_port(self):
+        port_root = ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out"
+        updater = port_root / "IdentityProfileUpdater.java"
+        profile = port_root / "IdentityProfileUpdate.java"
+        self.assertTrue(updater.exists(), "Profile writes need a focused output port")
+        self.assertTrue(profile.exists(), "Profile writes need a provider-neutral value")
+
+        forbidden_model_imports = (
+            "de.caritas.cob.userservice.api.adapters.web.",
+            "org.keycloak.",
+        )
+        model_text = profile.read_text()
+        for forbidden_import in forbidden_model_imports:
+            self.assertNotIn(
+                forbidden_import,
+                model_text,
+                "The profile-write value must not expose web or Keycloak transport types",
+            )
+
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/update/"
+            "UpdateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/update/"
+            "ConsultantUpdateService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Profile writers must depend on IdentityProfileUpdater:\n"
+            + "\n".join(missing_focused_port),
+        )
+        for source in consumers:
+            self.assertNotIn(
+                "identityClient.updateUserData(",
+                source.read_text(),
+                f"{source.name} must write profiles through the focused port",
+            )
+
+        identity_client = (port_root / "IdentityClient.java").read_text()
+        self.assertNotIn(
+            "updateUserData(",
+            identity_client,
+            "The broad identity command client must not own profile updates",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityProfileUpdater" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused profile-write port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_role_read_consumers_use_a_focused_identity_role_port(self):
         focused_lookup_import = (
             "import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;"
@@ -752,7 +825,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "Shared Spring identity mocks must provide the focused role-write port:\n"
             + "\n".join(missing_test_interface),
         )
-
 
 if __name__ == "__main__":
     unittest.main()

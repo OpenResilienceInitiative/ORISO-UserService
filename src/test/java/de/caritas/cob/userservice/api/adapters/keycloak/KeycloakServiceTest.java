@@ -48,6 +48,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
@@ -1039,35 +1040,56 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updateUserData_Should_callServicesCorrectly_When_emailIsChangedAndAvailable() {
+  public void updateProfile_Should_searchOnceAndUpdateOnce_When_emailIsChangedAndAvailable() {
+    setField(keycloakService, "multiTenancyEnabled", true);
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    UserDTO userDTO = new UserDTO();
-    userDTO.setEmail("anotherEmail");
+    var profile =
+        new IdentityProfileUpdate("username", "anotherEmail", 2L, "firstName", "lastName");
 
-    this.keycloakService.updateUserData("userId", userDTO, "firstName", "lastName");
+    this.keycloakService.updateProfile("userId", profile);
 
-    verify(userResource, times(1)).update(any());
+    verify(usersResource).get("userId");
+    verify(userResource).toRepresentation();
+    verify(usersResource).search("anotherEmail", 0, Integer.MAX_VALUE);
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var updatedRepresentation = representationCaptor.getValue();
+    assertThat(updatedRepresentation.getUsername(), is("username"));
+    assertThat(updatedRepresentation.getEmail(), is("anotherEmail"));
+    assertThat(updatedRepresentation.getFirstName(), is("firstName"));
+    assertThat(updatedRepresentation.getLastName(), is("lastName"));
+    assertThat(updatedRepresentation.isEnabled(), is(true));
+    assertThat(updatedRepresentation.isEmailVerified(), is(true));
+    assertThat(updatedRepresentation.getAttributes().get("tenantId"), is(singletonList("2")));
+    assertThat(
+        updatedRepresentation.getAttributes().get("username"), is(singletonList("username")));
+    assertThat(
+        updatedRepresentation.getAttributes().get("userName"), is(singletonList("username")));
   }
 
   @Test
-  public void updateUserData_Should_callServicesCorrectly_When_emailIsUnchanged() {
+  public void updateProfile_Should_notSearchAndUpdateOnce_When_emailIsUnchanged() {
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    UserDTO userDTO = new UserDTO();
-    userDTO.setEmail("email");
+    var profile = new IdentityProfileUpdate("username", "email", 2L, "firstName", "lastName");
 
-    this.keycloakService.updateUserData("userId", userDTO, "firstName", "lastName");
+    this.keycloakService.updateProfile("userId", profile);
 
-    verify(userResource, times(1)).update(any());
+    verify(usersResource).get("userId");
+    verify(userResource).toRepresentation();
+    verify(usersResource, never()).search(any(), any(), any());
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getEmail(), is("email"));
   }
 
   @Test
-  public void updateUserData_Should_throwCustomException_When_emailIsChangedButNotAvailable() {
+  public void updateProfile_Should_throwConflictAndNotUpdate_When_emailIsChangedButNotAvailable() {
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserRepresentation otherUserRepresentation = givenUserRepresentation("newemail");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
@@ -1075,15 +1097,18 @@ public class KeycloakServiceTest {
     when(usersResource.search(any(), any(), any()))
         .thenReturn(singletonList(otherUserRepresentation));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    UserDTO userDTO = new UserDTO();
-    userDTO.setEmail("newemail");
+    var profile = new IdentityProfileUpdate("username", "newemail", 2L, "firstName", "lastName");
 
     try {
-      this.keycloakService.updateUserData("userId", userDTO, "firstName", "lastName");
+      this.keycloakService.updateProfile("userId", profile);
       fail("Exception was not thrown");
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
     }
+    verify(usersResource).get("userId");
+    verify(userResource).toRepresentation();
+    verify(usersResource).search("newemail", 0, Integer.MAX_VALUE);
+    verify(userResource, never()).update(any());
   }
 
   @Test

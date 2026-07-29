@@ -14,12 +14,12 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -170,6 +170,7 @@ public class ConsultantUpdateServiceTest {
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
     updateConsultant.setIsGroupchatConsultant(null);
+    updateConsultant.setEmail("consultant@example.com");
     keepDisplayNameUnchanged(consultant, updateConsultant);
 
     this.consultantUpdateService.updateConsultant("", updateConsultant);
@@ -179,14 +180,14 @@ public class ConsultantUpdateServiceTest {
     verify(this.keycloakService, Mockito.never())
         .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
 
-    ArgumentCaptor<UserDTO> userDTOArgumentCaptor = ArgumentCaptor.forClass(UserDTO.class);
+    ArgumentCaptor<IdentityProfileUpdate> profileCaptor =
+        ArgumentCaptor.forClass(IdentityProfileUpdate.class);
     verify(this.keycloakService, times(1))
-        .updateUserData(
-            eq(consultant.getId()),
-            userDTOArgumentCaptor.capture(),
-            eq(updateConsultant.getFirstname()),
-            eq(updateConsultant.getLastname()));
-    assertEquals(userDTOArgumentCaptor.getValue().getTenantId(), consultant.getTenantId());
+        .updateProfile(eq(consultant.getId()), profileCaptor.capture());
+    assertEquals(profileCaptor.getValue().tenantId(), consultant.getTenantId());
+    assertEquals(profileCaptor.getValue().firstName(), updateConsultant.getFirstname());
+    assertEquals(profileCaptor.getValue().lastName(), updateConsultant.getLastname());
+    assertEquals("consultant@example.com", profileCaptor.getValue().email());
     verify(this.consultantService, times(1)).saveConsultant(any());
     verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
@@ -216,7 +217,7 @@ public class ConsultantUpdateServiceTest {
 
     this.consultantUpdateService.updateConsultant(consultant.getId(), updateConsultant, false);
 
-    verify(this.keycloakService, Mockito.never()).updateUserData(any(), any(), any(), any());
+    verify(this.keycloakService, Mockito.never()).updateProfile(any(), any());
     verify(this.keycloakService, Mockito.never()).updateRole(any(), any(String.class));
     verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
@@ -240,11 +241,7 @@ public class ConsultantUpdateServiceTest {
         .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
 
     verify(this.keycloakService, times(1))
-        .updateUserData(
-            eq(consultant.getId()),
-            any(UserDTO.class),
-            eq(updateConsultant.getFirstname()),
-            eq(updateConsultant.getLastname()));
+        .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
     verify(this.consultantService, times(1)).saveConsultant(any());
     verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
@@ -265,11 +262,7 @@ public class ConsultantUpdateServiceTest {
         .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
 
     verify(this.keycloakService, times(1))
-        .updateUserData(
-            eq(consultant.getId()),
-            any(UserDTO.class),
-            eq(updateConsultant.getFirstname()),
-            eq(updateConsultant.getLastname()));
+        .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
     verify(this.consultantService, times(1)).saveConsultant(any());
     verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
@@ -294,7 +287,7 @@ public class ConsultantUpdateServiceTest {
         () -> this.consultantUpdateService.updateConsultant("", updateConsultant));
 
     verify(this.keycloakService, Mockito.never())
-        .updateUserData(anyString(), any(UserDTO.class), anyString(), anyString());
+        .updateProfile(anyString(), any(IdentityProfileUpdate.class));
     verify(this.consultantService, Mockito.never()).saveConsultant(any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
   }

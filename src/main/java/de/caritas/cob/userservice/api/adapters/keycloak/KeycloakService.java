@@ -36,6 +36,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -87,6 +89,7 @@ public class KeycloakService
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
         IdentityProfileLookup,
+        IdentityProfileUpdater,
         IdentityRoleLookup,
         IdentityRoleUpdater,
         IdentityUsernameAvailability,
@@ -463,11 +466,32 @@ public class KeycloakService
 
   private UserRepresentation getUserRepresentation(
       final UserDTO user, final String firstName, final String lastName, final String locale) {
+    return getUserRepresentation(
+        user.getUsername(), user.getEmail(), user.getTenantId(), firstName, lastName, locale);
+  }
+
+  private UserRepresentation getUserRepresentation(final IdentityProfileUpdate profile) {
+    return getUserRepresentation(
+        profile.username(),
+        profile.email(),
+        profile.tenantId(),
+        profile.firstName(),
+        profile.lastName(),
+        null);
+  }
+
+  private UserRepresentation getUserRepresentation(
+      final String username,
+      final String email,
+      final Long tenantId,
+      final String firstName,
+      final String lastName,
+      final String locale) {
     var kcUser = new UserRepresentation();
     // Decode the username before setting it in Keycloak (Keycloak expects original username, not
     // encoded)
-    kcUser.setUsername(usernameTranscoder.decodeUsername(user.getUsername()));
-    kcUser.setEmail(user.getEmail());
+    kcUser.setUsername(usernameTranscoder.decodeUsername(username));
+    kcUser.setEmail(email);
     kcUser.setEmailVerified(true);
     if (nonNull(firstName)) {
       kcUser.setFirstName(firstName);
@@ -480,26 +504,26 @@ public class KeycloakService
     }
     kcUser.setEnabled(true);
 
-    putUsernameAttributes(user, kcUser);
-    updateTenantId(user, kcUser);
+    putUsernameAttributes(username, kcUser);
+    updateTenantId(tenantId, kcUser);
 
     return kcUser;
   }
 
-  private void putUsernameAttributes(UserDTO userDTO, UserRepresentation kcUser) {
+  private void putUsernameAttributes(String username, UserRepresentation kcUser) {
     Map<String, List<String>> attributes =
         kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
-    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    var decodedUsername = usernameTranscoder.decodeUsername(username);
     attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     kcUser.setAttributes(attributes);
   }
 
-  private void updateTenantId(UserDTO userDTO, UserRepresentation kcUser) {
+  private void updateTenantId(Long configuredTenantId, UserRepresentation kcUser) {
     if (TRUE.equals(multiTenancyEnabled)) {
       Map<String, List<String>> attributes =
           kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
-      var tenantId = resolveTenantId(userDTO);
+      var tenantId = resolveTenantId(configuredTenantId);
       if (tenantId != null) {
         attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
       }
@@ -529,8 +553,12 @@ public class KeycloakService
   }
 
   private Long resolveTenantId(UserDTO userDTO) {
-    if (userDTO.getTenantId() != null) {
-      return userDTO.getTenantId();
+    return resolveTenantId(userDTO.getTenantId());
+  }
+
+  private Long resolveTenantId(Long configuredTenantId) {
+    if (configuredTenantId != null) {
+      return configuredTenantId;
     }
     if (TRUE.equals(multiTenancyEnabled) && TenantContext.getCurrentTenant() != null) {
       return TenantContext.getCurrentTenant();
@@ -797,15 +825,13 @@ public class KeycloakService
    * Updates first name, last name and email address of user with given id in keycloak.
    *
    * @param userId Keycloak user ID
-   * @param userDTO {@link UserDTO}
-   * @param firstName the new first name
-   * @param lastName the new last name
+   * @param profile provider-neutral profile values to persist
    */
-  public void updateUserData(
-      final String userId, UserDTO userDTO, String firstName, String lastName) {
+  @Override
+  public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource.toRepresentation(), userDTO.getEmail());
-    userResource.update(getUserRepresentation(userDTO, firstName, lastName));
+    verifyEmail(userResource.toRepresentation(), profile.email());
+    userResource.update(getUserRepresentation(profile));
   }
 
   private void verifyEmail(UserRepresentation userRepresentation, String email) {

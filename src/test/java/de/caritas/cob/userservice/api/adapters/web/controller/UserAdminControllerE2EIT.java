@@ -41,6 +41,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -139,6 +140,7 @@ class UserAdminControllerE2EIT {
   IdentityClient identityClient;
 
   @MockitoBean IdentityRoleUpdater identityRoleUpdater;
+  @MockitoBean IdentityProfileUpdater identityProfileUpdater;
 
   @MockitoBean TenantService tenantService;
 

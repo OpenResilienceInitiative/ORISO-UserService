@@ -78,6 +78,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -177,6 +178,7 @@ class UserControllerAuthorizationIT {
   private IdentityClient identityClient;
 
   @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
+  @MockitoBean private IdentityProfileUpdater identityProfileUpdater;
   @MockitoBean private IdentityManager identityManager;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;
