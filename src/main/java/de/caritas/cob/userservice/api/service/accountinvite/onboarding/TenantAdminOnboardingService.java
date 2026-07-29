@@ -47,6 +47,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull TenantCreationClient tenantCreationClient;
+  private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
@@ -55,6 +56,11 @@ public class TenantAdminOnboardingService {
    * mandatory 2FA activation is still open and whose link is unexpired resolves with a pending
    * two-factor resume; every other state maps to the distinct link-death reasons (410 body {@code
    * reason}, unknown tokens 404).
+   *
+   * <p>A plainly resolving invite carries the operator's published DPA/AVV text: the onboarding
+   * step asks the invitee to confirm the agreement on behalf of their organisation, so the wording
+   * must be on screen and navigable (anchor/TOC) rather than replaced by a placeholder hint. The
+   * resume path skips the lookup — it re-enters at the 2FA step, which shows no contract.
    */
   @Transactional
   public OnboardingInviteState resolveOnboardingInvite(String rawToken) {
@@ -63,10 +69,11 @@ public class TenantAdminOnboardingService {
 
     if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
       expireIfPastExpiry(invite, now);
-      return new OnboardingInviteState(invite, false);
+      return new OnboardingInviteState(
+          invite, false, operatorDpaContentClient.fetchPublishedDpaContent());
     }
     if (isResumableAtTwoFactorStep(invite, now)) {
-      return new OnboardingInviteState(invite, true);
+      return new OnboardingInviteState(invite, true, null);
     }
     throw linkDeathException(invite);
   }
@@ -130,12 +137,25 @@ public class TenantAdminOnboardingService {
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 
-      // DPA acceptance snapshot: the wording is rendered read-only by the Admin panel; full
-      // signature persistence in TenantService is the U9 follow-up. Log for the audit trail.
-      log.info(
-          "Tenant-admin onboarding registration accepted the DPA (invite {}, signer '{}')",
-          invite.getId(),
-          command.dpaSignerName());
+      // DPA acceptance snapshot: the wording is rendered read-only by the Admin panel from the
+      // operator's published DPA; the binding per-tenant signature is taken later against the
+      // tenant's own published version (TenantService U9/U10 blocker). Log for the audit trail,
+      // including whether a contract text existed to be shown — an acceptance recorded while the
+      // operator published no DPA is a configuration defect and must be visible as such.
+      boolean dpaTextPresentable = operatorDpaContentClient.fetchPublishedDpaContent() != null;
+      if (!dpaTextPresentable) {
+        log.warn(
+            "Tenant-admin onboarding registration accepted the DPA although the platform operator"
+                + " has published none (invite {}, signer '{}') — publish the operator DPA so the"
+                + " wording is shown before the acceptance box",
+            invite.getId(),
+            command.dpaSignerName());
+      } else {
+        log.info(
+            "Tenant-admin onboarding registration accepted the DPA (invite {}, signer '{}')",
+            invite.getId(),
+            command.dpaSignerName());
+      }
 
       MultilingualTenantDTO created =
           tenantCreationClient.createTenant(buildTenantDto(invite, command));
@@ -294,10 +314,13 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Resolved onboarding state: the invite plus whether the flow re-enters at the 2FA step (#569
-   * resume contract) instead of the registration step.
+   * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
+   * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
+   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
+   * published or the lookup is unavailable.
    */
-  public record OnboardingInviteState(AccountInvite invite, boolean pendingTwoFactorResume) {}
+  public record OnboardingInviteState(
+      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
 
   /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
   public record RegisterTenantAdminCommand(
