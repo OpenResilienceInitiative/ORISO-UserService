@@ -20,7 +20,6 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -44,7 +43,6 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
 
@@ -136,7 +134,6 @@ public class CreateEnquiryMessageFacade {
           session, TenantContext.getCurrentTenantData());
     }
 
-    notifyEligibleConsultantsAboutLiveChatEnquiry(session);
     persistNewClientRequestNotifications(session, agencyList);
   }
 
@@ -171,28 +168,6 @@ public class CreateEnquiryMessageFacade {
       eventNotificationService.createNewClientRequestNotifications(session, consultantIds);
     } catch (RuntimeException ex) {
       log.warn("Could not persist request.new notifications for session {}", session.getId(), ex);
-    }
-  }
-
-  private void notifyEligibleConsultantsAboutLiveChatEnquiry(Session session) {
-    if (!sessionService.isAnonymousStyleRegistration(session)) {
-      return;
-    }
-
-    List<String> consultantIds;
-    if (session.getMainTopicId() != null) {
-      consultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
-    } else {
-      consultantIds =
-          consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId()).stream()
-              .map(agency -> agency.getConsultant().getId())
-              .collect(Collectors.toList());
-    }
-
-    if (!consultantIds.isEmpty()) {
-      liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
-          consultantIds, session.getId());
     }
   }
 

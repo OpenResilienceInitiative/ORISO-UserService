@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -31,8 +30,6 @@ class AcceptAnonymousEnquiryFacadeTest {
   @InjectMocks private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
 
   @Mock private AssignEnquiryFacade assignEnquiryFacade;
-
-  @Mock private LiveEventNotificationService liveEventNotificationService;
 
   @Mock private SessionService sessionService;
 
@@ -73,8 +70,6 @@ class AcceptAnonymousEnquiryFacadeTest {
 
     verify(this.userAccountService, times(1)).retrieveValidatedConsultant();
     verify(this.assignEnquiryFacade, times(1)).assignAnonymousEnquiry(eq(session), any());
-    verify(this.liveEventNotificationService, times(1))
-        .sendAcceptAnonymousEnquiryEventToUser(session.getUser().getUserId());
   }
 
   @Test
