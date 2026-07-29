@@ -9,14 +9,18 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry.Reason;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -26,8 +30,10 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Arrays;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
@@ -82,6 +88,7 @@ public class ConsultantAgencyServiceTest {
 
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private SessionRepository sessionRepository;
+  @Mock private ConsultantAgencyFallbackTelemetry fallbackTelemetry;
 
   @Mock
   @SuppressWarnings("unused")
@@ -286,6 +293,85 @@ public class ConsultantAgencyServiceTest {
     assertEquals(List.of(1L, 2L), resultAgencies.get(0).getTopicIds());
     assertEquals(Integer.valueOf(3), resultAgencies.get(0).getConsultingType());
     verify(agencyService, Mockito.never()).getAgencyWithoutCaching(any());
+    verify(fallbackTelemetry).record(Reason.DEPENDENCY_ERROR);
+  }
+
+  @Test
+  void getOnlineAgenciesOfConsultant_ShouldBoundFailureWarningsWithoutLoggingTheException() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    var dependencyFailure = new RuntimeException("sensitive dependency detail");
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID))).thenThrow(dependencyFailure);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(emptyList());
+    when(fallbackTelemetry.record(Reason.DEPENDENCY_ERROR)).thenReturn(OptionalLong.of(42));
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
+
+    try (var logs = LogbackCaptor.forClass(ConsultantAgencyService.class)) {
+      consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+      assertThat(logs.count(Level.WARN), org.hamcrest.Matchers.is(1L));
+      assertTrue(
+          logs.contains(
+              Level.WARN,
+              "AgencyService consultant-agency fallback active: reason=dependency-error, "
+                  + "suppressedSincePreviousWarning=42"));
+      assertTrue(
+          logs.messages(Level.WARN).stream().noneMatch(message -> message.contains("valid")));
+      assertTrue(
+          logs.messages(Level.WARN).stream()
+              .noneMatch(message -> message.contains("sensitive dependency detail")));
+      assertTrue(logs.events().stream().allMatch(event -> event.getThrowableProxy() == null));
+    }
+  }
+
+  @Test
+  void getOnlineAgenciesOfConsultant_ShouldSuppressRepeatedFailureWarningWhenTelemetryBoundsIt() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID)))
+        .thenThrow(new RuntimeException("Unavailable"));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(emptyList());
+    when(fallbackTelemetry.record(Reason.DEPENDENCY_ERROR)).thenReturn(OptionalLong.empty());
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
+
+    try (var logs = LogbackCaptor.forClass(ConsultantAgencyService.class)) {
+      consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+      assertEquals(0, logs.count(Level.WARN));
+    }
+  }
+
+  @Test
+  void getOnlineAgenciesOfConsultant_ShouldMeasureEmptyDependencyResponseSeparately() {
+    var activeConsultantAgency =
+        new ConsultantAgency(
+            AGENCY_ID, CONSULTANT, AGENCY_ID, nowInUtc(), nowInUtc(), null, 1L, null);
+    when(consultantAgencyRepository.findByConsultantId("valid"))
+        .thenReturn(singletonList(activeConsultantAgency));
+    when(agencyService.getAgenciesNotCached(singletonList(AGENCY_ID))).thenReturn(emptyList());
+    when(consultantTopicRepository.findTopicIdsByConsultantId("valid")).thenReturn(List.of(1L));
+    when(sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.of(AGENCY_ID)))
+        .thenReturn(emptyList());
+    when(fallbackTelemetry.record(Reason.EMPTY_RESPONSE)).thenReturn(OptionalLong.empty());
+    ReflectionTestUtils.setField(
+        consultantAgencyService, "registrationAgencyFallbackConsultingTypeId", 1);
+
+    consultantAgencyService.getOnlineAgenciesOfConsultant("valid");
+
+    verify(fallbackTelemetry).record(Reason.EMPTY_RESPONSE);
+    verify(fallbackTelemetry, never()).record(Reason.DEPENDENCY_ERROR);
   }
 
   @Test

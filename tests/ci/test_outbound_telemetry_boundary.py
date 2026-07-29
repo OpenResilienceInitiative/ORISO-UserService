@@ -77,6 +77,20 @@ class OutboundTelemetryBoundaryContractTest(unittest.TestCase):
 
         self.assertEqual(expected_files, declared_files)
 
+    def test_dependency_catalog_declares_application_fallback_measurement(self):
+        catalog = json.loads(DEPENDENCY_CATALOG.read_text())
+        fallback_metric = catalog["measurementPolicy"]["applicationFallbacks"]
+        fallback_telemetry = (
+            JAVA_ROOT
+            / "de/caritas/cob/userservice/api/config/observability/"
+            "ConsultantAgencyFallbackTelemetry.java"
+        ).read_text()
+
+        self.assertEqual("userservice.dependency.fallbacks", fallback_metric)
+        self.assertIn(f'"{fallback_metric}"', fallback_telemetry)
+        self.assertIn('"agency-service"', fallback_telemetry)
+        self.assertIn('"consultant-agency-batch"', fallback_telemetry)
+
 
 if __name__ == "__main__":
     unittest.main()

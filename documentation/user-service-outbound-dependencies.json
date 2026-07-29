@@ -104,6 +104,7 @@
     "latency": "userservice.outbound.http.latency",
     "payload": "userservice.outbound.http.payload",
     "explicitRetries": "userservice.outbound.retries",
-    "note": "Runtime call frequency is measured from metrics and load evidence, not inferred from static source-expression counts."
+    "applicationFallbacks": "userservice.dependency.fallbacks",
+    "note": "Runtime call frequency and successful application fallbacks are measured from metrics and load evidence, not inferred from static source-expression counts."
   }
 }

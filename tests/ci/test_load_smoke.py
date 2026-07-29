@@ -9,6 +9,7 @@ import tempfile
 from threading import Thread
 import time
 import unittest
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +18,10 @@ SEEDED_PUBLIC_READ_SCENARIO = ROOT / "tests/load/scenarios/seeded-public-read.js
 AGENCY_STUB_SCRIPT = ROOT / "tests/load/seeded_agency_stub.py"
 SEEDED_PUBLIC_READ_RUNNER = ROOT / "scripts/load/run-seeded-public-read.sh"
 SEEDED_REPLICA_RUNNER = ROOT / "scripts/load/run-seeded-public-read-replicas.sh"
+SEEDED_REPLICA_OUTAGE_RUNNER = (
+    ROOT / "scripts/load/run-seeded-public-read-replicas-outage.sh"
+)
+MARIADB_CONTRACT_WORKFLOW = ROOT / ".github/workflows/mariadb-contract.yml"
 JAVA_21_RUNTIME = ROOT / "scripts/load/ensure-java-21.sh"
 OUTBOUND_METRICS_SCRIPT = ROOT / "tests/load/outbound_dependency_metrics.py"
 SPEC = importlib.util.spec_from_file_location("user_service_load_smoke", LOAD_SCRIPT)
@@ -573,6 +578,33 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertEqual([1, 121], [agency["id"] for agency in payload])
         self.assertTrue(all(agency["offline"] is False for agency in payload))
 
+    def test_seeded_agency_stub_can_exercise_a_deterministic_dependency_outage(self):
+        spec = importlib.util.spec_from_file_location(
+            "seeded_agency_stub_outage", AGENCY_STUB_SCRIPT
+        )
+        stub = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = stub
+        spec.loader.exec_module(stub)
+        server = stub.create_server("127.0.0.1", 0, status_code=503)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(
+                    f"http://127.0.0.1:{server.server_port}/agencies/1,121",
+                    timeout=2,
+                )
+            self.assertEqual(503, raised.exception.code)
+            self.assertEqual(
+                {"error": "seeded AgencyService outage"},
+                json.load(raised.exception),
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_seeded_runner_wires_seed_dependency_and_mixed_scenario(self):
         result = subprocess.run(
             ["bash", "-n", str(SEEDED_PUBLIC_READ_RUNNER)],
@@ -627,11 +659,31 @@ class LoadSmokeContractTest(unittest.TestCase):
         )
         self.assertGreaterEqual(runner.count("outbound_dependency_metrics.py"), 3)
         self.assertIn('" capture \\\n', runner)
-        self.assertIn('" compare \\\n', runner)
+        self.assertIn('" compare\n', runner)
         self.assertIn("--max-calls-per-consultant-read", runner)
         self.assertIn("--max-mean-latency-ms", runner)
         self.assertIn("--max-response-bytes-per-call", runner)
         self.assertNotIn("ROCKET_CHAT_ENABLED", runner)
+
+    def test_replica_outage_runner_is_required_and_bounds_fallback_warnings(self):
+        result = subprocess.run(
+            ["bash", "-n", str(SEEDED_REPLICA_OUTAGE_RUNNER)],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        runner = SEEDED_REPLICA_OUTAGE_RUNNER.read_text(encoding="utf-8")
+        main_runner = SEEDED_REPLICA_RUNNER.read_text(encoding="utf-8")
+        workflow = MARIADB_CONTRACT_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("AGENCY_STUB_STATUS=503", runner)
+        self.assertIn("USERSERVICE_LOAD_EXPECT_AGENCY_FALLBACK=true", runner)
+        self.assertIn("run-seeded-public-read-replicas.sh", runner)
+        self.assertIn("--expected-fallback", main_runner)
+        self.assertIn("max_fallback_warnings_per_replica", main_runner)
+        self.assertIn("AgencyService consultant-agency fallback active", main_runner)
+        self.assertIn("run-seeded-public-read-replicas-outage.sh", workflow)
 
     def test_outbound_dependency_delta_reports_calls_payload_and_latency(self):
         spec = importlib.util.spec_from_file_location(
@@ -743,6 +795,59 @@ class LoadSmokeContractTest(unittest.TestCase):
         self.assertTrue(
             any("calls per consultant read" in violation for violation in violations)
         )
+
+    def test_outbound_dependency_delta_accepts_measured_bounded_fallbacks(self):
+        spec = importlib.util.spec_from_file_location(
+            "outbound_dependency_metrics_fallback", OUTBOUND_METRICS_SCRIPT
+        )
+        metrics = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = metrics
+        spec.loader.exec_module(metrics)
+
+        before = {
+            "targets": {
+                "replica-1": {
+                    "calls": {"COUNT": 0},
+                    "latency": {"COUNT": 0, "TOTAL_TIME": 0, "MAX": 0},
+                    "response_payload": {"COUNT": 0, "TOTAL": 0, "MAX": 0},
+                    "fallbacks": {"COUNT": 0},
+                }
+            }
+        }
+        after = {
+            "targets": {
+                "replica-1": {
+                    "calls": {"COUNT": 10},
+                    "latency": {"COUNT": 10, "TOTAL_TIME": 0.1, "MAX": 0.02},
+                    "response_payload": {"COUNT": 0, "TOTAL": 0, "MAX": 0},
+                    "fallbacks": {"COUNT": 10},
+                }
+            }
+        }
+        load_result = {
+            "summary": {
+                "operations": {
+                    "consultant-profile": {"requests": 10},
+                }
+            }
+        }
+
+        report, violations = metrics.compare_snapshots(
+            before,
+            after,
+            load_result,
+            max_calls_per_consultant_read=1.0,
+            max_mean_latency_ms=25.0,
+            max_response_bytes_per_call=250.0,
+            expected_fallback=True,
+        )
+
+        self.assertEqual([], violations)
+        self.assertEqual(10, report["outbound_calls"])
+        self.assertEqual(10, report["fallbacks"])
+        self.assertEqual(1.0, report["fallbacks_per_consultant_read"])
+        self.assertEqual(0, report["response_payload_measurements"])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 
 
+class SeededAgencyServer(ThreadingHTTPServer):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        status_code: int,
+    ) -> None:
+        super().__init__(server_address, SeededAgencyHandler)
+        self.status_code = status_code
+
+
 class SeededAgencyHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         prefix = "/agencies/"
@@ -20,6 +30,18 @@ class SeededAgencyHandler(BaseHTTPRequestHandler):
             agency_ids = [int(value) for value in raw_ids.split(",")]
         except ValueError:
             self.send_error(400)
+            return
+
+        server = self.server
+        if not isinstance(server, SeededAgencyServer):
+            raise RuntimeError("SeededAgencyHandler requires SeededAgencyServer")
+        if server.status_code != 200:
+            payload = json.dumps({"error": "seeded AgencyService outage"}).encode()
+            self.send_response(server.status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
             return
 
         payload = json.dumps(
@@ -49,8 +71,15 @@ class SeededAgencyHandler(BaseHTTPRequestHandler):
         pass
 
 
-def create_server(host: str, port: int) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer((host, port), SeededAgencyHandler)
+def create_server(
+    host: str,
+    port: int,
+    *,
+    status_code: int = 200,
+) -> SeededAgencyServer:
+    if status_code < 100 or status_code > 599:
+        raise ValueError("status code must be between 100 and 599")
+    return SeededAgencyServer((host, port), status_code)
 
 
 def main() -> None:
@@ -59,8 +88,9 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18083)
+    parser.add_argument("--status-code", type=int, default=200)
     args = parser.parse_args()
-    server = create_server(args.host, args.port)
+    server = create_server(args.host, args.port, status_code=args.status_code)
     print(f"Seeded AgencyService stub listening on {args.host}:{server.server_port}")
     try:
         server.serve_forever()
