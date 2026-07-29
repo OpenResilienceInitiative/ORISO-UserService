@@ -335,6 +335,36 @@ load runner also removed both JVMs, both disposable dependency containers and
 the AgencyService stub; its three local listening ports were free after the
 run.
 
+### User session query boundary
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `b0ef3dbfcc12fda4b9464d1e10beb76873245efb`:
+
+- `UserSessionQueryService` now owns user-ID, Matrix-room-ID and session-ID
+  response queries plus their AgencyService response mapping;
+- `UserSessionListService` depends directly on that focused boundary instead
+  of the broad lifecycle-oriented `SessionService`;
+- each non-empty response query sends at most one deduplicated agency-ID batch,
+  while empty query results make no AgencyService call;
+- asker role and ownership checks and the deliberate 403 agency fallback remain
+  unchanged;
+- mixed session results with and without agency IDs are mapped null-safely;
+- `SessionService` is reduced from 445 to 320 lines and from five to four
+  constructor collaborators;
+- 91 focused unit tests and 5 Spring/database integration tests passed;
+- unit suite: 3,568 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 88 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- package build, Spotless and `git diff --check`: passed;
+- the independent local review covered all 10 changed files and reported zero
+  findings.
+
+The integration suite created and cleaned its isolated database state, so no
+manual or shared database reset was needed. This evidence does not represent a
+merge, deployment or PreDev runtime claim.
+
 ## Problems addressed
 
 - process-local and scheduler state was too easy to mistake for replica safety;
