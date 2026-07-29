@@ -103,11 +103,11 @@ class IdentityManagerTest {
   }
 
   @Test
-  void hasRoleShouldDelegateTheApplicationRoleValueToIdentityClient() {
-    when(identityClient.userHasRole("consultant-id", "group-chat-consultant")).thenReturn(true);
+  void isUsernameAvailableShouldDelegateToIdentityClient() {
+    when(identityClient.isUsernameAvailable(RAW_USERNAME)).thenReturn(true);
 
-    assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
+    assertThat(identityManager.isUsernameAvailable(RAW_USERNAME)).isTrue();
 
-    verify(identityClient).userHasRole("consultant-id", "group-chat-consultant");
+    verify(identityClient).isUsernameAvailable(RAW_USERNAME);
   }
 }

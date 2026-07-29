@@ -1,6 +1,6 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-28
+Last verified: 2026-07-29
 Target branch: `pre-dev`
 
 ## Reproducible stability result
@@ -27,27 +27,27 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,428 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,429 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 852 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,428 unit plus 852
-integration executions, or 4,280.
+comparable primary current inventory is therefore 3,429 unit plus 852
+integration executions, or 4,281.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,280: 354 fewer unit and 88 fewer integration
+inventory to the current 4,281: 353 fewer unit and 88 fewer integration
 executions. The source diff for that same pre-cutover-to-current interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 442-execution net reduction. This is intentional scope
+map one-to-one to the 441-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -238,7 +238,7 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,428 unit executions with
+Measured on this branch after merging `pre-dev`: 3,429 unit executions with
 zero failures, zero errors and no skips, and 852 required integration
 executions across 83 reports with zero failures, zero errors and nine skips.
 The focused supplier test and formatting gate also pass.
