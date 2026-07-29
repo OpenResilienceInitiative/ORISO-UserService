@@ -27,21 +27,21 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,523 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,542 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,523 unit plus 860
-integration executions, or 4,383.
+comparable primary current inventory is therefore 3,542 unit plus 860
+integration executions, or 4,402.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,383: 259 fewer unit and 80 fewer integration
+inventory to the current 4,402: 240 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,523 unit executions.
+gate to all 3,542 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
@@ -298,11 +298,12 @@ context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
 Measured on integration source commit
-`7460be8361c7d0b8fe92673241c9bb653d0dc070`: 3,523 unit executions across
-401 reports with zero failures, zero errors and no skips, and 860 required
+`4dbf5c8f887da55e8ed1f81f8bc5e7b54b895321`: 3,542 unit executions across
+402 reports with zero failures, zero errors and no skips, and 860 required
 integration executions across 84 reports with zero failures, zero errors and
 nine skips. The 73-test CI/architecture suite, 8-test OpenAPI contract suite,
-focused 170-test identity/Keycloak composition and formatting gate also pass.
+focused 177-test DPA/identity/Keycloak composition and formatting gate also
+pass.
 
 #### Measured limit of this repair
 

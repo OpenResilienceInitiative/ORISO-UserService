@@ -117,14 +117,14 @@ the focused replay PRs.
 ## Combined local verification
 
 Executed on 2026-07-29 with Temurin JDK 21 against source commit
-`7460be8361c7d0b8fe92673241c9bb653d0dc070`:
+`4dbf5c8f887da55e8ed1f81f8bc5e7b54b895321`:
 
-- unit suite: 3,523 tests in 401 reports, 0 failures, 0 errors, 0 skipped;
+- unit suite: 3,542 tests in 402 reports, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
   0 errors, 9 environment-gated skips;
 - CI and executable architecture contracts: 73 tests passed;
 - OpenAPI contract gate: 8 tests passed;
-- focused identity and Keycloak composition: 170 Java tests passed; all
+- focused DPA, identity and Keycloak composition: 177 Java tests passed; all
   25 focused module-boundary tests passed within the 73-test CI suite;
 - focused Matrix-only dead-wiring composition: 98 Java tests passed;
 - focused Matrix push, durable-notification and LiveService-removal composition:
