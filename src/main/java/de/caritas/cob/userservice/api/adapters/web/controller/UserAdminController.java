@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -27,29 +26,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
-import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
-import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
-import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
-import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
-import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
-import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
-import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
-import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
-import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.validator.routines.EmailValidator;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -65,20 +47,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @Validated
 @RequiredArgsConstructor
-@Slf4j
 @Api(tags = "admin-user-controller")
 public class UserAdminController implements UseradminApi {
 
-  private final @NonNull SessionAdminService sessionAdminService;
-  private final @NonNull ViolationReportGenerator violationReportGenerator;
-  private final @NonNull ConsultantAdminFacade consultantAdminFacade;
-  private final @NonNull AskerUserAdminFacade askerUserAdminFacade;
-  private final @NonNull AdminUserFacade adminUserFacade;
-  private final @NonNull AppointmentService appointmentService;
-  private final @NonNull AdminDtoMapper adminDtoMapper;
-  private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
-  private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull UserAdminQueryControllerDelegate queryDelegate;
+  private final @NonNull UserAdminConsultantControllerDelegate consultantDelegate;
+  private final @NonNull UserAdminAskerControllerDelegate askerDelegate;
+  private final @NonNull UserAdminAccountControllerDelegate accountDelegate;
 
   /**
    * Creates the root hal based navigation entity.
@@ -87,8 +62,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<RootDTO> getRoot() {
-    RootDTO rootDTO = new RootDTOBuilder().buildRootDTO();
-    return ResponseEntity.ok(rootDTO);
+    return queryDelegate.getRoot();
   }
 
   /**
@@ -102,9 +76,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<SessionAdminResultDTO> getSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {
-    SessionAdminResultDTO sessionAdminResultDTO =
-        this.sessionAdminService.findSessions(page, perPage, sessionFilter);
-    return ResponseEntity.ok(sessionAdminResultDTO);
+    return queryDelegate.getSessions(page, perPage, sessionFilter);
   }
 
   /**
@@ -116,16 +88,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
       CreateConsultantDTO createConsultantDTO) {
-
-    // MATRIX MIGRATION: Capture plain username for Matrix user creation
-    // CreateConsultantDTO doesn't use EncodeUsernameJsonDeserializer, so username is plain
-    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
-        createConsultantDTO.getUsername(), null);
-
-    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase());
-    var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
-
-    return ResponseEntity.ok(consultant);
+    return consultantDelegate.createConsultant(createConsultantDTO);
   }
 
   /**
@@ -150,10 +113,7 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<ConsultantAdminResponseDTO> grantConsultantIdentity(
       @PathVariable String adminId,
       @Valid @RequestBody GrantConsultantIdentityDTO grantConsultantIdentityDTO) {
-    var consultant =
-        grantConsultantIdentityService.grantConsultantIdentityToAdmin(
-            adminId, grantConsultantIdentityDTO);
-    return ResponseEntity.ok(consultant);
+    return consultantDelegate.grantConsultantIdentity(adminId, grantConsultantIdentityDTO);
   }
 
   /**
@@ -173,7 +133,7 @@ public class UserAdminController implements UseradminApi {
         "/service/useradmin/users/{userId}/identities"
       })
   public ResponseEntity<UserIdentitiesDTO> getUserIdentities(@PathVariable String userId) {
-    return ResponseEntity.ok(this.userIdentitiesService.getUserIdentities(userId));
+    return consultantDelegate.getUserIdentities(userId);
   }
 
   /**
@@ -184,7 +144,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<List<ViolationDTO>> generateViolationReport() {
-    return ResponseEntity.ok(this.violationReportGenerator.generateReport());
+    return queryDelegate.generateViolationReport();
   }
 
   /**
@@ -196,18 +156,13 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
-    this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
-    return new ResponseEntity<>(HttpStatus.CREATED);
+    return consultantDelegate.createConsultantAgency(consultantId, createConsultantAgencyDTO);
   }
 
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
-    this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
-    return ResponseEntity.ok().build();
+    return consultantDelegate.setConsultantAgencies(consultantId, agencyList);
   }
 
   /**
@@ -218,8 +173,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> deleteConsultantAgency(String consultantId, Long agencyId) {
-    this.consultantAdminFacade.markConsultantAgencyForDeletion(consultantId, agencyId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return consultantDelegate.deleteConsultantAgency(consultantId, agencyId);
   }
 
   /**
@@ -236,8 +190,7 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<Void> markConsultantForDeletion(
       @PathVariable String consultantId,
       @RequestParam(required = false, defaultValue = "false") Boolean forceDeleteSessions) {
-    this.consultantAdminFacade.markConsultantForDeletion(consultantId, forceDeleteSessions);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return consultantDelegate.markConsultantForDeletion(consultantId, forceDeleteSessions);
   }
 
   @PostMapping(
@@ -248,12 +201,7 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<Void> pauseConsultantDeletion(
       @PathVariable String consultantId,
       @Valid @RequestBody DeletionPauseRequestDTO deletionPauseRequestDTO) {
-    this.consultantAdminFacade.pauseConsultantDeletion(
-        consultantId,
-        deletionPauseRequestDTO.getReason(),
-        deletionPauseRequestDTO.getMonths(),
-        authenticatedUser.getUserId());
-    return new ResponseEntity<>(HttpStatus.OK);
+    return consultantDelegate.pauseConsultantDeletion(consultantId, deletionPauseRequestDTO);
   }
 
   /**
@@ -279,15 +227,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
       @PathVariable String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
-    return ResponseEntity.ok(performUpdate(consultantId, updateConsultantDTO));
-  }
-
-  private ConsultantAdminResponseDTO performUpdate(
-      String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
-    if (updateConsultantDTO.getEmail() != null) {
-      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
-    }
-    return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
+    return consultantDelegate.updateConsultant(consultantId, updateConsultantDTO);
   }
 
   /**
@@ -299,9 +239,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> getConsultant(
       @PathVariable String consultantId) {
-    ConsultantAdminResponseDTO responseDTO =
-        this.consultantAdminFacade.findConsultant(consultantId);
-    return ResponseEntity.ok(responseDTO);
+    return consultantDelegate.getConsultant(consultantId);
   }
 
   /**
@@ -316,9 +254,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> getConsultants(
       Integer page, Integer perPage, ConsultantFilter consultantFilter, Sort sort) {
-    var resultDTO =
-        this.consultantAdminFacade.findFilteredConsultants(page, perPage, consultantFilter, sort);
-    return ResponseEntity.ok(resultDTO);
+    return consultantDelegate.getConsultants(page, perPage, consultantFilter, sort);
   }
 
   /**
@@ -329,8 +265,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<AgencyConsultantResponseDTO> getAgencyConsultants(String agencyId) {
-    var resultDTO = this.consultantAdminFacade.findConsultantsForAgency(agencyId);
-    return ResponseEntity.ok(resultDTO);
+    return consultantDelegate.getAgencyConsultants(agencyId);
   }
 
   /**
@@ -343,8 +278,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<ConsultantAgencyResponseDTO> getConsultantAgencies(
       @PathVariable String consultantId) {
-    var consultantAgencies = this.consultantAdminFacade.findConsultantAgencies(consultantId);
-    return ResponseEntity.ok(consultantAgencies);
+    return consultantDelegate.getConsultantAgencies(consultantId);
   }
 
   /**
@@ -355,8 +289,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
-    this.consultantAdminFacade.changeAgencyType(agencyId, agencyTypeDTO);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return consultantDelegate.changeAgencyType(agencyId, agencyTypeDTO);
   }
 
   /**
@@ -366,8 +299,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> markAskerForDeletion(String askerId) {
-    this.askerUserAdminFacade.markAskerForDeletion(askerId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return askerDelegate.markAskerForDeletion(askerId);
   }
 
   @PostMapping(
@@ -378,149 +310,103 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<Void> pauseAskerDeletion(
       @PathVariable String askerId,
       @Valid @RequestBody DeletionPauseRequestDTO deletionPauseRequestDTO) {
-    this.askerUserAdminFacade.pauseAskerDeletion(
-        askerId,
-        deletionPauseRequestDTO.getReason(),
-        deletionPauseRequestDTO.getMonths(),
-        authenticatedUser.getUserId());
-    return new ResponseEntity<>(HttpStatus.OK);
+    return askerDelegate.pauseAskerDeletion(askerId, deletionPauseRequestDTO);
   }
 
   @Override
   public ResponseEntity<AskerResponseDTO> getAsker(String askerId) {
-    AskerResponseDTO response = this.askerUserAdminFacade.getAsker(askerId);
-    return new ResponseEntity<>(response, HttpStatus.OK);
+    return askerDelegate.getAsker(askerId);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
-    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase());
-    var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
-
-    return ResponseEntity.ok(admin);
+    return accountDelegate.createTenantAdmin(createAgencyAdminDTO);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> createAgencyAdmin(final CreateAdminDTO createAdminDTO) {
-    return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
+    return accountDelegate.createAgencyAdmin(createAdminDTO);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> getAgencyAdmin(final String adminId) {
-    return new ResponseEntity<>(this.adminUserFacade.findAgencyAdmin(adminId), HttpStatus.OK);
+    return accountDelegate.getAgencyAdmin(adminId);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> getTenantAdmin(final String adminId) {
-    return new ResponseEntity<>(this.adminUserFacade.findTenantAdmin(adminId), HttpStatus.OK);
+    return accountDelegate.getTenantAdmin(adminId);
   }
 
   @Override
   public ResponseEntity<List<AdminResponseDTO>> getTenantAdmins(final Integer tenantId) {
-    return new ResponseEntity<>(this.adminUserFacade.findTenantAdmins(tenantId), HttpStatus.OK);
+    return accountDelegate.getTenantAdmins(tenantId);
   }
 
   @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
-    return ResponseEntity.ok(adminAgencies);
+    return accountDelegate.getAdminAgencies(adminId);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> getAgencyAdmins(
       final Integer page, final Integer perPage, final AdminFilter filter, final Sort sort) {
-    return new ResponseEntity<>(
-        this.adminUserFacade.findFilteredAdminsAgency(page, perPage, filter, sort), HttpStatus.OK);
+    return accountDelegate.getAgencyAdmins(page, perPage, filter, sort);
   }
 
   @Override
   public ResponseEntity<Void> deleteAgencyAdmin(final String adminId) {
-    this.adminUserFacade.deleteAgencyAdmin(adminId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return accountDelegate.deleteAgencyAdmin(adminId);
   }
 
   @Override
   public ResponseEntity<Void> deleteTenantAdmin(final String adminId) {
-    this.adminUserFacade.deleteTenantAdmin(adminId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return accountDelegate.deleteTenantAdmin(adminId);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> updateAgencyAdmin(
       final String adminId, UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase());
-    var admin = adminUserFacade.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
-
-    return new ResponseEntity<>(admin, HttpStatus.OK);
+    return accountDelegate.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> updateTenantAdmin(
       final String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
-    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase());
-    var admin = adminUserFacade.updateTenantAdmin(adminId, updateTenantAdminDTO);
-
-    return new ResponseEntity<>(admin, HttpStatus.OK);
+    return accountDelegate.updateTenantAdmin(adminId, updateTenantAdminDTO);
   }
 
   @Override
   public ResponseEntity<Void> createAdminAgencyRelation(
       final String adminId, final CreateAdminAgencyRelationDTO createAdminAgencyRelationDTO) {
-    this.adminUserFacade.createNewAdminAgencyRelation(adminId, createAdminAgencyRelationDTO);
-    return new ResponseEntity<>(HttpStatus.CREATED);
+    return accountDelegate.createAdminAgencyRelation(adminId, createAdminAgencyRelationDTO);
   }
 
   @Override
   public ResponseEntity<Void> deleteAdminAgencyRelation(final String adminId, final Long agencyId) {
-    this.adminUserFacade.deleteAdminAgencyRelation(adminId, agencyId);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return accountDelegate.deleteAdminAgencyRelation(adminId, agencyId);
   }
 
   @Override
   public ResponseEntity<Void> setAdminAgenciesRelation(
       final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
-    this.adminUserFacade.setAdminAgenciesRelation(adminId, newAdminAgencyRelationDTOs);
-    return new ResponseEntity<>(HttpStatus.OK);
+    return accountDelegate.setAdminAgenciesRelation(adminId, newAdminAgencyRelationDTOs);
   }
 
   @Override
   public ResponseEntity<AdminResponseDTO> patchAdminData(PatchAdminDTO patchAdminDTO) {
-    AdminResponseDTO adminResponseDTO = this.adminUserFacade.patchAdminUserData(patchAdminDTO);
-    return new ResponseEntity<>(adminResponseDTO, HttpStatus.OK);
+    return accountDelegate.patchAdminData(patchAdminDTO);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
       String query, Integer page, Integer perPage, String field, String order) {
-    String decodedInfix = determineDecodedInfix(query);
-    var isAscending = order.equalsIgnoreCase("asc");
-    var mappedField = adminDtoMapper.mappedFieldOf(field);
-    var resultMap =
-        adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
-
-    return ResponseEntity.ok(result);
+    return accountDelegate.searchAgencyAdmins(query, page, perPage, field, order);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
       String query, Integer page, Integer perPage, String field, String order) {
-    String decodedInfix = determineDecodedInfix(query);
-    var isAscending = order.equalsIgnoreCase("asc");
-    var mappedField = adminDtoMapper.mappedFieldOf(field);
-    var resultMap =
-        adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
-    return ResponseEntity.ok(result);
-  }
-
-  private String determineDecodedInfix(String query) {
-    if (EmailValidator.getInstance().isValid(query)) {
-      return EmailUrlDecoder.decodeEmailQuery(query);
-    } else {
-      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
-    }
+    return accountDelegate.searchTenantAdmins(query, page, perPage, field, order);
   }
 }

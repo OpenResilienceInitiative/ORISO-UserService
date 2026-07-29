@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,16 +46,17 @@ class UserAdminControllerPostUpdateRoutingTest {
 
     var controller =
         new UserAdminController(
-            mock(SessionAdminService.class),
-            mock(ViolationReportGenerator.class),
-            consultantAdminFacade,
-            mock(AskerUserAdminFacade.class),
-            mock(AdminUserFacade.class),
-            mock(AppointmentService.class),
-            mock(AdminDtoMapper.class),
-            mock(AuthenticatedUser.class),
-            mock(GrantConsultantIdentityService.class),
-            mock(UserIdentitiesService.class));
+            new UserAdminQueryControllerDelegate(
+                mock(SessionAdminService.class), mock(ViolationReportGenerator.class)),
+            new UserAdminConsultantControllerDelegate(
+                consultantAdminFacade,
+                mock(AuthenticatedUser.class),
+                mock(GrantConsultantIdentityService.class),
+                mock(UserIdentitiesService.class)),
+            new UserAdminAskerControllerDelegate(
+                mock(AskerUserAdminFacade.class), mock(AuthenticatedUser.class)),
+            new UserAdminAccountControllerDelegate(
+                mock(AdminUserFacade.class), mock(AdminDtoMapper.class)));
 
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }

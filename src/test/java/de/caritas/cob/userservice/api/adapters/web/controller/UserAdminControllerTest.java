@@ -40,7 +40,6 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.lang.reflect.Method;
 import java.net.URLEncoder;
@@ -64,7 +63,6 @@ class UserAdminControllerTest {
   @Mock private ConsultantAdminFacade consultantAdminFacade;
   @Mock private AskerUserAdminFacade askerUserAdminFacade;
   @Mock private AdminUserFacade adminUserFacade;
-  @Mock private AppointmentService appointmentService;
   @Mock private AdminDtoMapper adminDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GrantConsultantIdentityService grantConsultantIdentityService;
@@ -76,16 +74,14 @@ class UserAdminControllerTest {
   void setUp() {
     controller =
         new UserAdminController(
-            sessionAdminService,
-            violationReportGenerator,
-            consultantAdminFacade,
-            askerUserAdminFacade,
-            adminUserFacade,
-            appointmentService,
-            adminDtoMapper,
-            authenticatedUser,
-            grantConsultantIdentityService,
-            userIdentitiesService);
+            new UserAdminQueryControllerDelegate(sessionAdminService, violationReportGenerator),
+            new UserAdminConsultantControllerDelegate(
+                consultantAdminFacade,
+                authenticatedUser,
+                grantConsultantIdentityService,
+                userIdentitiesService),
+            new UserAdminAskerControllerDelegate(askerUserAdminFacade, authenticatedUser),
+            new UserAdminAccountControllerDelegate(adminUserFacade, adminDtoMapper));
   }
 
   @Test

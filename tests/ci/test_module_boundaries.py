@@ -51,6 +51,44 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "application services or outbound adapters:\n" + "\n".join(offenders),
         )
 
+    def test_user_admin_controller_only_composes_focused_web_delegates(self):
+        controller = (CONTROLLERS / "UserAdminController.java").read_text()
+        required_delegates = (
+            "UserAdminQueryControllerDelegate",
+            "UserAdminConsultantControllerDelegate",
+            "UserAdminAskerControllerDelegate",
+            "UserAdminAccountControllerDelegate",
+        )
+        forbidden_import_prefixes = (
+            "import de.caritas.cob.userservice.api.admin.",
+            "import de.caritas.cob.userservice.api.helper.AuthenticatedUser;",
+            "import de.caritas.cob.userservice.api.service.",
+            "import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;",
+        )
+
+        missing_delegates = [
+            delegate for delegate in required_delegates if delegate not in controller
+        ]
+        direct_application_imports = [
+            line
+            for line in controller.splitlines()
+            if line.startswith(forbidden_import_prefixes)
+        ]
+
+        self.assertEqual(
+            [],
+            missing_delegates,
+            "The generated admin API adapter must compose the four focused web "
+            "delegates:\n" + "\n".join(missing_delegates),
+        )
+        self.assertEqual(
+            [],
+            direct_application_imports,
+            "UserAdminController must not directly compose application services, "
+            "facades, mappers or authenticated-user state:\n"
+            + "\n".join(direct_application_imports),
+        )
+
     def test_session_module_depends_on_ports_not_chat_adapters(self):
         session_module = (
             ROOT
