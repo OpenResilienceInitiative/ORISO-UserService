@@ -27,28 +27,28 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,554 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Unit | 3,564 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
 | Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,554 unit plus 860
-integration executions, or 4,414.
+comparable primary current inventory is therefore 3,564 unit plus 860
+integration executions, or 4,424.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,414: 228 fewer unit and 80 fewer integration
+inventory to the current 4,424: 218 fewer unit and 80 fewer integration
 executions. The preserved cutover source-diff baseline deletes 40 obsolete test
 classes and adds 29 Matrix-only contract classes; later stability and invite
 work added further executable coverage.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 308-execution net reduction. This is intentional scope
+map one-to-one to the 298-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -60,7 +60,7 @@ is skipped or quarantined.
 suite, starts from a clean build, preserves the 830-test safety floor, checks
 for critical E2E reports and finally requires the exact versioned inventory of
 860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,554 unit executions.
+gate to all 3,564 unit executions.
 The previous three-test required subset and the non-blocking legacy quarantine
 were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
 `NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover

@@ -215,8 +215,9 @@ push, durable timeline delivery and partial-failure isolation.
 
 ### Broad identity-client removal increment
 
-Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
-`554039a0072689d859120922428fc7456338326a`:
+Implemented at `554039a0072689d859120922428fc7456338326a` and reverified
+on 2026-07-29 with Temurin JDK 21 against integrated application head
+`7bd3c4a1a8a7a7c7b4b4a479333bd0d4400e5c0c`:
 
 - the broad `IdentityClient` interface is deleted and no Java source imports
   it;
@@ -226,7 +227,10 @@ Reverified on 2026-07-29 with Temurin JDK 21 against implementation commit
   and the username-search helper is adapter-internal;
 - shared Spring integration contexts use one compatible `KeycloakService`
   replacement rather than competing focused mocks;
-- unit suite: 3,554 tests in 406 reports, 0 failures, 0 errors, 0 skipped;
+- the current `pre-dev` Matrix enquiry-membership fix from #905 is included;
+  its constructor extension is also covered by the existing technical-identity
+  fan-out proof;
+- unit suite: 3,564 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
 - required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
   0 errors and 9 exact environment-bound skips;
 - CI and executable architecture contracts: 84 tests passed;
