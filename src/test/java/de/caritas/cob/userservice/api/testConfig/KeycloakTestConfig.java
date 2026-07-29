@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -38,8 +37,7 @@ public class KeycloakTestConfig {
       UserHelper userHelper) {
 
     var keycloakAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
 
     return new KeycloakService(
         authenticatedUser,
@@ -72,12 +70,12 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public KeycloakLoginResponseDTO loginUser(String userName, String password) {
-        return new KeycloakLoginResponseDTO("", 0, 0, "", "", "", "");
+      public IdentityLogin login(String userName, String password) {
+        return new IdentityLogin("", 0, 0, "");
       }
 
       @Override
-      public boolean logoutUser(String refreshToken) {
+      public boolean logout(String refreshToken) {
         return true;
       }
 

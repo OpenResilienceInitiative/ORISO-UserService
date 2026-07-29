@@ -73,6 +73,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -214,30 +215,30 @@ class UserControllerAuthorizationIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
 
-    verifyNoInteractions(identityClient);
+    verifyNoInteractions(identityManager);
   }
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNotFound());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test
   void usernameAvailability_Should_StayPublic_WhenNoKeycloakAuthorization() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test

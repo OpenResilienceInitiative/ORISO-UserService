@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
 import de.caritas.cob.userservice.api.exception.CustomCryptoException;
 import de.caritas.cob.userservice.api.exception.NoMasterKeyException;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.Custo
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
 import java.util.Map;
@@ -219,6 +221,42 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
   private Map<String, String> messageBody(String message) {
     return Map.of("message", Optional.ofNullable(message).orElse(HttpStatus.BAD_REQUEST.name()));
+  }
+
+  /**
+   * 502 - Bad Gateway: the SMTP server did not accept an outgoing mail (TEN-INV-U6, #890). The
+   * caller must treat this as a failed delivery — no SENT state exists.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({SmtpSendException.class})
+  public ResponseEntity<Object> handleSmtpSendFailure(
+      final SmtpSendException ex, final WebRequest request) {
+    log.error("SMTP send failed", ex);
+
+    return handleExceptionInternal(
+        ex,
+        Map.of("reason", "SMTP_SEND_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.BAD_GATEWAY,
+        request);
+  }
+
+  /**
+   * 410 - Gone: an invite link exists but is consumed, revoked, superseded or expired (TEN-INV-U6,
+   * #890). The body carries the machine-readable reason for the public frontends.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({AccountInviteLinkException.class})
+  public ResponseEntity<Object> handleAccountInviteLinkGone(
+      final AccountInviteLinkException ex, final WebRequest request) {
+    log.warn("Account invite link rejected: {}", ex.getReason());
+
+    return handleExceptionInternal(
+        ex, reasonBody(ex.getReason().name()), new HttpHeaders(), HttpStatus.GONE, request);
   }
 
   /**

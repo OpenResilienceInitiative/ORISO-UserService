@@ -93,10 +93,6 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Mock private de.caritas.cob.userservice.api.service.user.UserService userService;
 
   @Mock
-  private de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService
-      liveEventNotificationService;
-
-  @Mock
   private de.caritas.cob.userservice.api.service.notification.EventNotificationService
       eventNotificationService;
 

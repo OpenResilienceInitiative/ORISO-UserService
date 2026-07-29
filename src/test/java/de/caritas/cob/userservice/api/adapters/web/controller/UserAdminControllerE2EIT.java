@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
@@ -119,7 +120,12 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
-  @MockitoBean(extraInterfaces = IdentityDummyEmailUpdater.class)
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAuthentication.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityUsernameAvailability.class
+      })
   IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;

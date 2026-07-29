@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
@@ -15,10 +14,6 @@ public interface IdentityClient {
   boolean changePassword(final String userId, final String password);
 
   void changeLanguage(final String userId, final String language);
-
-  KeycloakLoginResponseDTO loginUser(final String userName, final String password);
-
-  boolean logoutUser(final String refreshToken);
 
   void changeEmailAddress(final String emailAddress);
 
@@ -36,14 +31,10 @@ public interface IdentityClient {
 
   Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
-  Map<String, String> findUserByEmail(String email);
-
   KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
 
   KeycloakCreateUserResponseDTO createKeycloakUser(
       final UserDTO user, final String firstName, final String lastName);
-
-  boolean isUsernameAvailable(String username);
 
   void updateUserRole(final String userId);
 
@@ -73,11 +64,7 @@ public interface IdentityClient {
 
   List<UserRepresentation> findByUsername(String username);
 
-  void closeSession(String sessionId);
-
   void deactivateUser(String userId);
-
-  boolean verifyIgnoringOtp(String username, String password);
 
   UserRepresentation getById(String userId);
 }
