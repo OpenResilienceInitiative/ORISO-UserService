@@ -112,7 +112,7 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
         self.assertEqual(required_suite["unitTests"], current["unit"])
         self.assertEqual(required_suite["integrationTests"], current["integration"])
         self.assertEqual(
-            "c1db4b5decce8b8ea4a4a57ecc0698368ca60e17",
+            "2f8affd00dd8aac1bd5c55dd08319a665fcfb68a",
             current["verifiedApplicationHead"],
         )
         self.assertEqual(2, len(current["localEvidence"]))

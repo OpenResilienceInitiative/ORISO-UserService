@@ -283,6 +283,30 @@ application head `c1db4b5decce8b8ea4a4a57ecc0698368ca60e17`:
 - OpenAPI contract gate: 8 tests passed;
 - Spotless and `git diff --check`: passed.
 
+### Consultant session query increment
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `2f8affd00dd8aac1bd5c55dd08319a665fcfb68a`:
+
+- the focused `ConsultantSessionQueryService` owns consultant room/id, queue,
+  team, active, archive and narrowly scoped cross-tenant session reads;
+- the consultant list service plus registered and archive providers consume
+  the focused query boundary rather than the broad `SessionService`;
+- `SessionService` was reduced from 838 to 445 lines and from nine to five
+  constructor collaborators; consultant topic, group-participant, supervisor
+  and unused user-service dependencies were removed;
+- anonymous and directly assigned cross-tenant fallbacks still restore the
+  caller tenant and retain their distinct narrow visibility rules;
+- anonymous-conversation finish classification now uses the focused access
+  policy directly;
+- 97 focused query, list, provider, registry and finish-facade tests passed;
+- unit suite: 3,565 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 87 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- Spotless and `git diff --check`: passed.
+
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because both the integration
 suite and the exact-head load proof create and clean isolated databases. The
