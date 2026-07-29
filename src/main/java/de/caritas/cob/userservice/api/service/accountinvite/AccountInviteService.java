@@ -471,7 +471,17 @@ public class AccountInviteService {
 
     InviteMailSendReceipt receipt;
     try {
-      receipt = inviteMailDispatchService.send(invite.getRecipientEmail(), subject, body);
+      // #914: the dispatcher wraps the authored body in the canonical branded layout and renders
+      // the accept URL as a button plus a visible copy-paste fallback line. The link target itself
+      // is unchanged — it stays the server-decided acceptUrl from TEN-INV-U6.
+      receipt =
+          inviteMailDispatchService.send(
+              invite.getRecipientEmail(),
+              subject,
+              body,
+              acceptUrl,
+              invite.getTenantId(),
+              template.getLanguage());
     } catch (SmtpSendException exception) {
       recordDeliveryFailureSafely(failureAuditInviteId, template, invite, subject, body, exception);
       throw exception;
@@ -605,7 +615,12 @@ public class AccountInviteService {
     return Math.min(size, 100);
   }
 
-  private static String render(String value, AccountInvite invite, String acceptUrl) {
+  /**
+   * Substitutes the author-facing placeholders of a template. Public since #914 so the Admin
+   * preview endpoint renders a template exactly the way the send path does, instead of
+   * re-implementing the substitution.
+   */
+  public static String render(String value, AccountInvite invite, String acceptUrl) {
     if (value == null) {
       return "";
     }

@@ -403,6 +403,8 @@ class ConsultantRepositoryIT {
   void findAllByInfixShouldSearchCaseInsensitive() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
     var transformedInfix = easyRandom.nextBoolean() ? infix.toLowerCase() : infix.toUpperCase();
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
     var firstNameMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsMatchingFirstName(firstNameMatching, transformedInfix);
     var lastNameMatching = easyRandom.nextInt(20) + 5;
@@ -415,9 +417,11 @@ class ConsultantRepositoryIT {
     var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching;
-    assertEquals(allMatching, consultantPage.getTotalElements());
+    assertEquals(preExisting + allMatching, consultantPage.getTotalElements());
     assertEquals(allMatching, matchingIds.size());
-    consultantPage.forEach(consultant -> assertTrue(matchingIds.contains(consultant.getId())));
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.containsAll(matchingIds));
   }
 
   @Test

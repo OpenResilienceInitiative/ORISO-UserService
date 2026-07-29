@@ -14,6 +14,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.PreviewCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
@@ -46,6 +49,7 @@ public class AccountInviteController {
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull InviteEmailTemplateService templateService;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
+  private final @NonNull InviteEmailPreviewService previewService;
 
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites")
@@ -215,6 +219,53 @@ public class AccountInviteController {
     return ResponseEntity.ok(response);
   }
 
+  /**
+   * Renders the canonical branded mail with the current branding (ORISO-UserService#914) so the
+   * Admin can show what is actually sent instead of re-implementing the markup. Same platform-admin
+   * authorisation as the other {@code /useradmin/invite-email-templates} endpoints.
+   *
+   * <p>Use {@code templateId} to preview a stored template, {@code kind} to pick the sample content
+   * for a template kind, and {@code tenant_id} to preview a specific tenant's branding. Without any
+   * parameter the endpoint renders the built-in sample invite with platform branding — that is the
+   * fixture the Admin Storybook stories are generated from.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @GetMapping("/useradmin/invite-email-templates/preview")
+  public ResponseEntity<InviteEmailPreviewResponseDTO> previewTemplate(
+      @RequestParam(value = "templateId", required = false) Long templateId,
+      @RequestParam(value = "kind", required = false) String kind,
+      @RequestParam(value = "tenant_id", required = false) Long tenantId,
+      @RequestParam(value = "language", required = false) String language) {
+    return ResponseEntity.ok(
+        InviteEmailPreviewResponseDTO.from(
+            previewService.preview(
+                new PreviewCommand(
+                    templateId,
+                    parseOptionalEnum(InviteEmailTemplateKind.class, kind, "kind"),
+                    null,
+                    null,
+                    tenantId,
+                    language))));
+  }
+
+  /** Live preview of unsaved editor content — same renderer, same branding, same output shape. */
+  @PreAuthorize(ADMIN_AUTH)
+  @PostMapping("/useradmin/invite-email-templates/preview")
+  public ResponseEntity<InviteEmailPreviewResponseDTO> previewTemplateContent(
+      @RequestBody(required = false) PreviewRequestDTO request) {
+    PreviewRequestDTO safe = request == null ? new PreviewRequestDTO() : request;
+    return ResponseEntity.ok(
+        InviteEmailPreviewResponseDTO.from(
+            previewService.preview(
+                new PreviewCommand(
+                    safe.templateId,
+                    parseOptionalEnum(InviteEmailTemplateKind.class, safe.kind, "kind"),
+                    safe.subject,
+                    safe.body,
+                    safe.tenantId,
+                    safe.language))));
+  }
+
   private InviteEmailDeliveryStatus latestDeliveryStatus(AccountInvite invite) {
     if (invite.getId() == null) {
       return null;
@@ -306,6 +357,40 @@ public class AccountInviteController {
     PENDING_2FA_ACTIVATION,
     /** All account gates of the invite are satisfied. */
     COMPLETED
+  }
+
+  public static class PreviewRequestDTO {
+    public Long templateId;
+    public String kind;
+    public String subject;
+    public String body;
+    public Long tenantId;
+    public String language;
+  }
+
+  /** Rendered branded mail — everything the Admin needs to display or snapshot the real output. */
+  public static class InviteEmailPreviewResponseDTO {
+    public Long templateId;
+    public String templateName;
+    public String kind;
+    public String language;
+    public String subject;
+    public String html;
+    public String plainText;
+    public String sampleAcceptUrl;
+
+    static InviteEmailPreviewResponseDTO from(InviteEmailPreview preview) {
+      InviteEmailPreviewResponseDTO dto = new InviteEmailPreviewResponseDTO();
+      dto.templateId = preview.templateId();
+      dto.templateName = preview.templateName();
+      dto.kind = preview.kind() == null ? null : preview.kind().name();
+      dto.language = preview.language();
+      dto.subject = preview.subject();
+      dto.html = preview.html();
+      dto.plainText = preview.plainText();
+      dto.sampleAcceptUrl = preview.sampleAcceptUrl();
+      return dto;
+    }
   }
 
   public static class TemplateRequestDTO {
