@@ -307,6 +307,27 @@ application head `2f8affd00dd8aac1bd5c55dd08319a665fcfb68a`:
 - OpenAPI contract gate: 8 tests passed;
 - Spotless and `git diff --check`: passed.
 
+### Redis token TTL contract stabilization
+
+Implemented and reverified on 2026-07-29 with Temurin JDK 21 against
+application head `11065c92d0a225c7168901525227c9bc3c19cbab`:
+
+- the remaining-TTL integration contract gives the initial Redis store/claim
+  path five seconds instead of depending on an 800 ms runner-scheduling
+  window;
+- restoration is deliberately delayed until only two seconds remain, so the
+  test now proves expiry at the original deadline rather than merely observing
+  that a quickly restored token eventually expires;
+- both successful restore operations are asserted explicitly;
+- the exact Redis shared-state pair passed four consecutive local executions,
+  after a separate focused token-store execution also passed;
+- unit suite: 3,565 tests in 407 reports, 0 failures, 0 errors, 0 skipped;
+- required integration/contract/E2E suite: 860 tests in 84 reports, 0 failures,
+  0 errors and 9 exact environment-bound skips;
+- CI and executable architecture contracts: 87 tests passed;
+- OpenAPI contract gate: 8 tests passed;
+- package build, Spotless and `git diff --check`: passed.
+
 The dedicated MariaDB and Redis service-container gates remain required in
 GitHub CI. A local database reset was not needed because both the integration
 suite and the exact-head load proof create and clean isolated databases. The
