@@ -34,7 +34,7 @@ import lombok.ToString;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString(exclude = "tokenHash")
+@ToString(exclude = {"tokenHash", "tenantIdReservationToken"})
 public class AccountInvite {
 
   @Id
@@ -60,6 +60,14 @@ public class AccountInvite {
 
   @Column(name = "agency_id")
   private Long agencyId;
+
+  /**
+   * Token of the TenantService tenant-ID reservation held by this invite (TEN-INV-U3). Tenant
+   * creation consumes the reserved ID only against this token; it stays with the invite until the
+   * reservation is consumed or released.
+   */
+  @Column(name = "tenant_id_reservation_token", length = 36)
+  private String tenantIdReservationToken;
 
   @Column(name = "department_id")
   private Long departmentId;

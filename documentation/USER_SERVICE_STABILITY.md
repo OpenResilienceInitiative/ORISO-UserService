@@ -27,27 +27,27 @@ After repairing those clusters:
 
 | Suite | Tests | Failures | Errors | Skipped | Command |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,439 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 853 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
+| Unit | 3,456 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
+| Integration + contract + E2E | 856 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
 | MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
 | Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
 
 The rows are not one additive total: the MariaDB and Redis rows are dedicated
 environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,439 unit plus 853
-integration executions, or 4,292.
+comparable primary current inventory is therefore 3,456 unit plus 856
+integration executions, or 4,312.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
 or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,292: 343 fewer unit and 87 fewer integration
+inventory to the current 4,312: 326 fewer unit and 84 fewer integration
 executions. The source diff for that same pre-cutover-to-current interval
 deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
 Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 430-execution net reduction. This is intentional scope
+map one-to-one to the 410-execution net reduction. This is intentional scope
 removal plus replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
@@ -238,9 +238,9 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,439 unit executions with
-zero failures, zero errors and no skips, and 853 required integration
-executions across 83 reports with zero failures, zero errors and nine skips.
+Measured on this branch after merging `pre-dev`: 3,456 unit executions with
+zero failures, zero errors and no skips, and 856 required integration
+executions across 84 reports with zero failures, zero errors and nine skips.
 The focused supplier test and formatting gate also pass.
 
 #### Measured limit of this repair
@@ -316,6 +316,10 @@ selected registered system accounts such as the per-tenant
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
+- The unused identity session-close command was removed from the broad output
+  port, the Keycloak facade and its authentication collaborator. Repository-wide
+  tracing found no production consumer, so the removed path has an exact
+  zero-call bound. The active refresh-token logout flow remains unchanged.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -348,22 +352,33 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing the outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
-from reverting to concrete application/chat services and prevents the
+from reverting to concrete application/chat services, prevents user web
+mappers from importing the outbound identity client, and prevents the
 `service.session` application package from importing concrete Matrix adapters. It also
 prevents the Identity/Profile packages and the Admin module from importing
 their protected concrete chat adapters. The separate removal contract prevents
 Rocket.Chat production packages, configuration, DTOs and schema fields from
-returning. The appointment deletion repair stays behind `Organizing` and
-`AppointmentRepository`.
+returning. A dead-surface contract prevents the unused identity session-close
+command from returning on the broad port or either Keycloak wrapper. The
+appointment deletion repair stays behind `Organizing` and `AppointmentRepository`.
 
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+
+Email-ownership validation now uses the focused
+`IdentityEmailOwnerLookup` output port and the application-owned
+`IdentityEmailOwner` value. `IdentityManager` no longer interprets Keycloak map
+keys, while the Keycloak adapter retains exact-email matching and representation
+mapping. The external-call bound is unchanged: one email-ownership check makes
+exactly one identity-provider lookup. An unused email remains accepted; raw and
+encoded representations of the same username remain accepted; incomplete owner
+data is rejected safely.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
