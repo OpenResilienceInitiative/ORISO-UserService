@@ -48,10 +48,6 @@ public interface IdentityClient {
 
   void updatePassword(final String userId, final String password);
 
-  String updateDummyEmail(final String userId, UserDTO user);
-
-  void updateDummyEmail(String userId);
-
   void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
 
   void updateEmail(String userId, String emailAddress);

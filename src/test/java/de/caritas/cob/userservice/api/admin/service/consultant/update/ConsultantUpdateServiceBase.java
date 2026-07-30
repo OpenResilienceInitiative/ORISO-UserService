@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -33,6 +34,7 @@ public class ConsultantUpdateServiceBase {
   @MockitoBean(
       extraInterfaces = {
         IdentityAuthentication.class,
+        IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityUsernameAvailability.class
       })
