@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -52,6 +53,7 @@ public class AssignEnquiryFacade {
   private final @NonNull UserRepository userRepository;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull EventNotificationService eventNotificationService;
 
@@ -446,7 +448,7 @@ public class AssignEnquiryFacade {
     }
 
     var matrixLocalpart = usernameTranscoder.decodeUsername(consultant.getUsername());
-    var displayName = consultant.getFirstName() + " " + consultant.getLastName();
+    var displayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, displayName);
     if (!isBlank(matrixUserId)) {
       consultant.setMatrixUserId(matrixUserId);
