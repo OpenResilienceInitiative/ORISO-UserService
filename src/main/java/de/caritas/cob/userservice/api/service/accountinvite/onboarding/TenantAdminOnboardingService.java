@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -49,6 +50,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
   private final @NonNull UsernameTranscoder usernameTranscoder;
@@ -85,7 +87,7 @@ public class TenantAdminOnboardingService {
    * Creates the inactive tenant plus the tenant-admin account and consumes the tenant-ID
    * reservation atomically; strictly single-use (atomic claim). Ordering keeps the external side
    * effects compensable: the invite is claimed first (rolls back with the transaction), then the
-   * Keycloak account is created (compensated via {@code rollBackUser} on any later failure), and
+   * Keycloak account is created (compensated via {@code rollbackUser} on any later failure), and
    * the TenantService creation — the irreversible reservation consumption — runs last.
    *
    * <p>The DPA acceptance travels WITH that creation call (#569). There is exactly one data
@@ -181,7 +183,7 @@ public class TenantAdminOnboardingService {
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
       // state and must be compensated explicitly so a failed registration stays retryable.
-      identityClient.rollBackUser(admin.getId());
+      identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
     }
   }

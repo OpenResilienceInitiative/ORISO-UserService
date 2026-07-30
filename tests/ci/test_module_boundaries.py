@@ -398,6 +398,100 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(missing_test_interface),
         )
 
+    def test_identity_account_removal_consumers_use_a_focused_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityAccountRemover.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Identity account removal needs a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        port_text = port.read_text()
+        self.assertNotIn(
+            "de.caritas.cob.userservice.api.adapters.",
+            port_text,
+        )
+        self.assertNotIn("org.keycloak.", port_text)
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/"
+            "DeleteKeycloakUserAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/"
+            "DeleteKeycloakAskerAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/consultant/"
+            "DeleteKeycloakConsultantAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/delete/"
+            "DeleteAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/rollback/"
+            "RollbackFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/create/"
+            "CreateAdminService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused account-removal port",
+            )
+            self.assertNotIn(
+                "identityClient.deleteUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client deletion",
+            )
+            self.assertNotIn(
+                "identityClient.rollBackUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client rollback",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "deleteUser(",
+            identity_client,
+            "The broad identity command client must not own account deletion",
+        )
+        self.assertNotIn(
+            "rollBackUser(",
+            identity_client,
+            "The broad identity command client must not own account rollback",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityAccountRemover.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused removal port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
     def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):
         source = (
             ROOT
