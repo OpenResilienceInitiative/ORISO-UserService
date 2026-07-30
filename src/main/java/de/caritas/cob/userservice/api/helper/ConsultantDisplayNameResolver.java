@@ -11,10 +11,10 @@ import org.springframework.stereotype.Component;
  * member of the same room, so their own client can read every member's display name straight from
  * {@code /joined_members} — filtering the participant list in the UI does not hide anything.
  *
- * <p>The invariant this class enforces: a counsellor's Matrix display name never reveals more
- * than the room's member list already does. The Matrix ID itself carries the (transcoded)
- * username, and the app already shows the client {@link Consultant#getDisplayName()} where one is
- * set — so those two are the only permitted sources. The real name is never used.
+ * <p>The invariant this class enforces: a counsellor's Matrix display name never reveals more than
+ * the room's member list already does. The Matrix ID itself carries the (transcoded) username, and
+ * the app already shows the client {@link Consultant#getDisplayName()} where one is set — so those
+ * two are the only permitted sources. The real name is never used.
  */
 @Component
 public class ConsultantDisplayNameResolver {
