@@ -18,6 +18,17 @@ runs:
     shell: bash
     run: scripts/ci/run-required-integration-tests.sh
 
+  - name: Report integration inventory
+    if: ${{ always() }}
+    shell: bash
+    run: |
+      set -o pipefail
+      {
+        echo "### Integration test inventory"
+        echo
+        python3 scripts/ci/suite-inventory.py --require integration
+      } | tee -a "$GITHUB_STEP_SUMMARY"
+
   - name: Upload required integration reports
     if: ${{ always() }}
     uses: actions/upload-artifact@v4
