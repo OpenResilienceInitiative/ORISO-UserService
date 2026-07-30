@@ -122,7 +122,11 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             gateway,
             sessionService,
             new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
-                consultantRepository, gateway, userHelper, usernameTranscoder));
+                consultantRepository,
+                gateway,
+                userHelper,
+                usernameTranscoder,
+                new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver()));
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -45,6 +46,9 @@ class AgencySilentMembershipServiceTest {
   @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private UserHelper userHelper;
   @Mock private UsernameTranscoder usernameTranscoder;
+  // ADR-002 §2: provisioning must never register the counsellor's real name (see
+  // ConsultantDisplayNameResolverTest for the invariant itself).
+  @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   @InjectMocks private AgencySilentMembershipService underTest;
 
@@ -91,7 +95,9 @@ class AgencySilentMembershipServiceTest {
     when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
         .thenReturn(List.of(fresh));
     when(usernameTranscoder.decodeUsername("c-new")).thenReturn("c-new");
-    when(sessionRoomGateway.createUser("c-new", "generated-password", "First Last"))
+    when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
+        .thenReturn("pseudonym");
+    when(sessionRoomGateway.createUser("c-new", "generated-password", "pseudonym"))
         .thenReturn("@c-new:oriso.org");
     when(sessionRoomGateway.loginAsUser("@c-new:oriso.org")).thenReturn("token-new");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "token-new")).thenReturn(true);
