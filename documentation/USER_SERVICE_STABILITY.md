@@ -1,7 +1,11 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-29
 Target branch: `pre-dev`
+
+Suite counts in this record are generated, not written down — see
+[Reproducible stability result](#reproducible-stability-result). A date stamp
+here would have the same problem, so freshness comes from the CI run that
+produced the numbers.
 
 ## Reproducible stability result
 
@@ -23,50 +27,59 @@ and 45 initial Spring context-threshold cascades. The artifact preserves the
 15-suite breakdown behind those 45 errors and does not invent a more specific
 original exception where the retained report did not contain one.
 
-After repairing those clusters:
+After repairing those clusters the suite is green.
 
-| Suite | Tests | Failures | Errors | Skipped | Command |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,456 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 856 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
-| MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+The current execution counts are deliberately not recorded here. They are a
+measurement, not a decision, and every branch that adds a test changes them —
+which made this file conflict on each merge and forced a hand reconciliation
+that is easy to get wrong. `scripts/ci/suite-inventory.py` derives them from
+the Surefire and Failsafe reports instead, and both test jobs publish the
+result to their CI run summary. For the combined view locally:
 
-The rows are not one additive total: the MariaDB and Redis rows are dedicated
-environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,456 unit plus 856
-integration executions, or 4,312.
+```
+./mvnw verify
+python3 scripts/ci/suite-inventory.py
+```
+
+What is enforced rather than described:
+
+- `scripts/ci/run-required-integration-tests.sh` owns the complete `*IT` suite,
+  requires at least 75 reports and 830 executed tests, and fails on any failure
+  or error;
+- a required CI guard rejects newly disabled or ignored tests;
+- the MariaDB schema and statistics contracts and the Redis availability
+  contract run as their own required jobs, so they are dedicated environment
+  proofs rather than part of the primary inventory.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
-or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,312: 326 fewer unit and 84 fewer integration
-executions. The source diff for that same pre-cutover-to-current interval
-deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
-Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+or 4,722. Those figures are frozen reference points and do not move.
+
+The Matrix-only cutover then reduced both the executable product and its test
+inventory. The source diff for that pre-cutover-to-current interval deletes 40
+obsolete test classes and adds 29 Matrix-only contract classes. Thirty-three of
+the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 410-execution net reduction. This is intentional scope
-removal plus replacement coverage, not unexplained test quarantine.
+map one-to-one to the execution delta. This is intentional scope removal plus
+replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
 CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
-`scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 830 executed tests and
-checks for critical E2E reports.
-The previous three-test required subset and the non-blocking legacy quarantine
-were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
-`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
-deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
-that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
-floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
-disabled or ignored tests. The two environment-gated cases are not quarantined:
-Redis and MariaDB have their own required service-container/fresh-database jobs
-on branch, pull-request and publish workflows.
+The integration contract starts from a clean build and additionally checks that
+the critical E2E reports are present, so a green run cannot mean a silently
+shrunken suite. The previous three-test required subset and the non-blocking
+legacy quarantine were removed. On the current Matrix-only `pre-dev` baseline,
+the four remaining `NewEnquiryEmailSupplierTest` log assertions run normally.
+The Matrix cutover deleted `NewMessageEmailSupplierTest`; this replay
+deliberately does not restore that legacy path. The 830-test floor is the
+Matrix-only figure; the older 900-test floor included deleted Rocket.Chat-only
+tests. The environment-gated Redis and MariaDB jobs run on the branch,
+pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -238,10 +251,8 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Measured on this branch after merging `pre-dev`: 3,456 unit executions with
-zero failures, zero errors and no skips, and 856 required integration
-executions across 84 reports with zero failures, zero errors and nine skips.
-The focused supplier test and formatting gate also pass.
+Both suites, the focused supplier test and the formatting gate pass; the
+per-run counts are in the CI summary rather than repeated here.
 
 #### Measured limit of this repair
 
