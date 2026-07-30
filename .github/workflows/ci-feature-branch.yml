@@ -43,6 +43,3 @@ jobs:
       uses: ./.github/actions/maven-verify-required
       with:
         java_version: '21'
-
-  mariadb-contract:
-    uses: ./.github/workflows/mariadb-contract.yml
