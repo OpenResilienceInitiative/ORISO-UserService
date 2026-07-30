@@ -7,6 +7,10 @@ CONTROLLERS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller"
 )
+WEB_MAPPINGS = (
+    ROOT
+    / "src/main/java/de/caritas/cob/userservice/api/adapters/web/mapping"
+)
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
@@ -90,6 +94,144 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "concrete identity or chat adapters:\n" + "\n".join(offenders),
         )
 
+    def test_identity_authentication_uses_a_focused_provider_neutral_port(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        authentication_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityAuthentication.java"
+        )
+        consumers = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
+            "anonymous/AnonymousUserCreatorService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/agency/"
+            "AgencyMatrixCredentialClient.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/appointment/"
+            "AppointmentService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/user/validation/"
+            "UserAccountValidator.java",
+        )
+
+        self.assertTrue(
+            authentication_port.exists(),
+            "A focused IdentityAuthentication port must own authentication",
+        )
+        authentication_contract = authentication_port.read_text()
+        self.assertIn(
+            "IdentityLogin login(",
+            authentication_contract,
+            "Authentication must return the provider-neutral login value",
+        )
+        self.assertNotIn("adapters.keycloak", authentication_contract)
+        self.assertNotIn("org.keycloak", authentication_contract)
+
+        for method in ("loginUser(", "logoutUser(", "verifyIgnoringOtp("):
+            self.assertNotIn(
+                method,
+                identity_port,
+                "The broad identity command port must not expose authentication",
+            )
+
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if "IdentityAuthentication" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            offenders,
+            "All live production authentication consumers must use the focused port:\n"
+            + "\n".join(offenders),
+        )
+
+    def test_username_availability_uses_a_focused_provider_neutral_port(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        availability_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityUsernameAvailability.java"
+        )
+        consumers = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/"
+            "anonymous/AnonymousUsernameRegistry.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/"
+            "ConsultantImportService.java",
+        )
+        user_verifier = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/helper/UserVerifier.java"
+        ).read_text()
+
+        self.assertTrue(
+            availability_port.exists(),
+            "A focused IdentityUsernameAvailability port must own availability reads",
+        )
+        self.assertNotIn(
+            "isUsernameAvailable(",
+            identity_port,
+            "The broad identity command port must not expose username availability",
+        )
+
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if "IdentityUsernameAvailability" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            offenders,
+            "All current availability consumers must use the focused port:\n"
+            + "\n".join(offenders),
+        )
+        self.assertNotIn(
+            "IdentityClient",
+            user_verifier,
+            "UserVerifier must not retain an unused broad identity dependency",
+        )
+
+    def test_identity_email_owner_lookup_uses_a_focused_typed_port(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        ).read_text()
+
+        self.assertNotIn(
+            "findUserByEmail(",
+            identity_port,
+            "The broad identity command port must not expose email-owner reads",
+        )
+        self.assertIn(
+            "IdentityEmailOwnerLookup",
+            identity_manager,
+            "IdentityManager must use the focused typed email-owner lookup",
+        )
+        self.assertNotIn(
+            '"encodedUsername"',
+            identity_manager,
+            "Application code must not interpret Keycloak adapter map keys",
+        )
+        self.assertNotIn(
+            '"decodedUsername"',
+            identity_manager,
+            "Application code must not interpret Keycloak adapter map keys",
+        )
+
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
             ROOT
@@ -135,6 +277,23 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "not expose the outbound-port package:\n" + "\n".join(offenders),
         )
 
+    def test_user_web_mappers_do_not_import_outbound_identity_client(self):
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in WEB_MAPPINGS.glob("*.java")
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User web mappers must ask the identity input port instead of calling "
+            "the outbound identity client:\n" + "\n".join(offenders),
+        )
+
     def test_admin_module_depends_on_ports_not_chat_adapters(self):
         admin_module = ROOT / "src/main/java/de/caritas/cob/userservice/api/admin"
         forbidden_prefixes = (
@@ -178,6 +337,65 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The session-assignment application module must use outbound ports "
             "instead of concrete chat adapters or admin implementation services:\n"
             + "\n".join(offenders),
+        )
+
+    def test_dummy_email_consumer_uses_a_focused_provider_neutral_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdater.java"
+        )
+        value = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdate.java"
+        )
+        self.assertTrue(port.exists(), "Dummy-email updates need a focused output port")
+        self.assertTrue(value.exists(), "Dummy-email updates need provider-neutral values")
+        if not port.exists() or not value.exists():
+            return
+
+        for boundary in (port, value):
+            boundary_text = boundary.read_text()
+            self.assertNotIn(
+                "de.caritas.cob.userservice.api.adapters.",
+                boundary_text,
+            )
+            self.assertNotIn("org.keycloak.", boundary_text)
+
+        registration = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java"
+        ).read_text()
+        self.assertIn("IdentityDummyEmailUpdater", registration)
+        self.assertNotIn("identityClient.updateDummyEmail(", registration)
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updateDummyEmail(",
+            identity_client,
+            "The broad identity command client must not own dummy-email updates",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityDummyEmailUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused dummy-email port:\n"
+            + "\n".join(missing_test_interface),
         )
 
     def test_identity_account_removal_consumers_use_a_focused_port(self):

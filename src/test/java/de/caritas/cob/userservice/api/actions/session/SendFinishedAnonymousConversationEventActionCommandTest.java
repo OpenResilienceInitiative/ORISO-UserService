@@ -1,8 +1,9 @@
 package de.caritas.cob.userservice.api.actions.session;
 
+import static de.caritas.cob.userservice.api.service.notification.EventNotificationService.CATEGORY_SYSTEM;
 import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
-import static org.mockito.Mockito.times;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -10,8 +11,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEvent.FinishConversationPhase;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -29,14 +29,14 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
 
-  @Mock private LiveEventNotificationService liveEventNotificationService;
+  @Mock private EventNotificationService eventNotificationService;
 
   @ParameterizedTest
   @MethodSource("sessionsWithOnlyConsultantAndWithoutAnyUser")
   void execute_Should_useNoOtherServices_When_sessionHasNoUserOrOnlyConsultant(Session session) {
     this.actionCommand.execute(session);
 
-    verifyNoMoreInteractions(this.authenticatedUser, this.liveEventNotificationService);
+    verifyNoMoreInteractions(this.authenticatedUser, this.eventNotificationService);
   }
 
   private static List<Session> sessionsWithOnlyConsultantAndWithoutAnyUser() {
@@ -48,52 +48,77 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
   }
 
   @Test
-  void execute_Should_triggerLiveEventWithStatusInProgressToUser_When_consultantWasInitiator() {
+  void execute_Should_persistFinishedEventForUser_When_consultantWasInitiator() {
     Session session = new EasyRandom().nextObject(Session.class);
     when(this.authenticatedUser.getUserId()).thenReturn(session.getConsultant().getId());
 
     this.actionCommand.execute(session);
 
-    verify(this.liveEventNotificationService, times(1))
-        .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getUser().getUserId()), FinishConversationPhase.IN_PROGRESS);
+    verifyFinishedEvent(session.getUser().getUserId(), session);
   }
 
   @Test
-  void execute_Should_triggerLiveEventWithStatusInProgressToConsultant_When_userWasInitiator() {
+  void execute_Should_persistFinishedEventForConsultant_When_userWasInitiator() {
     Session session = new EasyRandom().nextObject(Session.class);
     when(this.authenticatedUser.getUserId()).thenReturn(session.getUser().getUserId());
 
     this.actionCommand.execute(session);
 
-    verify(this.liveEventNotificationService, times(1))
-        .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getConsultant().getId()), FinishConversationPhase.IN_PROGRESS);
+    verifyFinishedEvent(session.getConsultant().getId(), session);
   }
 
   @Test
-  void execute_Should_triggerLiveEventWithStatusNewToUser_When_sessionHasOnlyUser() {
+  void execute_Should_persistFinishedEventForUser_When_sessionHasOnlyUser() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConsultant(null);
 
     this.actionCommand.execute(session);
 
-    verify(this.liveEventNotificationService, times(1))
-        .sendLiveFinishedAnonymousConversationToUsers(
-            singletonList(session.getUser().getUserId()), FinishConversationPhase.NEW);
+    verifyFinishedEvent(session.getUser().getUserId(), session);
   }
 
   @Test
-  void
-      execute_Should_triggerLiveEventWithStatusInProgressToUserAndConsultant_When_systemWasInitiator() {
+  void execute_Should_persistFinishedEventForBothParticipants_When_systemWasInitiator() {
     Session session = new EasyRandom().nextObject(Session.class);
     when(this.authenticatedUser.getUserId()).thenThrow(new RuntimeException(""));
 
     this.actionCommand.execute(session);
 
-    verify(this.liveEventNotificationService, times(1))
-        .sendLiveFinishedAnonymousConversationToUsers(
-            List.of(session.getConsultant().getId(), session.getUser().getUserId()),
-            FinishConversationPhase.IN_PROGRESS);
+    verifyFinishedEvent(session.getConsultant().getId(), session);
+    verifyFinishedEvent(session.getUser().getUserId(), session);
+  }
+
+  @Test
+  void execute_Should_continueForOtherParticipants_When_onePersistenceAttemptFails() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.authenticatedUser.getUserId()).thenThrow(new RuntimeException("system action"));
+    doThrow(new IllegalStateException("database unavailable"))
+        .when(eventNotificationService)
+        .createEvent(
+            session.getConsultant().getId(),
+            "conversation.finished",
+            CATEGORY_SYSTEM,
+            "Conversation finished",
+            "The anonymous conversation has ended.",
+            null,
+            session.getId(),
+            session.getTenantId());
+
+    assertThatCode(() -> actionCommand.execute(session)).doesNotThrowAnyException();
+
+    verifyFinishedEvent(session.getUser().getUserId(), session);
+  }
+
+  private void verifyFinishedEvent(String recipientId, Session session) {
+    verify(eventNotificationService)
+        .createEvent(
+            recipientId,
+            "conversation.finished",
+            CATEGORY_SYSTEM,
+            "Conversation finished",
+            "The anonymous conversation has ended.",
+            null,
+            session.getId(),
+            session.getTenantId());
   }
 }

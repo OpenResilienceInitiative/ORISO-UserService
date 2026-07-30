@@ -25,8 +25,15 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -64,7 +71,13 @@ import org.springframework.web.client.RestClientResponseException;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient, IdentityAccountRemover {
+public class KeycloakService
+    implements IdentityAccountRemover,
+        IdentityAuthentication,
+        IdentityClient,
+        IdentityDummyEmailUpdater,
+        IdentityEmailOwnerLookup,
+        IdentityUsernameAvailability {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -140,30 +153,23 @@ public class KeycloakService implements IdentityClient, IdentityAccountRemover {
         || !userRepresentation.getAttributes().get(LOCALE).contains(locale);
   }
 
-  /**
-   * Performs a Keycloak login and returns the Keycloak {@link KeycloakLoginResponseDTO} on success.
-   *
-   * @param userName the username
-   * @param password the password
-   * @return {@link KeycloakLoginResponseDTO}
-   */
-  public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    return keycloakAuthClient.loginUser(userName, password);
+  @Override
+  public IdentityLogin login(final String userName, final String password) {
+    KeycloakLoginResponseDTO response = keycloakAuthClient.loginUser(userName, password);
+    return new IdentityLogin(
+        response.getAccessToken(),
+        response.getExpiresIn(),
+        response.getRefreshExpiresIn(),
+        response.getRefreshToken());
   }
 
   @Override
-  public boolean verifyIgnoringOtp(String username, String password) {
+  public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
     return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }
 
-  /**
-   * Performs a Keycloak logout. This only destroys the Keycloak session, the (offline) access token
-   * will still be valid until expiration date/time ends.
-   *
-   * @param refreshToken the refreshToken
-   * @return true if logout was successful
-   */
-  public boolean logoutUser(final String refreshToken) {
+  @Override
+  public boolean logout(final String refreshToken) {
     return keycloakAuthClient.logoutUser(refreshToken);
   }
 
@@ -189,16 +195,16 @@ public class KeycloakService implements IdentityClient, IdentityAccountRemover {
   }
 
   public void deleteEmailAddress() {
-    updateDummyEmail(authenticatedUser.getUserId());
+    var userId = authenticatedUser.getUserId();
+    updateEmail(userId, userHelper.getDummyEmail(userId));
   }
 
   @Override
-  public Map<String, String> findUserByEmail(String email) {
+  public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> userRepresentation.getEmail().equals(email))
+        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
         .findFirst()
-        .map(keycloakMapper::mapOf)
-        .orElseGet(Map::of);
+        .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
 
   @Override
@@ -700,28 +706,24 @@ public class KeycloakService implements IdentityClient, IdentityAccountRemover {
   }
 
   /**
-   * If user didn't provide an email, set to dummy address (userId@online-beratung.de). No *
-   * success/error status possible, because the Keycloak Client doesn't provide one either. *
+   * Replaces a blank email with the configured dummy address.
    *
-   * @param userId Keycloak user ID
-   * @param user {@link UserDTO}
-   * @return the (dummy) email address
+   * @param userId identity-provider user ID
+   * @param identityUpdate provider-neutral identity metadata
+   * @return the dummy email address
    */
-  public String updateDummyEmail(final String userId, UserDTO user) {
-    user.setEmail(userHelper.getDummyEmail(userId));
+  @Override
+  public String updateDummyEmail(
+      final String userId, final IdentityDummyEmailUpdate identityUpdate) {
+    var dummyEmail = userHelper.getDummyEmail(userId);
+    var user = new UserDTO();
+    user.setUsername(identityUpdate.username());
+    user.setEmail(dummyEmail);
+    user.setTenantId(identityUpdate.tenantId());
     var userResource = keycloakClient.getUsersResource().get(userId);
     userResource.update(getUserRepresentation(user, null, null));
-    log.debug("Set email dummy for {} to {}", userId, userHelper.getDummyEmail(userId));
-    return userHelper.getDummyEmail(userId);
-  }
-
-  /**
-   * Sets a user's dummy email
-   *
-   * @param userId user ID
-   */
-  public void updateDummyEmail(String userId) {
-    updateEmail(userId, userHelper.getDummyEmail(userId));
+    log.debug("Set email dummy for {} to {}", userId, dummyEmail);
+    return dummyEmail;
   }
 
   /**
@@ -791,16 +793,22 @@ public class KeycloakService implements IdentityClient, IdentityAccountRemover {
   @Override
   public void deleteUser(String userId) {
     try {
-      keycloakClient.getUsersResource().get(userId).remove();
-    } catch (NotFoundException e) {
-      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+      removeUserIfPresent(userId);
     } catch (NotAuthorizedException e) {
       log.warn(
           "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
               + " and retrying once",
           userId);
       keycloakClient.refreshAdminSession();
+      removeUserIfPresent(userId);
+    }
+  }
+
+  private void removeUserIfPresent(String userId) {
+    try {
       keycloakClient.getUsersResource().get(userId).remove();
+    } catch (NotFoundException e) {
+      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
     }
   }
 
@@ -901,15 +909,6 @@ public class KeycloakService implements IdentityClient, IdentityAccountRemover {
       throw new KeycloakException("User with id not found in keycloak: " + userId);
     }
     return userResource.toRepresentation();
-  }
-
-  /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
-   */
-  public void closeSession(String sessionId) {
-    keycloakAuthClient.closeSession(sessionId);
   }
 
   /**
