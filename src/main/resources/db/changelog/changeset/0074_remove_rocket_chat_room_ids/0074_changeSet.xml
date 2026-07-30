@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <!--
+    Lossless and fail-closed: the archive reports every removed value and is
+    the rollback source. Rocket.Chat-only rows stop the deployment before the
+    source columns are dropped.
+  -->
+  <changeSet id="0074-create-legacy-chat-id-archive" author="oriso">
+    <createTable tableName="legacy_chat_identifier_archive">
+      <column name="entity_type" type="varchar(16)">
+        <constraints nullable="false" primaryKey="true" primaryKeyName="pk_legacy_chat_identifier_archive"/>
+      </column>
+      <column name="entity_id" type="bigint">
+        <constraints nullable="false" primaryKey="true" primaryKeyName="pk_legacy_chat_identifier_archive"/>
+      </column>
+      <column name="legacy_rc_group_id" type="varchar(255)"/>
+      <column name="matrix_room_id" type="varchar(255)"/>
+      <column name="migration_status" type="varchar(32)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="archived_at" type="datetime" defaultValueComputed="CURRENT_TIMESTAMP">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <rollback>
+      <dropTable tableName="legacy_chat_identifier_archive"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0074-snapshot-session-rocket-chat-room-ids" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="session" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      INSERT INTO legacy_chat_identifier_archive
+        (entity_type, entity_id, legacy_rc_group_id, matrix_room_id, migration_status)
+      SELECT
+        'session',
+        id,
+        rc_group_id,
+        matrix_room_id,
+        CASE
+          WHEN rc_group_id LIKE '!%:%' THEN 'MATRIX_ID_BACKFILL'
+          WHEN matrix_room_id LIKE '!%:%' THEN 'MATRIX_ID_PRESENT'
+          ELSE 'LEGACY_ID_REQUIRES_ACTION'
+        END
+      FROM session
+      WHERE rc_group_id IS NOT NULL AND rc_group_id != ''
+      ON DUPLICATE KEY UPDATE
+        legacy_rc_group_id = VALUES(legacy_rc_group_id),
+        matrix_room_id = VALUES(matrix_room_id),
+        migration_status = VALUES(migration_status),
+        archived_at = CURRENT_TIMESTAMP
+    </sql>
+    <rollback>
+      <sql>
+        DELETE FROM legacy_chat_identifier_archive WHERE entity_type = 'session'
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0074-snapshot-chat-rocket-chat-room-ids" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="chat" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      INSERT INTO legacy_chat_identifier_archive
+        (entity_type, entity_id, legacy_rc_group_id, matrix_room_id, migration_status)
+      SELECT
+        'chat',
+        id,
+        rc_group_id,
+        matrix_room_id,
+        CASE
+          WHEN rc_group_id LIKE '!%:%' THEN 'MATRIX_ID_BACKFILL'
+          WHEN matrix_room_id LIKE '!%:%' THEN 'MATRIX_ID_PRESENT'
+          ELSE 'LEGACY_ID_REQUIRES_ACTION'
+        END
+      FROM chat
+      WHERE rc_group_id IS NOT NULL AND rc_group_id != ''
+      ON DUPLICATE KEY UPDATE
+        legacy_rc_group_id = VALUES(legacy_rc_group_id),
+        matrix_room_id = VALUES(matrix_room_id),
+        migration_status = VALUES(migration_status),
+        archived_at = CURRENT_TIMESTAMP
+    </sql>
+    <rollback>
+      <sql>
+        DELETE FROM legacy_chat_identifier_archive WHERE entity_type = 'chat'
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0074-preflight-no-orphaned-legacy-room-ids" author="oriso">
+    <preConditions
+      onFail="HALT"
+      onError="HALT"
+      onFailMessage="Rocket.Chat-only room IDs remain. Inspect legacy_chat_identifier_archive and provision Matrix room IDs before retrying.">
+      <and>
+        <or>
+          <not>
+            <columnExists tableName="session" columnName="rc_group_id"/>
+          </not>
+          <sqlCheck expectedResult="0">
+            SELECT COUNT(*)
+            FROM session
+            WHERE rc_group_id IS NOT NULL
+              AND rc_group_id != ''
+              AND rc_group_id NOT LIKE '!%:%'
+              AND (matrix_room_id IS NULL OR matrix_room_id NOT LIKE '!%:%')
+          </sqlCheck>
+        </or>
+        <or>
+          <not>
+            <columnExists tableName="chat" columnName="rc_group_id"/>
+          </not>
+          <sqlCheck expectedResult="0">
+            SELECT COUNT(*)
+            FROM chat
+            WHERE rc_group_id IS NOT NULL
+              AND rc_group_id != ''
+              AND rc_group_id NOT LIKE '!%:%'
+              AND (matrix_room_id IS NULL OR matrix_room_id NOT LIKE '!%:%')
+          </sqlCheck>
+        </or>
+      </and>
+    </preConditions>
+    <sql>SELECT 1</sql>
+  </changeSet>
+
+  <changeSet id="0074-backfill-and-remove-rocket-chat-room-id-from-session" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="session" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      UPDATE session
+      SET matrix_room_id = rc_group_id
+      WHERE (matrix_room_id IS NULL OR matrix_room_id = '')
+        AND rc_group_id IS NOT NULL
+        AND rc_group_id LIKE '!%:%'
+    </sql>
+    <dropColumn tableName="session" columnName="rc_group_id"/>
+    <rollback>
+      <addColumn tableName="session">
+        <column name="rc_group_id" type="varchar(255)"/>
+      </addColumn>
+      <sql>
+        UPDATE session s
+        JOIN legacy_chat_identifier_archive a
+          ON a.entity_type = 'session' AND a.entity_id = s.id
+        SET
+          s.rc_group_id = a.legacy_rc_group_id,
+          s.matrix_room_id = a.matrix_room_id
+      </sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="0074-backfill-and-remove-rocket-chat-room-id-from-chat" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <columnExists tableName="chat" columnName="rc_group_id"/>
+    </preConditions>
+    <sql>
+      UPDATE chat
+      SET matrix_room_id = rc_group_id
+      WHERE (matrix_room_id IS NULL OR matrix_room_id = '')
+        AND rc_group_id IS NOT NULL
+        AND rc_group_id LIKE '!%:%'
+    </sql>
+    <dropColumn tableName="chat" columnName="rc_group_id"/>
+    <rollback>
+      <addColumn tableName="chat">
+        <column name="rc_group_id" type="varchar(255)"/>
+      </addColumn>
+      <sql>
+        UPDATE chat c
+        JOIN legacy_chat_identifier_archive a
+          ON a.entity_type = 'chat' AND a.entity_id = c.id
+        SET
+          c.rc_group_id = a.legacy_rc_group_id,
+          c.matrix_room_id = a.matrix_room_id
+      </sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

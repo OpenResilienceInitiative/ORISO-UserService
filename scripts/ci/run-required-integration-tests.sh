@@ -14,9 +14,15 @@ import sys
 import xml.etree.ElementTree as ET
 
 reports = sorted(Path("target/surefire-reports").glob("TEST-*IT.xml"))
+# The complete Matrix-only suite produces at least 75 reports / 830 tests. Keep these
+# bounds explicit so Maven cannot silently skip a material part of the suite. The
+# previous 900-test floor included deleted Rocket.Chat-only tests.
+minimum_reports = 75
+minimum_tests = 830
 required_e2e = {
     "AppointmentControllerE2EIT",
-    "ConversationControllerE2EIT",
+    "ConversationControllerAuthorizationIT",
+    "ConversationControllerIT",
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
 }
@@ -37,8 +43,14 @@ print(
     f"reports={len(reports)} tests={tests} failures={failures} "
     f"errors={errors} skipped={skipped}"
 )
-if tests < 900:
-    print(f"Expected at least 900 integration tests, found {tests}.", file=sys.stderr)
+if len(reports) < minimum_reports:
+    print(
+        f"Expected at least {minimum_reports} integration reports, found {len(reports)}.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+if tests < minimum_tests:
+    print(f"Expected at least {minimum_tests} integration tests, found {tests}.", file=sys.stderr)
     sys.exit(1)
 if failures or errors:
     print("Integration reports contain failures or errors.", file=sys.stderr)

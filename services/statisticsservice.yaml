@@ -214,16 +214,16 @@ components:
     CreateMessageStatisticsEventMessage:
       type: object
       required:
-        - rcGroupId
+        - matrixRoomId
         - hasAttachment
       allOf:
         - $ref: '#/components/schemas/StatisticsEventMessage'
         - type: object
       properties:
-        rcGroupId:
+        matrixRoomId:
           type: string
-          description: The Rocket.Chat id of the group from the session
-          example: hzt766asas
+          description: The Matrix room ID from the session
+          example: "!session:matrix.example"
         hasAttachment:
           type: boolean
           description: indicates whether the message has an attachment

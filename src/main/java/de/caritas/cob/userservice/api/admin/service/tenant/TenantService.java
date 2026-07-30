@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.admin.service.tenant;
 
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -21,11 +22,12 @@ public class TenantService {
     log.info("Calling tenant service to get tenant data for subdomain {}", subdomain);
     return tenantServiceApiControllerFactory
         .createControllerApi()
-        .getRestrictedTenantDataBySubdomain(subdomain);
+        .getRestrictedTenantDataBySubdomain(subdomain, null);
   }
 
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "#tenantId")
   public RestrictedTenantDTO getRestrictedTenantData(Long tenantId) {
+    requireConcreteTenantId(tenantId);
     log.info("Calling tenant service to get tenant data for tenantId {}", tenantId);
 
     return tenantServiceApiControllerFactory
@@ -34,9 +36,16 @@ public class TenantService {
   }
 
   public RestrictedTenantDTO getRestrictedTenantDataFresh(Long tenantId) {
+    requireConcreteTenantId(tenantId);
     log.info("Calling tenant service for current tenant data for tenantId {}", tenantId);
     return tenantServiceApiControllerFactory
         .createControllerApi()
         .getRestrictedTenantDataByTenantId(tenantId);
+  }
+
+  private void requireConcreteTenantId(Long tenantId) {
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
+      throw new IllegalArgumentException("Concrete tenant id required");
+    }
   }
 }

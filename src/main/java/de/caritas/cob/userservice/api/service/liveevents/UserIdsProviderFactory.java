@@ -17,15 +17,15 @@ public class UserIdsProviderFactory {
   /**
    * Provides the relevant {@link UserIdsProvider}.
    *
-   * @param rcGroupId the rocket chat group id
-   * @return {@link RelevantUserAccountIdsByChatProvider} if the group id belongs to a chat and
-   *     {@link RelevantUserAccountIdsBySessionProvider} if not
+   * @param matrixRoomId Matrix room ID
+   * @return {@link RelevantUserAccountIdsByChatProvider} if the room belongs to a chat and {@link
+   *     RelevantUserAccountIdsBySessionProvider} if not
    */
-  public UserIdsProvider byRocketChatGroup(String rcGroupId) {
-    return isChat(rcGroupId) ? this.byChatProvider : this.bySessionProvider;
+  public UserIdsProvider forMatrixRoom(String matrixRoomId) {
+    return isChat(matrixRoomId) ? this.byChatProvider : this.bySessionProvider;
   }
 
-  private boolean isChat(String rcGroupId) {
-    return this.chatRepository.findByGroupId(rcGroupId).isPresent();
+  private boolean isChat(String matrixRoomId) {
+    return this.chatRepository.findByMatrixRoomId(matrixRoomId).isPresent();
   }
 }

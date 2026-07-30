@@ -10,7 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -34,18 +33,19 @@ class LiveProxyControllerIT {
 
   @MockitoBean private LinkDiscoverers linkDiscoverers;
 
-  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
-
   @Test
-  void sendLiveEvent_Should_returnBadRequest_When_rcGroupIdIsNotProvided() throws Exception {
+  void sendLiveEvent_Should_returnBadRequest_When_matrixRoomIdIsNotProvided() throws Exception {
     this.mockMvc.perform(post(LIVE_EVENT_PATH)).andExpect(status().isBadRequest());
 
     verifyNoInteractions(liveEventNotificationService);
   }
 
   @Test
-  void sendLiveEvent_Should_returnStatusOkAndUseMock_When_rcGroupIdIsProvided() throws Exception {
-    this.mockMvc.perform(post(LIVE_EVENT_PATH).param("rcGroupId", "id")).andExpect(status().isOk());
+  void sendLiveEvent_Should_returnStatusOkAndUseMock_When_matrixRoomIdIsProvided()
+      throws Exception {
+    this.mockMvc
+        .perform(post(LIVE_EVENT_PATH).param("matrixRoomId", "id"))
+        .andExpect(status().isOk());
 
     verify(liveEventNotificationService, times(1)).sendLiveDirectMessageEventToUsers(eq("id"));
   }

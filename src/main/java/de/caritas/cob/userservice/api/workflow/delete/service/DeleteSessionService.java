@@ -22,7 +22,7 @@ public class DeleteSessionService {
   private final @NonNull ActionsRegistry actionsRegistry;
 
   /**
-   * Deletes the given session with the related Rocket.Chat room.
+   * Deletes the given session and schedules cleanup of its Matrix room.
    *
    * @param session the {@link Session} to delete
    * @return a {@link List} of {@link DeletionWorkflowError}

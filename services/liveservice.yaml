@@ -76,8 +76,8 @@ components:
       required:
         - videoCallUrl
         - initiatorUsername
-        - initiatorRcUserId
-        - rcGroupId
+        - initiatorMatrixUserId
+        - matrixRoomId
       properties:
         videoCallUrl:
           type: string
@@ -87,11 +87,11 @@ components:
           type: string
           example: consultant
           description: The username of the calling user
-        initiatorRcUserId:
+        initiatorMatrixUserId:
           type: string
-          example: "ag89h3tjkerg94t"
-          description: The Rocket.Chat user id of the calling user
-        rcGroupId:
+          example: "@consultant:matrix.example"
+          description: The Matrix user ID of the calling user
+        matrixRoomId:
           type: string
-          example: "xGklslk2JJKK"
-          description: The Rocket.Chat room id of the session
+          example: "!call-room:matrix.example"
+          description: The Matrix room ID of the session

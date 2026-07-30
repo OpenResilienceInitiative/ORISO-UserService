@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.tutorial;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -11,9 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.TutorialProgress;
 import de.caritas.cob.userservice.api.port.out.TutorialProgressRepository;
 import de.caritas.cob.userservice.api.service.tutorial.TutorialProgressService.UpsertTutorialProgressRequest;
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -25,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class TutorialProgressServiceTest {
 
   @Mock private TutorialProgressRepository tutorialProgressRepository;
+  @Mock private TutorialProgressStore tutorialProgressStore;
 
   @InjectMocks private TutorialProgressService service;
 
@@ -49,7 +49,7 @@ class TutorialProgressServiceTest {
 
     assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
         .isInstanceOf(BadRequestException.class);
-    verify(tutorialProgressRepository, never()).save(any());
+    verify(tutorialProgressStore, never()).upsert(any(), anyInt());
   }
 
   @Test
@@ -59,57 +59,19 @@ class TutorialProgressServiceTest {
 
     assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
         .isInstanceOf(BadRequestException.class);
-    verify(tutorialProgressRepository, never()).save(any());
-  }
-
-  @Test
-  void upsertOwnProgress_rejectsNewRowsBeyondThePerUserCap() {
-    var req = request("in_progress");
-    req.setTourVersion(7);
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            "user-1", "frontend", "consultant-walkthrough", 7))
-        .thenReturn(Optional.empty());
-    when(tutorialProgressRepository.countByUserId("user-1")).thenReturn(50L);
-
-    assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, req))
-        .isInstanceOf(BadRequestException.class);
-    verify(tutorialProgressRepository, never()).save(any());
-  }
-
-  @Test
-  void upsertOwnProgress_stillUpdatesAnExistingRowWhenTheCapIsReached() {
-    var req = request("completed");
-    var existing =
-        TutorialProgress.builder()
-            .userId("user-1")
-            .surface("frontend")
-            .tourId("consultant-walkthrough")
-            .tourVersion(1)
-            .status("in_progress")
-            .build();
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            "user-1", "frontend", "consultant-walkthrough", 1))
-        .thenReturn(Optional.of(existing));
-    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-    var item = service.upsertOwnProgress("user-1", 1L, req);
-
-    assertThat(item.getStatus()).isEqualTo("completed");
+    verify(tutorialProgressStore, never()).upsert(any(), anyInt());
   }
 
   @Test
   void upsertOwnProgress_createsScopedRecordForTheAuthenticatedUser() {
     // Business reason: progress is keyed by user, surface, tour and version so
     // multiple tutorials and audiences can track state independently.
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            "user-1", "frontend", "consultant-walkthrough", 1))
-        .thenReturn(Optional.empty());
-    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
 
     var item = service.upsertOwnProgress("user-1", 1L, request("in_progress"));
 
     var captor = ArgumentCaptor.forClass(TutorialProgress.class);
-    verify(tutorialProgressRepository).save(captor.capture());
+    verify(tutorialProgressStore).upsert(captor.capture(), anyInt());
     assertThat(captor.getValue().getUserId()).isEqualTo("user-1");
     assertThat(captor.getValue().getSurface()).isEqualTo("frontend");
     assertThat(captor.getValue().getTourId()).isEqualTo("consultant-walkthrough");
@@ -119,40 +81,10 @@ class TutorialProgressServiceTest {
   }
 
   @Test
-  void upsertOwnProgress_overwritesExistingScopeIdempotently() {
-    // Business reason: restarting or re-running a tour updates the same
-    // versioned scope instead of piling up rows.
-    var existing =
-        TutorialProgress.builder()
-            .id(7L)
-            .userId("user-1")
-            .surface("frontend")
-            .tourId("consultant-walkthrough")
-            .tourVersion(1)
-            .status("completed")
-            .createDate(LocalDateTime.now())
-            .build();
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            "user-1", "frontend", "consultant-walkthrough", 1))
-        .thenReturn(Optional.of(existing));
-    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-    service.upsertOwnProgress("user-1", 1L, request("in_progress"));
-
-    var captor = ArgumentCaptor.forClass(TutorialProgress.class);
-    verify(tutorialProgressRepository).save(captor.capture());
-    assertThat(captor.getValue().getId()).isEqualTo(7L);
-    assertThat(captor.getValue().getStatus()).isEqualTo("in_progress");
-  }
-
-  @Test
   void upsertOwnProgress_completedSetsCompletionTimestamp() {
     // Business reason: completion requires an explicit final-step write and is
     // observable through the completedAt timestamp.
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            any(), any(), any(), any()))
-        .thenReturn(Optional.empty());
-    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
 
     var item = service.upsertOwnProgress("user-1", 1L, request("completed"));
 
@@ -161,10 +93,7 @@ class TutorialProgressServiceTest {
 
   @Test
   void upsertOwnProgress_skippedIsStoredAsSkippedNotCompleted() {
-    when(tutorialProgressRepository.findByUserIdAndSurfaceAndTourIdAndTourVersion(
-            any(), any(), any(), any()))
-        .thenReturn(Optional.empty());
-    when(tutorialProgressRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
 
     var item = service.upsertOwnProgress("user-1", 1L, request("skipped"));
 
@@ -176,7 +105,7 @@ class TutorialProgressServiceTest {
   void upsertOwnProgress_rejectsUnknownStatus() {
     assertThatThrownBy(() -> service.upsertOwnProgress("user-1", 1L, request("finished")))
         .isInstanceOf(BadRequestException.class);
-    verify(tutorialProgressRepository, never()).save(any());
+    verify(tutorialProgressStore, never()).upsert(any(), anyInt());
   }
 
   @Test

@@ -4,12 +4,13 @@ import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
+import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
@@ -27,17 +28,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 @Slf4j
@@ -45,18 +40,15 @@ import org.springframework.web.client.RestTemplate;
 @RequiredArgsConstructor
 public class MagicLinkLoginService {
 
-  private static final String TOKEN_ENDPOINT_PATH = "/token";
-  private static final String TOKEN_GRANT_PASSWORD = "password";
-  private static final String TOKEN_GRANT_EXCHANGE =
-      "urn:ietf:params:oauth:grant-type:token-exchange";
   private static final Duration MAGIC_LINK_TOKEN_TTL = Duration.ofMinutes(15);
+  private static final String TOKEN_SCOPE = "magic-login";
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull RestTemplate restTemplate;
-  private final @NonNull IdentityClientConfig identityClientConfig;
-
-  private final Map<String, MagicLoginTokenEntry> magicLoginTokens = new ConcurrentHashMap<>();
+  private final @NonNull IdentitySessionExchange identitySessionExchange;
+  private final @NonNull OneTimeTokenStore oneTimeTokenStore;
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
@@ -64,17 +56,15 @@ public class MagicLinkLoginService {
   @Value("${magic.link.frontend.base-url:https://app.oriso.org}")
   private String magicLinkFrontendBaseUrl;
 
-  @Value("${keycloak.config.admin-username}")
-  private String keycloakAdminUsername;
-
-  @Value("${keycloak.config.admin-password}")
-  private String keycloakAdminPassword;
-
-  @Value("${keycloak.config.app-client-id:app}")
-  private String keycloakAppClientId;
-
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
+
+  /** Operator-provided SMTP credentials; see {@link PasswordResetService}. */
+  @Value("${smtp.user:}")
+  private String configuredSmtpUsername;
+
+  @Value("${smtp.password:}")
+  private String configuredSmtpPassword;
 
   public MagicLinkRequestResult requestMagicLink(String usernameInput) {
     if (isBlank(usernameInput)) {
@@ -99,24 +89,49 @@ public class MagicLinkLoginService {
     return MagicLinkRequestResult.ACCEPTED;
   }
 
-  public Optional<KeycloakLoginResponseDTO> consumeMagicLink(String token) {
+  public Optional<IdentitySession> consumeMagicLink(String token) {
     if (isBlank(token)) {
       return Optional.empty();
     }
 
-    cleanupExpiredTokens();
-    MagicLoginTokenEntry entry = magicLoginTokens.remove(token);
-    if (entry == null || entry.getExpiresAt().isBefore(Instant.now())) {
+    Optional<OneTimeTokenStore.TokenClaim> claim;
+    try {
+      claim = oneTimeTokenStore.claim(TOKEN_SCOPE, token);
+    } catch (RuntimeException redisFailure) {
+      log.warn(
+          "Magic-link token validation unavailable ({})", redisFailure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+    if (claim.isEmpty()) {
       return Optional.empty();
     }
 
-    KeycloakLoginResponseDTO exchanged = exchangeTokenForUser(entry.getKeycloakUserId());
-    if (exchanged == null) {
-      // Restore token for short-lived retry if exchange failed due transient infra issue.
-      magicLoginTokens.put(token, entry);
+    Optional<IdentitySession> exchanged;
+    try {
+      exchanged = identitySessionExchange.exchangeForUser(claim.get().subjectId());
+    } catch (RuntimeException exchangeFailure) {
+      log.warn(
+          "Magic-link identity session exchange unavailable ({})",
+          exchangeFailure.getClass().getSimpleName());
+      restoreTokenForRetry(token, claim.get());
       return Optional.empty();
     }
-    return Optional.of(exchanged);
+    if (exchanged.isEmpty()) {
+      // Restore token for short-lived retry if exchange failed due transient infra issue.
+      restoreTokenForRetry(token, claim.get());
+      return Optional.empty();
+    }
+    return exchanged;
+  }
+
+  private void restoreTokenForRetry(String token, OneTimeTokenStore.TokenClaim claim) {
+    try {
+      oneTimeTokenStore.restore(TOKEN_SCOPE, token, claim, false);
+    } catch (RuntimeException redisFailure) {
+      log.warn(
+          "Magic-link token retry restoration unavailable ({})",
+          redisFailure.getClass().getSimpleName());
+    }
   }
 
   private Optional<AccountLoginTarget> resolveAccount(String username) {
@@ -241,68 +256,15 @@ public class MagicLinkLoginService {
     String token =
         UUID.randomUUID().toString().replace("-", "")
             + UUID.randomUUID().toString().replace("-", "");
-    magicLoginTokens.put(
-        token, new MagicLoginTokenEntry(keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL)));
+    oneTimeTokenStore.store(
+        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL), false);
     return token;
-  }
-
-  private void cleanupExpiredTokens() {
-    Instant now = Instant.now();
-    magicLoginTokens.entrySet().removeIf(entry -> entry.getValue().getExpiresAt().isBefore(now));
   }
 
   private String buildMagicFrontendUrl(String oneTimeToken) {
     return normalizeBaseUrl(magicLinkFrontendBaseUrl)
         + "/login?magicToken="
         + URLEncoder.encode(oneTimeToken, StandardCharsets.UTF_8);
-  }
-
-  private KeycloakLoginResponseDTO exchangeTokenForUser(String keycloakUserId) {
-    String adminToken = loginAdminForToken();
-    if (isBlank(adminToken)) {
-      return null;
-    }
-    try {
-      MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-      form.add("grant_type", TOKEN_GRANT_EXCHANGE);
-      form.add("client_id", keycloakAppClientId);
-      form.add("subject_token", adminToken);
-      form.add("requested_subject", keycloakUserId);
-      HttpHeaders headers = new HttpHeaders();
-      headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-      HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
-      String tokenUrl = identityClientConfig.getOpenIdConnectUrl(TOKEN_ENDPOINT_PATH);
-      return restTemplate.postForEntity(tokenUrl, entity, KeycloakLoginResponseDTO.class).getBody();
-    } catch (Exception ex) {
-      log.warn(
-          "Magic link token exchange failed for user {}, reason: {}",
-          keycloakUserId,
-          ex.getMessage());
-      return null;
-    }
-  }
-
-  private String loginAdminForToken() {
-    try {
-      MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-      form.add("grant_type", TOKEN_GRANT_PASSWORD);
-      form.add("client_id", keycloakAppClientId);
-      form.add("username", keycloakAdminUsername);
-      form.add("password", keycloakAdminPassword);
-      HttpHeaders headers = new HttpHeaders();
-      headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-      HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
-      String tokenUrl = identityClientConfig.getOpenIdConnectUrl(TOKEN_ENDPOINT_PATH);
-      var response = restTemplate.postForEntity(tokenUrl, entity, Map.class);
-      if (response.getBody() == null) {
-        return null;
-      }
-      Object token = response.getBody().get("access_token");
-      return token == null ? null : String.valueOf(token);
-    } catch (Exception ex) {
-      log.warn("Magic link admin token fetch failed, reason: {}", ex.getMessage());
-      return null;
-    }
   }
 
   @SuppressWarnings("unchecked")
@@ -324,20 +286,28 @@ public class MagicLinkLoginService {
       String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
       boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String username = asStringSettingValue(settingsResponse.get("globalSmtpUsername"));
-      String password = asStringSettingValue(settingsResponse.get("globalSmtpPassword"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
       String emailThemeColor =
           asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
-      if (!systemEmailsEnabled
-          || !smtpEnabled
-          || isBlank(host)
-          || port == null
-          || isBlank(username)
-          || isBlank(password)
-          || isBlank(from)) {
+      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
         return Optional.empty();
+      }
+
+      // The public /settings payload deliberately omits the SMTP username and password since the
+      // CTS-C01 credential-leak fix, so they can never be read from there.
+      String username = configuredSmtpUsername;
+      String password = configuredSmtpPassword;
+      if (isBlank(username) || isBlank(password)) {
+        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+        if (credentials.isEmpty()) {
+          log.warn(
+              "Magic link email not sent: no SMTP credentials available. Set SMTP_USER and "
+                  + "SMTP_PASSWORD on UserService.");
+          return Optional.empty();
+        }
+        username = credentials.get().getGlobalSmtpUsername();
+        password = credentials.get().getGlobalSmtpPassword();
       }
 
       return Optional.of(
@@ -400,12 +370,6 @@ public class MagicLinkLoginService {
     String username;
     String email;
     Boolean magicLinkLoginEnabled;
-  }
-
-  @lombok.Value
-  private static class MagicLoginTokenEntry {
-    String keycloakUserId;
-    Instant expiresAt;
   }
 
   public enum MagicLinkRequestResult {

@@ -37,7 +37,7 @@ class DeletionLifecycleServiceTest {
   private Consultant newConsultant() {
     return Consultant.builder()
         .id("consultant-1")
-        .rocketChatId("rc-1")
+        .matrixUserId("rc-1")
         .username("consultant-1")
         .firstName("First")
         .lastName("Last")

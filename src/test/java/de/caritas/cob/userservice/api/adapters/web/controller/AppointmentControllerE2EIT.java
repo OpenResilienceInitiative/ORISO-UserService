@@ -38,7 +38,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.mockito.ArgumentMatchers;
 import org.mockito.MockitoAnnotations;
 import org.springframework.amqp.core.Message;
@@ -78,8 +77,6 @@ class AppointmentControllerE2EIT {
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
   @MockitoBean private Clock clock;
-
-  @MockitoBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 

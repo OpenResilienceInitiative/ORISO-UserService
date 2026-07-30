@@ -103,9 +103,6 @@ public class Admin implements TenantAware {
   @Column(length = 6, nullable = false)
   private AdminType type;
 
-  @Column(name = "rc_user_id")
-  private String rcUserId;
-
   @Column(name = "id_old", updatable = false)
   private Long oldId;
 

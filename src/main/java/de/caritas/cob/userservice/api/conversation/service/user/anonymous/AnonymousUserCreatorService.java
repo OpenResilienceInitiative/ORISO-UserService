@@ -1,49 +1,32 @@
 package de.caritas.cob.userservice.api.conversation.service.user.anonymous;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.login.LoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.conversation.model.AnonymousUserCredentials;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatLoginException;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import de.caritas.cob.userservice.api.service.LogService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 /** Service to create anonymous user accounts. */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class AnonymousUserCreatorService {
-
-  @Value("${rocket-chat.enabled:false}")
-  private boolean rocketChatEnabled;
 
   private final @NonNull CreateUserFacade createUserFacade;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull RocketChatService rocketChatService;
   private final @NonNull RollbackFacade rollbackFacade;
-  private final @NonNull UserService userService;
-  private final @NonNull UserHelper userHelper;
 
   /**
-   * Creates an anonymous user account in Keycloak and MariaDB, plus Rocket.Chat when enabled.
+   * Creates an anonymous user account in Keycloak, MariaDB, and Matrix.
    *
    * @param userDto {@link UserDTO}
    * @return {@link AnonymousUserCredentials}
@@ -57,126 +40,28 @@ public class AnonymousUserCreatorService {
     // subsequent login fails with 401 (breaking invite-link redeem). The anonymous chat endpoints
     // in SecurityConfig all accept USER_DEFAULT, matching how /users/askers/new already registers
     // anonymous chat users (see CreateUserFacade).
-    IdentitySession identitySession;
-    ResponseEntity<LoginResponseDTO> rcLoginResponseDto = null;
+    IdentitySession identityLogin;
     try {
       var user =
           createUserFacade.updateIdentityAndCreateAccount(identityUserId, userDto, UserRole.USER);
-      if (!rocketChatEnabled) {
-        createUserFacade.provisionMatrixUser(user, userDto.getUsername());
-      }
-      identitySession = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
-      if (rocketChatEnabled) {
-        ensureRocketChatUserExists(userDto, identityUserId);
-        rcLoginResponseDto = loginRocketChatUser(userDto.getUsername(), userDto.getPassword());
-      }
-    } catch (RocketChatLoginException | BadRequestException | InternalServerErrorException e) {
+      createUserFacade.provisionMatrixUser(user, userDto.getUsername());
+      identityLogin = identityClient.loginUser(userDto.getUsername(), userDto.getPassword());
+    } catch (BadRequestException | InternalServerErrorException e) {
       rollBackAnonymousUserAccount(identityUserId);
       throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
     }
 
-    var credentialsBuilder =
-        AnonymousUserCredentials.builder()
-            .userId(identityUserId)
-            .accessToken(identitySession.getAccessToken())
-            .expiresIn(identitySession.getExpiresIn())
-            .refreshToken(identitySession.getRefreshToken())
-            .refreshExpiresIn(identitySession.getRefreshExpiresIn());
-
-    if (rocketChatEnabled) {
-      credentialsBuilder.rocketChatCredentials(obtainRocketChatCredentials(rcLoginResponseDto));
-    }
-
-    var anonymousUserCredentials = credentialsBuilder.build();
-
-    if (rocketChatEnabled) {
-      updateRocketChatUserIdInDatabase(anonymousUserCredentials);
-    }
-
-    return anonymousUserCredentials;
-  }
-
-  private void ensureRocketChatUserExists(UserDTO userDto, String keycloakUserId)
-      throws RocketChatLoginException {
-    String encodedUsername = userDto.getUsername();
-    String email =
-        StringUtils.isNotBlank(userDto.getEmail())
-            ? userDto.getEmail()
-            : userHelper.getDummyEmail(keycloakUserId);
-    try {
-      var createResponse =
-          rocketChatService.createUser(encodedUsername, userDto.getPassword(), email);
-      if (createResponse.getBody() != null && !createResponse.getBody().isSuccess()) {
-        String error = createResponse.getBody().getError();
-        if (!isRocketChatUserAlreadyExists(error)) {
-          throw new RocketChatLoginException(
-              String.format(
-                  "Could not create user (%s) in Rocket.Chat: %s", encodedUsername, error));
-        }
-        log.warn("Rocket.Chat user {} already exists: {}", encodedUsername, error);
-      }
-    } catch (RocketChatLoginException e) {
-      if (!isRocketChatUserAlreadyExists(e.getMessage())) {
-        throw e;
-      }
-      log.warn(
-          "Rocket.Chat user {} might already exist, continuing with login: {}",
-          encodedUsername,
-          e.getMessage());
-    }
-  }
-
-  /**
-   * Users created via {@link RocketChatService#createUser} must log in with the native login API.
-   * LDAP first-login only applies to accounts provisioned from Keycloak/LDAP.
-   */
-  private ResponseEntity<LoginResponseDTO> loginRocketChatUser(String username, String password)
-      throws RocketChatLoginException {
-    try {
-      return rocketChatService.loginWithPassword(username, password);
-    } catch (RocketChatLoginException nativeLoginEx) {
-      log.warn(
-          "Native Rocket.Chat login failed for {}, trying LDAP first-login: {}",
-          username,
-          nativeLoginEx.getMessage());
-      return rocketChatService.loginUserFirstTime(username, password);
-    }
-  }
-
-  private static boolean isRocketChatUserAlreadyExists(String errorMessage) {
-    if (errorMessage == null) {
-      return false;
-    }
-    String lower = errorMessage.toLowerCase();
-    return lower.contains("already exists")
-        || lower.contains("in use")
-        || lower.contains("duplicate");
+    return AnonymousUserCredentials.builder()
+        .userId(identityUserId)
+        .accessToken(identityLogin.getAccessToken())
+        .expiresIn(identityLogin.getExpiresIn())
+        .refreshToken(identityLogin.getRefreshToken())
+        .refreshExpiresIn(identityLogin.getRefreshExpiresIn())
+        .build();
   }
 
   private void rollBackAnonymousUserAccount(String userId) {
     rollbackFacade.rollBackUserAccount(
         RollbackUserAccountInformation.builder().userId(userId).rollBackUserAccount(true).build());
-  }
-
-  private RocketChatCredentials obtainRocketChatCredentials(
-      ResponseEntity<LoginResponseDTO> response) {
-    return RocketChatCredentials.builder()
-        .rocketChatUserId(response.getBody().getData().getUserId())
-        .rocketChatToken(response.getBody().getData().getAuthToken())
-        .build();
-  }
-
-  private void updateRocketChatUserIdInDatabase(AnonymousUserCredentials anonymousUserCredentials) {
-    var user =
-        userService
-            .getUser(anonymousUserCredentials.getUserId())
-            .orElseThrow(
-                () ->
-                    new InternalServerErrorException(
-                        String.format(
-                            "Could not get user %s to update the rocket chat user id.",
-                            anonymousUserCredentials.getUserId())));
-    userService.updateRocketChatIdInDatabase(
-        user, anonymousUserCredentials.getRocketChatCredentials().getRocketChatUserId());
   }
 }

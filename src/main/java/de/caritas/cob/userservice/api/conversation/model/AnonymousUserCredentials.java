@@ -1,10 +1,9 @@
 package de.caritas.cob.userservice.api.conversation.model;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import lombok.Builder;
 import lombok.Data;
 
-/** Representation of Keycloak and Rocket.Chat credentials for an anonymous user. */
+/** Identity credentials for an anonymous Matrix user. */
 @Data
 @Builder
 public class AnonymousUserCredentials {
@@ -14,5 +13,4 @@ public class AnonymousUserCredentials {
   private int expiresIn;
   private String refreshToken;
   private int refreshExpiresIn;
-  private RocketChatCredentials rocketChatCredentials;
 }

@@ -118,9 +118,6 @@ public class AgencyInviteLinkController {
       response.expiresIn = session.getExpiresIn();
       response.refreshToken = session.getRefreshToken();
       response.refreshExpiresIn = session.getRefreshExpiresIn();
-      response.rcUserId = session.getRcUserId();
-      response.rcToken = session.getRcToken();
-      response.rcGroupId = session.getRcGroupId();
     }
     response.tenantId = ctx.getTenantId();
     response.agencyId = ctx.getAgencyId();
@@ -369,9 +366,6 @@ public class AgencyInviteLinkController {
     public Integer expiresIn;
     public String refreshToken;
     public Integer refreshExpiresIn;
-    public String rcUserId;
-    public String rcToken;
-    public String rcGroupId;
     public Long tenantId;
     public Long agencyId;
     public Integer consultingTypeId;
@@ -399,18 +393,6 @@ public class AgencyInviteLinkController {
 
     public Integer getRefreshExpiresIn() {
       return refreshExpiresIn;
-    }
-
-    public String getRcUserId() {
-      return rcUserId;
-    }
-
-    public String getRcToken() {
-      return rcToken;
-    }
-
-    public String getRcGroupId() {
-      return rcGroupId;
     }
 
     public Long getTenantId() {

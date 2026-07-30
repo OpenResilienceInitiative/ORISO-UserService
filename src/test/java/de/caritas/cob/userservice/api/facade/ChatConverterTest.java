@@ -267,7 +267,7 @@ class ChatConverterTest {
   private Consultant givenConsultant() {
     return Consultant.builder()
         .id("001")
-        .rocketChatId("rocketChatId")
+        .matrixUserId("@consultant:matrix.example")
         .username("username")
         .firstName("firstName")
         .lastName("lastName")

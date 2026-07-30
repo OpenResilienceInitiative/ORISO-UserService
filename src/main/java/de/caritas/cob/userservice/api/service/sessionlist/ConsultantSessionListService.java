@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.sessionlist;
 import static java.util.Collections.emptyList;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
@@ -32,20 +31,19 @@ public class ConsultantSessionListService {
   private final @NonNull ChatService chatService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantChatEnricher consultantChatEnricher;
-  private final RocketChatCredentials rocketChatCredentials;
 
   /**
    * @param consultant {@link Consultant}
-   * @param rcGroupIds rocket chat group IDs
+   * @param roomIds chat room IDs
    * @param roles roles of the consultant
    * @return List of {@link ConsultantSessionResponseDTO}
    */
-  public List<ConsultantSessionResponseDTO> retrieveSessionsForConsultantAndGroupIds(
-      Consultant consultant, List<String> rcGroupIds, Set<String> roles) {
-    var groupIds = new HashSet<>(rcGroupIds);
+  public List<ConsultantSessionResponseDTO> retrieveSessionsForConsultantAndRoomIds(
+      Consultant consultant, List<String> roomIds, Set<String> roles) {
+    var matrixRoomIds = new HashSet<>(roomIds);
     var sessions =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(consultant, groupIds, roles);
-    var chats = chatService.getChatSessionsForConsultantByGroupIds(groupIds);
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
   }
@@ -60,11 +58,11 @@ public class ConsultantSessionListService {
       Consultant consultant, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
     var sessions = sessionService.getSessionsByIds(consultant, uniqueSessionIds, roles);
-    var groupIds =
+    var matrixRoomIds =
         sessions.stream()
-            .map(sessionResponse -> sessionResponse.getSession().getGroupId())
+            .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
             .collect(Collectors.toSet());
-    var chats = chatService.getChatSessionsForConsultantByGroupIds(groupIds);
+    var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
   }
@@ -82,8 +80,20 @@ public class ConsultantSessionListService {
     return sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, uniqueSessionIds);
   }
 
+  /**
+   * Loads a cross-tenant session the consultant is directly assigned to (#774 follow-up). Used as
+   * the open-path fallback after a cross-tenant live chat is accepted, so routing to the accepted
+   * conversation resolves it instead of 204-ing.
+   */
+  public List<ConsultantSessionResponseDTO>
+      retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
+          Consultant consultant, List<Long> sessionIds) {
+    var uniqueSessionIds = new HashSet<>(sessionIds);
+    return sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, uniqueSessionIds);
+  }
+
   public List<ConsultantSessionResponseDTO> retrieveChatsForConsultantAndChatIds(
-      Consultant consultant, List<Long> chatIds, String rcAuthToken) {
+      Consultant consultant, List<Long> chatIds) {
     log.info(
         "🔍 ConsultantSessionListService.retrieveChatsForConsultantAndChatIds - consultant: {}, chatIds: {}",
         consultant.getUsername(),
@@ -95,7 +105,7 @@ public class ConsultantSessionListService {
     var chats = chatService.getChatSessionsForConsultantByIds(uniqueChatIds);
     log.info("🔍 Retrieved {} chats from ChatService", chats.size());
 
-    var result = updateConsultantChatValues(chats, rcAuthToken, consultant);
+    var result = updateConsultantChatValues(chats, consultant);
     log.info("🔍 After updateConsultantChatValues: {} chats", result.size());
 
     return result;
@@ -147,16 +157,13 @@ public class ConsultantSessionListService {
    * Returns a list of {@link ConsultantSessionResponseDTO} for the specified consultant id.
    *
    * @param consultant the {@link Consultant}
-   * @param rcAuthToken the Rocket.Chat auth token
    * @param sessionListQueryParameter session list query parameters as {@link
    *     SessionListQueryParameter}
    * @return a {@link ConsultantSessionListResponseDTO} with a {@link List} of {@link
    *     ConsultantSessionResponseDTO}
    */
   public List<ConsultantSessionResponseDTO> retrieveTeamSessionsForAuthenticatedConsultant(
-      Consultant consultant,
-      String rcAuthToken,
-      SessionListQueryParameter sessionListQueryParameter) {
+      Consultant consultant, SessionListQueryParameter sessionListQueryParameter) {
 
     // Get team sessions (Session entities)
     List<ConsultantSessionResponseDTO> teamSessions =
@@ -181,43 +188,38 @@ public class ConsultantSessionListService {
       List<ConsultantSessionResponseDTO> chats) {
     List<ConsultantSessionResponseDTO> allSessions = new ArrayList<>();
 
-    var rcAuthToken = rocketChatCredentials.getRocketChatToken();
-
     // Enrich sessions and chats
     List<ConsultantSessionResponseDTO> enrichedSessions = emptyList();
     List<ConsultantSessionResponseDTO> enrichedChats = emptyList();
 
     if (isNotEmpty(sessions)) {
-      enrichedSessions = updateConsultantSessionValues(sessions, rcAuthToken, consultant);
+      enrichedSessions = updateConsultantSessionValues(sessions);
     }
 
     if (isNotEmpty(chats)) {
-      enrichedChats = updateConsultantChatValues(chats, rcAuthToken, consultant);
+      enrichedChats = updateConsultantChatValues(chats, consultant);
     }
 
-    // MATRIX MIGRATION: Merge sessions and chats by groupId
-    // For group chats, we have BOTH a Session and a Chat entity with the same groupId
-    // We need to combine them into a single ConsultantSessionResponseDTO
-    var chatsByGroupId =
+    // A group chat has both a Session and a Chat with the same Matrix room ID.
+    var chatsByMatrixRoomId =
         enrichedChats.stream()
-            .filter(chat -> chat.getChat() != null && chat.getChat().getGroupId() != null)
-            .collect(Collectors.toMap(chat -> chat.getChat().getGroupId(), chat -> chat));
+            .filter(chat -> chat.getChat() != null && chat.getChat().getMatrixRoomId() != null)
+            .collect(Collectors.toMap(chat -> chat.getChat().getMatrixRoomId(), chat -> chat));
 
     // Add sessions, merging with matching chats
     for (ConsultantSessionResponseDTO session : enrichedSessions) {
-      if (session.getSession() != null && session.getSession().getGroupId() != null) {
-        var matchingChat = chatsByGroupId.get(session.getSession().getGroupId());
+      if (session.getSession() != null && session.getSession().getMatrixRoomId() != null) {
+        var matchingChat = chatsByMatrixRoomId.get(session.getSession().getMatrixRoomId());
         if (matchingChat != null) {
           // Merge: session already has session data, add chat data from matching chat
           session.setChat(matchingChat.getChat());
-          chatsByGroupId.remove(session.getSession().getGroupId()); // Mark as merged
+          chatsByMatrixRoomId.remove(session.getSession().getMatrixRoomId());
         }
       }
       allSessions.add(session);
     }
 
-    // Add remaining chats that didn't match any session (old-style chats without sessions)
-    allSessions.addAll(chatsByGroupId.values());
+    allSessions.addAll(chatsByMatrixRoomId.values());
 
     return allSessions;
   }
@@ -230,14 +232,12 @@ public class ConsultantSessionListService {
   }
 
   private List<ConsultantSessionResponseDTO> updateConsultantSessionValues(
-      List<ConsultantSessionResponseDTO> sessions, String rcAuthToken, Consultant consultant) {
-    return this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
-        sessions, rcAuthToken, consultant);
+      List<ConsultantSessionResponseDTO> sessions) {
+    return this.consultantSessionEnricher.updateRequiredConsultantSessionValues(sessions);
   }
 
   private List<ConsultantSessionResponseDTO> updateConsultantChatValues(
-      List<ConsultantSessionResponseDTO> chats, String rcAuthToken, Consultant consultant) {
-    return this.consultantChatEnricher.updateRequiredConsultantChatValues(
-        chats, rcAuthToken, consultant);
+      List<ConsultantSessionResponseDTO> chats, Consultant consultant) {
+    return this.consultantChatEnricher.updateRequiredConsultantChatValues(chats, consultant);
   }
 }

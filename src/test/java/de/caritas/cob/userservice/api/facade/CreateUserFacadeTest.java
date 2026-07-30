@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
-import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USER_ALREADY_REGISTERED_TO_CONSULTING_TYPE;
 import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITHOUT_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
@@ -247,46 +246,6 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_ReturnExistingSession_When_FallbackFindsPartiallyCreatedSession()
-          throws Exception {
-    var existingSessionId = 123L;
-    var user =
-        new User(USER_ID, null, USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getEmail(), false);
-    var existingSession =
-        Session.builder()
-            .id(existingSessionId)
-            .user(user)
-            .consultingTypeId(CONSULTING_TYPE_SETTINGS_SUCHT.getId())
-            .registrationType(Session.RegistrationType.REGISTERED)
-            .postcode(USER_DTO_SUCHT.getPostcode())
-            .status(Session.SessionStatus.NEW)
-            .build();
-
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(user);
-    when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenThrow(new InternalServerErrorException("session data failed"));
-    when(createSessionFacade.createUserSession(any(), any(), any(), any()))
-        .thenThrow(
-            new CustomValidationHttpStatusException(
-                USER_ALREADY_REGISTERED_TO_CONSULTING_TYPE, HttpStatus.CONFLICT));
-    when(sessionService.getSessionsForUserByConsultingTypeId(
-            any(), eq(CONSULTING_TYPE_SETTINGS_SUCHT.getId())))
-        .thenReturn(List.of(existingSession));
-    givenMatrixProvisioningSucceeds();
-
-    Long sessionId =
-        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
-
-    assertThat(sessionId, is(existingSessionId));
-  }
-
-  @Test
-  public void
       updateKeycloakAccountAndCreateDatabaseUserAccount_Should_CallNecessaryMethods_When_EverythingSucceeds() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
@@ -516,23 +475,25 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_CreateMinimalSession_When_InitializeNewSessionThrows()
+      createUserAccountWithInitializedConsultingType_Should_Compensate_When_InitializeNewSessionThrows()
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenThrow(new RuntimeException("rc down"));
-    when(createSessionFacade.createUserSession(any(), any(), any(), any())).thenReturn(42L);
-    givenAFullyPersistedUser();
+        .thenThrow(new RuntimeException("Matrix room initialization failed"));
+    User user = givenAFullyPersistedUser();
     givenMatrixProvisioningSucceeds();
 
-    Long sessionId =
-        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    RuntimeException exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
-    assertThat(sessionId, is(42L));
-    verify(createSessionFacade, times(1)).createUserSession(any(), any(), any(), any());
+    assertThat(exception.getMessage(), is("Matrix room initialization failed"));
+    verify(userService).deleteUser(user);
+    verify(keycloakService).rollBackUser(USER_ID);
   }
 
   @Test
@@ -557,11 +518,6 @@ public class CreateUserFacadeTest {
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new InternalServerErrorException("session initialization failed"));
-    when(createSessionFacade.createUserSession(any(), any(), any(), any()))
-        .thenThrow(new InternalServerErrorException("minimal session failed"));
-    when(sessionService.getSessionsForUserByConsultingTypeId(
-            user, CONSULTING_TYPE_SETTINGS_SUCHT.getId()))
-        .thenReturn(List.of());
     when(sessionService.getSessionsForUser(user)).thenReturn(List.of(partialSession));
 
     assertThrows(
@@ -610,11 +566,6 @@ public class CreateUserFacadeTest {
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new InternalServerErrorException("first attempt failed"))
         .thenReturn(replayRegistration);
-    when(createSessionFacade.createUserSession(any(), any(), any(), any()))
-        .thenThrow(new InternalServerErrorException("minimal session failed"));
-    when(sessionService.getSessionsForUserByConsultingTypeId(
-            firstUser, CONSULTING_TYPE_SETTINGS_SUCHT.getId()))
-        .thenReturn(List.of());
     when(sessionService.getSessionsForUser(firstUser)).thenReturn(List.of(partialSession));
 
     PlainCredentialsHolder.set("first", "password");

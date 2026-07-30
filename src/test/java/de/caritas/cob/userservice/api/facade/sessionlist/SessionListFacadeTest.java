@@ -7,8 +7,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.COUNT_0;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.COUNT_1;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.COUNT_10;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.OFFSET_0;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_STATUS_IN_PROGRESS;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSION_RESPONSE_SESSION_CHAT_DTO_LIST;
@@ -55,11 +53,11 @@ public class SessionListFacadeTest {
   @Test
   public void retrieveSessionsForAuthenticatedUser_Should_ReturnCorrectlySortedSessionList() {
 
-    when(userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS))
+    when(userSessionListService.retrieveSessionsForAuthenticatedUser(USER_ID))
         .thenReturn(USER_SESSION_RESPONSE_SESSION_CHAT_DTO_LIST);
 
     UserSessionListResponseDTO result =
-        sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(USER_ID, RC_CREDENTIALS);
+        sessionListFacade.retrieveSortedSessionsForAuthenticatedUser(USER_ID);
 
     for (UserSessionResponseDTO dto : result.getSessions()) {
       Long previousDate =
@@ -135,12 +133,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(CONSULTANT_SESSION_RESPONSE_DTO_LIST.size(), result.getSessions().size());
 
@@ -278,12 +276,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(CONSULTANT_SESSION_RESPONSE_DTO_LIST.size(), result.getSessions().size());
 
@@ -301,12 +299,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_CHAT_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(CONSULTANT_SESSION_CHAT_RESPONSE_DTO_LIST.size(), result.getSessions().size());
     assertEquals(
@@ -321,12 +319,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(CONSULTANT_SESSION_RESPONSE_DTO_LIST.size(), result.getSessions().size());
     assertEquals(Integer.valueOf(CONSULTANT_SESSION_RESPONSE_DTO_LIST.size()), result.getTotal());
@@ -339,12 +337,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_10, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(OFFSET_0, result.getOffset());
   }
@@ -360,12 +358,12 @@ public class SessionListFacadeTest {
             SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_0, result.getSessions().size());
   }
@@ -378,12 +376,12 @@ public class SessionListFacadeTest {
         createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_1, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter))
+            CONSULTANT, sessionListQueryParameter))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     ConsultantSessionListResponseDTO result =
         sessionListFacade.retrieveTeamSessionsDtoForAuthenticatedConsultant(
-            CONSULTANT, RC_TOKEN, sessionListQueryParameter);
+            CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_1, result.getSessions().size());
   }
@@ -394,13 +392,13 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveSessionsForAuthenticatedUserByGroupIds_Should_ReturnGroupSessionList() {
-    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndGroupIds(
-            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+    when(userSessionListService.retrieveSessionsForAuthenticatedUserAndRoomIds(
+            Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveSessionsForAuthenticatedUserByGroupIds(
-            USER_ID, java.util.List.of(), RC_CREDENTIALS, java.util.Set.of());
+        sessionListFacade.retrieveSessionsForAuthenticatedUserByRoomIds(
+            USER_ID, java.util.List.of(), java.util.Set.of());
 
     assertNotNull(result);
     assertEquals(0, result.getSessions().size());
@@ -409,12 +407,12 @@ public class SessionListFacadeTest {
   @Test
   public void retrieveSessionsForAuthenticatedUserBySessionIds_Should_ReturnGroupSessionList() {
     when(userSessionListService.retrieveSessionsForAuthenticatedUserAndSessionIds(
-            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+            Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
         sessionListFacade.retrieveSessionsForAuthenticatedUserBySessionIds(
-            USER_ID, java.util.List.of(), RC_CREDENTIALS, java.util.Set.of());
+            USER_ID, java.util.List.of(), java.util.Set.of());
 
     assertNotNull(result);
     assertEquals(0, result.getSessions().size());
@@ -422,13 +420,10 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveChatsForUserByChatIds_Should_ReturnGroupSessionList() {
-    when(userSessionListService.retrieveChatsForUserAndChatIds(
-            Mockito.any(), Mockito.any(), Mockito.any()))
+    when(userSessionListService.retrieveChatsForUserAndChatIds(Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
-    var result =
-        sessionListFacade.retrieveChatsForUserByChatIds(
-            USER_ID, java.util.List.of(), RC_CREDENTIALS);
+    var result = sessionListFacade.retrieveChatsForUserByChatIds(USER_ID, java.util.List.of());
 
     assertNotNull(result);
     assertEquals(0, result.getSessions().size());
@@ -436,12 +431,12 @@ public class SessionListFacadeTest {
 
   @Test
   public void retrieveSessionsForAuthenticatedConsultantByGroupIds_Should_ReturnGroupSessionList() {
-    when(consultantSessionListService.retrieveSessionsForConsultantAndGroupIds(
+    when(consultantSessionListService.retrieveSessionsForConsultantAndRoomIds(
             Mockito.any(), Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveSessionsForAuthenticatedConsultantByGroupIds(
+        sessionListFacade.retrieveSessionsForAuthenticatedConsultantByRoomIds(
             CONSULTANT, java.util.List.of(), java.util.Set.of());
 
     assertNotNull(result);
@@ -466,12 +461,11 @@ public class SessionListFacadeTest {
   @Test
   public void retrieveChatsForConsultantByChatIds_Should_ReturnGroupSessionList() {
     when(consultantSessionListService.retrieveChatsForConsultantAndChatIds(
-            Mockito.any(), Mockito.any(), Mockito.any()))
+            Mockito.any(), Mockito.any()))
         .thenReturn(new java.util.ArrayList<>());
 
     var result =
-        sessionListFacade.retrieveChatsForConsultantByChatIds(
-            CONSULTANT, java.util.List.of(), RC_CREDENTIALS);
+        sessionListFacade.retrieveChatsForConsultantByChatIds(CONSULTANT, java.util.List.of());
 
     assertNotNull(result);
     assertEquals(0, result.getSessions().size());

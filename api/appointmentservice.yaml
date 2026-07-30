@@ -185,16 +185,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: RCToken
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: RCUserId
-          in: header
-          required: false
-          schema:
-            type: string
       requestBody:
         content:
           'application/json':
@@ -251,9 +241,7 @@ components:
 
     AppointmentStatus:
       type: string
-      enum: [
-        created, started, paused
-      ]
+      enum: [created, started, paused]
 
     LanguageCode:
       type: string
@@ -268,7 +256,7 @@ components:
           pa, pi, pl, ps, pt, qu, rm, rn, ro, ru, rw, sa, sc, sd, se, sg, si, sk, sl, sm, sn,
           so, sq, sr, ss, st, su, sv, sw, ta, te, tg, th, ti, tk, tl, tn, to, tr, ts, tt, tw,
           ty, ug, uk, ur, uz, ve, vi, vo, wa, wo, xh, yi, yo, za, zh, zu
-      ]
+          ]
 
     EnquiryAppointmentDTO:
       type: object
@@ -289,8 +277,8 @@ components:
         sessionId:
           type: integer
           format: int64
-        rcGroupId:
+        matrixRoomId:
           type: string
-          example: fR2Rz7dmWmHdXE8uz
+          example: "!aBcDeF123:matrix.example"
         t:
           type: string

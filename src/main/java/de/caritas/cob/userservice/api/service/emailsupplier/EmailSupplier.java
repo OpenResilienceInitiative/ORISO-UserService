@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.emailsupplier;
 
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupMembersException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import java.util.List;
@@ -10,8 +9,6 @@ public interface EmailSupplier {
 
   String TEMPLATE_NEW_ENQUIRY_NOTIFICATION = "enquiry-notification-consultant";
   String TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION = "direct-enquiry-notification-consultant";
-  String TEMPLATE_NEW_MESSAGE_NOTIFICATION_CONSULTANT = "message-notification-consultant";
-  String TEMPLATE_NEW_MESSAGE_NOTIFICATION_ASKER = "message-notification-asker";
   String TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION = "assign-enquiry-notification";
   String TEMPLATE_FREE_TEXT = "free-text";
   String TEMPLATE_DAILY_ENQUIRY_NOTIFICATION = "daily-enquiry-notification";
@@ -23,5 +20,5 @@ public interface EmailSupplier {
    *
    * @return the generated emails
    */
-  List<MailDTO> generateEmails() throws RocketChatGetGroupMembersException;
+  List<MailDTO> generateEmails();
 }
