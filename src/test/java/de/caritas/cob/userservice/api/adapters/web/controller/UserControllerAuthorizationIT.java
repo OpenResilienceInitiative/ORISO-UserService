@@ -73,8 +73,11 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -157,7 +160,13 @@ class UserControllerAuthorizationIT {
   @MockitoBean private ConsultantImportService consultantImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
 
-  @MockitoBean(extraInterfaces = IdentityDummyEmailUpdater.class)
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAuthentication.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityUsernameAvailability.class
+      })
   private IdentityClient identityClient;
 
   @MockitoBean private IdentityManager identityManager;
