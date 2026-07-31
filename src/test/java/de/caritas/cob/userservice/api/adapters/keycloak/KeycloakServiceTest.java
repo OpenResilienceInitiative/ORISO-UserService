@@ -1507,23 +1507,23 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void getRealmRoles_Should_ReturnRoleNames_When_LookupSucceeds() {
+  public void findAllByUserId_Should_ReturnRoleNames_When_LookupSucceeds() {
     UserResource userResource = givenUserResourceWithRealmRoles("user", "consultant");
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    List<String> roles = keycloakService.getRealmRoles(USER_ID);
+    List<String> roles = keycloakService.findAllByUserId(USER_ID);
 
     assertThat(roles, is(Lists.newArrayList("user", "consultant")));
   }
 
   @Test
-  public void getRealmRoles_Should_ThrowKeycloakException_When_LookupFails() {
+  public void findAllByUserId_Should_ThrowKeycloakException_When_LookupFails() {
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    assertThrows(KeycloakException.class, () -> keycloakService.getRealmRoles(USER_ID));
+    assertThrows(KeycloakException.class, () -> keycloakService.findAllByUserId(USER_ID));
   }
 
   @Test

@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -25,7 +25,7 @@ class UserIdentitiesServiceTest {
 
   @Mock private ConsultantRepository consultantRepository;
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleLookup identityRoleLookup;
 
   @InjectMocks private UserIdentitiesService userIdentitiesService;
 
@@ -35,7 +35,7 @@ class UserIdentitiesServiceTest {
     lenient()
         .when(consultantRepository.findByIdAndDeleteDateIsNull(USER_ID))
         .thenReturn(Optional.empty());
-    lenient().when(identityClient.getRealmRoles(USER_ID)).thenReturn(List.of());
+    lenient().when(identityRoleLookup.findAllByUserId(USER_ID)).thenReturn(List.of());
 
     var result = userIdentitiesService.getUserIdentities(USER_ID);
 
@@ -47,7 +47,7 @@ class UserIdentitiesServiceTest {
     lenient().when(adminRepository.existsById(USER_ID)).thenReturn(false);
     when(consultantRepository.findByIdAndDeleteDateIsNull(USER_ID))
         .thenReturn(Optional.of(new Consultant()));
-    lenient().when(identityClient.getRealmRoles(USER_ID)).thenReturn(List.of());
+    lenient().when(identityRoleLookup.findAllByUserId(USER_ID)).thenReturn(List.of());
 
     var result = userIdentitiesService.getUserIdentities(USER_ID);
 
@@ -58,7 +58,7 @@ class UserIdentitiesServiceTest {
   void getUserIdentities_Should_ReturnBothFalseWithRoles_When_NeitherIdentityExists() {
     when(adminRepository.existsById(USER_ID)).thenReturn(false);
     when(consultantRepository.findByIdAndDeleteDateIsNull(USER_ID)).thenReturn(Optional.empty());
-    when(identityClient.getRealmRoles(USER_ID)).thenReturn(List.of("user-admin"));
+    when(identityRoleLookup.findAllByUserId(USER_ID)).thenReturn(List.of("user-admin"));
 
     var result = userIdentitiesService.getUserIdentities(USER_ID);
 
@@ -74,7 +74,7 @@ class UserIdentitiesServiceTest {
     lenient()
         .when(consultantRepository.findByIdAndDeleteDateIsNull(USER_ID))
         .thenReturn(Optional.of(new Consultant()));
-    when(identityClient.getRealmRoles(USER_ID)).thenReturn(roles);
+    when(identityRoleLookup.findAllByUserId(USER_ID)).thenReturn(roles);
 
     var result = userIdentitiesService.getUserIdentities(USER_ID);
 
