@@ -1078,8 +1078,10 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    this.keycloakService.rollBackUser("userId");
+    this.keycloakService.rollbackUser("userId");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).remove();
   }
 
@@ -1090,7 +1092,7 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    this.keycloakService.rollBackUser("userId");
+    this.keycloakService.rollbackUser("userId");
 
     assertTrue(
         logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
@@ -1560,7 +1562,9 @@ public class KeycloakServiceTest {
 
     keycloakService.deleteUser(USER_ID);
 
-    verify(userResource).remove();
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get(USER_ID);
+    verify(userResource, times(1)).remove();
   }
 
   @Test
@@ -1577,6 +1581,10 @@ public class KeycloakServiceTest {
 
     assertThat(
         logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get(USER_ID);
+    verify(userResource, times(1)).remove();
+    verify(keycloakClient, never()).refreshAdminSession();
   }
 
   @Test
@@ -1592,7 +1600,9 @@ public class KeycloakServiceTest {
 
     keycloakService.deleteUser(USER_ID);
 
-    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(usersResource, times(2)).get(USER_ID);
+    verify(keycloakClient, times(1)).refreshAdminSession();
     verify(userResource, times(2)).remove();
   }
 

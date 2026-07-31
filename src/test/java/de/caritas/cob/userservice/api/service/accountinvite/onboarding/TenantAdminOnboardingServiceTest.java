@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -60,6 +61,7 @@ class TenantAdminOnboardingServiceTest {
   @Mock private AccountInviteService accountInviteService;
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
 
@@ -73,6 +75,7 @@ class TenantAdminOnboardingServiceTest {
             accountInviteService,
             createAdminService,
             identityClient,
+            identityAccountRemover,
             tenantCreationClient,
             operatorDpaContentClient,
             new UsernameTranscoder());
@@ -509,7 +512,7 @@ class TenantAdminOnboardingServiceTest {
     assertThrows(
         ConflictException.class, () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
-    verify(identityClient).rollBackUser("kc-user-1");
+    verify(identityAccountRemover).rollbackUser("kc-user-1");
   }
 
   @Test
@@ -533,7 +536,7 @@ class TenantAdminOnboardingServiceTest {
         InternalServerErrorException.class,
         () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
-    verify(identityClient).rollBackUser("kc-user-1");
+    verify(identityAccountRemover).rollbackUser("kc-user-1");
     verify(tenantCreationClient, never()).createTenant(any());
   }
 
