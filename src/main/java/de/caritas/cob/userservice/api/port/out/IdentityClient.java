@@ -55,5 +55,4 @@ public interface IdentityClient {
   boolean userHasRole(String userId, String userRole);
 
   List<UserRepresentation> findByUsername(String username);
-
 }
