@@ -21,6 +21,9 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -47,6 +50,8 @@ import org.springframework.web.client.RestClientException;
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull UserService userService;
   private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
@@ -283,7 +288,7 @@ public class CreateUserFacade {
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
     checkIfUserIdNotNull(userId, userDTO);
     identityClient.updateRole(userId, role);
-    identityClient.updatePassword(userId, userDTO.getPassword());
+    identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 
   private void checkIfUserIdNotNull(String userId, UserDTO userDTO) {
@@ -295,7 +300,8 @@ public class CreateUserFacade {
 
   private String returnDummyEmailIfNoneGiven(UserDTO userDTO, String userId) {
     if (isBlank(userDTO.getEmail())) {
-      return identityClient.updateDummyEmail(userId, userDTO);
+      return identityDummyEmailUpdater.updateDummyEmail(
+          userId, new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId()));
     }
 
     return userDTO.getEmail();

@@ -156,6 +156,23 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
+                // PUBLIC account-invite endpoints (#569 chain fix): the invitee has no account
+                // yet, the raw invite token in the path is the only credential. Both prefix
+                // variants because the API gateway forwards /service unchanged.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/account-invites/{token}/onboarding",
+                    "/service/users/account-invites/{token}/onboarding")
+                .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/account-invites/{token}/accept",
+                    "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/onboarding/register",
+                    "/service/users/account-invites/{token}/onboarding/register",
+                    "/users/account-invites/{token}/onboarding/two-factor",
+                    "/service/users/account-invites/{token}/onboarding/two-factor")
+                .permitAll()
                 // Password-reset request/confirm are already permitted by the exact requestMatchers
                 // above (with and without the /service prefix); no broad regex needed.
                 .requestMatchers(HttpMethod.GET, "/conversations/anonymous/{sessionId:[0-9]+}")

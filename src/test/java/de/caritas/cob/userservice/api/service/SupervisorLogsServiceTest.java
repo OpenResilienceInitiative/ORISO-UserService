@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -13,7 +14,10 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,8 +36,14 @@ class SupervisorLogsServiceTest {
 
   @Mock private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AdminAuditAgencyScope adminAuditAgencyScope;
 
   @InjectMocks private SupervisorLogsService service;
+
+  @BeforeEach
+  void tenantWideByDefault() {
+    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.empty());
+  }
 
   @AfterEach
   void cleanTenantContext() {
@@ -266,6 +276,62 @@ class SupervisorLogsServiceTest {
     service.listSupervisorLogs(1, 10);
 
     assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(77L);
+  }
+
+  // ─── agency scope (Beratungsstellen-Admins) ───────────────────────────────
+
+  @Test
+  void listSupervisorLogs_Should_FilterByAgency_When_AdminIsAgencyScoped() {
+    when(authenticatedUser.getAccessToken()).thenReturn(null);
+    TenantContext.setCurrentTenant(5L);
+    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.of(Set.of(7L, 9L)));
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<SqlParameterSource> paramsCaptor =
+        ArgumentCaptor.forClass(SqlParameterSource.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            sqlCaptor.capture(), paramsCaptor.capture(), eq(Long.class)))
+        .thenReturn(0L);
+    when(namedParameterJdbcTemplate.query(
+            sqlCaptor.capture(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(sqlCaptor.getAllValues())
+        .allSatisfy(sql -> assertThat(sql).contains("s.agency_id IN (:agencyIds)"));
+    assertThat(paramsCaptor.getValue().getValue("agencyIds")).isEqualTo(Set.of(7L, 9L));
+  }
+
+  @Test
+  void listSupervisorLogs_Should_NotFilterByAgency_When_AdminIsTenantWide() {
+    when(authenticatedUser.getAccessToken()).thenReturn(null);
+    TenantContext.setCurrentTenant(5L);
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            sqlCaptor.capture(), any(SqlParameterSource.class), eq(Long.class)))
+        .thenReturn(0L);
+    when(namedParameterJdbcTemplate.query(
+            sqlCaptor.capture(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(sqlCaptor.getAllValues())
+        .allSatisfy(sql -> assertThat(sql).doesNotContain("agencyIds"));
+  }
+
+  @Test
+  void listSupervisorLogs_Should_ReturnNothing_When_AgencyScopeIsEmpty() {
+    // Fail closed: an agency admin assigned to no agency must not fall back to the tenant.
+    when(authenticatedUser.getAccessToken()).thenReturn(null);
+    TenantContext.setCurrentTenant(5L);
+    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.of(Set.of()));
+
+    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
+
+    assertThat(result.getTotal()).isZero();
+    assertThat(result.getData()).isEmpty();
+    verifyNoInteractions(namedParameterJdbcTemplate);
   }
 
   // ─── helpers ──────────────────────────────────────────────────────────────

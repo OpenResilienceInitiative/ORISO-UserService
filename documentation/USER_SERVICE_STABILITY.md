@@ -1,7 +1,11 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-27
 Target branch: `pre-dev`
+
+Suite counts in this record are generated, not written down — see
+[Reproducible stability result](#reproducible-stability-result). A date stamp
+here would have the same problem, so freshness comes from the CI run that
+produced the numbers.
 
 ## Reproducible stability result
 
@@ -23,50 +27,59 @@ and 45 initial Spring context-threshold cascades. The artifact preserves the
 15-suite breakdown behind those 45 errors and does not invent a more specific
 original exception where the retained report did not contain one.
 
-After repairing those clusters:
+After repairing those clusters the suite is green.
 
-| Suite | Tests | Failures | Errors | Skipped | Command |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,373 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 840 | 0 | 0 | 2 | `scripts/ci/run-required-integration-tests.sh` |
-| MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+The current execution counts are deliberately not recorded here. They are a
+measurement, not a decision, and every branch that adds a test changes them —
+which made this file conflict on each merge and forced a hand reconciliation
+that is easy to get wrong. `scripts/ci/suite-inventory.py` derives them from
+the Surefire and Failsafe reports instead, and both test jobs publish the
+result to their CI run summary. For the combined view locally:
 
-The rows are not one additive total: the MariaDB and Redis rows are dedicated
-environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,373 unit plus 840
-integration executions, or 4,213.
+```
+./mvnw verify
+python3 scripts/ci/suite-inventory.py
+```
+
+What is enforced rather than described:
+
+- `scripts/ci/run-required-integration-tests.sh` owns the complete `*IT` suite,
+  requires at least 75 reports and 830 executed tests, and fails on any failure
+  or error;
+- a required CI guard rejects newly disabled or ignored tests;
+- the MariaDB schema and statistics contracts and the Redis availability
+  contract run as their own required jobs, so they are dedicated environment
+  proofs rather than part of the primary inventory.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
-or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,213: 409 fewer unit and 100 fewer integration
-executions. The source diff for that same pre-cutover-to-current interval
-deletes 40 obsolete test classes and adds 29 Matrix-only contract classes.
-Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+or 4,722. Those figures are frozen reference points and do not move.
+
+The Matrix-only cutover then reduced both the executable product and its test
+inventory. The source diff for that pre-cutover-to-current interval deletes 40
+obsolete test classes and adds 29 Matrix-only contract classes. Thirty-three of
+the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 509-execution net reduction. This is intentional scope
-removal plus replacement coverage, not unexplained test quarantine.
+map one-to-one to the execution delta. This is intentional scope removal plus
+replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
 CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
-`scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, requires at least 830 executed tests and
-checks for critical E2E reports.
-The previous three-test required subset and the non-blocking legacy quarantine
-were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
-`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
-deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
-that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
-floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
-disabled or ignored tests. The two environment-gated cases are not quarantined:
-Redis and MariaDB have their own required service-container/fresh-database jobs
-on branch, pull-request and publish workflows.
+The integration contract starts from a clean build and additionally checks that
+the critical E2E reports are present, so a green run cannot mean a silently
+shrunken suite. The previous three-test required subset and the non-blocking
+legacy quarantine were removed. On the current Matrix-only `pre-dev` baseline,
+the four remaining `NewEnquiryEmailSupplierTest` log assertions run normally.
+The Matrix cutover deleted `NewMessageEmailSupplierTest`; this replay
+deliberately does not restore that legacy path. The 830-test floor is the
+Matrix-only figure; the older 900-test floor included deleted Rocket.Chat-only
+tests. The environment-gated Redis and MariaDB jobs run on the branch,
+pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -180,6 +193,122 @@ pipeline and supplies a baseline, but it does not prove the new
 `userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
 repair. Those require the branch image to be deployed and queried again.
 
+### Live PreDev follow-up after the `pre-dev` merge
+
+The 2026-07-26 read-only follow-up kept build, deploy and runtime evidence
+separate:
+
+- merge commit `730a9323` published the UserService `pre-dev` image with digest
+  `sha256:16534c4d5b0cf8d98b58e164c75bc1ee0320e4597fe28181ab56eee198fe1cfb`;
+- the running PreDev deployment still used the older digest
+  `sha256:11c0a03cd903d387a6cc229412ac91e1a99b33cb68f1d276e09613d4c4c479e2`;
+- no `userservice.*` metric metadata existed in the live SigNoz store.
+
+The merge and image publication are therefore confirmed, but deployment and
+the new custom-metric runtime proof remain open.
+
+Approximately 24 hours of traces from that older running image supplied this
+baseline:
+
+| Service/client operation | Spans/calls | Errors | p95 latency |
+| --- | ---: | ---: | ---: |
+| UserService, all spans | 15,732 | 33 | 25.38 ms |
+| Matrix POST | 877 | 0 | 47.64 ms |
+| Matrix DELETE | 660 | 0 | 26.27 ms |
+| Matrix GET | 474 | 1 | about 30 s |
+| Matrix PUT | 8 | 0 | 287.16 ms |
+| Tenant GET | 14 | 10 | n/a |
+| Keycloak GET | 9 | 0 | 16.23 ms |
+| Consulting Type GET | 9 | 0 | 20.86 ms |
+| Agency GET | 4 | 0 | 28.89 ms |
+
+Of the Matrix GET calls, 462 were expected `/sync` long-polls. Their latency is
+not ordinary request slowness. The Tenant errors were 404 responses in a
+technical/global context. That context has no tenant-specific branding, so the
+canonical tenant-template supplier now returns only the generic application URL
+without calling TenantService or ApplicationSettingsService. A unit regression
+test proves that both outbound boundaries remain untouched. Runtime
+confirmation still requires the repaired branch image to be merged, deployed
+and traced.
+
+### Anonymous-deletion repeat loop
+
+Trace grouping identified one concrete chatty-call cause in
+`deleteUserAnonymousScheduler.performDeletionWorkflow`:
+
+- six scheduler runs made 1,510 successful Matrix client calls;
+- each run averaged about 252 Matrix calls and reached a maximum of 272;
+- every root workflow then failed after about 7.5 seconds while the secondary
+  error-notification path tried to resolve a tenant template.
+
+The deletion method wrapped both irreversible Matrix actions and database
+cleanup in one transaction. When notification failed after the actions, the
+exception rolled back database cleanup, so the next scheduler run repeated the
+already completed external calls.
+
+The notification step is now best-effort: its runtime failure is logged without
+workflow identifiers instead of escaping the transaction. The technical mail
+context also no longer performs the TenantService lookup that caused the
+observed notification failure, which removes the most frequent trigger.
+
+Both suites, the focused supplier test and the formatting gate pass; the
+per-run counts are in the CI summary rather than repeated here.
+
+#### Measured limit of this repair
+
+Catching the notification failure is not sufficient on its own when the
+workflow error originates inside the database delete. Reproduced locally in
+`DeleteUserAnonymousSchedulerIT`: with the preceding session deletes flushed
+and the user detached, `userRepository.delete` takes Hibernate's merge path and
+raises
+
+```
+org.hibernate.ObjectNotFoundException: No row with the given identifier exists
+  for entity [de.caritas.cob.userservice.api.model.Session with id ...]
+  at org.hibernate.type.EntityType.replace(EntityType.java:334)
+```
+
+which matches the PreDev stack. `DeleteDatabaseAskerAction` catches it and
+records a workflow error, the notification then fails and is caught here as
+intended — but Hibernate has already marked the transaction rollback-only, so
+the commit still fails with `UnexpectedRollbackException` and nothing is
+retained. Stubbing the repository to throw reproduces the shape of that failure
+but not its consequence, because only a genuine failure poisons the persistence
+context; the test therefore provokes the real exception.
+
+Making the deletion commit independently of that poisoned context requires its
+own transaction boundary. That boundary now exists, described below.
+
+#### Per-user transaction boundary
+
+Selection, deletion and notification each own their scope:
+
+- `AnonymousUserDeletionCandidates` reads in a read-only transaction and returns
+  user **ids**, not entities. An entity handed across a transaction boundary
+  would be detached in the next one, which is what made the delete take
+  Hibernate's merge path over an already-initialized session collection in the
+  first place. Loading the user inside the deleting transaction removes that
+  path entirely.
+- `AnonymousUserDeletionUnit` deletes exactly one user under
+  `Propagation.REQUIRES_NEW` and commits when it returns.
+- `AnonymousUserDeletionBatch` holds no transaction. It catches a failed
+  per-user commit, records it as a workflow error and continues with the
+  remaining users.
+- `DeleteUserAnonymousService` notifies after the batch, outside every deletion
+  transaction.
+
+A user whose own transaction is poisoned still cannot be retained — that
+transaction is doomed by definition — but it is now the only one lost, and it
+is reported rather than silent. Proven in `DeleteUserAnonymousSchedulerIT` with
+a genuine `DataIntegrityViolationException`: a leftover `user_agency` row makes
+one user's delete violate the restricting foreign key, and the other user in
+the same batch is still deleted and committed.
+
+The selection is also filtered to `RegistrationType.ANONYMOUS`. Without that
+filter this workflow, configured under `user.anonymous.deleteworkflow.*`, also
+selected registered system accounts such as the per-tenant
+`group-chat-system-*` users.
+
 ## Chatty-call reductions
 
 - The Matrix-only cutover physically removed the Rocket.Chat adapter, credential
@@ -198,6 +327,21 @@ repair. Those require the branch image to be deployed and queried again.
 - Appointment deletion uses one conditional database `DELETE` and its affected
   row count. It preserves the 404 contract without a read-before-delete round
   trip.
+- Authenticated user-data profile lookup now uses one focused
+  `IdentityProfileLookup` call and exposes only five provider-neutral fields
+  across the application seam: ID, username, first name, last name and email.
+  The Keycloak adapter still performs exactly one user-resource resolution and
+  one representation read, with no retry. Provider not-found becomes absence;
+  other provider failures retain the token-based facade fallback. This bounds
+  the internal payload but does not claim a smaller Keycloak network response.
+- Consultant role-set validation reads the user's complete realm-role list once
+  and performs the requested-set intersection in-process. The code-level bound
+  is therefore zero identity calls for an empty role set and exactly one for a
+  non-empty set, instead of up to one `userHasRole` request per candidate role.
+- The unused identity session-close command was removed from the broad output
+  port, the Keycloak facade and its authentication collaborator. Repository-wide
+  tracing found no production consumer, so the removed path has an exact
+  zero-call bound. The active refresh-token logout flow remains unchanged.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -230,22 +374,56 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
-from reverting to concrete application/chat services and prevents the
+from reverting to concrete application/chat services, prevents user web
+mappers from importing the outbound identity client, and prevents the
 `service.session` application package from importing concrete Matrix adapters. It also
 prevents the Identity/Profile packages and the Admin module from importing
 their protected concrete chat adapters. The separate removal contract prevents
 Rocket.Chat production packages, configuration, DTOs and schema fields from
-returning. The appointment deletion repair stays behind `Organizing` and
-`AppointmentRepository`.
+returning. A dead-surface contract prevents the unused identity session-close
+command from returning on the broad port or either Keycloak wrapper. The
+appointment deletion repair stays behind `Organizing` and `AppointmentRepository`.
 
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
+A dedicated profile-read contract keeps user-data facades off the broad
+identity client, removes profile lookup from that client and requires shared
+Spring identity mocks to provide the focused port.
+The role-read contract keeps full realm-role reads behind the focused
+`IdentityRoleLookup` port and prevents per-candidate role checks from returning
+to consultant-agency validation.
+
+Registration-time dummy-email replacement now retains only username and tenant
+metadata in a provider-neutral value. The Keycloak adapter computes the dummy
+address, resolves the target identity once and performs one update. The former
+asker-import consumer no longer exists on the Matrix-only baseline; current-user
+email deletion remains on the existing email-address operation.
+
+Identity account removal now has explicit provider-call bounds. A normal
+removal resolves the target once and calls remove once. An unauthorized removal
+refreshes the admin session once and retries the complete lookup/remove
+operation at most once. Provider not-found handling remains idempotent,
+provisioning rollback remains best-effort and strict deletion sequencing is
+unchanged.
+
+The focused password-write boundary covers admin provisioning, consultant
+provisioning and imports, user registration and self-service password reset. A
+write resolves the target identity once, performs one provider reset and has no
+automatic retry. Password-reset token restoration and provisioning rollback
+remain application policies; provider credential DTOs and password-policy error
+translation remain adapter concerns.
+Identity deactivation now has an explicit one-user call bound: the Keycloak
+adapter resolves the users resource and user once, reads one representation and
+performs at most one update, with no hidden or application retry. The anonymous
+deactivation action keeps its existing best-effort error handling; the account,
+asker and consultant deletion flows remain strict and preserve their existing
+ordering around lifecycle and persistence changes.
 
 A dedicated email-mutation contract prevents `IdentityManager` and
 `UserAccountService` from returning to the broad `IdentityClient` for account
@@ -263,9 +441,10 @@ verified on PreDev.
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
 source. The next safe sequence is the remaining identity create-user DTO
-decoupling, then the Admin controller composition boundary, then smaller
-Session orchestration boundaries. Each step must add a failing boundary
-contract before moving dependencies.
+decoupling and further non-authentication identity transport cleanup, then the
+Admin controller composition boundary, then smaller Session orchestration
+boundaries. Each step must add a failing boundary contract before moving
+dependencies.
 
 ## Microservice decision
 

@@ -7,7 +7,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class AskerUserAdminFacade {
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull UserService userService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
@@ -40,7 +40,7 @@ public class AskerUserAdminFacade {
           String.format("Asker with id %s is already marked for deletion", userId));
     }
 
-    this.identityClient.deactivateUser(userId);
+    this.identityDeactivator.deactivateUser(userId);
     this.deletionLifecycleService.beginUserDeletion(user, null);
     this.userService.saveUser(user);
   }

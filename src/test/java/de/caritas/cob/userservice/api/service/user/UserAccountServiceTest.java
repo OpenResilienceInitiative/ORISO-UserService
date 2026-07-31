@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -54,6 +55,7 @@ public class UserAccountServiceTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
+  @Mock private IdentityDeactivator identityDeactivator;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
 
@@ -250,8 +252,9 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
-    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
+  @Override
+  public void deleteCurrentUserEmail() {
+    verify(identityClient, never()).changeEmailAddress(anyString());
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verify(userService, times(2)).getUser(any());
@@ -272,8 +275,9 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
-    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
+  @Override
+  public void deleteCurrentUserEmail() {
+    verify(identityClient, never()).changeEmailAddress(anyString());
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);
@@ -382,7 +386,7 @@ public class UserAccountServiceTest {
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(identityClient, times(1)).deactivateUser(USER.getUserId());
+    verify(identityDeactivator, times(1)).deactivateUser(USER.getUserId());
     verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
     verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));

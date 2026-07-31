@@ -19,8 +19,17 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -62,8 +71,20 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockitoBean IdentityClient identityClient;
-  @MockitoBean IdentityEmailAddressUpdater identityEmailAddressUpdater;
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailAddressUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;
 
