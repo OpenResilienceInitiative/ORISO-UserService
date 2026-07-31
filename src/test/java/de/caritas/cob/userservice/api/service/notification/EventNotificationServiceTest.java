@@ -54,10 +54,6 @@ class EventNotificationServiceTest {
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
 
-  @Mock
-  private de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService
-      liveEventNotificationService;
-
   @Captor private ArgumentCaptor<EventNotification> eventCaptor;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -738,76 +734,6 @@ class EventNotificationServiceTest {
         "user-1", "message.new", null, "Title", "Text", null, 1L, 1L);
     verify(eventNotificationRepository).save(eventCaptor.capture());
     assertEquals(EventNotificationService.CATEGORY_SYSTEM, eventCaptor.getValue().getCategory());
-  }
-
-  // ---------------------------------------------------------------------------
-  // Real-time backbone: every persisted notification nudges its recipient's client
-  // to refresh the Activity Timeline feed (no 15s poll wait). Carries no content.
-  // ---------------------------------------------------------------------------
-
-  @Test
-  void createEvent_firesLiveRefreshToRecipientAfterPersist() {
-    eventNotificationService.createEvent(
-        "user-1", "message.new", EventNotificationService.CATEGORY_MESSAGE, "T", "B", null, 1L, 1L);
-
-    verify(eventNotificationRepository).save(any());
-    verify(liveEventNotificationService).sendEventNotificationCreatedEventToUser("user-1");
-  }
-
-  @Test
-  void createEvent_doesNotFireLiveRefreshForBlankRecipient() {
-    eventNotificationService.createEvent(
-        "  ", "message.new", EventNotificationService.CATEGORY_MESSAGE, "T", "B", null, 1L, 1L);
-
-    verify(liveEventNotificationService, never()).sendEventNotificationCreatedEventToUser(any());
-  }
-
-  @Test
-  void createMessageNotificationFromRoom_firesLiveRefreshToRecipient() {
-    Session session = sessionMock();
-    User user = mock(User.class);
-    when(user.getUserId()).thenReturn("asker-1");
-    when(session.getUser()).thenReturn(user);
-    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
-        .thenReturn(Optional.of(session));
-
-    eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", "hi");
-
-    verify(liveEventNotificationService).sendEventNotificationCreatedEventToUser("asker-1");
-  }
-
-  @Test
-  void createEventOnce_firesLiveRefreshOnFirstPersistOnly() {
-    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
-            "consultant-1", "group-chat:reminder:42:0"))
-        .thenReturn(false, true);
-
-    eventNotificationService.createEventOnce(
-        "group-chat:reminder:42:0",
-        "consultant-1",
-        "group_chat.reminder",
-        EventNotificationService.CATEGORY_SYSTEM,
-        "Reminder",
-        "Soon",
-        "{\"seriesId\":42}",
-        null,
-        42L,
-        null);
-    eventNotificationService.createEventOnce(
-        "group-chat:reminder:42:0",
-        "consultant-1",
-        "group_chat.reminder",
-        EventNotificationService.CATEGORY_SYSTEM,
-        "Reminder",
-        "Soon",
-        "{\"seriesId\":42}",
-        null,
-        42L,
-        null);
-
-    verify(liveEventNotificationService, times(1))
-        .sendEventNotificationCreatedEventToUser("consultant-1");
   }
 
   @Test

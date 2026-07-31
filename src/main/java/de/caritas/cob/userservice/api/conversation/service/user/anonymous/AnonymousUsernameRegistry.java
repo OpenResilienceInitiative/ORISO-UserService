@@ -6,7 +6,7 @@ import static org.apache.commons.lang3.StringUtils.substringAfter;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -23,7 +23,7 @@ public class AnonymousUsernameRegistry {
 
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -88,7 +88,7 @@ public class AnonymousUsernameRegistry {
             () ->
                 userService.findUserByUsername(username).isPresent()
                     || consultantService.getConsultantByUsername(username).isPresent())
-        || !identityClient.isUsernameAvailable(username)
+        || !identityUsernameAvailability.isUsernameAvailable(username)
         || existsInMatrix(username);
   }
 
