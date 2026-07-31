@@ -58,6 +58,5 @@ public interface IdentityClient {
 
   List<UserRepresentation> findByUsername(String username);
 
-
   UserRepresentation getById(String userId);
 }
