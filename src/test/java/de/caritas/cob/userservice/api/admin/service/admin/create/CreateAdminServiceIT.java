@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -63,6 +64,7 @@ class CreateAdminServiceIT {
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
@@ -102,7 +104,7 @@ class CreateAdminServiceIT {
         .createKeycloakUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -139,7 +141,7 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -180,7 +182,7 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -213,7 +215,7 @@ class CreateAdminServiceIT {
         .createKeycloakUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 

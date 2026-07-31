@@ -79,6 +79,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -170,6 +171,7 @@ class UserControllerAuthorizationIT {
         IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })

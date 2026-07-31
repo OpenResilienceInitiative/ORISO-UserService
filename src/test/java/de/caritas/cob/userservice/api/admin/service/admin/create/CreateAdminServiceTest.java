@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -42,6 +43,7 @@ class CreateAdminServiceTest {
   @InjectMocks private CreateAdminService createAdminService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityAccountRemover identityAccountRemover;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;

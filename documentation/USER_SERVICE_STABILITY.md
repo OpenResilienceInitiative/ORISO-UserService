@@ -367,7 +367,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -402,6 +402,12 @@ operation at most once. Provider not-found handling remains idempotent,
 provisioning rollback remains best-effort and strict deletion sequencing is
 unchanged.
 
+The focused password-write boundary covers admin provisioning, consultant
+provisioning and imports, user registration and self-service password reset. A
+write resolves the target identity once, performs one provider reset and has no
+automatic retry. Password-reset token restoration and provisioning rollback
+remain application policies; provider credential DTOs and password-policy error
+translation remain adapter concerns.
 Identity deactivation now has an explicit one-user call bound: the Keycloak
 adapter resolves the users resource and user once, reads one representation and
 performs at most one update, with no hidden or application retry. The anonymous
