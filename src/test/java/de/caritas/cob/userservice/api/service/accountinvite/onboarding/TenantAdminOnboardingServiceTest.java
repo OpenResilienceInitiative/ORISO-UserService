@@ -78,6 +78,7 @@ class TenantAdminOnboardingServiceTest {
             createAdminService,
             identityClient,
             identityAccountRemover,
+            identityProfileLookup,
             tenantCreationClient,
             operatorDpaContentClient,
             new UsernameTranscoder());
