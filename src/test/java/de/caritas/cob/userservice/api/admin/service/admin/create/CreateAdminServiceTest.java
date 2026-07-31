@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
@@ -41,6 +42,7 @@ class CreateAdminServiceTest {
   @InjectMocks private CreateAdminService createAdminService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountRemover identityAccountRemover;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
 
@@ -90,7 +92,7 @@ class CreateAdminServiceTest {
         InternalServerErrorException.class,
         () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
-    verify(identityClient).rollBackUser("kc-user-id");
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
   }
 
   @Test
@@ -114,6 +116,6 @@ class CreateAdminServiceTest {
 
     assertThat(exception.getCustomHttpHeaders().getFirst("X-Reason"))
         .isEqualTo(HttpStatusExceptionReason.ROLE_NOT_FOUND.name());
-    verify(identityClient).rollBackUser("kc-user-id");
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
   }
 }
