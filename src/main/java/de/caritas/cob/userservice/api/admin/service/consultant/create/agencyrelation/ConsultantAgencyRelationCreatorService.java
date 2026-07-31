@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -36,6 +37,7 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleLookup identityRoleLookup;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -159,15 +161,14 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private void checkConsultantHasRoleSet(Set<String> roles, String consultantId) {
-    roles.stream()
-        .filter(role -> identityClient.userHasRole(consultantId, role))
-        .findAny()
-        .orElseThrow(
-            () ->
-                new BadRequestException(
-                    String.format(
-                        "Consultant with id %s does not have the role set %s",
-                        consultantId, roles)));
+    var hasRequestedRole =
+        !roles.isEmpty()
+            && identityRoleLookup.findAllByUserId(consultantId).stream().anyMatch(roles::contains);
+    if (!hasRequestedRole) {
+      throw new BadRequestException(
+          String.format(
+              "Consultant with id %s does not have the role set %s", consultantId, roles));
+    }
   }
 
   private AgencyDTO retrieveAgency(Long agencyId) {

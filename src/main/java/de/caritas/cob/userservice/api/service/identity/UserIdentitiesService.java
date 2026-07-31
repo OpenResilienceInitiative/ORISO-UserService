@@ -3,7 +3,7 @@ package de.caritas.cob.userservice.api.service.identity;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,7 +22,7 @@ public class UserIdentitiesService {
 
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleLookup identityRoleLookup;
 
   /**
    * Looks up the identities held by the given user.
@@ -35,7 +35,7 @@ public class UserIdentitiesService {
     dto.setHasAdminIdentity(adminRepository.existsById(userId));
     dto.setHasConsultantIdentity(
         consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent());
-    dto.setKeycloakRoles(identityClient.getRealmRoles(userId));
+    dto.setKeycloakRoles(identityRoleLookup.findAllByUserId(userId));
     return dto;
   }
 }

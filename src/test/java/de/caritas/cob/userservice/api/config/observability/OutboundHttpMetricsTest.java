@@ -100,28 +100,28 @@ class OutboundHttpMetricsTest {
     var metrics = new OutboundHttpMetrics(registry);
     var transport = new CompletableFuture<String>();
 
-    var observed = metrics.observeAsyncCall("live-service", "post", 123, () -> transport);
+    var observed = metrics.observeAsyncCall("mail-service", "post", 123, () -> transport);
     transport.complete("accepted");
 
     assertThat(observed.join()).isEqualTo("accepted");
     assertThat(
             registry
                 .get(OutboundHttpMetrics.CALLS)
-                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .tags("dependency", "mail-service", "method", "post", "outcome", "2xx")
                 .counter()
                 .count())
         .isEqualTo(1);
     assertThat(
             registry
                 .get(OutboundHttpMetrics.LATENCY)
-                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .tags("dependency", "mail-service", "method", "post", "outcome", "2xx")
                 .timer()
                 .count())
         .isEqualTo(1);
     assertThat(
             registry
                 .get(OutboundHttpMetrics.PAYLOAD)
-                .tags("dependency", "live-service", "direction", "request")
+                .tags("dependency", "mail-service", "direction", "request")
                 .summary()
                 .totalAmount())
         .isEqualTo(123);
@@ -133,14 +133,14 @@ class OutboundHttpMetricsTest {
     var metrics = new OutboundHttpMetrics(registry);
     var transport = new CompletableFuture<String>();
 
-    var observed = metrics.observeAsyncCall("live-service", "post", 31, () -> transport);
+    var observed = metrics.observeAsyncCall("mail-service", "post", 31, () -> transport);
     transport.completeExceptionally(new IllegalStateException("room-secret"));
 
     assertThatThrownBy(observed::join);
     assertThat(
             registry
                 .get(OutboundHttpMetrics.CALLS)
-                .tags("dependency", "live-service", "method", "post", "outcome", "async_error")
+                .tags("dependency", "mail-service", "method", "post", "outcome", "async_error")
                 .counter()
                 .count())
         .isEqualTo(1);
@@ -156,7 +156,7 @@ class OutboundHttpMetricsTest {
     var metrics = new OutboundHttpMetrics(new FailingCounterMeterRegistry());
     var transport = new CompletableFuture<String>();
 
-    var observed = metrics.observeAsyncCall("live-service", "post", 31, () -> transport);
+    var observed = metrics.observeAsyncCall("mail-service", "post", 31, () -> transport);
     transport.complete("accepted");
 
     assertThat(observed.join()).isEqualTo("accepted");
@@ -169,13 +169,13 @@ class OutboundHttpMetricsTest {
 
     metrics
         .observeAsyncCall(
-            "live-service", "POST", 31, () -> CompletableFuture.completedFuture("accepted"))
+            "mail-service", "POST", 31, () -> CompletableFuture.completedFuture("accepted"))
         .join();
 
     assertThat(
             registry
                 .get(OutboundHttpMetrics.CALLS)
-                .tags("dependency", "live-service", "method", "post", "outcome", "2xx")
+                .tags("dependency", "mail-service", "method", "post", "outcome", "2xx")
                 .counter()
                 .count())
         .isEqualTo(1);
@@ -188,13 +188,13 @@ class OutboundHttpMetricsTest {
 
     metrics
         .observeAsyncCall(
-            "live-service", "post", -1, () -> CompletableFuture.completedFuture("accepted"))
+            "mail-service", "post", -1, () -> CompletableFuture.completedFuture("accepted"))
         .join();
 
     assertThat(
             registry
                 .find(OutboundHttpMetrics.PAYLOAD)
-                .tags("dependency", "live-service", "direction", "request")
+                .tags("dependency", "mail-service", "direction", "request")
                 .summary())
         .isNull();
   }
@@ -206,7 +206,7 @@ class OutboundHttpMetricsTest {
     try {
       var observed =
           metrics.observeAsyncCall(
-              "live-service",
+              "mail-service",
               "post",
               31,
               () -> {

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -19,7 +20,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -53,8 +53,8 @@ public class AssignEnquiryFacade {
   private final @NonNull UserRepository userRepository;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
 
   /**
@@ -94,8 +94,6 @@ public class AssignEnquiryFacade {
     // ADR-016 hard close: the pre-acceptance Team-Besprechung archives the moment the case is
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
-    liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
-        session.getUser().getUserId());
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
@@ -114,6 +112,7 @@ public class AssignEnquiryFacade {
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
     assignEnquiry(session, consultant);
+    eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {
@@ -449,7 +448,7 @@ public class AssignEnquiryFacade {
     }
 
     var matrixLocalpart = usernameTranscoder.decodeUsername(consultant.getUsername());
-    var displayName = consultant.getFirstName() + " " + consultant.getLastName();
+    var displayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, displayName);
     if (!isBlank(matrixUserId)) {
       consultant.setMatrixUserId(matrixUserId);

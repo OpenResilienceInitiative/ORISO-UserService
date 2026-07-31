@@ -11,7 +11,15 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -28,7 +36,20 @@ public class UpdateAdminServiceIT {
   private final String VALID_ADMIN_ID = "164be67d-4d1b-4d80-bb6b-0ee057a1c59e";
 
   @Autowired private UpdateAdminService updateAdminService;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
   @Autowired private RetrieveAdminService retrieveAdminService;
 
   @Test
