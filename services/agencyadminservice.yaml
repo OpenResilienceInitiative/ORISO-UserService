@@ -4,6 +4,127 @@ info:
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
 paths:
+  /agencyadmin/agencyids/{agencyId}/availability:
+    get:
+      tags:
+        - admin-agency-controller
+      summary: 'Returns the authoritative allocation state of one agency ID: FREE, RESERVED by an open invite, or ASSIGNED to a real agency. [Authorization: Role: agency-admin]'
+      operationId: getAgencyIdAvailability
+      parameters:
+        - name: agencyId
+          in: path
+          description: Agency ID to check
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK - successfull operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgencyIdAvailabilityResponseDTO'
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+  /agencyadmin/agencyids/next-free:
+    get:
+      tags:
+        - admin-agency-controller
+      summary: 'Returns the next free agency ID from the given value in the given direction, skipping assigned and reserved IDs. [Authorization: Role: agency-admin]'
+      operationId: getNextFreeAgencyId
+      parameters:
+        - name: fromId
+          in: query
+          description: The agency ID to start stepping from (exclusive)
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: direction
+          in: query
+          description: Stepping direction
+          required: true
+          schema:
+            type: string
+            enum:
+              - UP
+              - DOWN
+      responses:
+        '200':
+          description: OK - successfull operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgencyIdResponseDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '404':
+          description: NOT FOUND - no free agency ID exists in that direction
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+  /agencyadmin/agencyids/reservations:
+    post:
+      tags:
+        - admin-agency-controller
+      summary: 'Reserves an agency ID for an open invite. Without an agencyId in the body (AUTO mode) the smallest currently free ID is reserved atomically; with one, exactly that ID is reserved or the request fails with a conflict. Reserves agency IDs only; a supplied tenantId is validated against TenantService but never reserved here. [Authorization: Role: agency-admin]'
+      operationId: reserveAgencyId
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgencyIdReservationRequestDTO'
+        required: true
+      responses:
+        '201':
+          description: CREATED - agency ID was reserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgencyIdResponseDTO'
+        '400':
+          description: BAD REQUEST - invalid request or non-existing tenant
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '409':
+          description: CONFLICT - agency ID is already assigned or reserved
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
+  /agencyadmin/agencyids/reservations/{agencyId}:
+    delete:
+      tags:
+        - admin-agency-controller
+      summary: 'Releases an open agency ID reservation (e.g. when an unconsumed invite is revoked or deleted), making the ID assignable again. [Authorization: Role: agency-admin]'
+      operationId: releaseAgencyIdReservation
+      parameters:
+        - name: agencyId
+          in: path
+          description: The reserved agency ID to release
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: NO CONTENT - reservation was released
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '404':
+          description: NOT FOUND - no open reservation for this agency ID
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
   /agencyadmin:
     get:
       tags:
@@ -1769,6 +1890,45 @@ components:
           example: false
         agencyAdminControls:
           $ref: '#/components/schemas/AgencyAdminControls'
+    AgencyIdAvailabilityResponseDTO:
+      type: object
+      required:
+        - agencyId
+        - status
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+          example: 21
+        status:
+          type: string
+          enum:
+            - FREE
+            - RESERVED
+            - ASSIGNED
+          example: FREE
+    AgencyIdResponseDTO:
+      type: object
+      required:
+        - agencyId
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+          example: 21
+    AgencyIdReservationRequestDTO:
+      type: object
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+          description: 'The manually picked agency ID to reserve. Omit for AUTO mode (smallest free ID).'
+          example: 21
+        tenantId:
+          type: integer
+          format: int64
+          description: 'Tenant the pending agency belongs to. Validated only - never reserved here.'
+          example: 1
   securitySchemes:
     Bearer:
       type: apiKey

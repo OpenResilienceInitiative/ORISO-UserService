@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.action;
 
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,12 +16,12 @@ public abstract class DeleteKeycloakUserAction {
 
   protected static final String ERROR_REASON = "Unable to delete keycloak user account";
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
 
   protected void deleteUserWithId(String userId) {
 
     try {
-      identityClient.deleteUser(userId);
+      identityAccountRemover.deleteUser(userId);
     } catch (HttpClientErrorException ex) {
       acceptDeletionIfUserNotFoundInKeycloak(userId, ex);
     }

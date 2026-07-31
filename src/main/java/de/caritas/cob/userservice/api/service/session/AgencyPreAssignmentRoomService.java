@@ -25,6 +25,7 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
+  private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -98,6 +99,7 @@ public class AgencyPreAssignmentRoomService {
       }
 
       inviteUser(roomId, user, agencyToken);
+      joinAgencyConsultants(session, roomId, agencyToken);
 
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
@@ -114,6 +116,26 @@ public class AgencyPreAssignmentRoomService {
           session.getId(),
           ex.getMessage());
     }
+  }
+
+  /**
+   * FE#811 / ADR-002 §1: the agency's counsellors become real room members here, while the room is
+   * still empty, so an enquiry is readable to everyone entitled to pick it up and no one ever joins
+   * after a Megolm session was already handed out.
+   *
+   * <p>A directly addressed enquiry (public counsellor link, appointment booking) is deliberately
+   * excluded — the advice seeker chose one counsellor, and fanning that case out to the whole
+   * department would widen its audience beyond what they consented to.
+   */
+  private void joinAgencyConsultants(Session session, String roomId, String agencyToken) {
+    if (Boolean.TRUE.equals(session.getIsConsultantDirectlySet())) {
+      log.debug(
+          "Session {} is directly assigned to a consultant, skipping department membership.",
+          session.getId());
+      return;
+    }
+
+    agencySilentMembershipService.joinAgencyConsultants(session.getAgencyId(), roomId, agencyToken);
   }
 
   private void inviteUser(String roomId, User user, String agencyToken) {
