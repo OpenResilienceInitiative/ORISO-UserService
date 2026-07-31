@@ -14,8 +14,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import ch.qos.logback.classic.Level;
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -37,7 +37,7 @@ public class DeleteKeycloakConsultantActionTest {
 
   @InjectMocks private DeleteKeycloakConsultantAction deleteKeycloakConsultantAction;
 
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityAccountRemover identityAccountRemover;
 
   private LogbackCaptor consultantActionLogCaptor;
   private LogbackCaptor userActionLogCaptor;
@@ -64,7 +64,7 @@ public class DeleteKeycloakConsultantActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verify(this.keycloakService, times(1)).deleteUser(any());
+    verify(this.identityAccountRemover, times(1)).deleteUser(any());
   }
 
   @Test
@@ -72,7 +72,7 @@ public class DeleteKeycloakConsultantActionTest {
       execute_Should_returnExpectedWorkflowErrorAndLogError_When_consultantDeletionFailes() {
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
-    doThrow(new RuntimeException()).when(this.keycloakService).deleteUser(any());
+    doThrow(new RuntimeException()).when(this.identityAccountRemover).deleteUser(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
@@ -94,7 +94,7 @@ public class DeleteKeycloakConsultantActionTest {
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
     doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
-        .when(this.keycloakService)
+        .when(this.identityAccountRemover)
         .deleteUser(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());

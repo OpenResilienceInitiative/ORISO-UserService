@@ -36,8 +36,14 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -119,7 +125,16 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
-  @MockitoBean(extraInterfaces = IdentityDeactivator.class)
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
   IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;

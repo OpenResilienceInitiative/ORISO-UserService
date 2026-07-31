@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -109,7 +110,6 @@ class CaseHandoverServiceTest {
         .thenReturn(List.of());
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(matrixSynapseService.leaveRoom(anyString(), anyString())).thenReturn(true);
   }
 
   @Test
@@ -136,18 +136,24 @@ class CaseHandoverServiceTest {
     when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
         .thenReturn("requester-token");
     when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
-    when(matrixSynapseService.leaveRoom("!room:matrix", "previous-token")).thenReturn(true);
 
     caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
 
     verify(matrixSynapseService)
         .inviteUserToRoom("!room:matrix", "@requester:matrix", "previous-token");
     verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
-    verify(matrixSynapseService).leaveRoom("!room:matrix", "previous-token");
+    // ADR-002: a takeover re-hides the original counsellor but keeps their membership, so they
+    // can reclaim the case. Removing them here would make the history unrecoverable under Megolm.
+    verify(matrixSynapseService, never()).leaveRoom(anyString(), anyString());
   }
 
+  /**
+   * Reproduced on Pre-Dev 2026-07-30: since #905 the requester is already a member of the enquiry
+   * room, and Synapse rejects the invite with 403 "<user> is already in the room". Before this test
+   * the rejection was turned into a 500 and the handover failed outright.
+   */
   @Test
-  void requestAccess_doesNotActivateRequester_WhenPreviousConsultantCannotLeaveMatrixRoom()
+  void requestAccess_grantsAccess_WhenRequesterIsAlreadyAMemberAndTheInviteIsRejected()
       throws Exception {
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
@@ -156,8 +162,30 @@ class CaseHandoverServiceTest {
         .thenReturn("previous-token");
     when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
         .thenReturn("requester-token");
+    when(matrixSynapseService.inviteUserToRoom(
+            "!room:matrix", "@requester:matrix", "previous-token"))
+        .thenThrow(new MatrixInviteUserException("@requester:matrix is already in the room."));
     when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
-    when(matrixSynapseService.leaveRoom("!room:matrix", "previous-token")).thenReturn(false);
+
+    CaseHandoverStatus status =
+        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals(requester, session.getConsultant());
+    verify(matrixSynapseService).joinRoom("!room:matrix", "requester-token");
+    verify(sessionRepository).save(session);
+  }
+
+  @Test
+  void requestAccess_doesNotActivateRequester_WhenRequesterCannotJoinMatrixRoom() throws Exception {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(false);
 
     assertThrows(
         InternalServerErrorException.class,

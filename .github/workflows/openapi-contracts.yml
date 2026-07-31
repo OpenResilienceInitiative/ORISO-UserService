@@ -37,7 +37,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        ref: ${{ github.event_name == 'pull_request' && '299d4792820747ff8c5b387e421a6e971fb760d3' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && '11d1e2426593ffa0a550a64042ce97ca6e0a80cf' || 'pre-dev' }}
         path: .providers/agency
         persist-credentials: false
 
@@ -53,7 +53,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        ref: ${{ github.event_name == 'pull_request' && 'a213d5546e2cdbcbd1f641291661f11cbbca2cfc' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && 'f7f1d8878e9d52cb0106549a10894ca5944a968e' || 'pre-dev' }}
         path: .providers/tenant
         persist-credentials: false
 

@@ -57,6 +57,7 @@ class AgencyPreAssignmentRoomServiceTest {
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private SessionService sessionService;
+  @Mock private AgencySilentMembershipService agencySilentMembershipService;
 
   @InjectMocks private AgencyPreAssignmentRoomService underTest;
 
@@ -227,6 +228,39 @@ class AgencyPreAssignmentRoomServiceTest {
 
     verify(sessionService, never()).saveSession(any());
     assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName(
+      "FE#811: the agency's consultants join the fresh room, before any message can be sent")
+  void ensureHoldingRoom_joinsAgencyConsultantsAsSilentMembers() throws Exception {
+    stubHappyPathUntilRoomCreation();
+
+    underTest.ensureHoldingRoom(session, user);
+
+    // Membership must be established while the room is still empty: a consultant joined after the
+    // first message holds no Megolm key for it (FE#811 / ADR-002 §1).
+    var inOrder =
+        org.mockito.Mockito.inOrder(
+            sessionRoomGateway, agencySilentMembershipService, sessionService);
+    inOrder.verify(sessionRoomGateway).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
+    inOrder
+        .verify(agencySilentMembershipService)
+        .joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN);
+    inOrder.verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("a directly addressed enquiry is not fanned out to the whole department")
+  void ensureHoldingRoom_skipsDepartment_whenConsultantDirectlySet() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    session.setIsConsultantDirectlySet(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verifyNoInteractions(agencySilentMembershipService);
+    // the room itself is still provisioned for the asker
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
   @Test
