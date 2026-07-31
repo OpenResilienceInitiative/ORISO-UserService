@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
@@ -129,6 +130,7 @@ class UserAdminControllerE2EIT {
       extraInterfaces = {
         IdentityAccountRemover.class,
         IdentityAuthentication.class,
+        IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,

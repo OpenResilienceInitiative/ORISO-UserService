@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -77,6 +78,7 @@ public class KeycloakService
     implements IdentityAccountRemover,
         IdentityAuthentication,
         IdentityClient,
+        IdentityDeactivator,
         IdentityDummyEmailUpdater,
         IdentityEmailOwnerLookup,
         IdentityPasswordUpdater,
@@ -921,6 +923,7 @@ public class KeycloakService
    *
    * @param userId the user id to be deactivated
    */
+  @Override
   public void deactivateUser(String userId) {
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
