@@ -74,6 +74,9 @@ class SessionDataServiceIT {
   @Test
   void saveSessionData_Should_UpdateExistingSessionData_When_CalledTwice() {
     sessionDataService.saveSessionData(SESSION_ID, new SessionDataDTO().age("25").state("8"));
+    assertThat(sessionDataRepository.findBySessionId(SESSION_ID))
+        .extracting(SessionData::getKey, SessionData::getValue)
+        .containsExactlyInAnyOrder(tuple("age", "25"), tuple("state", "8"));
 
     assertThatCode(
             () ->
