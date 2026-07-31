@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -71,6 +72,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
       extraInterfaces = {
         IdentityAccountRemover.class,
         IdentityAuthentication.class,
+        IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,

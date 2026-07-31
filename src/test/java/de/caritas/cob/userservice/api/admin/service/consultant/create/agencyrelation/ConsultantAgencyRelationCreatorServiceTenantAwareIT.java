@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -84,6 +85,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
       extraInterfaces = {
         IdentityAccountRemover.class,
         IdentityAuthentication.class,
+        IdentityDeactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityRoleLookup.class,
