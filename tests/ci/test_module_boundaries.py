@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -396,6 +397,63 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             missing_test_interface,
             "Shared Spring identity mocks must implement the focused dummy-email port:\n"
             + "\n".join(missing_test_interface),
+        )
+
+    def test_shared_spring_identity_mocks_carry_every_keycloak_port(self):
+        """A @MockitoBean on IdentityClient replaces the whole keycloakService bean.
+
+        KeycloakService is the single implementation of every focused identity port, so a
+        mock that omits one of them makes the ApplicationContext unloadable for any test
+        whose graph injects that port — the failure is a BeanNotOfRequiredTypeException on
+        'keycloakService', hundreds of errors away from the file that caused it.
+
+        Splitting IdentityClient into focused ports has broken this three times (#791,
+        #820) because each split touched extraInterfaces by hand. Derive the required set
+        from KeycloakService instead, so adding a port fails here rather than in the suite.
+        """
+        keycloak_service = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        implements_clause = re.search(
+            r"\bclass\s+KeycloakService\b.*?\bimplements\b(.*?)\{",
+            keycloak_service,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            implements_clause, "KeycloakService must declare the identity ports it implements"
+        )
+
+        # IdentityClient is the mocked type itself, so it is never an extra interface.
+        required_ports = sorted(
+            {
+                port.strip()
+                for port in implements_clause.group(1).split(",")
+                if port.strip().startswith("Identity") and port.strip() != "IdentityClient"
+            }
+        )
+        self.assertIn(
+            "IdentityAuthentication",
+            required_ports,
+            "Expected KeycloakService to still implement the focused identity ports",
+        )
+
+        offenders = []
+        for source in sorted((ROOT / "src/test/java").rglob("*.java")):
+            text = source.read_text()
+            if "@MockitoBean" not in text or "IdentityClient identityClient" not in text:
+                continue
+            missing = [port for port in required_ports if f"{port}.class" not in text]
+            if missing:
+                offenders.append(f"{source.relative_to(ROOT)}: missing {', '.join(missing)}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "A @MockitoBean replacing keycloakService must list every port KeycloakService "
+            "implements in extraInterfaces, otherwise the ApplicationContext cannot be "
+            "built:\n" + "\n".join(offenders),
         )
 
     def test_identity_account_removal_consumers_use_a_focused_port(self):
