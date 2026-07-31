@@ -44,10 +44,12 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
@@ -1258,10 +1260,15 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void getById_Should_getUserById() {
+  public void findById_Should_MapUserRepresentation() {
 
     // given
-    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UserRepresentation userRepresentation = new UserRepresentation();
+    userRepresentation.setId("userId");
+    userRepresentation.setUsername("username");
+    userRepresentation.setFirstName("first");
+    userRepresentation.setLastName("last");
+    userRepresentation.setEmail("email@example.org");
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(userResource.toRepresentation()).thenReturn(userRepresentation);
@@ -1269,15 +1276,19 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(userResource);
 
     // when
-    UserRepresentation userId = this.keycloakService.getById("userId");
+    Optional<IdentityProfile> profile = this.keycloakService.findById("userId");
 
     // then
     verify(keycloakClient, times(1)).getUsersResource();
-    assertThat(userId, equalTo(userRepresentation));
+    assertThat(
+        profile,
+        equalTo(
+            Optional.of(
+                new IdentityProfile("userId", "username", "first", "last", "email@example.org"))));
   }
 
   @Test
-  public void getById_Should_ThrowKeycloakExceptionIfUserNotFound() {
+  public void findById_Should_ReturnEmptyIfUserResourceIsAbsent() {
 
     // given
     UsersResource usersResource = mock(UsersResource.class);
@@ -1285,7 +1296,21 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(null);
 
     // when, then
-    assertThrows(KeycloakException.class, () -> this.keycloakService.getById("userId"));
+    assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
+  }
+
+  @Test
+  public void findById_Should_ReturnEmptyIfKeycloakReportsUserNotFound() {
+
+    // given
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("userId")).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenThrow(new NotFoundException());
+
+    // when, then
+    assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
   }
 
   /**

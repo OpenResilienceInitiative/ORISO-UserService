@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -51,6 +52,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
   private final @NonNull UsernameTranscoder usernameTranscoder;
@@ -215,10 +217,14 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
-    var keycloakUser = identityClient.getById(invite.getAcceptedByUserId());
+    var profile =
+        identityProfileLookup
+            .findById(invite.getAcceptedByUserId())
+            .orElseThrow(
+                () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
         identityClient.setUpOtpCredential(
-            keycloakUser.getUsername(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }

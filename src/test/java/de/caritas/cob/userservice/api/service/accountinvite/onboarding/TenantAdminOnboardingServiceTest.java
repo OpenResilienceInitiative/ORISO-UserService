@@ -28,6 +28,8 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -42,7 +44,6 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -62,6 +63,7 @@ class TenantAdminOnboardingServiceTest {
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
 
@@ -76,6 +78,7 @@ class TenantAdminOnboardingServiceTest {
             createAdminService,
             identityClient,
             identityAccountRemover,
+            identityProfileLookup,
             tenantCreationClient,
             operatorDpaContentClient,
             new UsernameTranscoder());
@@ -548,9 +551,10 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret("TOTPSECRET");
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    UserRepresentation keycloakUser = new UserRepresentation();
-    keycloakUser.setUsername("enc.keycloak-username");
-    when(identityClient.getById("kc-user-1")).thenReturn(keycloakUser);
+    when(identityProfileLookup.findById("kc-user-1"))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
     when(identityClient.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
         .thenReturn(true);
 
@@ -567,9 +571,10 @@ class TenantAdminOnboardingServiceTest {
     invite.setAcceptedByUserId("kc-user-1");
     invite.setTotpPendingSecret("TOTPSECRET");
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    UserRepresentation keycloakUser = new UserRepresentation();
-    keycloakUser.setUsername("enc.keycloak-username");
-    when(identityClient.getById("kc-user-1")).thenReturn(keycloakUser);
+    when(identityProfileLookup.findById("kc-user-1"))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
     when(identityClient.setUpOtpCredential(anyString(), anyString(), anyString()))
         .thenReturn(false);
 
