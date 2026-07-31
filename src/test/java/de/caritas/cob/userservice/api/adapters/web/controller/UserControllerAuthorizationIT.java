@@ -178,6 +178,7 @@ class UserControllerAuthorizationIT {
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
+
   @MockitoBean private IdentityManager identityManager;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;

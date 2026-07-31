@@ -297,6 +297,7 @@ class UserControllerIT {
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
+
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;

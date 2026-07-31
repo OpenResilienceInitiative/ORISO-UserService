@@ -51,6 +51,7 @@ public class UpdateAdminServiceIT {
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
+
   @Autowired private RetrieveAdminService retrieveAdminService;
 
   @Test

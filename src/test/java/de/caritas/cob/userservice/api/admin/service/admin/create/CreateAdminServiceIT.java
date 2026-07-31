@@ -71,6 +71,7 @@ class CreateAdminServiceIT {
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
+
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
