@@ -91,9 +91,11 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
+  private IdentityClient identityClient;
 
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
 

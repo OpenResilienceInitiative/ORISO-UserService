@@ -78,9 +78,11 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
+  IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;
 

@@ -283,6 +283,7 @@ class UserControllerIT {
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
@@ -291,9 +292,11 @@ class UserControllerIT {
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
+  private IdentityClient identityClient;
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;

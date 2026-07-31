@@ -57,6 +57,7 @@ class CreateAdminServiceIT {
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
 
   @Autowired private CreateAdminService createAdminService;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
@@ -65,9 +66,11 @@ class CreateAdminServiceIT {
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
+  private IdentityClient identityClient;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();

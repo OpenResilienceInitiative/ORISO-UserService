@@ -44,9 +44,11 @@ public class ConsultantUpdateServiceBase {
         IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
         IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
+  protected IdentityClient identityClient;
 
   @MockitoBean protected AgencyService agencyService;
 
