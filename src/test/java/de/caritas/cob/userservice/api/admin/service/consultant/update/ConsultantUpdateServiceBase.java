@@ -54,7 +54,7 @@ public class ConsultantUpdateServiceBase {
 
   @BeforeEach
   void stubAssignedAgencies() {
-    when(agencyService.getAgencies(anyList()))
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
             invocation ->
                 invocation.<List<Long>>getArgument(0).stream()

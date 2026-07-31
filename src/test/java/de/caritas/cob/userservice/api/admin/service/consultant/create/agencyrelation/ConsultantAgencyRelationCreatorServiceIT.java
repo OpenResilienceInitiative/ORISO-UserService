@@ -91,7 +91,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
 
@@ -129,7 +129,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(true);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(extendedConsultingTypeResponseDTO);
 
@@ -164,7 +164,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(consultingType);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     var consultant = createConsultantWithoutAgencyAndSession();
     when(keycloakService.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
