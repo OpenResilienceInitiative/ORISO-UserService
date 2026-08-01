@@ -21,7 +21,8 @@ public enum UserRole {
   TOPIC_ADMIN("topic-admin"),
   NOTIFICATIONS_TECHNICAL("notifications-technical"),
   RESTRICTED_CONSULTANT_ADMIN("restricted-consultant-admin"),
-  SUPERVISOR_CONSULTANT("supervisor-consultant");
+  SUPERVISOR_CONSULTANT("supervisor-consultant"),
+  GLOBAL_SUPPORT_ADMIN("global-support-admin");
 
   private final String value;
 

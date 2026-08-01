@@ -88,11 +88,25 @@ class KeycloakAuthClientTest {
   void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
     assertTrue(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD));
+  }
+
+  @Test
+  void verifyIgnoringOtp_Should_ReturnFalse_When_MissingTotpAppearsOutsideTheJsonContract() {
+    var exception = mock(HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(exception.getResponseBodyAsString())
+        .thenReturn(
+            "{\"error\":\"invalid_grant\",\"error_description\":\"Account disabled; Missing totp enrollment\"}");
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(exception);
+
+    assertThat(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD), is(false));
   }
 
   @Test
@@ -190,5 +204,39 @@ class KeycloakAuthClientTest {
 
     assertThat(keycloakAuthClient.logoutUser(REFRESH_TOKEN), is(false));
     assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnTrueAndLogout_When_LoginWithOtpSucceeds() {
+    var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setRefreshToken(REFRESH_TOKEN);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(loginResponse));
+    when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
+        .thenReturn(ResponseEntity.noContent().build());
+
+    assertTrue(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_LoginIsRejected() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"), is(false));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_OtpIsMissingOrWrong() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error_description\":\"Missing totp\"}".getBytes(),
+                null));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, ""), is(false));
   }
 }

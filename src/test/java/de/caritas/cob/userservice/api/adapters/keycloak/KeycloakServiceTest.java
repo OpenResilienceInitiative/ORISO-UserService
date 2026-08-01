@@ -1344,7 +1344,8 @@ public class KeycloakServiceTest {
       verifyPasswordIgnoringSecondFactor_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
