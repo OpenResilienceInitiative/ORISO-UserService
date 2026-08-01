@@ -374,8 +374,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. Profile email propagation uses the `MessageClient` port. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing, while the web adapter maps the application model to the existing seven-field snake-case response. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role-set validation performs one full read instead of one provider request per candidate role. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`; the user-data facade no longer imports the broad identity command client or Keycloak representations. | The older broad `IdentityClient` contract still exposes provider transports in other identity operations. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and create-user validation still exposes an older Keycloak response DTO. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
+| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -427,11 +427,10 @@ ordering around lifecycle and persistence changes.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source. The next safe sequence is the remaining identity create-user DTO
-decoupling and further non-authentication identity transport cleanup, then the
-Admin controller composition boundary, then smaller Session orchestration
-boundaries. Each step must add a failing boundary contract before moving
-dependencies.
+source, and identity create-user results are provider-neutral via `CreatedIdentity`. The next safe sequence
+is further non-authentication identity transport cleanup, then the Admin controller
+composition boundary, then smaller Session orchestration boundaries. Each step
+must add a failing boundary contract before moving dependencies.
 
 ## Microservice decision
 

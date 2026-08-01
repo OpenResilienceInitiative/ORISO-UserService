@@ -13,7 +13,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -27,6 +26,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -78,10 +78,9 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() {
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
-        .thenReturn(keycloakResponse);
+    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
     doThrow(new RuntimeException("role assignment failed"))
         .when(identityClient)
         .updateRole(anyString(), any(UserRole.class));
@@ -99,10 +98,9 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing() {
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
-        .thenReturn(keycloakResponse);
+    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
     doThrow(new NotFoundException("HTTP 404 Not Found"))
         .when(identityClient)
         .updateRole(anyString(), any(UserRole.class));

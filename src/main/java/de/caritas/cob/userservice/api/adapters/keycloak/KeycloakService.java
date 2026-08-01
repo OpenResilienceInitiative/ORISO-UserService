@@ -8,7 +8,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -39,6 +38,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -317,10 +317,10 @@ public class KeycloakService
    * Creates a user in Keycloak and returns its Keycloak user ID.
    *
    * @param user {@link UserDTO}
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user) {
-    return createKeycloakUser(user, null, null);
+  public CreatedIdentity createUser(final UserDTO user) {
+    return createUser(user, null, null);
   }
 
   /**
@@ -329,9 +329,9 @@ public class KeycloakService
    * @param user {@link UserDTO}
    * @param firstName first name of user
    * @param lastName last name of user
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(
+  public CreatedIdentity createUser(
       final UserDTO user, final String firstName, final String lastName) {
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
@@ -353,7 +353,7 @@ public class KeycloakService
                   createdUserId),
               exception);
         }
-        return new KeycloakCreateUserResponseDTO(createdUserId);
+        return new CreatedIdentity(createdUserId);
       }
       handleCreateKeycloakUserError(response);
     }
