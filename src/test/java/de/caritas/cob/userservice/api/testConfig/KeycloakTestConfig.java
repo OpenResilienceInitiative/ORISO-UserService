@@ -11,8 +11,9 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -36,8 +37,7 @@ public class KeycloakTestConfig {
       UserHelper userHelper) {
 
     var keycloakAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
 
     return new KeycloakService(
         authenticatedUser,
@@ -70,12 +70,12 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public IdentitySession loginUser(String userName, String password) {
-        return new IdentitySession("", 0, 0, "", "", "", "");
+      public IdentityLogin login(String userName, String password) {
+        return new IdentityLogin("", 0, 0, "");
       }
 
       @Override
-      public boolean logoutUser(String refreshToken) {
+      public boolean logout(String refreshToken) {
         return true;
       }
 
@@ -89,9 +89,6 @@ public class KeycloakTestConfig {
 
         CreatedIdentity keycloakUserDTO = new CreatedIdentity();
         keycloakUserDTO.setUserId("keycloak-user-id " + RandomStringUtils.randomNumeric(5));
-        /*if (shouldGenerateNewUsername(user)) {
-          keycloakUserDTO.setUserId("keycloak-user-id" + RandomStringUtils.randomNumeric(5));
-        }*/
         return keycloakUserDTO;
       }
 
@@ -105,9 +102,8 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public String updateDummyEmail(String userId, UserDTO user) {
+      public String updateDummyEmail(String userId, IdentityDummyEmailUpdate update) {
         var dummyMail = userId + "@dummy.du";
-        user.setEmail(dummyMail);
         return dummyMail;
       }
 
@@ -134,7 +130,7 @@ public class KeycloakTestConfig {
       public void updateEmail(String userId, String emailAddress) {}
 
       @Override
-      public void rollBackUser(String userId) {}
+      public void rollbackUser(String userId) {}
 
       @Override
       public void deleteUser(String userId) {}

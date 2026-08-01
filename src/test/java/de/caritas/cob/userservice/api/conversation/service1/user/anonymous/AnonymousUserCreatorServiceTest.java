@@ -17,9 +17,10 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -32,23 +33,20 @@ class AnonymousUserCreatorServiceTest {
   @InjectMocks private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private CreateUserFacade createUserFacade;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityAuthentication identityAuthentication;
   @Mock private RollbackFacade rollbackFacade;
 
   @Test
   void createAnonymousUserCreatesIdentityAccountAndMatrixUser() {
     var createdIdentity = new CreatedIdentity();
     createdIdentity.setUserId("user-id");
-    var identityLogin = new IdentitySession();
-    identityLogin.setAccessToken("access-token");
-    identityLogin.setExpiresIn(300);
-    identityLogin.setRefreshToken("refresh-token");
-    identityLogin.setRefreshExpiresIn(600);
+    var identityLogin = new IdentityLogin("access-token", 300, 600, "refresh-token");
     var user = new User();
 
     when(identityClient.createUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
-    when(identityClient.loginUser(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
+    when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenReturn(identityLogin);
 
     var credentials = anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT);
@@ -79,7 +77,7 @@ class AnonymousUserCreatorServiceTest {
         .isInstanceOf(InternalServerErrorException.class);
 
     verify(rollbackFacade).rollBackUserAccount(any());
-    verify(identityClient, never()).loginUser(anyString(), anyString());
+    verify(identityAuthentication, never()).login(anyString(), anyString());
   }
 
   @Test
@@ -91,7 +89,7 @@ class AnonymousUserCreatorServiceTest {
     when(identityClient.createUser(USER_DTO_SUCHT)).thenReturn(createdIdentity);
     when(createUserFacade.updateIdentityAndCreateAccount(anyString(), any(), any()))
         .thenReturn(user);
-    when(identityClient.loginUser(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
+    when(identityAuthentication.login(USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getPassword()))
         .thenThrow(new BadRequestException("login failed"));
 
     assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))

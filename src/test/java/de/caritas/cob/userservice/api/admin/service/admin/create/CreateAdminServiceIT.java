@@ -20,7 +20,16 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
@@ -48,7 +57,21 @@ class CreateAdminServiceIT {
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
 
   @Autowired private CreateAdminService createAdminService;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
@@ -82,7 +105,7 @@ class CreateAdminServiceIT {
     verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -118,7 +141,7 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -158,7 +181,7 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -190,7 +213,7 @@ class CreateAdminServiceIT {
     verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify(identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 

@@ -22,7 +22,11 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -57,6 +61,9 @@ import org.springframework.web.client.RestClientException;
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull UserService userService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
@@ -107,7 +114,7 @@ public class CreateUserFacade {
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
       ProvisioningAttempt activeAttempt = provisioningAttempt;
       activeAttempt.register(
-          IDENTITY_USER, identityUserId, () -> identityClient.rollBackUser(identityUserId));
+          IDENTITY_USER, identityUserId, () -> identityAccountRemover.rollbackUser(identityUserId));
       activeAttempt.register(
           DATABASE_USER,
           identityUserId,
@@ -320,7 +327,7 @@ public class CreateUserFacade {
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
     checkIfUserIdNotNull(userId);
     identityClient.updateRole(userId, role);
-    identityClient.updatePassword(userId, userDTO.getPassword());
+    identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 
   private void checkIfUserIdNotNull(String userId) {
@@ -331,7 +338,8 @@ public class CreateUserFacade {
 
   private String returnDummyEmailIfNoneGiven(UserDTO userDTO, String userId) {
     if (isBlank(userDTO.getEmail())) {
-      return identityClient.updateDummyEmail(userId, userDTO);
+      return identityDummyEmailUpdater.updateDummyEmail(
+          userId, new IdentityDummyEmailUpdate(userDTO.getUsername(), userDTO.getTenantId()));
     }
 
     return userDTO.getEmail();

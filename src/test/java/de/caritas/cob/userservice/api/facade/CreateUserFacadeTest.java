@@ -29,7 +29,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -48,6 +47,11 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -78,7 +82,10 @@ import org.springframework.http.ResponseEntity;
 public class CreateUserFacadeTest {
 
   @InjectMocks private CreateUserFacade createUserFacade;
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private UserService userService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
@@ -157,7 +164,7 @@ public class CreateUserFacadeTest {
   public void
       createUserAccountWithInitializedConsultingType_Should_AbortBeforeDependentWrites_When_IdentityProviderReturnsNoUserId() {
     PlainCredentialsHolder.set("plain-user", null);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITHOUT_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITHOUT_USER_ID);
 
     assertThrows(
         IdentityProvisioningException.class,
@@ -174,7 +181,7 @@ public class CreateUserFacadeTest {
       createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_DatabaseUserCreationFails()
           throws Exception {
     PlainCredentialsHolder.set("plain-user", "plain-password");
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
@@ -185,7 +192,7 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     verify(matrixSynapseService, never()).createUser(any(), any(), any());
     verify(createNewSessionFacade, never())
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
@@ -199,8 +206,8 @@ public class CreateUserFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
@@ -218,8 +225,8 @@ public class CreateUserFacadeTest {
     TenantContext.setCurrentTenant(1L);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
@@ -232,16 +239,16 @@ public class CreateUserFacadeTest {
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
-    verify(keycloakService, times(1)).createUser(any(UserDTO.class));
-    verify(keycloakService, times(1)).updateRole(any(), any(UserRole.class));
-    verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
+    verify(identityClient, times(1)).createUser(any(UserDTO.class));
+    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
+    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
     verify(statisticsService, times(1)).fireEvent(any());
     verify(matrixSynapseService, never()).deactivateUser(anyString());
     verify(sessionService, never()).deleteSession(any(Session.class));
     verify(userService, never()).deleteUser(any(User.class));
-    verify(keycloakService, never()).rollBackUser(anyString());
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
   }
 
   @Test
@@ -249,19 +256,19 @@ public class CreateUserFacadeTest {
       updateKeycloakAccountAndCreateDatabaseUserAccount_Should_CallNecessaryMethods_When_EverythingSucceeds() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(keycloakService, times(1)).updateRole(any(), any(UserRole.class));
-    verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
+    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
+    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
   }
 
   @Test
   public void
       updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_PasswordUpdateFails() {
     RuntimeException identityFailure = new RuntimeException("password update failed");
-    doThrow(identityFailure).when(keycloakService).updatePassword(anyString(), anyString());
+    doThrow(identityFailure).when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     RuntimeException propagated =
         assertThrows(
@@ -278,7 +285,7 @@ public class CreateUserFacadeTest {
   public void
       updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_RoleUpdateFails() {
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(keycloakService).updateRole(anyString(), any(UserRole.class));
+    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
 
     RuntimeException propagated =
         assertThrows(
@@ -295,9 +302,9 @@ public class CreateUserFacadeTest {
   void
       createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_RoleUpdateFails() {
     PlainCredentialsHolder.set("plain-user", "plain-password");
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(keycloakService).updateRole(anyString(), any(UserRole.class));
+    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
 
     RuntimeException propagated =
         assertThrows(
@@ -306,7 +313,7 @@ public class CreateUserFacadeTest {
 
     assertThat(propagated, is(identityFailure));
     verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -320,7 +327,7 @@ public class CreateUserFacadeTest {
         () -> {
           when(consultingTypeManager.getConsultingTypeSettings(any()))
               .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-          doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+          doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
           when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
               .thenThrow(new IllegalArgumentException());
 
@@ -345,7 +352,7 @@ public class CreateUserFacadeTest {
   private void givenBasicRegistrationStubs() throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
@@ -410,7 +417,7 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     // userService.createUser/saveUser left unstubbed -> null user, no username to resolve
 
@@ -421,7 +428,7 @@ public class CreateUserFacadeTest {
     verify(matrixSynapseService, never()).createUser(any(), any(), any());
     verify(createNewSessionFacade, never())
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -432,7 +439,7 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any()))
@@ -445,7 +452,7 @@ public class CreateUserFacadeTest {
     verify(createNewSessionFacade, never())
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
     verify(userService).deleteUser(user);
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -456,7 +463,7 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.clear();
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any())).thenReturn(ResponseEntity.ok(null));
@@ -469,7 +476,7 @@ public class CreateUserFacadeTest {
     verify(createNewSessionFacade, never())
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
     verify(userService).deleteUser(user);
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     verify(userService, times(1)).saveUser(any());
   }
 
@@ -479,7 +486,7 @@ public class CreateUserFacadeTest {
           throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new RuntimeException("Matrix room initialization failed"));
@@ -493,7 +500,7 @@ public class CreateUserFacadeTest {
 
     assertThat(exception.getMessage(), is("Matrix room initialization failed"));
     verify(userService).deleteUser(user);
-    verify(keycloakService).rollBackUser(USER_ID);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
   }
 
   @Test
@@ -509,7 +516,7 @@ public class CreateUserFacadeTest {
     matrixResponse.setUserId("@plainuser:matrix.oriso.org");
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(keycloakService.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(user);
     when(userService.saveUser(any(User.class))).thenReturn(user);
     when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
@@ -525,11 +532,11 @@ public class CreateUserFacadeTest {
         () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     var compensationOrder =
-        inOrder(matrixSynapseService, sessionService, userService, keycloakService);
+        inOrder(matrixSynapseService, sessionService, userService, identityAccountRemover);
     compensationOrder.verify(sessionService).deleteSession(partialSession);
     compensationOrder.verify(matrixSynapseService).deactivateUser("@plainuser:matrix.oriso.org");
     compensationOrder.verify(userService).deleteUser(user);
-    compensationOrder.verify(keycloakService).rollBackUser(USER_ID);
+    compensationOrder.verify(identityAccountRemover).rollbackUser(USER_ID);
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -554,7 +561,7 @@ public class CreateUserFacadeTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
-    when(keycloakService.createUser(any())).thenReturn(firstIdentity, replayIdentity);
+    when(identityClient.createUser(any())).thenReturn(firstIdentity, replayIdentity);
     when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
         .thenReturn(firstUser, replayUser);
     when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -582,9 +589,9 @@ public class CreateUserFacadeTest {
     verify(matrixSynapseService, never()).deactivateUser("@replay:matrix.oriso.org");
     verify(userService).deleteUser(firstUser);
     verify(userService, never()).deleteUser(replayUser);
-    verify(keycloakService).rollBackUser("first-id");
-    verify(keycloakService, never()).rollBackUser("replay-id");
-    verify(keycloakService, times(2)).createUser(any(UserDTO.class));
+    verify(identityAccountRemover).rollbackUser("first-id");
+    verify(identityAccountRemover, never()).rollbackUser("replay-id");
+    verify(identityClient, times(2)).createUser(any(UserDTO.class));
     assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
@@ -635,7 +642,7 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_RoleIsAnonymous() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
     User user = new User();
     user.setTermsAndConditionsConfirmation(LocalDateTime.now());
     user.setDataPrivacyConfirmation(LocalDateTime.now());
@@ -655,7 +662,7 @@ public class CreateUserFacadeTest {
   void
       updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
     doThrow(new RuntimeException("kc down"))
-        .when(keycloakService)
+        .when(identityClient)
         .updateRole(anyString(), any(UserRole.class));
 
     assertThrows(
@@ -692,8 +699,15 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_CallUpdateDummyEmail_When_EmailIsBlank() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.updateDummyEmail(anyString(), any(UserDTO.class)))
+    doNothing().when(identityClient).updateRole(anyString(), any(UserRole.class));
+    doNothing()
+        .when(identityPasswordUpdater)
+        .updatePassword(anyString(), org.mockito.ArgumentMatchers.nullable(String.class));
+    when(identityDummyEmailUpdater.updateDummyEmail(
+            anyString(), any(IdentityDummyEmailUpdate.class)))
         .thenReturn("dummy@example.com");
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
+        .thenReturn(new User());
     UserDTO userDtoWithBlankEmail =
         UserDTO.builder()
             .email("")
@@ -704,7 +718,8 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, userDtoWithBlankEmail, UserRole.USER);
 
-    verify(keycloakService, times(1)).updateDummyEmail(eq(USER_ID), any(UserDTO.class));
+    verify(identityDummyEmailUpdater, times(1))
+        .updateDummyEmail(eq(USER_ID), any(IdentityDummyEmailUpdate.class));
   }
 
   @Test

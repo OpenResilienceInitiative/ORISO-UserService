@@ -17,9 +17,9 @@ import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceAp
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
@@ -63,7 +63,7 @@ class AppointmentServiceTest {
   @Mock SecurityHeaderSupplier securityHeaderSupplier;
 
   @Mock TenantHeaderSupplier tenantHeaderSupplier;
-  @Mock IdentityClient identityClient;
+  @Mock IdentityAuthentication identityAuthentication;
 
   @SuppressWarnings("unused")
   @Mock
@@ -75,7 +75,7 @@ class AppointmentServiceTest {
 
   @Mock ConsultantAdminResponseDTO consultantAdminResponseDTO;
 
-  @Mock IdentitySession keycloakLoginResponseDTO;
+  @Mock IdentityLogin identityLogin;
 
   @Mock org.springframework.http.HttpHeaders httpHeaders;
 
@@ -91,7 +91,7 @@ class AppointmentServiceTest {
     appointmentService = spy(createAppointmentService());
     nonSpiedAppointmentService = createAppointmentService();
 
-    when(identityClient.loginUser(any(), any())).thenReturn(keycloakLoginResponseDTO);
+    when(identityAuthentication.login(any(), any())).thenReturn(identityLogin);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");
@@ -108,7 +108,7 @@ class AppointmentServiceTest {
         new StubAppointmentAskerServiceApiControllerFactory(appointmentAskerApi),
         securityHeaderSupplier,
         tenantHeaderSupplier,
-        identityClient,
+        identityAuthentication,
         identityClientConfig);
   }
 

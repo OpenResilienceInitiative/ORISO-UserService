@@ -4,9 +4,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
-import de.caritas.cob.userservice.api.port.out.identity.IdentitySession;
-import de.caritas.cob.userservice.api.port.out.identity.IdentityUserProfile;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -15,10 +12,6 @@ public interface IdentityClient {
   boolean changePassword(final String userId, final String password);
 
   void changeLanguage(final String userId, final String language);
-
-  IdentitySession loginUser(final String userName, final String password);
-
-  boolean logoutUser(final String refreshToken);
 
   void changeEmailAddress(final String emailAddress);
 
@@ -36,13 +29,9 @@ public interface IdentityClient {
 
   Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
-  Map<String, String> findUserByEmail(String email);
-
   CreatedIdentity createUser(final UserDTO user);
 
   CreatedIdentity createUser(final UserDTO user, final String firstName, final String lastName);
-
-  boolean isUsernameAvailable(String username);
 
   void updateUserRole(final String userId);
 
@@ -54,31 +43,11 @@ public interface IdentityClient {
 
   void updateRole(final String userId, final String roleName);
 
-  void updatePassword(final String userId, final String password);
-
-  String updateDummyEmail(final String userId, UserDTO user);
-
-  void updateDummyEmail(String userId);
-
   void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
 
   void updateEmail(String userId, String emailAddress);
 
-  void rollBackUser(String userId);
-
-  void deleteUser(String userId);
-
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);
-
-  List<String> getRealmRoles(String userId);
-
-  void closeSession(String sessionId);
-
-  void deactivateUser(String userId);
-
-  boolean verifyIgnoringOtp(String username, String password);
-
-  IdentityUserProfile getUserProfile(String userId);
 }
