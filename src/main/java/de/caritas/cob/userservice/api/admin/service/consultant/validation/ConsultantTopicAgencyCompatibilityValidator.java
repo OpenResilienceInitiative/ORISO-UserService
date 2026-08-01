@@ -104,9 +104,24 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     if (!uncoveredTopicIds.isEmpty()) {
       throw new BadRequestException(
           String.format(
-              "Consultant topic ids %s are not covered by selected/assigned agencies %s",
-              uncoveredTopicIds, selectedAgencyIds));
+              "Consultant topic ids %s are not covered by selected/assigned agencies %s (coverage: %s)",
+              uncoveredTopicIds, selectedAgencyIds, describeCoverage(agencies)));
     }
+  }
+
+  /**
+   * Renders {@code agencyId=[coveredTopicIds]} pairs so a rejection tells the admin which agency
+   * was actually evaluated and what it covers, instead of only listing the agency ids.
+   */
+  private String describeCoverage(List<AgencyDTO> agencies) {
+    return agencies.stream()
+        .map(
+            agency ->
+                String.format(
+                    "%s=%s",
+                    agency.getId(),
+                    agency.getTopicIds() == null ? List.of() : agency.getTopicIds()))
+        .collect(Collectors.joining(", ", "{", "}"));
   }
 
   private List<Long> assignedAgencyIdsOf(String consultantId) {
@@ -124,6 +139,12 @@ public class ConsultantTopicAgencyCompatibilityValidator {
                     String.format("Consultant with id %s does not exist", consultantId)));
   }
 
+  /**
+   * Reads the agencies uncached on purpose. Topic coverage lives in the AgencyService and is edited
+   * there (add a topic to an existing agency), while the userservice caches agencies in {@code
+   * agencyCache} for three hours with no cross-service invalidation. Serving this validation from
+   * that cache rejects topics the agency already covers until the entry expires.
+   */
   private List<AgencyDTO> agenciesFor(List<Long> selectedAgencyIds) {
     var agencies = agencyService.getAgenciesWithoutCaching(selectedAgencyIds);
     if (agencies == null) {

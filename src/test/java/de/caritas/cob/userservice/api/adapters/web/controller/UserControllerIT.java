@@ -44,12 +44,22 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.manager.consultingtype.registration.mandatoryfields.MandatoryFields;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -273,7 +283,21 @@ class UserControllerIT {
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;
@@ -378,7 +402,7 @@ class UserControllerIT {
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
@@ -389,7 +413,7 @@ class UserControllerIT {
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -401,7 +425,7 @@ class UserControllerIT {
   void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -410,10 +434,40 @@ class UserControllerIT {
   }
 
   @Test
+  void consumeMagicLinkShouldPreservePublicSnakeCaseSessionContract() throws Exception {
+    when(magicLinkLoginService.consumeMagicLink("one-time-token"))
+        .thenReturn(
+            Optional.of(
+                new IdentitySession(
+                    "access-token",
+                    300,
+                    600,
+                    "refresh-token",
+                    "Bearer",
+                    "session-state",
+                    "openid profile")));
+
+    mvc.perform(
+            post("/users/magic-link/consume")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"one-time-token\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.access_token").value("access-token"))
+        .andExpect(jsonPath("$.expires_in").value(300))
+        .andExpect(jsonPath("$.refresh_expires_in").value(600))
+        .andExpect(jsonPath("$.refresh_token").value("refresh-token"))
+        .andExpect(jsonPath("$.token_type").value("Bearer"))
+        .andExpect(jsonPath("$.session_state").value("session-state"))
+        .andExpect(jsonPath("$.scope").value("openid profile"))
+        .andExpect(jsonPath("$.accessToken").doesNotExist())
+        .andExpect(jsonPath("$.refreshToken").doesNotExist());
+  }
+
+  @Test
   void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -426,7 +480,7 @@ class UserControllerIT {
       throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username))
+    when(identityManager.isUsernameAvailable(username))
         .thenThrow(new RuntimeException("Keycloak 401"));
 
     /* when */

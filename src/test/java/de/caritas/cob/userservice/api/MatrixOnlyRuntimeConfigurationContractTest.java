@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test;
 class MatrixOnlyRuntimeConfigurationContractTest {
 
   private static final Path RESOURCES = Path.of("src/main/resources");
+  private static final Path APPLICATION =
+      Path.of("src/main/java/de/caritas/cob/userservice/api/UserServiceApplication.java");
+  private static final Path LOCAL_RUN_EXAMPLE = Path.of("run-local-remote-db.sh.example");
 
   @Test
   void releaseWorkflowMustPublishImmutableMultiPlatformImagesWithEvidence() throws IOException {
@@ -54,6 +57,13 @@ class MatrixOnlyRuntimeConfigurationContractTest {
 
     assertThat(configurationValidator).doesNotContain("rocket", "Rocket");
     assertThat(cacheManager).doesNotContain("rocket", "Rocket");
+    assertThat(Files.readString(LOCAL_RUN_EXAMPLE))
+        .as(LOCAL_RUN_EXAMPLE.toString())
+        .doesNotContain(
+            "ROCKET_CHAT_BASE_URL",
+            "ROCKET_CHAT_MONGO_URL",
+            "ROCKET_TECHNICAL_USERNAME",
+            "ROCKET_TECHNICAL_PASSWORD");
 
     try (var propertyFiles = Files.list(RESOURCES)) {
       for (var propertyFile :
@@ -64,6 +74,34 @@ class MatrixOnlyRuntimeConfigurationContractTest {
             .as(propertyFile.toString())
             .doesNotContain("rocket-chat.", "rocket.technical.", "rocket.systemuser.")
             .doesNotContain("cache.rocketchat.");
+      }
+    }
+  }
+
+  @Test
+  void matrixOnlyRuntimeMustNotShipTheRetiredMongoDbStack() throws IOException {
+    assertThat(Files.readString(Path.of("pom.xml")))
+        .doesNotContain("spring-boot-starter-data-mongodb");
+    assertThat(Files.readString(APPLICATION))
+        .doesNotContain("MongoAutoConfiguration", "DataMongoAutoConfiguration");
+    assertThat(Files.readString(LOCAL_RUN_EXAMPLE))
+        .as(LOCAL_RUN_EXAMPLE.toString())
+        .doesNotContain("SPRING_DATA_MONGODB_URI", "mongodb://");
+
+    try (var propertyFiles = Files.list(RESOURCES)) {
+      for (var propertyFile :
+          propertyFiles
+              .filter(path -> path.getFileName().toString().endsWith(".properties"))
+              .toList()) {
+        assertThat(Files.readString(propertyFile))
+            .as(propertyFile.toString())
+            .doesNotContain(
+                "spring.data.mongodb",
+                "SPRING_DATA_MONGODB_URI",
+                "mongodb://",
+                "MongoAutoConfiguration",
+                "MongoDataAutoConfiguration",
+                "MongoRepositoriesAutoConfiguration");
       }
     }
   }

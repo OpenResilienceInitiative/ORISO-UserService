@@ -867,17 +867,19 @@ public class CaseHandoverService {
           "Failed to create previous consultant Matrix token for case handover");
     }
 
+    // Since #905 the department's counsellors are already members of the room (ADR-002 §1), so
+    // Synapse answers this invite with 403 "<user> is already in the room" — the normal case, not
+    // a failure. The join below is the actual assertion, so let it decide. Mirrors the same
+    // tolerance in AgencySilentMembershipService.joinSilently.
     try {
       matrixSynapseService.inviteUserToRoom(
           roomId, requester.getMatrixUserId(), previousConsultantToken);
     } catch (Exception exception) {
-      log.error(
-          "Failed to invite case handover requester {} to Matrix room {}: {}",
+      log.debug(
+          "Invite of case handover requester {} to Matrix room {} did not succeed: {}",
           requester.getUsername(),
           roomId,
           exception.getMessage());
-      throw new InternalServerErrorException(
-          "Failed to invite case handover requester to Matrix room");
     }
 
     String requesterToken =
@@ -893,16 +895,10 @@ public class CaseHandoverService {
           "Failed to join case handover requester to Matrix room");
     }
 
-    // A completed takeover transfers access; it must not leave the previous
-    // counsellor joined at the transport layer after the application curtain
-    // has hidden the conversation. Removing the old member only after the new
-    // member joined keeps the room reachable if the join itself fails.
-    boolean previousConsultantLeft =
-        matrixSynapseService.leaveRoom(roomId, previousConsultantToken);
-    if (!previousConsultantLeft) {
-      throw new InternalServerErrorException(
-          "Failed to remove previous consultant from Matrix room after case handover");
-    }
+    // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
+    // a takeover re-hide the original counsellor while they stay a member, so they can reclaim the
+    // case when they return — and under Megolm a counsellor removed here could never be given the
+    // history back. Hiding the conversation is the application curtain's job, not Matrix's.
   }
 
   private String resolveConsultantName(Consultant consultant) {

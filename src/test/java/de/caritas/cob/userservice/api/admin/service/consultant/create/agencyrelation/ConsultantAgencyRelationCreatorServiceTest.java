@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -55,6 +56,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock private IdentityClient identityClient;
 
+  @Mock private IdentityRoleLookup identityRoleLookup;
+
   @Mock private ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
 
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -69,7 +72,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().roleSetKey("valid role set").agencyId(2L);
@@ -95,7 +98,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(this.consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
         .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(anyString(), any(), any());
@@ -120,7 +123,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(eq(2L))).thenReturn(agencyDTO);
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -144,7 +147,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(280L)).thenReturn(agency);
+    when(agencyService.getAgency(280L)).thenReturn(agency);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
     when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
@@ -176,7 +179,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
   public void createNewConsultantAgency_Should_throwBadRequest_When_agencyDoesNotExist() {
     when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.of(new Consultant()));
-    when(agencyService.getAgencyWithoutCaching(99L)).thenReturn(null);
+    when(agencyService.getAgency(99L)).thenReturn(null);
 
     assertThrows(
         BadRequestException.class,
@@ -198,8 +201,8 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(newAgency);
-    when(agencyService.getAgencyWithoutCaching(3L)).thenReturn(existingAgency);
+    when(agencyService.getAgency(2L)).thenReturn(newAgency);
+    when(agencyService.getAgency(3L)).thenReturn(existingAgency);
     when(consultingTypeManager.isConsultantBoundedToAgency(2)).thenReturn(true);
 
     assertThrows(
@@ -211,14 +214,32 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Test
   public void createConsultantAgencyRelations_Should_throwBadRequest_When_consultantHasNoRole() {
-    when(identityClient.userHasRole("consultant Id", "consultant")).thenReturn(false);
+    when(identityRoleLookup.findAllByUserId("consultant Id")).thenReturn(List.of("other-role"));
 
     assertThrows(
         BadRequestException.class,
         () ->
             consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-                "consultant Id", Set.of(1L), asSet("consultant"), LogService::logInfo));
+                "consultant Id",
+                Set.of(1L),
+                asSet("consultant", "tenant-admin", "user-admin"),
+                LogService::logInfo));
 
+    verify(identityRoleLookup).findAllByUserId("consultant Id");
+    verify(identityClient, never()).userHasRole(anyString(), anyString());
+    verify(consultantAgencyService, never()).saveConsultantAgency(any());
+  }
+
+  @Test
+  public void
+      createConsultantAgencyRelations_Should_throwBadRequestWithoutIdentityRead_When_rolesAreEmpty() {
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
+                "consultant Id", Set.of(1L), Set.of(), LogService::logInfo));
+
+    verify(identityRoleLookup, never()).findAllByUserId(anyString());
     verify(consultantAgencyService, never()).saveConsultantAgency(any());
   }
 
@@ -229,16 +250,22 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     consultant.setId("consultant Id");
     consultant.setTenantId(1L);
 
-    when(identityClient.userHasRole("consultant Id", "consultant")).thenReturn(true);
+    when(identityRoleLookup.findAllByUserId("consultant Id"))
+        .thenReturn(List.of("other-role", "tenant-admin"));
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(1L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(1L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(1))
         .thenReturn(easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class));
 
     consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-        "consultant Id", Set.of(1L), asSet("consultant"), LogService::logInfo);
+        "consultant Id",
+        Set.of(1L),
+        asSet("consultant", "tenant-admin", "user-admin"),
+        LogService::logInfo);
 
+    verify(identityRoleLookup).findAllByUserId("consultant Id");
+    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 
@@ -253,7 +280,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
 
     var input =
         new CreateConsultantAgencyDTOInputAdapter(
@@ -275,7 +302,7 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
     when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
         .thenReturn(Optional.of(consultant));
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
 

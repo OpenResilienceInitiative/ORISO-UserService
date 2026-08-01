@@ -41,6 +41,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Facade to encapsulate admin functions for consultants. */
 @Service
@@ -185,14 +186,20 @@ public class ConsultantAdminFacade {
    * are left untouched (idempotency). Validation failures (e.g. topic/agency mismatch) are
    * propagated to the caller instead of being swallowed, so the admin UI can surface them.
    *
+   * <p>Runs in a single transaction. A rejected deletion (e.g. the consultant is the last one of a
+   * still-active agency) aborts the whole call, so the consultant can never be left with a partly
+   * applied agency set — earlier deletions rolled back, later creations never reached. A consultant
+   * stuck in such a half-applied state fails the subsequent topic update, because the topics are
+   * then validated against agencies that are no longer the ones the admin selected.
+   *
    * @param consultantId the consultant to update
    * @param agencyList the desired complete set of agency relations
    */
+  @Transactional
   public void setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
     var persistedAgencyIds =
-        consultantAgencyAdminService.findConsultantAgencies(consultantId).getEmbedded().stream()
-            .map(agencyAdminResponse -> agencyAdminResponse.getEmbedded().getId())
+        consultantAgencyAdminService.findConsultantAgencyIds(consultantId).stream()
             .collect(Collectors.toSet());
     var desiredAgencyIds =
         agencyList.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());

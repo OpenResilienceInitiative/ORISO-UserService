@@ -210,6 +210,8 @@ class ConsultantRepositoryIT {
   @Test
   void findAllByInfixShouldFindConsultantWithMatchingInfixes() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
     var firstNameMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsMatchingFirstName(firstNameMatching, infix);
     var lastNameMatching = easyRandom.nextInt(20) + 5;
@@ -222,26 +224,35 @@ class ConsultantRepositoryIT {
     var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching;
-    assertEquals(allMatching, consultantPage.getTotalElements());
+    assertEquals(preExisting + allMatching, consultantPage.getTotalElements());
     assertEquals(allMatching, matchingIds.size());
-    consultantPage.forEach(consultant -> assertTrue(matchingIds.contains(consultant.getId())));
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.containsAll(matchingIds));
   }
 
   @Test
   void findAllByInfixShouldReturnEmptyResultIfNoneMatching() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
     var notMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsNotMatching(notMatching, infix);
 
     var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
-    assertEquals(0, consultantPage.getTotalElements());
+    assertEquals(preExisting, consultantPage.getTotalElements());
     assertEquals(0, matchingIds.size());
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    nonMatchingIds.forEach(id -> assertFalse(foundIds.contains(id)));
   }
 
   @Test
   void findAllByInfixShouldNotReturnConsultantsMarkedForDeletion() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
     var consultant = givenConsultantMatchingEmail(infix);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     consultant.setDeleteDate(LocalDateTime.now());
@@ -250,23 +261,36 @@ class ConsultantRepositoryIT {
 
     var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
-    assertEquals(0, consultantPage.getTotalElements());
+    assertEquals(preExisting, consultantPage.getTotalElements());
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertFalse(foundIds.contains(consultant.getId()));
   }
 
   @Test
   void findAllByInfixShouldBePagedIfPageSizeGiven() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExistingIds =
+        underTest.findAllByInfix(infix, null, Pageable.unpaged()).stream()
+            .map(Consultant.ConsultantBase::getId)
+            .collect(Collectors.toSet());
     var pageSize = easyRandom.nextInt(100) + 1;
     givenConsultantsMatchingEmail(pageSize + 1, infix);
 
     var pageRequest = PageRequest.of(0, pageSize);
     var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
+    int totalMatching = preExistingIds.size() + pageSize + 1;
     assertEquals(pageSize, consultantPage.getNumberOfElements());
-    assertEquals(2, consultantPage.getTotalPages());
-    assertEquals(pageSize + 1, consultantPage.getTotalElements());
+    assertEquals((totalMatching + pageSize - 1) / pageSize, consultantPage.getTotalPages());
+    assertEquals(totalMatching, consultantPage.getTotalElements());
     assertEquals(pageSize + 1, matchingIds.size());
-    consultantPage.forEach(consultant -> assertTrue(matchingIds.contains(consultant.getId())));
+    consultantPage.forEach(
+        consultant ->
+            assertTrue(
+                matchingIds.contains(consultant.getId())
+                    || preExistingIds.contains(consultant.getId())));
   }
 
   @Test
@@ -286,6 +310,11 @@ class ConsultantRepositoryIT {
   void findAllByInfixAndAgencyIdShouldNotReturnConsultantsMarkedForDeletion() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
     var agencyId = givenANewAgencyId();
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting =
+        underTest
+            .findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged())
+            .getTotalElements();
     var consultant = givenConsultantMatchingEmail(infix);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     consultant.setDeleteDate(LocalDateTime.now());
@@ -296,27 +325,38 @@ class ConsultantRepositoryIT {
     var consultantPage =
         underTest.findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged());
 
-    assertEquals(0, consultantPage.getTotalElements());
+    assertEquals(preExisting, consultantPage.getTotalElements());
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertFalse(foundIds.contains(consultant.getId()));
   }
 
   @Test
   void
       findAllByInfixAndAgencyId_ShouldFindOnlyMatchingConsultants_IfAgencyListIsMatchesConsultantAgencies() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
+    var agencyIds = Lists.newArrayList(1L, 2L, 5L, 7L);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExistingIds =
+        underTest.findAllByInfixAndAgencyIds(infix, agencyIds, null, Pageable.unpaged()).stream()
+            .map(Consultant.ConsultantBase::getId)
+            .collect(Collectors.toSet());
     var pageSize = easyRandom.nextInt(100) + 1;
-    givenConsultantsMatchingEmailAndAgencyId(
-        pageSize + 1, Lists.newArrayList(1L, 2L, 5L, 7L), infix);
+    givenConsultantsMatchingEmailAndAgencyId(pageSize + 1, agencyIds, infix);
 
     var pageRequest = PageRequest.of(0, pageSize);
-    var consultantPage =
-        underTest.findAllByInfixAndAgencyIds(
-            infix, Lists.newArrayList(1L, 2L, 5L, 7L), null, pageRequest);
+    var consultantPage = underTest.findAllByInfixAndAgencyIds(infix, agencyIds, null, pageRequest);
 
+    int totalMatching = preExistingIds.size() + pageSize + 1;
     assertEquals(pageSize, consultantPage.getNumberOfElements());
-    assertEquals(2, consultantPage.getTotalPages());
-    assertEquals(pageSize + 1, consultantPage.getTotalElements());
+    assertEquals((totalMatching + pageSize - 1) / pageSize, consultantPage.getTotalPages());
+    assertEquals(totalMatching, consultantPage.getTotalElements());
     assertEquals(pageSize + 1, matchingIds.size());
-    consultantPage.forEach(consultant -> assertTrue(matchingIds.contains(consultant.getId())));
+    consultantPage.forEach(
+        consultant ->
+            assertTrue(
+                matchingIds.contains(consultant.getId())
+                    || preExistingIds.contains(consultant.getId())));
   }
 
   @Test
@@ -360,6 +400,11 @@ class ConsultantRepositoryIT {
   @Test
   void findAllByInfixShouldBeSortedByLastNameDescIfSortGiven() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExistingIds =
+        underTest.findAllByInfix(infix, null, Pageable.unpaged()).stream()
+            .map(Consultant.ConsultantBase::getId)
+            .collect(Collectors.toSet());
     var pageSize = easyRandom.nextInt(100) + 1;
     givenConsultantsMatchingEmail(pageSize, infix);
 
@@ -367,12 +412,14 @@ class ConsultantRepositoryIT {
     var pageRequest = PageRequest.of(0, pageSize, sort);
     var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
-    assertEquals(pageSize, consultantPage.getTotalElements());
+    assertEquals(preExistingIds.size() + pageSize, consultantPage.getTotalElements());
     assertEquals(pageSize, matchingIds.size());
     var foundConsultants = consultantPage.getContent();
     var previousLastName = foundConsultants.get(0).getLastName();
     for (var foundConsultant : foundConsultants) {
-      assertTrue(matchingIds.contains(foundConsultant.getId()));
+      assertTrue(
+          matchingIds.contains(foundConsultant.getId())
+              || preExistingIds.contains(foundConsultant.getId()));
       assertTrue(previousLastName.compareTo(foundConsultant.getLastName()) >= 0);
       previousLastName = foundConsultant.getLastName();
     }
@@ -381,6 +428,11 @@ class ConsultantRepositoryIT {
   @Test
   void findAllByInfixShouldBeSortedByFirstNameAscIfSortGiven() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExistingIds =
+        underTest.findAllByInfix(infix, null, Pageable.unpaged()).stream()
+            .map(Consultant.ConsultantBase::getId)
+            .collect(Collectors.toSet());
     var pageSize = easyRandom.nextInt(100) + 1;
     givenConsultantsMatchingEmail(pageSize, infix);
 
@@ -388,12 +440,14 @@ class ConsultantRepositoryIT {
     var pageRequest = PageRequest.of(0, pageSize, sort);
     var consultantPage = underTest.findAllByInfix(infix, null, pageRequest);
 
-    assertEquals(pageSize, consultantPage.getTotalElements());
+    assertEquals(preExistingIds.size() + pageSize, consultantPage.getTotalElements());
     assertEquals(pageSize, matchingIds.size());
     var foundConsultants = consultantPage.getContent();
     var previousFirstName = foundConsultants.get(0).getFirstName();
     for (var foundConsultant : foundConsultants) {
-      assertTrue(matchingIds.contains(foundConsultant.getId()));
+      assertTrue(
+          matchingIds.contains(foundConsultant.getId())
+              || preExistingIds.contains(foundConsultant.getId()));
       assertTrue(previousFirstName.compareTo(foundConsultant.getFirstName()) <= 0);
       previousFirstName = foundConsultant.getFirstName();
     }
@@ -403,6 +457,8 @@ class ConsultantRepositoryIT {
   void findAllByInfixShouldSearchCaseInsensitive() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
     var transformedInfix = easyRandom.nextBoolean() ? infix.toLowerCase() : infix.toUpperCase();
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
     var firstNameMatching = easyRandom.nextInt(20) + 5;
     givenConsultantsMatchingFirstName(firstNameMatching, transformedInfix);
     var lastNameMatching = easyRandom.nextInt(20) + 5;
@@ -415,9 +471,11 @@ class ConsultantRepositoryIT {
     var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
 
     int allMatching = firstNameMatching + lastNameMatching + emailMatching;
-    assertEquals(allMatching, consultantPage.getTotalElements());
+    assertEquals(preExisting + allMatching, consultantPage.getTotalElements());
     assertEquals(allMatching, matchingIds.size());
-    consultantPage.forEach(consultant -> assertTrue(matchingIds.contains(consultant.getId())));
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.containsAll(matchingIds));
   }
 
   @Test

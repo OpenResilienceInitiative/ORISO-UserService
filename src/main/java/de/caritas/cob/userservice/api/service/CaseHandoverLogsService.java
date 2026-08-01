@@ -10,6 +10,8 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NonNull;
@@ -25,6 +27,7 @@ public class CaseHandoverLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public CaseHandoverLogsResult listCaseHandoverLogs(int page, int perPage) {
@@ -32,19 +35,37 @@ public class CaseHandoverLogsService {
     int safePage = Math.max(page, 1);
     int offset = (safePage - 1) * safePerPage;
     Long tenantId = resolveEffectiveTenantId();
+    Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+
+    // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
+    // never the whole tenant, and never an `IN ()` that the database would reject.
+    if (agencyIds.isPresent() && agencyIds.get().isEmpty()) {
+      return CaseHandoverLogsResult.builder()
+          .data(List.of())
+          .total(0L)
+          .page(safePage)
+          .perPage(safePerPage)
+          .build();
+    }
+
+    // Empty for tenant-wide admins, an agency filter for Beratungsstellen-Admins. Appended rather
+    // than parameterised because a NULL collection cannot be expanded into an `IN` list.
+    String agencyFilter = agencyIds.isPresent() ? "\nAND s.agency_id IN (:agencyIds)" : "";
 
     MapSqlParameterSource params =
         new MapSqlParameterSource()
             .addValue("tenantId", tenantId)
             .addValue("limit", safePerPage)
             .addValue("offset", offset);
+    agencyIds.ifPresent(ids -> params.addValue("agencyIds", ids));
 
     Long total =
         namedParameterJdbcTemplate.queryForObject(
             "SELECT COUNT(*)\n"
                 + "FROM case_handover_request chr\n"
                 + "JOIN session s ON s.id = chr.session_id\n"
-                + "WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))",
+                + "WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter,
             params,
             Long.class);
 
@@ -72,8 +93,9 @@ public class CaseHandoverLogsService {
                 + "JOIN session s ON s.id = chr.session_id\n"
                 + "JOIN consultant req ON req.consultant_id = chr.requester_consultant_id\n"
                 + "LEFT JOIN consultant prev ON prev.consultant_id = chr.previous_consultant_id\n"
-                + "WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
-                + "ORDER BY chr.created_at DESC\n"
+                + "WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter
+                + "\nORDER BY chr.created_at DESC\n"
                 + "LIMIT :limit OFFSET :offset",
             params,
             new CaseHandoverLogEntryRowMapper());

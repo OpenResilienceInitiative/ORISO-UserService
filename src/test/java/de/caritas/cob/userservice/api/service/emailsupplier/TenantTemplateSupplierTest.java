@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.emailsupplier;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -40,6 +41,7 @@ class TenantTemplateSupplierTest {
   @AfterEach
   void tearDown() {
     ReflectionTestUtils.setField(tenantTemplateSupplier, "multitenancyWithSingleDomain", false);
+    TenantContext.clear();
   }
 
   @Test
@@ -132,6 +134,20 @@ class TenantTemplateSupplierTest {
     verify(tenantService).getRestrictedTenantData(tenantData.getTenantId());
 
     TenantContext.clear();
+  }
+
+  @Test
+  void getTemplateAttributes_ShouldProvideApplicationUrl_WhenContextIsTechnical() {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    List<TemplateDataDTO> templateAttributes = tenantTemplateSupplier.getTemplateAttributes();
+
+    assertThat(templateAttributes.size(), is(1));
+    assertThat(templateAttributes.getFirst().getKey(), is("url"));
+    assertThat(templateAttributes.getFirst().getValue(), is("https://onlineberatung.net"));
+    verifyNoInteractions(tenantService, applicationSettingsService);
   }
 
   private void assertTemplateAttributesAreCorrectWithUrl(

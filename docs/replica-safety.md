@@ -22,7 +22,7 @@ does not fall back to heap state.
 | Matrix room lookup maps | Process heap with DB fallback | Performance | Rebuildable cache |
 | Active-view map | Process heap | Notification suppression hint | Best-effort only; scale-out review required |
 | Matrix impersonation tokens | Process heap | Performance | Expiring cache; re-login on miss |
-| Ehcache agency/tenant/settings data | Process heap | Performance/read freshness | TTL-bounded; invalidation bound not yet proven |
+| Caffeine agency/tenant/settings data | Process heap | Performance/read freshness | TTL-bounded; invalidation bound not yet proven |
 | Scheduled workflows | Each process | External/database side effects | Single-replica blocker unless individually idempotent |
 
 ## Redis token guarantees

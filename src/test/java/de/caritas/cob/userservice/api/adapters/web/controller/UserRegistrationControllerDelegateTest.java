@@ -11,12 +11,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
@@ -35,8 +35,9 @@ import de.caritas.cob.userservice.api.model.EnquiryData;
 import de.caritas.cob.userservice.api.model.NewSessionValidationConstraint;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.identity.IdentitySession;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
@@ -69,7 +70,7 @@ class UserRegistrationControllerDelegateTest {
   @Mock private Messaging messenger;
   @Mock private ConsultantDtoMapper consultantDtoMapper;
   @Mock private UserHelper userHelper;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityManaging identityManager;
   @Mock private MagicLinkLoginService magicLinkLoginService;
   @Mock private PasswordResetService passwordResetService;
   @Mock private SessionDeleteService sessionDeleteService;
@@ -78,7 +79,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void userExistsShouldReturnOkWhenUsernameExists() {
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(false);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(false);
 
     var response = delegate.userExists(USERNAME);
 
@@ -87,7 +88,7 @@ class UserRegistrationControllerDelegateTest {
 
   @Test
   void usernameAvailabilityShouldReturnConflictWhenUsernameIsTaken() {
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(false);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(false);
 
     var response = delegate.usernameAvailability(USERNAME);
 
@@ -110,13 +111,15 @@ class UserRegistrationControllerDelegateTest {
   void consumeMagicLinkShouldReturnOkWhenTokenIsValid() {
     var consume = new MagicLinkConsumeDTO();
     consume.setToken("token");
-    var loginResponse = new KeycloakLoginResponseDTO();
-    when(magicLinkLoginService.consumeMagicLink("token")).thenReturn(Optional.of(loginResponse));
+    var identitySession =
+        new IdentitySession(
+            "access-token", 300, 600, "refresh-token", "Bearer", "session-state", "openid profile");
+    when(magicLinkLoginService.consumeMagicLink("token")).thenReturn(Optional.of(identitySession));
 
     var response = delegate.consumeMagicLink(consume);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(loginResponse);
+    assertThat(response.getBody()).isEqualTo(MagicLinkSessionResponseDTO.from(identitySession));
   }
 
   @Test
@@ -259,7 +262,7 @@ class UserRegistrationControllerDelegateTest {
   @Test
   void userExists_usernameAvailable_returnsNotFound() {
     // Available usernames indicate the account does not exist yet.
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(true);
 
     var response = delegate.userExists(USERNAME);
 
@@ -269,7 +272,7 @@ class UserRegistrationControllerDelegateTest {
   @Test
   void usernameAvailability_available_returnsNoContent() {
     // Available usernames confirm the handle can be registered.
-    when(identityClient.isUsernameAvailable(USERNAME)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(USERNAME)).thenReturn(true);
 
     var response = delegate.usernameAvailability(USERNAME);
 

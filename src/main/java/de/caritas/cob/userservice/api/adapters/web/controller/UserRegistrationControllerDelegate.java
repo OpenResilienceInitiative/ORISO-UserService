@@ -3,11 +3,11 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static de.caritas.cob.userservice.api.model.NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetConfirmDTO;
@@ -21,8 +21,8 @@ import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.EnquiryData;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
@@ -54,7 +54,7 @@ class UserRegistrationControllerDelegate {
   private final @NonNull Messaging messenger;
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserHelper userHelper;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityManaging identityManager;
   private final @NonNull MagicLinkLoginService magicLinkLoginService;
   private final @NonNull PasswordResetService passwordResetService;
   private final @NonNull SessionDeleteService sessionDeleteService;
@@ -63,7 +63,7 @@ class UserRegistrationControllerDelegate {
   private boolean featureTopicsEnabled;
 
   ResponseEntity<Void> userExists(String username) {
-    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    val usernameAvailable = identityManager.isUsernameAvailable(username);
     val userExists = !usernameAvailable;
     if (userExists) {
       return ResponseEntity.ok().build();
@@ -72,7 +72,7 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<Void> usernameAvailability(String username) {
-    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    val usernameAvailable = identityManager.isUsernameAvailable(username);
     return usernameAvailable
         ? ResponseEntity.noContent().build()
         : ResponseEntity.status(HttpStatus.CONFLICT).build();
@@ -86,9 +86,10 @@ class UserRegistrationControllerDelegate {
     return ResponseEntity.noContent().build();
   }
 
-  ResponseEntity<KeycloakLoginResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
+  ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
     return magicLinkLoginService
         .consumeMagicLink(consumeDTO.getToken())
+        .map(MagicLinkSessionResponseDTO::from)
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.badRequest().build());
   }

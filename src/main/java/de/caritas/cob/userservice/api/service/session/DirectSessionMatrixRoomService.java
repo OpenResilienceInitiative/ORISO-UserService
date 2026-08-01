@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.session;
 
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -25,6 +26,7 @@ public class DirectSessionMatrixRoomService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionService sessionService;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
@@ -154,7 +156,7 @@ public class DirectSessionMatrixRoomService {
           sessionRoomGateway.createUser(
               consultant.getUsername(),
               generatedMatrixPassword,
-              consultant.getFirstName() + " " + consultant.getLastName());
+              consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
       if (matrixUserId != null) {
         consultant.setMatrixUserId(matrixUserId);
         consultantRepository.save(consultant);

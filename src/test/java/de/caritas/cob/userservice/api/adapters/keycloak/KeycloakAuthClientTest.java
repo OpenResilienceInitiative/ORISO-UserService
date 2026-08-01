@@ -7,9 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -24,14 +24,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.admin.client.resource.RealmResource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -50,8 +52,6 @@ class KeycloakAuthClientTest {
   @Mock private RestTemplate restTemplate;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClientConfig identityClientConfig;
-  @Mock private KeycloakClient keycloakClient;
-
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -86,8 +86,6 @@ class KeycloakAuthClientTest {
 
   @Test
   void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
-    // The vendored otp-config SPI (ADR-013) answers with this exact JSON error
-    // contract when the password was accepted but the second factor is absent.
     var exception = mock(HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     when(exception.getResponseBodyAsString())
@@ -100,8 +98,6 @@ class KeycloakAuthClientTest {
 
   @Test
   void verifyIgnoringOtp_Should_ReturnFalse_When_MissingTotpAppearsOutsideTheJsonContract() {
-    // A body merely CONTAINING the phrase (e.g. inside another message) must not
-    // count as password-verified — only the SPI's exact error_description does.
     var exception = mock(HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     when(exception.getResponseBodyAsString())
@@ -111,6 +107,26 @@ class KeycloakAuthClientTest {
         .thenThrow(exception);
 
     assertThat(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD), is(false));
+  }
+
+  @Test
+  void verifyIgnoringOtp_ShouldDecodeEncodedUsernameBeforeKeycloakLogin() {
+    var loginResponse = mock(KeycloakLoginResponseDTO.class);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(new ResponseEntity<>(loginResponse, HttpStatus.OK));
+    var encodedUsername =
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .encodeUsername("blinky.fish@oriso.org");
+
+    assertTrue(keycloakAuthClient.verifyIgnoringOtp(encodedUsername, PASSWORD));
+
+    @SuppressWarnings("rawtypes")
+    var requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate, atLeastOnce())
+        .postForEntity(anyString(), requestCaptor.capture(), eq(KeycloakLoginResponseDTO.class));
+    @SuppressWarnings("unchecked")
+    var body = (MultiValueMap<String, String>) requestCaptor.getValue().getBody();
+    assertThat(body.getFirst("username"), is("blinky.fish@oriso.org"));
   }
 
   @Test
@@ -188,16 +204,6 @@ class KeycloakAuthClientTest {
 
     assertThat(keycloakAuthClient.logoutUser(REFRESH_TOKEN), is(false));
     assertTrue(logCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
-  }
-
-  @Test
-  void closeSession_Should_DeleteSession() {
-    var realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
-
-    keycloakAuthClient.closeSession("sessionId");
-
-    verify(realmResource, times(1)).deleteSession(eq("sessionId"), eq(false));
   }
 
   @Test

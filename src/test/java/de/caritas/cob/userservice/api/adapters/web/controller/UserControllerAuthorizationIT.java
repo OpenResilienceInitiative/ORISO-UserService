@@ -73,7 +73,16 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -155,7 +164,21 @@ class UserControllerAuthorizationIT {
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
   @MockitoBean private ConsultantImportService consultantImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
-  @MockitoBean private IdentityClient identityClient;
+
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
   @MockitoBean private IdentityManager identityManager;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private DecryptionService encryptionService;
@@ -210,30 +233,30 @@ class UserControllerAuthorizationIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isUnauthorized());
 
-    verifyNoInteractions(identityClient);
+    verifyNoInteractions(identityManager);
   }
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
   void userExists_Should_ReturnNotFound_WhenTechnicalUserIsAuthorized() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNotFound());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test
   void usernameAvailability_Should_StayPublic_WhenNoKeycloakAuthorization() throws Exception {
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(true);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(true);
 
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isNoContent());
 
-    verify(identityClient).isUsernameAvailable(username);
+    verify(identityManager).isUsernameAvailable(username);
   }
 
   @Test
@@ -2730,7 +2753,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_forbidden_and_call_no_methods_when_no_user_or_consultant_authority()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
+            get("/users/sessions/room?roomIds%5B%5D=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
@@ -2744,7 +2767,7 @@ class UserControllerAuthorizationIT {
       getSessionsForGroupOrGroupIds_should_return_unauthorized_and_call_no_methods_when_no_keycloak_authorization()
           throws Exception {
     mvc.perform(
-            get("/users/sessions/room?matrixRoomIds=!room:matrix.example")
+            get("/users/sessions/room?roomIds%5B%5D=!room:matrix.example")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .accept(MediaType.APPLICATION_JSON))
