@@ -21,6 +21,8 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
@@ -116,6 +118,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
 
   // Room-provisioning collaborators of the REAL AgencyPreAssignmentRoomService.
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
+  @Mock private ConsultantRepository consultantRepository;
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
 
   private Session session;
   private User user;
@@ -129,7 +133,11 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var realRoomService =
         new AgencyPreAssignmentRoomService(
-            matrixCredentialClient, matrixSynapseService, sessionService);
+            matrixCredentialClient,
+            matrixSynapseService,
+            sessionService,
+            consultantRepository,
+            consultantTopicRepository);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();

@@ -14,10 +14,14 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -56,11 +60,15 @@ class AgencyPreAssignmentRoomServiceTest {
   private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
   private static final String AGENCY_TOKEN = "agency-access-token";
   private static final String USER_TOKEN = "user-access-token";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:oriso.org";
+  private static final String CONSULTANT_TOKEN = "consultant-access-token";
   private static final String NEW_ROOM_ID = "!newRoom:oriso.org";
 
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionService sessionService;
+  @Mock private ConsultantRepository consultantRepository;
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
 
   @InjectMocks private AgencyPreAssignmentRoomService underTest;
 
@@ -76,7 +84,40 @@ class AgencyPreAssignmentRoomServiceTest {
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
+    session.setMainTopicId(23L);
     session.setMatrixRoomId(null);
+  }
+
+  @Test
+  @DisplayName("ensureHoldingRoom joins eligible department consultants before the asker can send")
+  void ensureHoldingRoom_joinsEligibleDepartmentConsultantsBeforePersisting() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    Consultant eligibleConsultant = new Consultant();
+    eligibleConsultant.setId("consultant-1");
+    eligibleConsultant.setUsername("consultant");
+    eligibleConsultant.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(List.of(eligibleConsultant));
+    when(consultantTopicRepository.findConsultantIdsByTopicId(23L))
+        .thenReturn(List.of(eligibleConsultant.getId()));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenReturn(CONSULTANT_TOKEN);
+    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, CONSULTANT_TOKEN)).thenReturn(true);
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(matrixSynapseService.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    var ordered = org.mockito.Mockito.inOrder(matrixSynapseService, sessionService);
+    ordered
+        .verify(matrixSynapseService)
+        .inviteUserToRoom(NEW_ROOM_ID, CONSULTANT_MATRIX_ID, AGENCY_TOKEN);
+    ordered.verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, CONSULTANT_TOKEN);
+    ordered
+        .verify(matrixSynapseService)
+        .inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    ordered.verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    ordered.verify(sessionService).saveSession(session);
   }
 
   private AgencyMatrixCredentialsDTO validCredentials() {

@@ -7,12 +7,19 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +34,8 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -103,6 +112,7 @@ public class AgencyPreAssignmentRoomService {
 
       String roomId = response.getBody().getRoomId();
 
+      inviteEligibleDepartmentConsultants(roomId, session, agencyToken);
       inviteUser(roomId, user, agencyToken);
 
       session.setMatrixRoomId(roomId);
@@ -118,6 +128,54 @@ public class AgencyPreAssignmentRoomService {
       log.error(
           "Could not create agency holding room for session {}: {}",
           session.getId(),
+          ex.getMessage());
+    }
+  }
+
+  /**
+   * ADR-002: department consultants are silent Matrix members from room creation. Joining them
+   * before the asker joins guarantees that the first encrypted event includes their devices in the
+   * Megolm audience; accepting or revealing the case later must never be a late-membership event.
+   */
+  private void inviteEligibleDepartmentConsultants(
+      String roomId, Session session, String agencyToken) {
+    List<Consultant> agencyConsultants =
+        consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(
+            session.getAgencyId());
+    Set<String> topicConsultantIds = resolveTopicConsultantIds(session);
+
+    agencyConsultants.stream()
+        .filter(consultant -> consultant != null && !isBlank(consultant.getMatrixUserId()))
+        .filter(
+            consultant ->
+                topicConsultantIds.isEmpty() || topicConsultantIds.contains(consultant.getId()))
+        .forEach(consultant -> inviteConsultant(roomId, consultant, agencyToken));
+  }
+
+  private Set<String> resolveTopicConsultantIds(Session session) {
+    if (session.getMainTopicId() == null) {
+      return Collections.emptySet();
+    }
+    return consultantTopicRepository.findConsultantIdsByTopicId(session.getMainTopicId()).stream()
+        .collect(Collectors.toSet());
+  }
+
+  private void inviteConsultant(String roomId, Consultant consultant, String agencyToken) {
+    try {
+      matrixSynapseService.inviteUserToRoom(roomId, consultant.getMatrixUserId(), agencyToken);
+      String consultantToken =
+          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      if (isBlank(consultantToken) || !matrixSynapseService.joinRoom(roomId, consultantToken)) {
+        log.warn(
+            "Eligible consultant {} could not join holding room {} before first message",
+            consultant.getUsername(),
+            roomId);
+      }
+    } catch (MatrixInviteUserException ex) {
+      log.error(
+          "Failed to add eligible consultant {} to holding room {}: {}",
+          consultant.getUsername(),
+          roomId,
           ex.getMessage());
     }
   }
