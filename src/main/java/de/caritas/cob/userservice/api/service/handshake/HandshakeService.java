@@ -155,16 +155,21 @@ public class HandshakeService {
   }
 
   /**
-   * Confirmation by the addressed consultant. The transition is a conditional update: only the
-   * caller that actually changed the row may create the support session and its outbox job, which
-   * is what keeps two simultaneous confirmations from producing two sessions.
+   * Confirmation by the addressed consultant. The credentials are verified in full, second factor
+   * included: Keycloak answers a missing OTP and a wrong password with the same {@code
+   * invalid_grant / Invalid user credentials}, so any attempt to verify the password alone and
+   * tolerate the missing factor would either lock out every consultant that has 2FA or accept a
+   * wrong password. The transition itself is a conditional update: only the caller that actually
+   * changed the row may create the support session and its outbox job, which is what keeps two
+   * simultaneous confirmations from producing two sessions.
    */
   @Transactional(
       noRollbackFor = {ForbiddenException.class, BadRequestException.class, GoneException.class})
-  public HandshakeItem confirm(AuthenticatedUser counterpart, String handshakeId, String password) {
+  public HandshakeItem confirm(
+      AuthenticatedUser counterpart, String handshakeId, String password, String otp) {
     var session = requirePendingFor(counterpart, handshakeId);
 
-    if (!keycloakAuthClient.verifyIgnoringOtp(counterpart.getUsername(), password)) {
+    if (!keycloakAuthClient.verifyWithOtp(counterpart.getUsername(), password, otp)) {
       registerFailedAttempt(session, counterpart);
       throw new ForbiddenException(
           String.format(

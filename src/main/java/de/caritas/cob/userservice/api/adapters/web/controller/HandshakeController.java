@@ -48,7 +48,9 @@ public class HandshakeController {
       @PathVariable String handshakeId,
       @jakarta.validation.Valid @RequestBody ConfirmHandshakeRequest request) {
     return ResponseEntity.accepted()
-        .body(handshakeService.confirm(authenticatedUser, handshakeId, request.getPassword()));
+        .body(
+            handshakeService.confirm(
+                authenticatedUser, handshakeId, request.getPassword(), request.getOtp()));
   }
 
   @PostMapping("/{handshakeId}/decline")
@@ -68,9 +70,13 @@ public class HandshakeController {
     @jakarta.validation.constraints.Size(max = 255)
     private String password;
 
+    @jakarta.validation.constraints.NotBlank
+    @jakarta.validation.constraints.Size(max = 16)
+    private String otp;
+
     @Override
     public String toString() {
-      return "ConfirmHandshakeRequest{password=[REDACTED]}";
+      return "ConfirmHandshakeRequest{password=[REDACTED], otp=[REDACTED]}";
     }
   }
 }

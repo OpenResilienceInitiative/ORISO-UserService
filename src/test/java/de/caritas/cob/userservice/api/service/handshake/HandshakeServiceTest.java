@@ -185,10 +185,32 @@ class HandshakeServiceTest {
   // --- confirm ---
 
   @Test
+  void confirm_Should_ProveTheSecondFactorRatherThanInferItFromAnErrorMessage() {
+    var session = pendingSession();
+    when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
+    // Password-only verification cannot tell "wrong password" from "right password, OTP missing":
+    // Keycloak answers `invalid_grant / Invalid user credentials` for both. A consultant with a
+    // second factor could therefore never confirm, so the confirmation must carry the OTP and be
+    // verified in full — symmetrically to the initiator.
+    when(keycloakAuthClient.verifyWithOtp("consultant.user", "secret", "123456")).thenReturn(true);
+    when(handshakeSessionRepository.confirmIfStillPending(anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(HandshakeStatus.CONFIRMED);
+              return 1;
+            });
+
+    var item = handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456");
+
+    assertThat(item.getStatus()).isEqualTo("CONFIRMED");
+    verify(keycloakAuthClient, never()).verifyIgnoringOtp(anyString(), anyString());
+  }
+
+  @Test
   void confirm_Should_MoveToConfirmedAndEnqueueExactlyOneProvisioningJob() {
     var session = pendingSession();
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
-    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "secret")).thenReturn(true);
+    when(keycloakAuthClient.verifyWithOtp("consultant.user", "secret", "123456")).thenReturn(true);
     // The conditional update is what changes the row; mirror that so the re-read sees CONFIRMED.
     when(handshakeSessionRepository.confirmIfStillPending(anyString(), any()))
         .thenAnswer(
@@ -197,7 +219,7 @@ class HandshakeServiceTest {
               return 1;
             });
 
-    var item = handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret");
+    var item = handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456");
 
     var captor = ArgumentCaptor.forClass(HandshakeOutboxEvent.class);
     verify(handshakeOutboxEventRepository).save(captor.capture());
@@ -210,11 +232,12 @@ class HandshakeServiceTest {
   void confirm_Should_NotCreateJob_When_TheConditionalUpdateLost() {
     var session = pendingSession();
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
-    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "secret")).thenReturn(true);
+    when(keycloakAuthClient.verifyWithOtp("consultant.user", "secret", "123456")).thenReturn(true);
     // Someone else confirmed between our read and our write.
     when(handshakeSessionRepository.confirmIfStillPending(anyString(), any())).thenReturn(0);
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456"))
         .isInstanceOf(ConflictException.class);
     verify(handshakeOutboxEventRepository, never()).save(any());
   }
@@ -225,7 +248,8 @@ class HandshakeServiceTest {
     session.setCounterpartId("somebody-else");
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456"))
         .isInstanceOf(ForbiddenException.class);
     verify(keycloakAuthClient, never()).verifyIgnoringOtp(anyString(), anyString());
   }
@@ -234,9 +258,10 @@ class HandshakeServiceTest {
   void confirm_Should_Forbid_When_PasswordCheckFails() {
     var session = pendingSession();
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
-    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "wrong")).thenReturn(false);
+    when(keycloakAuthClient.verifyWithOtp("consultant.user", "wrong", "123456")).thenReturn(false);
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "wrong"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "wrong", "123456"))
         .isInstanceOf(ForbiddenException.class);
     assertThat(session.getConfirmAttempts()).isEqualTo(1);
     verify(handshakeSessionRepository, never()).delete(any());
@@ -247,9 +272,10 @@ class HandshakeServiceTest {
     var session = pendingSession();
     session.setConfirmAttempts(4);
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
-    when(keycloakAuthClient.verifyIgnoringOtp("consultant.user", "wrong")).thenReturn(false);
+    when(keycloakAuthClient.verifyWithOtp("consultant.user", "wrong", "123456")).thenReturn(false);
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "wrong"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "wrong", "123456"))
         .isInstanceOf(ForbiddenException.class);
     // Terminal: with no operational row left the request can never be confirmed afterwards.
     verify(handshakeSessionRepository).delete(session);
@@ -261,7 +287,8 @@ class HandshakeServiceTest {
     session.setExpiryDate(nowInUtc().minusSeconds(1));
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456"))
         .isInstanceOf(GoneException.class);
     verify(handshakeSessionRepository).delete(session);
     assertThat(auditedEvents()).containsExactly("SESSION_NOT_ESTABLISHED");
@@ -273,7 +300,8 @@ class HandshakeServiceTest {
     session.setStatus(HandshakeStatus.DECLINED);
     when(handshakeSessionRepository.findById(HANDSHAKE_ID)).thenReturn(Optional.of(session));
 
-    assertThatThrownBy(() -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret"))
+    assertThatThrownBy(
+            () -> handshakeService.confirm(consultant(), HANDSHAKE_ID, "secret", "123456"))
         .isInstanceOf(ConflictException.class);
   }
 

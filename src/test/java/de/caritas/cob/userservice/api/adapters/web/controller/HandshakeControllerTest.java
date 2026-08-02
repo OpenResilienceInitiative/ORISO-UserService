@@ -39,11 +39,12 @@ class HandshakeControllerTest {
   }
 
   @Test
-  void confirm_delegatesWithTheAuthenticatedCounterpartAndBodyPassword() {
+  void confirm_delegatesWithTheAuthenticatedCounterpartAndBothBodyCredentials() {
     var item = mock(HandshakeItem.class);
-    when(handshakeService.confirm(authenticatedUser, "hs-1", "pw")).thenReturn(item);
+    when(handshakeService.confirm(authenticatedUser, "hs-1", "pw", "123456")).thenReturn(item);
     var body = new HandshakeController.ConfirmHandshakeRequest();
     body.setPassword("pw");
+    body.setOtp("123456");
 
     var response = controller.confirm("hs-1", body);
 
