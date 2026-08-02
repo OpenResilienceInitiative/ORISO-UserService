@@ -4,7 +4,7 @@ Load workspace parent `../AGENTS.md` first (`PROJECT_ORISO_ROOT` = parent of thi
 
 ## Stack
 
-Java **21**, Spring Boot **4.0.1**, Maven Wrapper **3.9.15**. Owns user/consultant lifecycle, sessions, and related `/service/users` / useradmin APIs.
+Java **21**, Spring Boot **4.0.7**, Maven Wrapper **3.9.15**. Owns user/consultant lifecycle, sessions, and related `/service/users` / useradmin APIs.
 
 ## Commands
 
@@ -14,7 +14,9 @@ Java **21**, Spring Boot **4.0.1**, Maven Wrapper **3.9.15**. Owns user/consulta
 ./mvnw -B spotless:check   # format gate (present in pom; not always in CI)
 ```
 
-From workspace: `REPO=ORISO-UserService ../scripts/harness/verify-fast.sh` (or `verify-full.sh`).
+From this repository root (so `../scripts` resolves to the workspace harness):
+`REPO=ORISO-UserService ../scripts/harness/verify-fast.sh` (or `verify-full.sh`).
+From `PROJECT_ORISO_ROOT`: `REPO=ORISO-UserService ./scripts/harness/verify-fast.sh`.
 
 CI (GitHub Actions): `./mvnw -B test` then `./mvnw -B package -DskipTests` on Java 21.
 
