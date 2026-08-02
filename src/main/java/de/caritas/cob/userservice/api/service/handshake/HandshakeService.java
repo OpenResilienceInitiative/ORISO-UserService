@@ -122,7 +122,11 @@ public class HandshakeService {
             consultant.getId(),
             request.getAgencyId(),
             purpose,
-            List.of(HandshakeStatus.PENDING, HandshakeStatus.CONFIRMED))) {
+            // Only PENDING is an open request. A CONFIRMED handshake whose session has since been
+            // withdrawn is history; counting it here would let one finished support session block
+            // that consultant from ever being helped again. A still-running session is caught by
+            // the session guard below, which is the one that actually protects.
+            List.of(HandshakeStatus.PENDING))) {
       throw new ConflictException("A support request for this consultant is already open");
     }
     if (supportAccessSessionRepository.existsBySupportAdminIdAndConsultantIdAndStatusIn(

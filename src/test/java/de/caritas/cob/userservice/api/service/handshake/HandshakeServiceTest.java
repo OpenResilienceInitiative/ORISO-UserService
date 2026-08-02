@@ -162,6 +162,25 @@ class HandshakeServiceTest {
   }
 
   @Test
+  void initiate_Should_AllowANewRequest_WhenTheEarlierSupportSessionHasEnded() {
+    givenValidInitiation();
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var item = handshakeService.initiate(supportAdmin(), supportRequest());
+
+    // Only PENDING is an open request. A CONFIRMED handshake whose session has already been
+    // withdrawn is history, and treating it as "still open" would let one finished support session
+    // block that consultant from ever being helped again.
+    assertThat(item.getStatus()).isEqualTo("PENDING");
+    var captor = ArgumentCaptor.forClass(List.class);
+    verify(handshakeSessionRepository)
+        .existsByInitiatorIdAndCounterpartIdAndAgencyIdAndPurposeAndStatusIn(
+            anyString(), anyString(), anyLong(), any(), captor.capture());
+    assertThat(captor.getValue()).containsExactly(HandshakeStatus.PENDING);
+  }
+
+  @Test
   void initiate_Should_Conflict_When_ASessionForThatPairIsAlreadyRunning() {
     givenValidInitiation();
     when(supportAccessSessionRepository.existsBySupportAdminIdAndConsultantIdAndStatusIn(
