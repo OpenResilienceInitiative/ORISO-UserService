@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
+import de.caritas.cob.userservice.api.admin.service.admin.GlobalSupportAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -36,6 +37,7 @@ class AdminUserFacadeTest {
 
   @InjectMocks private AdminUserFacade adminUserFacade;
   @Mock private AgencyAdminUserService agencyAdminUserService;
+  @Mock private GlobalSupportAdminUserService globalSupportAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
   @Mock private AdminFilterService adminFilterService;
 

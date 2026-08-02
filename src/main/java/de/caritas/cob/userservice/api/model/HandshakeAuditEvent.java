@@ -49,6 +49,10 @@ public class HandshakeAuditEvent {
   @Column(name = "tenant_id")
   private Long tenantId;
 
+  /** Target agency of the support access — the scope an Agency Admin is allowed to see. */
+  @Column(name = "agency_id")
+  private Long agencyId;
+
   @Column(name = "create_date", nullable = false)
   private LocalDateTime createDate;
 }

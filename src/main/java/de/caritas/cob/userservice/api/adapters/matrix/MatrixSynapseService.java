@@ -18,6 +18,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.Optional;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -864,6 +865,16 @@ public class MatrixSynapseService implements MatrixUserClient {
 
     return matrixRoomClient.createRoom(
         roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+  }
+
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createEncryptedRoom(
+      String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
+    return matrixRoomClient.createRoom(roomName, roomAlias, accessToken, true);
+  }
+
+  public Optional<String> resolveRoomAlias(String roomAlias, String accessToken)
+      throws MatrixCreateRoomException {
+    return matrixRoomClient.resolveRoomAlias(roomAlias, accessToken);
   }
 
   /**

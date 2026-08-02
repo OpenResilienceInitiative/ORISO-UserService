@@ -79,6 +79,11 @@ public class AuthenticatedUser {
   }
 
   @JsonIgnore
+  public boolean isGlobalSupportAdmin() {
+    return nonNull(roles) && roles.contains(UserRole.GLOBAL_SUPPORT_ADMIN.getValue());
+  }
+
+  @JsonIgnore
   public boolean isPlatformAdmin() {
     return Long.valueOf(0L).equals(tenantId) && isAgencySuperAdmin() && isTenantSuperAdmin();
   }

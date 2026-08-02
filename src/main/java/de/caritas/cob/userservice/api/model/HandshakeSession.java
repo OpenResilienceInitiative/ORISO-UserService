@@ -7,6 +7,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -17,6 +18,10 @@ import lombok.Setter;
 /**
  * One live-handshake cycle (ADR-018): initiated with fresh password+OTP, confirmable by exactly one
  * counterpart with a fresh password inside the TTL window, single-use.
+ *
+ * <p>There is no EXPIRED state on purpose. A lapsed handshake leaves no operational row at all —
+ * only one {@code SESSION_NOT_ESTABLISHED} audit entry — so a stale row can never be mistaken for
+ * standing permission.
  */
 @Entity
 @Table(name = "handshake_session")
@@ -28,9 +33,12 @@ import lombok.Setter;
 public class HandshakeSession {
 
   public enum HandshakeStatus {
+    /** Waiting for the counterpart, inside the TTL window. */
     PENDING,
+    /** The counterpart confirmed with a fresh password; the support session owns it from here. */
     CONFIRMED,
-    EXPIRED
+    /** The counterpart explicitly refused. */
+    DECLINED
   }
 
   @Id
@@ -63,13 +71,18 @@ public class HandshakeSession {
   @Column(name = "tenant_id")
   private Long tenantId;
 
-  /** Brute-force guard: failed counterpart password attempts; at the limit the session locks. */
+  /**
+   * The concrete agency the support request is scoped to. Always derived from the persisted
+   * consultant-agency relation, never taken from the request body or the token.
+   */
+  @Column(name = "agency_id")
+  private Long agencyId;
+
   @Builder.Default
   @Column(name = "confirm_attempts", nullable = false)
   private int confirmAttempts = 0;
 
-  /** Optimistic lock: exactly one concurrent confirmation may win the PENDING→CONFIRMED race. */
-  @jakarta.persistence.Version
+  @Version
   @Column(name = "version", nullable = false)
   private long version;
 }

@@ -19,13 +19,17 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Live-Handshake endpoints (ADR-018 §1). Identities always come from the token: the initiator is
- * the authenticated caller of {@code POST /}, the counterpart is the authenticated caller of {@code
- * confirm} — a handshake can never be initiated or confirmed in someone else's name.
- * Fresh-credential verification and per-purpose role checks live in {@link HandshakeService}.
+ * Support-access request endpoints (ADR-018 §1). Identities always come from the token: the
+ * initiator is the authenticated caller of {@code POST /requests}, the counterpart is the
+ * authenticated caller of {@code confirm} and {@code decline} — a request can never be raised or
+ * decided in someone else's name. Fresh-credential verification, the agency check, and the
+ * per-purpose role checks live in {@link HandshakeService}.
+ *
+ * <p>Confirmation answers {@code 202 Accepted}: the room does not exist yet at that moment, it is
+ * provisioned asynchronously, and the UI must show that rather than claim an active session.
  */
 @RestController
-@RequestMapping("/users/handshakes")
+@RequestMapping("/users/support-access/requests")
 @RequiredArgsConstructor
 public class HandshakeController {
 
@@ -43,8 +47,13 @@ public class HandshakeController {
   public ResponseEntity<HandshakeItem> confirm(
       @PathVariable String handshakeId,
       @jakarta.validation.Valid @RequestBody ConfirmHandshakeRequest request) {
-    return ResponseEntity.ok(
-        handshakeService.confirm(authenticatedUser, handshakeId, request.getPassword()));
+    return ResponseEntity.accepted()
+        .body(handshakeService.confirm(authenticatedUser, handshakeId, request.getPassword()));
+  }
+
+  @PostMapping("/{handshakeId}/decline")
+  public ResponseEntity<HandshakeItem> decline(@PathVariable String handshakeId) {
+    return ResponseEntity.ok(handshakeService.decline(authenticatedUser, handshakeId));
   }
 
   @GetMapping("/pending")
@@ -58,5 +67,10 @@ public class HandshakeController {
     @jakarta.validation.constraints.NotBlank
     @jakarta.validation.constraints.Size(max = 255)
     private String password;
+
+    @Override
+    public String toString() {
+      return "ConfirmHandshakeRequest{password=[REDACTED]}";
+    }
   }
 }

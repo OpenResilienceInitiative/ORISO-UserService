@@ -942,9 +942,20 @@ public class KeycloakService
    */
   @Override
   public void deactivateUser(String userId) {
+    setUserEnabled(userId, false);
+  }
+
+  /**
+   * Enables or disables the Keycloak account.
+   *
+   * @param userId the user id to be switched
+   * @param enabled whether the account may be signed into
+   */
+  @Override
+  public void setUserEnabled(String userId, boolean enabled) {
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
-    userRepresentation.setEnabled(false);
+    userRepresentation.setEnabled(enabled);
     userResource.update(userRepresentation);
   }
 }

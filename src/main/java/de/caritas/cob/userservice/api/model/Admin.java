@@ -58,7 +58,6 @@ public class Admin implements TenantAware {
     AGENCY,
     TENANT,
     SUPER,
-    /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
     SUPPORT
   }
 
@@ -102,7 +101,7 @@ public class Admin implements TenantAware {
   private String email;
 
   @Enumerated(EnumType.STRING)
-  @Column(length = 6, nullable = false)
+  @Column(length = 32, nullable = false)
   private AdminType type;
 
   @Column(name = "id_old", updatable = false)

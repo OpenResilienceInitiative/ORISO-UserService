@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
+import de.caritas.cob.userservice.api.admin.service.admin.GlobalSupportAdminUserService;
 import de.caritas.cob.userservice.api.exception.CustomCryptoException;
 import de.caritas.cob.userservice.api.exception.NoMasterKeyException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
@@ -9,6 +10,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessa
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.GoneException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -194,6 +196,28 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+  }
+
+  /** ADR-018: the support request existed but its five-minute window has closed. */
+  @ExceptionHandler({GoneException.class})
+  protected ResponseEntity<Object> handleSupportRequestGone(
+      final GoneException ex, final WebRequest request) {
+    ex.executeLogging();
+
+    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.GONE, request);
+  }
+
+  /**
+   * ADR-018: the caller really is a Global Support Admin, but the account is blocked or its
+   * onboarding is unfinished. 423 keeps that distinguishable from "wrong role" (403).
+   */
+  @ExceptionHandler({GlobalSupportAdminUserService.SupportAdminNotOperationalException.class})
+  protected ResponseEntity<Object> handleSupportAdminNotOperational(
+      final GlobalSupportAdminUserService.SupportAdminNotOperationalException ex,
+      final WebRequest request) {
+    log.warn("Global Support Admin operation refused: {}", ex.getMessage());
+
+    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.LOCKED, request);
   }
 
   private Optional<String> conflictReasonOf(Throwable throwable) {

@@ -15,34 +15,20 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public enum HandshakePurpose {
   /** A Global Support Admin asks a Berater*in to open a fresh 1:1 support room. */
-  SUPPORT_ACCESS(Set.of("global-support-admin"), Set.of("consultant")),
-
-  /** Four-eyes credential reset for a Global Support Admin (Platform Admin + another GSA). */
-  RECOVERY_SUPPORT_ADMIN(
-      Set.of("global-support-admin", HandshakePurpose.PLATFORM_ADMIN),
-      Set.of("global-support-admin", HandshakePurpose.PLATFORM_ADMIN)),
-
-  /** Four-eyes credential reset for a Berater*in (Beratungsstellen-Admin + GSA). */
-  RECOVERY_CONSULTANT(
-      Set.of("global-support-admin", "agency-admin"),
-      Set.of("global-support-admin", "agency-admin")),
-
-  /** Granting/removing a Fachidentität (GSA initiates, a Beratungsstellen-Admin confirms). */
-  IDENTITY_GRANT(Set.of("global-support-admin"), Set.of("agency-admin"));
-
-  /** Marker for "must be a platform admin" (tenant 0 + admin role pair, not a single role). */
-  static final String PLATFORM_ADMIN = "#platform-admin";
+  SUPPORT_ACCESS(Set.of("global-support-admin"), Set.of("consultant"), true);
 
   private final Set<String> initiatorRoles;
   private final Set<String> counterpartRoles;
 
   /**
-   * Tenant policy: only SUPPORT_ACCESS crosses tenants (platform support by design, ADR-018 §2).
-   * Every other purpose is tenant-scoped — the confirming counterpart must belong to the
-   * initiator's tenant or be platform-scoped (tenant 0).
+   * Release 1 offers SUPPORT_ACCESS only. Recovery and identity grants reuse this core later; until
+   * their participant and tenant rules are defined they must not inherit the support policy by
+   * accident, so they stay unreachable rather than merely undocumented.
    */
-  public boolean isTenantScoped() {
-    return this != SUPPORT_ACCESS;
+  private final boolean publiclyOffered;
+
+  public boolean isPubliclyOffered() {
+    return publiclyOffered;
   }
 
   public boolean mayInitiate(AuthenticatedUser user) {
@@ -54,9 +40,6 @@ public enum HandshakePurpose {
   }
 
   private boolean matches(AuthenticatedUser user, Set<String> allowed) {
-    if (allowed.contains(PLATFORM_ADMIN) && user.isPlatformAdmin()) {
-      return true;
-    }
     var roles = user.getRoles();
     return roles != null && allowed.stream().anyMatch(roles::contains);
   }

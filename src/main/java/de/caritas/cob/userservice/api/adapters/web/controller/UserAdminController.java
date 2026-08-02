@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeletionPauseRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
@@ -45,10 +47,13 @@ import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort.Direction;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -401,6 +406,14 @@ public class UserAdminController implements UseradminApi {
   }
 
   @Override
+  public ResponseEntity<GlobalSupportAdminDTO> createGlobalSupportAdmin(
+      CreateAdminDTO createAdminDTO) {
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
+    return new ResponseEntity<>(
+        adminUserFacade.createGlobalSupportAdmin(createAdminDTO), HttpStatus.CREATED);
+  }
+
+  @Override
   public ResponseEntity<AdminResponseDTO> createAgencyAdmin(final CreateAdminDTO createAdminDTO) {
     return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
   }
@@ -514,6 +527,26 @@ public class UserAdminController implements UseradminApi {
             decodedInfix, page - 1, perPage, mappedField, isAscending);
     var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
     return ResponseEntity.ok(result);
+  }
+
+  @Override
+  public ResponseEntity<GlobalSupportAdminSearchResultDTO> searchGlobalSupportAdmins(
+      String query, Integer page, Integer perPage, String field, String order) {
+    var decodedInfix = determineDecodedInfix(query);
+    var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var direction = order.equalsIgnoreCase("asc") ? Direction.ASC : Direction.DESC;
+    var pageRequest = PageRequest.of(page - 1, perPage, direction, mappedField);
+    return ResponseEntity.ok(adminUserFacade.searchGlobalSupportAdmins(decodedInfix, pageRequest));
+  }
+
+  @Override
+  public ResponseEntity<GlobalSupportAdminDTO> disableGlobalSupportAdmin(String adminId) {
+    return ResponseEntity.ok(adminUserFacade.disableGlobalSupportAdmin(adminId));
+  }
+
+  @Override
+  public ResponseEntity<GlobalSupportAdminDTO> enableGlobalSupportAdmin(String adminId) {
+    return ResponseEntity.ok(adminUserFacade.enableGlobalSupportAdmin(adminId));
   }
 
   private String determineDecodedInfix(String query) {

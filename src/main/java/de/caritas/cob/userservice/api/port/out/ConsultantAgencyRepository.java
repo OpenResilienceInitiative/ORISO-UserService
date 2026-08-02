@@ -24,6 +24,27 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   boolean existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(String consultantId, Long agencyId);
 
+  /**
+   * Support-target lookup (ADR-018 §5). Returns one row per consultant-agency pair, because support
+   * is always requested for a consultant at one concrete agency — never for a consultant as such.
+   * Only active, undeleted assignments are eligible.
+   */
+  @Query(
+      """
+      select ca from ConsultantAgency ca
+       where ca.deleteDate is null
+         and ca.consultant.deleteDate is null
+         and (
+           lower(ca.consultant.firstName) like lower(concat('%', :infix, '%'))
+           or lower(ca.consultant.lastName) like lower(concat('%', :infix, '%'))
+           or lower(ca.consultant.email) like lower(concat('%', :infix, '%'))
+           or lower(ca.consultant.username) like lower(concat('%', :infix, '%'))
+         )
+       order by ca.consultant.lastName asc, ca.consultant.firstName asc, ca.agencyId asc
+      """)
+  org.springframework.data.domain.Page<ConsultantAgency> findSupportTargets(
+      @Param("infix") String infix, org.springframework.data.domain.Pageable pageable);
+
   List<ConsultantAgency> findByConsultantId(String consultantId);
 
   List<ConsultantAgency> findByConsultantIdAndStatusAndDeleteDateIsNull(

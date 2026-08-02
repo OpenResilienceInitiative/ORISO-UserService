@@ -7,12 +7,15 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSupportAdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
+import de.caritas.cob.userservice.api.admin.service.admin.GlobalSupportAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -33,6 +36,7 @@ public class AdminUserFacade {
   private final @NonNull AgencyAdminUserService agencyAdminUserService;
 
   private final @NonNull TenantAdminUserService tenantAdminUserService;
+  private final @NonNull GlobalSupportAdminUserService globalSupportAdminUserService;
   private final @NonNull AdminAgencyRelationService adminAgencyRelationService;
   private final @NonNull AdminFilterService adminFilterService;
 
@@ -44,6 +48,23 @@ public class AdminUserFacade {
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
     return this.agencyAdminUserService.createNewAgencyAdmin(createAgencyAdminDTO);
+  }
+
+  public GlobalSupportAdminDTO createGlobalSupportAdmin(CreateAdminDTO createAdminDTO) {
+    return globalSupportAdminUserService.create(createAdminDTO);
+  }
+
+  public GlobalSupportAdminSearchResultDTO searchGlobalSupportAdmins(
+      String infix, PageRequest pageRequest) {
+    return globalSupportAdminUserService.search(infix, pageRequest);
+  }
+
+  public GlobalSupportAdminDTO disableGlobalSupportAdmin(String adminId) {
+    return globalSupportAdminUserService.disable(adminId);
+  }
+
+  public GlobalSupportAdminDTO enableGlobalSupportAdmin(String adminId) {
+    return globalSupportAdminUserService.enable(adminId);
   }
 
   public AdminResponseDTO findAgencyAdmin(final String adminId) {

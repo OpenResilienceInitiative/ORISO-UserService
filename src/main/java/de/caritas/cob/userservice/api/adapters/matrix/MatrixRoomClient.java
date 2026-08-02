@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -29,6 +30,7 @@ import org.springframework.web.client.RestTemplate;
 public class MatrixRoomClient {
 
   private static final String ENDPOINT_CREATE_ROOM = "/_matrix/client/r0/createRoom";
+  private static final String ENDPOINT_ROOM_ALIAS = "/_matrix/client/v3/directory/room/{roomAlias}";
   private static final String ROOM_ENCRYPTION_EVENT_TYPE = "m.room.encryption";
   private static final String MEGOLM_ALGORITHM = "m.megolm.v1.aes-sha2";
   private static final String ENDPOINT_INVITE_USER = "/_matrix/client/r0/rooms/{roomId}/invite";
@@ -48,6 +50,26 @@ public class MatrixRoomClient {
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
     return createRoom(roomName, roomAlias, accessToken, false);
+  }
+
+  public Optional<String> resolveRoomAlias(String localAlias, String accessToken)
+      throws MatrixCreateRoomException {
+    var fullAlias = "#%s:%s".formatted(localAlias, matrixConfig.getServerName());
+    try {
+      var url = buildUrl(ENDPOINT_ROOM_ALIAS, Map.of("roomAlias", fullAlias));
+      var response =
+          restTemplate.exchange(
+              url, HttpMethod.GET, new HttpEntity<>(getClientHttpHeaders(accessToken)), Map.class);
+      var roomId = response.getBody() == null ? null : response.getBody().get("room_id");
+      return roomId instanceof String value && !value.isBlank()
+          ? Optional.of(value)
+          : Optional.empty();
+    } catch (HttpClientErrorException.NotFound ignored) {
+      return Optional.empty();
+    } catch (Exception exception) {
+      throw new MatrixCreateRoomException(
+          "Could not resolve Matrix room alias %s".formatted(fullAlias));
+    }
   }
 
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(

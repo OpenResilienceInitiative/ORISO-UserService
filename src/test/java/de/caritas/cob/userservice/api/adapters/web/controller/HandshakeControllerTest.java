@@ -47,6 +47,19 @@ class HandshakeControllerTest {
 
     var response = controller.confirm("hs-1", body);
 
+    // 202, not 200: the room does not exist yet at this point, so the UI must show provisioning
+    // rather than claim an active session.
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+    assertThat(response.getBody()).isEqualTo(item);
+  }
+
+  @Test
+  void decline_delegatesWithTheAuthenticatedCounterpart() {
+    var item = mock(HandshakeItem.class);
+    when(handshakeService.decline(authenticatedUser, "hs-1")).thenReturn(item);
+
+    var response = controller.decline("hs-1");
+
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isEqualTo(item);
   }

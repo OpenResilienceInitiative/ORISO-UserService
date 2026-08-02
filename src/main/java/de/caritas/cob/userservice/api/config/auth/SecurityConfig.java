@@ -208,12 +208,11 @@ public class SecurityConfig {
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
-                // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
-                // per-purpose role pairs + fresh-credential checks are enforced in the service.
-                .requestMatchers("/users/handshakes", "/users/handshakes/**")
-                .authenticated()
-                .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
-                .authenticated()
+                // ADR-018 support access. Only the two participant roles reach the handshake and
+                // its session; the per-purpose role pair, the agency check and the fresh-credential
+                // checks are enforced in the service.
+                .requestMatchers("/users/support-access", "/users/support-access/**")
+                .hasAnyAuthority(GLOBAL_SUPPORT_ADMIN, CONSULTANT_DEFAULT)
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -324,8 +323,21 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
-                .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
-                .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
+                // Managing support admins is Platform-Admin-only territory.
+                .requestMatchers(
+                    "/useradmin/supportadmins",
+                    "/useradmin/supportadmins/**",
+                    "/service/useradmin/supportadmins",
+                    "/service/useradmin/supportadmins/**")
+                .hasAuthority(TENANT_ADMIN)
+                .requestMatchers(
+                    "/useradmin/support-targets/**", "/service/useradmin/support-targets/**")
+                .hasAuthority(GLOBAL_SUPPORT_ADMIN)
+                // Which entries a caller actually sees is decided in SupportAccessAuditService by
+                // role and organisation; this only keeps unrelated roles off the endpoint.
+                .requestMatchers(
+                    "/useradmin/support-access/**", "/service/useradmin/support-access/**")
+                .hasAnyAuthority(TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(

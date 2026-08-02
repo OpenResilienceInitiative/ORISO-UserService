@@ -51,11 +51,21 @@ public class CreateAdminService {
 
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, true);
   }
 
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
-    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, true);
+  }
+
+  /**
+   * ADR-018 fail-closed provisioning: the Global Support Admin identity is born disabled and
+   * without its privileged realm role. Only {@code GlobalSupportAdminUserService} releases it once
+   * the role assignment succeeded, so a half-finished creation can never be signed into.
+   */
+  public Admin createNewGlobalSupportAdmin(CreateAdminDTO createAdminDTO) {
+    createAdminDTO.setTenantId(0);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.SUPPORT, false);
   }
 
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
@@ -64,6 +74,9 @@ public class CreateAdminService {
     }
     if (Admin.AdminType.TENANT.equals(adminType)) {
       return getUserRolesForTenantAdmin();
+    }
+    if (Admin.AdminType.SUPPORT.equals(adminType)) {
+      return Lists.newArrayList(UserRole.GLOBAL_SUPPORT_ADMIN);
     }
     return Lists.newArrayList();
   }
@@ -93,7 +106,10 @@ public class CreateAdminService {
     }
   }
 
-  private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
+  private Admin createNewAdmin(
+      final CreateAdminDTO createAdminDTO,
+      Admin.AdminType adminType,
+      final boolean releaseImmediately) {
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
@@ -101,7 +117,11 @@ public class CreateAdminService {
             : userHelper.getRandomPassword();
     try {
       identityPasswordUpdater.updatePassword(keycloakUserId, password);
-      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      if (releaseImmediately) {
+        getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      } else {
+        identityClient.setUserEnabled(keycloakUserId, false);
+      }
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
       identityAccountRemover.rollbackUser(keycloakUserId);

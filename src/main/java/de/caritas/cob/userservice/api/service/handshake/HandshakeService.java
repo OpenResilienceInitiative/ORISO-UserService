@@ -3,14 +3,24 @@ package de.caritas.cob.userservice.api.service.handshake;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
+import de.caritas.cob.userservice.api.admin.service.admin.GlobalSupportAdminUserService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.GoneException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.HandshakeAuditEvent;
+import de.caritas.cob.userservice.api.model.HandshakeOutboxEvent;
+import de.caritas.cob.userservice.api.model.HandshakeOutboxEvent.OutboxStatus;
 import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
+import de.caritas.cob.userservice.api.model.SupportAccessSession.SupportAccessSessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
+import de.caritas.cob.userservice.api.port.out.HandshakeOutboxEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
+import de.caritas.cob.userservice.api.port.out.SupportAccessSessionRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -26,10 +36,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Live-Handshake core primitive (ADR-018 §1): two people confirm a privileged action with fresh
- * credentials before it executes. The initiator re-authenticates with password + OTP, the
- * counterpart confirms with their password inside a ~5-minute window; a lapsed window leaves
- * nothing but one audit entry ("session was not established"). Confirmation triggers the purpose's
- * {@link HandshakeCompletionHandler} inside the same transaction.
+ * credentials before it executes. The Global Support Admin re-authenticates with password + OTP for
+ * one consultant at one concrete agency; that consultant confirms with their password inside a
+ * five-minute window.
+ *
+ * <p>Two properties carry the security weight. Confirmation is a conditional update, so exactly one
+ * of two concurrent confirmations may go on to create a session. And a lapsed handshake leaves no
+ * operational row at all — only one {@code SESSION_NOT_ESTABLISHED} audit entry.
+ *
+ * <p>Version 1 exposes only {@link HandshakePurpose#SUPPORT_ACCESS}; recovery and identity grants
+ * reuse this core later but have no reachable endpoint yet.
  */
 @Service
 @Slf4j
@@ -38,22 +54,18 @@ public class HandshakeService {
 
   private static final String EVENT_INITIATED = "INITIATED";
   private static final String EVENT_CONFIRMED = "CONFIRMED";
+  private static final String EVENT_DECLINED = "DECLINED";
   private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
   private static final String EVENT_NOT_ESTABLISHED = "SESSION_NOT_ESTABLISHED";
-  private static final String EVENT_CONFIRM_LOCKED = "CONFIRM_LOCKED";
 
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
-  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
-
-  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClientConfig
-      identityClientConfig;
-
-  private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
-
-  private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
-      new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
+  private final @NonNull HandshakeOutboxEventRepository handshakeOutboxEventRepository;
+  private final @NonNull GlobalSupportAdminUserService globalSupportAdminUserService;
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull SupportAccessSessionRepository supportAccessSessionRepository;
 
   @Value("${handshake.ttl-seconds:300}")
   private long ttlSeconds;
@@ -64,30 +76,63 @@ public class HandshakeService {
   @Value("${handshake.max-confirm-attempts:5}")
   private int maxConfirmAttempts;
 
-  @Value("${handshake.sweep-batch-size:200}")
-  private int sweepBatchSize;
+  @Value("${support-access.enabled:false}")
+  private boolean supportAccessEnabled;
 
   @Transactional
   public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
+    if (!supportAccessEnabled) {
+      throw new ForbiddenException("Support access is disabled");
+    }
     var purpose = purposeOf(request.getPurpose());
 
     if (!purpose.mayInitiate(initiator)) {
       throw new ForbiddenException(
           String.format("User %s may not initiate a %s handshake", initiator.getUserId(), purpose));
     }
-    if (request.getCounterpartId() == null || request.getCounterpartId().isBlank()) {
-      throw new BadRequestException("Handshake counterpart must be provided");
+    if (request.getConsultantId() == null || request.getConsultantId().isBlank()) {
+      throw new BadRequestException("Handshake consultant must be provided");
     }
-    if (initiator.getUserId().equals(request.getCounterpartId())) {
+    if (request.getAgencyId() == null) {
+      throw new BadRequestException("Handshake agency must be provided");
+    }
+    if (initiator.getUserId().equals(request.getConsultantId())) {
       throw new BadRequestException("A handshake requires two distinct people");
     }
-    requireActiveSecondFactorForSupportAdmin(initiator);
+    globalSupportAdminUserService.requireOperationalSupportAdmin();
     if (!keycloakAuthClient.verifyWithOtp(
         initiator.getUsername(), request.getPassword(), request.getOtp())) {
       throw new ForbiddenException(
           String.format(
               "Fresh credential verification failed for handshake initiator %s",
               initiator.getUserId()));
+    }
+    var consultant =
+        consultantRepository
+            .findActiveByIdForUpdate(request.getConsultantId())
+            .orElseThrow(() -> new BadRequestException("Handshake consultant not found"));
+    // Scope comes from the persisted relation, never from the request body or the token.
+    if (!consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+        consultant.getId(), request.getAgencyId())) {
+      throw new BadRequestException("Consultant is not assigned to the requested agency");
+    }
+    if (handshakeSessionRepository
+        .existsByInitiatorIdAndCounterpartIdAndAgencyIdAndPurposeAndStatusIn(
+            initiator.getUserId(),
+            consultant.getId(),
+            request.getAgencyId(),
+            purpose,
+            List.of(HandshakeStatus.PENDING, HandshakeStatus.CONFIRMED))) {
+      throw new ConflictException("A support request for this consultant is already open");
+    }
+    if (supportAccessSessionRepository.existsBySupportAdminIdAndConsultantIdAndStatusIn(
+        initiator.getUserId(),
+        consultant.getId(),
+        List.of(
+            SupportAccessSessionStatus.PROVISIONING,
+            SupportAccessSessionStatus.ACTIVE,
+            SupportAccessSessionStatus.REVOCATION_PENDING))) {
+      throw new ConflictException("A support session is already running for this consultant");
     }
 
     var now = nowInUtc();
@@ -96,11 +141,12 @@ public class HandshakeService {
             .id(UUID.randomUUID().toString())
             .purpose(purpose)
             .initiatorId(initiator.getUserId())
-            .counterpartId(request.getCounterpartId())
+            .counterpartId(consultant.getId())
             .status(HandshakeStatus.PENDING)
             .createDate(now)
             .expiryDate(now.plusSeconds(ttlSeconds))
-            .tenantId(initiator.getTenantId())
+            .tenantId(consultant.getTenantId())
+            .agencyId(request.getAgencyId())
             .build();
     session = handshakeSessionRepository.save(session);
     audit(session, EVENT_INITIATED, initiator.getUserId());
@@ -108,60 +154,59 @@ public class HandshakeService {
     return HandshakeItem.of(session);
   }
 
-  @Transactional
+  /**
+   * Confirmation by the addressed consultant. The transition is a conditional update: only the
+   * caller that actually changed the row may create the support session and its outbox job, which
+   * is what keeps two simultaneous confirmations from producing two sessions.
+   */
+  @Transactional(
+      noRollbackFor = {ForbiddenException.class, BadRequestException.class, GoneException.class})
   public HandshakeItem confirm(AuthenticatedUser counterpart, String handshakeId, String password) {
-    var session =
-        handshakeSessionRepository
-            .findById(handshakeId)
-            .orElseThrow(
-                () -> new BadRequestException(String.format("Unknown handshake %s", handshakeId)));
+    var session = requirePendingFor(counterpart, handshakeId);
 
-    if (session.getStatus() != HandshakeStatus.PENDING) {
-      throw new BadRequestException(String.format("Handshake %s is not pending", handshakeId));
-    }
-    if (session.getExpiryDate().isBefore(nowInUtc())) {
-      expire(session);
-      throw new BadRequestException(String.format("Handshake %s has expired", handshakeId));
-    }
-    if (!session.getCounterpartId().equals(counterpart.getUserId())) {
-      throw new ForbiddenException(
-          String.format(
-              "User %s is not the counterpart of handshake %s",
-              counterpart.getUserId(), handshakeId));
-    }
-    enforceTenantPolicy(session, counterpart);
-    if (!session.getPurpose().mayConfirm(counterpart)) {
-      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
-      throw new ForbiddenException(
-          String.format(
-              "User %s may not confirm a %s handshake",
-              counterpart.getUserId(), session.getPurpose()));
-    }
     if (!keycloakAuthClient.verifyIgnoringOtp(counterpart.getUsername(), password)) {
-      registerFailedConfirmAttempt(session, counterpart);
+      registerFailedAttempt(session, counterpart);
       throw new ForbiddenException(
           String.format(
               "Fresh credential verification failed for handshake counterpart %s",
               counterpart.getUserId()));
     }
 
-    session.setStatus(HandshakeStatus.CONFIRMED);
-    session.setConfirmedDate(nowInUtc());
-    try {
-      handshakeSessionRepository.save(session);
-    } catch (org.springframework.dao.OptimisticLockingFailureException e) {
-      throw new BadRequestException(
-          String.format("Handshake %s was modified concurrently", handshakeId));
+    var now = nowInUtc();
+    if (handshakeSessionRepository.confirmIfStillPending(session.getId(), now) != 1) {
+      // Someone else already decided this handshake between our read and our write.
+      throw new ConflictException(
+          String.format("Handshake %s was already decided", session.getId()));
     }
-    audit(session, EVENT_CONFIRMED, counterpart.getUserId());
+    var confirmed =
+        handshakeSessionRepository
+            .findById(session.getId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Confirmed handshake %s vanished".formatted(session.getId())));
+    handshakeOutboxEventRepository.save(
+        HandshakeOutboxEvent.builder()
+            .aggregateId(confirmed.getId())
+            .eventType(SupportAccessJobHandler.PROVISION_ROOM)
+            .status(OutboxStatus.PENDING)
+            .attempts(0)
+            .createDate(now)
+            .nextAttemptDate(now)
+            .build());
+    audit(confirmed, EVENT_CONFIRMED, counterpart.getUserId());
 
-    for (var handler : completionHandlers) {
-      if (handler.supports(session.getPurpose())) {
-        handler.onConfirmed(session);
-      }
-    }
+    return HandshakeItem.of(confirmed);
+  }
 
-    return HandshakeItem.of(session);
+  /** Explicit refusal. Declining is a decision and is audited; ignoring the popup is not. */
+  @Transactional
+  public HandshakeItem decline(AuthenticatedUser counterpart, String handshakeId) {
+    var session = requirePendingFor(counterpart, handshakeId);
+    session.setStatus(HandshakeStatus.DECLINED);
+    var declined = handshakeSessionRepository.saveAndFlush(session);
+    audit(declined, EVENT_DECLINED, counterpart.getUserId());
+    return HandshakeItem.of(declined);
   }
 
   @Transactional(readOnly = true)
@@ -174,16 +219,13 @@ public class HandshakeService {
         .toList();
   }
 
-  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. */
+  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry and no operational row. */
   @Scheduled(fixedDelayString = "${handshake.sweep-delay-ms:60000}")
   @Transactional
   public void sweepExpired() {
     handshakeSessionRepository
-        .findAllByStatusAndExpiryDateBefore(
-            HandshakeStatus.PENDING,
-            nowInUtc(),
-            org.springframework.data.domain.PageRequest.of(0, sweepBatchSize))
-        .forEach(this::expire);
+        .findAllByStatusAndExpiryDateBefore(HandshakeStatus.PENDING, nowInUtc())
+        .forEach(this::lapse);
   }
 
   /** ADR-018 §3: audit retention 12 months, automatic deletion. */
@@ -194,88 +236,56 @@ public class HandshakeService {
         nowInUtc().minusMonths(auditRetentionMonths));
   }
 
-  /**
-   * Tenant isolation: SUPPORT_ACCESS crosses tenants by design; every other purpose requires the
-   * confirming counterpart to belong to the session (initiator) tenant or be platform-scoped.
-   */
-  private void enforceTenantPolicy(HandshakeSession session, AuthenticatedUser counterpart) {
-    if (!session.getPurpose().isTenantScoped()) {
-      return;
-    }
-    var counterpartTenant = counterpart.getTenantId();
-    var sessionTenant = session.getTenantId();
-    var platformScoped = counterpartTenant != null && counterpartTenant == 0L;
-    if (sessionTenant != null && !platformScoped && !sessionTenant.equals(counterpartTenant)) {
-      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+  private HandshakeSession requirePendingFor(AuthenticatedUser counterpart, String handshakeId) {
+    var session =
+        handshakeSessionRepository
+            .findById(handshakeId)
+            .orElseThrow(
+                () -> new BadRequestException(String.format("Unknown handshake %s", handshakeId)));
+
+    // Ownership before state, so a stranger cannot probe which requests exist.
+    if (!session.getCounterpartId().equals(counterpart.getUserId())) {
       throw new ForbiddenException(
           String.format(
-              "User %s belongs to another tenant than handshake %s",
-              counterpart.getUserId(), session.getId()));
+              "User %s is not the counterpart of handshake %s",
+              counterpart.getUserId(), handshakeId));
     }
+    if (!session.getPurpose().mayConfirm(counterpart)) {
+      throw new ForbiddenException(
+          String.format(
+              "User %s may not decide a %s handshake",
+              counterpart.getUserId(), session.getPurpose()));
+    }
+    if (session.getStatus() != HandshakeStatus.PENDING) {
+      throw new ConflictException(String.format("Handshake %s was already decided", handshakeId));
+    }
+    if (!session.getExpiryDate().isAfter(nowInUtc())) {
+      lapse(session);
+      throw new GoneException(String.format("Handshake %s has expired", handshakeId));
+    }
+    return session;
   }
 
-  /** Durable brute-force guard: at the attempt limit the session locks terminally. */
-  private void registerFailedConfirmAttempt(
-      HandshakeSession session, AuthenticatedUser counterpart) {
+  /**
+   * A wrong password is counted on the live row. The configured attempt is terminal: the row is
+   * removed, so the request can never be confirmed afterwards.
+   */
+  private void registerFailedAttempt(HandshakeSession session, AuthenticatedUser counterpart) {
     session.setConfirmAttempts(session.getConfirmAttempts() + 1);
     if (session.getConfirmAttempts() >= maxConfirmAttempts) {
-      session.setStatus(HandshakeStatus.EXPIRED);
-      handshakeSessionRepository.save(session);
-      audit(session, EVENT_CONFIRM_LOCKED, counterpart.getUserId());
+      audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
+      lapse(session);
       return;
     }
-    handshakeSessionRepository.save(session);
+    handshakeSessionRepository.saveAndFlush(session);
     audit(session, EVENT_CONFIRM_REJECTED, counterpart.getUserId());
   }
 
-  /**
-   * ADR-018: a Global Support Admin cannot become active without completed 2FA enrollment. Fails
-   * closed — an unreachable OTP state never lets a support admin through.
-   */
-  private void requireActiveSecondFactorForSupportAdmin(AuthenticatedUser initiator) {
-    var roles = initiator.getRoles();
-    if (roles == null
-        || !roles.contains(
-            de.caritas.cob.userservice.api.config.auth.UserRole.GLOBAL_SUPPORT_ADMIN.getValue())) {
-      return;
-    }
-    // A role policy that denies OTP for support admins makes this gate unsatisfiable —
-    // the same deadlock class fixed for platform admins on pre-dev (adadd471). Fail
-    // closed (privileged access without 2FA is never granted), but name it as a
-    // deployment misconfiguration instead of telling the admin to do the impossible.
-    if (!identityClientConfig.isOtpAllowed(roles)) {
-      throw new ForbiddenException(
-          String.format(
-              "Support access is unavailable: the OTP policy denies OTP for the support-admin role,"
-                  + " so support admin %s cannot satisfy the mandatory 2FA gate."
-                  + " This is a deployment configuration error (identity.otp-allowed-*).",
-              initiator.getUserId()));
-    }
-    boolean otpActive;
-    try {
-      var otpInfo =
-          identityClient.getOtpCredential(
-              usernameTranscoder.encodeUsername(initiator.getUsername()));
-      otpActive = otpInfo != null && Boolean.TRUE.equals(otpInfo.getOtpSetup());
-    } catch (Exception e) {
-      log.warn(
-          "Could not read OTP state for support admin {}; failing closed",
-          initiator.getUserId(),
-          e);
-      otpActive = false;
-    }
-    if (!otpActive) {
-      throw new ForbiddenException(
-          String.format(
-              "Support admin %s must complete 2FA enrollment before initiating a handshake",
-              initiator.getUserId()));
-    }
-  }
-
-  private void expire(HandshakeSession session) {
-    session.setStatus(HandshakeStatus.EXPIRED);
-    handshakeSessionRepository.save(session);
+  /** Removes the operational row and leaves exactly one audit entry behind. */
+  private void lapse(HandshakeSession session) {
     audit(session, EVENT_NOT_ESTABLISHED, null);
+    handshakeSessionRepository.delete(session);
+    handshakeSessionRepository.flush();
   }
 
   private void audit(HandshakeSession session, String event, String actorId) {
@@ -287,13 +297,22 @@ public class HandshakeService {
             .actorId(actorId)
             .counterpartId(session.getCounterpartId())
             .tenantId(session.getTenantId())
+            .agencyId(session.getAgencyId())
             .createDate(nowInUtc())
             .build());
   }
 
   private HandshakePurpose purposeOf(String value) {
+    // Version 1 offers SUPPORT_ACCESS only; anything else is rejected before any credential work.
+    if (value == null || value.isBlank()) {
+      return HandshakePurpose.SUPPORT_ACCESS;
+    }
     try {
-      return HandshakePurpose.valueOf(value);
+      var purpose = HandshakePurpose.valueOf(value);
+      if (!purpose.isPubliclyOffered()) {
+        throw new BadRequestException(String.format("Handshake purpose %s is not offered", value));
+      }
+      return purpose;
     } catch (IllegalArgumentException | NullPointerException e) {
       throw new BadRequestException(String.format("Unknown handshake purpose %s", value));
     }
@@ -302,20 +321,29 @@ public class HandshakeService {
   @Getter
   @Setter
   public static class InitiateHandshakeRequest {
-    @jakarta.validation.constraints.NotBlank
     @jakarta.validation.constraints.Size(max = 40)
     private String purpose;
 
     @jakarta.validation.constraints.NotBlank
     @jakarta.validation.constraints.Size(max = 36)
-    private String counterpartId;
+    private String consultantId;
+
+    @jakarta.validation.constraints.NotNull private Long agencyId;
 
     @jakarta.validation.constraints.NotBlank
     @jakarta.validation.constraints.Size(max = 255)
     private String password;
 
+    @jakarta.validation.constraints.NotBlank
     @jakarta.validation.constraints.Size(max = 16)
     private String otp;
+
+    /** Never let credentials reach a log line, however this object is rendered. */
+    @Override
+    public String toString() {
+      return "InitiateHandshakeRequest{purpose=%s, consultantId=%s, agencyId=%s, password=[REDACTED], otp=[REDACTED]}"
+          .formatted(purpose, consultantId, agencyId);
+    }
   }
 
   @Getter
@@ -324,6 +352,7 @@ public class HandshakeService {
     private String purpose;
     private String initiatorId;
     private String counterpartId;
+    private Long agencyId;
     private String status;
     private LocalDateTime expiryDate;
 
@@ -333,6 +362,7 @@ public class HandshakeService {
       item.purpose = session.getPurpose().name();
       item.initiatorId = session.getInitiatorId();
       item.counterpartId = session.getCounterpartId();
+      item.agencyId = session.getAgencyId();
       item.status = session.getStatus().name();
       item.expiryDate = session.getExpiryDate();
       return item;

@@ -907,6 +907,156 @@ paths:
         security:
           - Bearer: [ ]
 
+  /useradmin/supportadmins:
+      post:
+        tags:
+          - admin-user-controller
+        summary: 'Creates a Global Support Admin. Only Platform Admins may call this operation.'
+        operationId: createGlobalSupportAdmin
+        requestBody:
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/CreateAdminDTO'
+          required: true
+        responses:
+          201:
+            description: CREATED - Global Support Admin was created and must enroll a second factor.
+            content:
+              'application/json':
+                schema:
+                  $ref: '#/components/schemas/GlobalSupportAdminDTO'
+          400:
+            description: BAD REQUEST - invalid/incomplete request or body object
+          401:
+            description: UNAUTHORIZED - no/invalid role/authorization
+          403:
+            description: FORBIDDEN - caller is not a Platform Admin
+          409:
+            description: CONFLICT - invalid/unavailable username or email address
+          500:
+            description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        security:
+          - Bearer: [ ]
+
+  /useradmin/supportadmins/search:
+      get:
+        tags:
+          - admin-user-controller
+        summary: 'Lists Global Support Admins. Only Platform Admins may call this operation.'
+        operationId: searchGlobalSupportAdmins
+        parameters:
+          - name: query
+            in: query
+            required: true
+            schema:
+              type: string
+              minLength: 1
+          - name: page
+            in: query
+            schema:
+              type: integer
+              default: 1
+              minimum: 1
+          - name: perPage
+            in: query
+            schema:
+              type: integer
+              default: 20
+              minimum: 1
+              maximum: 100
+          - name: field
+            in: query
+            schema:
+              type: string
+              enum: [ FIRSTNAME, LASTNAME, EMAIL, UPDATE_DATE ]
+              default: FIRSTNAME
+          - name: order
+            in: query
+            schema:
+              type: string
+              enum: [ ASC, DESC ]
+              default: ASC
+        responses:
+          200:
+            description: OK - successful operation
+            content:
+              'application/json':
+                schema:
+                  $ref: '#/components/schemas/GlobalSupportAdminSearchResultDTO'
+          401:
+            description: UNAUTHORIZED - no/invalid role/authorization
+          403:
+            description: FORBIDDEN - caller is not a Platform Admin
+          500:
+            description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        security:
+          - Bearer: [ ]
+
+  /useradmin/supportadmins/{adminId}/disable:
+      post:
+        tags:
+          - admin-user-controller
+        summary: >-
+          Blocks a Global Support Admin and revokes every support access it currently holds.
+          Only Platform Admins may call this operation.
+        operationId: disableGlobalSupportAdmin
+        parameters:
+          - name: adminId
+            in: path
+            required: true
+            schema:
+              type: string
+        responses:
+          200:
+            description: OK - the account is blocked and running access is being revoked.
+            content:
+              'application/json':
+                schema:
+                  $ref: '#/components/schemas/GlobalSupportAdminDTO'
+          401:
+            description: UNAUTHORIZED - no/invalid role/authorization
+          403:
+            description: FORBIDDEN - caller is not a Platform Admin
+          404:
+            description: NOT FOUND - no Global Support Admin with that id
+          500:
+            description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        security:
+          - Bearer: [ ]
+
+  /useradmin/supportadmins/{adminId}/enable:
+      post:
+        tags:
+          - admin-user-controller
+        summary: >-
+          Starts onboarding or reactivation of a Global Support Admin. The account stays unusable
+          until a second factor is enrolled. Only Platform Admins may call this operation.
+        operationId: enableGlobalSupportAdmin
+        parameters:
+          - name: adminId
+            in: path
+            required: true
+            schema:
+              type: string
+        responses:
+          200:
+            description: OK - provisioning was started.
+            content:
+              'application/json':
+                schema:
+                  $ref: '#/components/schemas/GlobalSupportAdminDTO'
+          401:
+            description: UNAUTHORIZED - no/invalid role/authorization
+          403:
+            description: FORBIDDEN - caller is not a Platform Admin
+          404:
+            description: NOT FOUND - no Global Support Admin with that id
+          500:
+            description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        security:
+          - Bearer: [ ]
+
   /useradmin/tenantadmins/search:
       get:
         tags:
@@ -1640,6 +1790,55 @@ components:
           $ref: '#/components/schemas/AdminDTO'
         _links:
           $ref: '#/components/schemas/AdminLinks'
+
+    GlobalSupportAdminDTO:
+      type: object
+      required:
+        - id
+        - username
+        - firstname
+        - lastname
+        - email
+        - secondFactorStatus
+        - provisioningStatus
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        firstname:
+          type: string
+        lastname:
+          type: string
+        email:
+          type: string
+        secondFactorStatus:
+          type: string
+          enum: [ PENDING_2FA, ACTIVE, UNAVAILABLE ]
+          description: ACTIVE only when Keycloak confirms an enrolled second factor.
+        provisioningStatus:
+          type: string
+          enum: [ INVITED, PENDING_2FA, ACTIVE, DISABLING, DISABLED, PROVISIONING_FAILED ]
+          description: >-
+            Authoritative operational state. Only ACTIVE may initiate support access; an access
+            token issued before a disable stops working as soon as this leaves ACTIVE.
+        createDate:
+          type: string
+        updateDate:
+          type: string
+
+    GlobalSupportAdminSearchResultDTO:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalSupportAdminDTO'
+        total:
+          type: integer
 
     AdminSearchResultDTO:
       type: object

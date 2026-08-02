@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
 import java.lang.reflect.Type;
 import org.springframework.core.MethodParameter;
@@ -18,7 +19,7 @@ public class SensitiveRequestBodyLoggingAdvice extends RequestBodyAdviceAdapter 
       MethodParameter methodParameter,
       Type targetType,
       Class<? extends HttpMessageConverter<?>> converterType) {
-    return PasswordDTO.class.equals(targetType);
+    return PasswordDTO.class.equals(targetType) || OneTimePasswordDTO.class.equals(targetType);
   }
 
   @Override
@@ -28,11 +29,37 @@ public class SensitiveRequestBodyLoggingAdvice extends RequestBodyAdviceAdapter 
       MethodParameter parameter,
       Type targetType,
       Class<? extends HttpMessageConverter<?>> converterType) {
-    if (body instanceof PasswordDTO) {
-      var passwordDTO = (PasswordDTO) body;
+    if (body instanceof PasswordDTO passwordDTO) {
       return RedactedPasswordDTO.from(passwordDTO);
     }
+    // ADR-018: a one-time code is a credential too. Without this it would survive in a request-body
+    // log line long enough to be replayed inside its validity window.
+    if (body instanceof OneTimePasswordDTO otpDTO) {
+      return RedactedOneTimePasswordDTO.from(otpDTO);
+    }
     return body;
+  }
+
+  static final class RedactedOneTimePasswordDTO extends OneTimePasswordDTO {
+
+    static RedactedOneTimePasswordDTO from(OneTimePasswordDTO otpDTO) {
+      var redacted = new RedactedOneTimePasswordDTO();
+      redacted.setSecret(otpDTO.getSecret());
+      redacted.setOtp(otpDTO.getOtp());
+      return redacted;
+    }
+
+    @Override
+    public String toString() {
+      return "class OneTimePasswordDTO {\n"
+          + "    secret: "
+          + REDACTED
+          + "\n"
+          + "    otp: "
+          + REDACTED
+          + "\n"
+          + "}";
+    }
   }
 
   static final class RedactedPasswordDTO extends PasswordDTO {

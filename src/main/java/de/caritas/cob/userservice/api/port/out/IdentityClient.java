@@ -50,4 +50,10 @@ public interface IdentityClient {
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);
+
+  /**
+   * Enables or disables the Keycloak account. ADR-018 provisions a Global Support Admin disabled
+   * and releases it only after the privileged role was assigned.
+   */
+  void setUserEnabled(String userId, boolean enabled);
 }
