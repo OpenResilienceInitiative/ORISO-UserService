@@ -186,7 +186,8 @@ class SupportAccessMatrixWorkerTest {
   }
 
   @Test
-  void revoke_Should_StayPending_WhenTheSupportIdentityIsStillAMember() throws Exception {
+  void revoke_Should_StayPending_WhenTheSupportIdentityIsStillAMemberOfALiveRoom()
+      throws Exception {
     var session = session(SupportAccessSessionStatus.REVOCATION_PENDING);
     session.setMatrixRoomId(ROOM_ID);
     session.setSupportAdminMatrixId(SUPPORT_MATRIX_ID);
@@ -195,6 +196,47 @@ class SupportAccessMatrixWorkerTest {
     when(matrixSynapseService.purgeRoom(ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(SUPPORT_MATRIX_ID)));
+    when(matrixSynapseService.isUserDeactivated(SUPPORT_MATRIX_ID)).thenReturn(false);
+
+    assertThatThrownBy(() -> worker.revoke(SESSION_ID)).isInstanceOf(IllegalStateException.class);
+
+    assertThat(session.getStatus()).isEqualTo(SupportAccessSessionStatus.REVOCATION_PENDING);
+  }
+
+  @Test
+  void revoke_Should_Close_WhenTheIdentityIsProvenDeadEvenThoughThePurgedRoomStillListsIt()
+      throws Exception {
+    var session = session(SupportAccessSessionStatus.REVOCATION_PENDING);
+    session.setMatrixRoomId(ROOM_ID);
+    session.setSupportAdminMatrixId(SUPPORT_MATRIX_ID);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(matrixSynapseService.deactivateUser(SUPPORT_MATRIX_ID)).thenReturn(true);
+    when(matrixSynapseService.purgeRoom(ROOM_ID)).thenReturn(true);
+    // Synapse keeps the historical membership rows of a purged room, so asking the room alone
+    // would leave every withdrawal REVOCATION_PENDING forever. What actually decides whether
+    // access is gone is the identity: a deactivated user holds no tokens and can join nothing.
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of(SUPPORT_MATRIX_ID)));
+    when(matrixSynapseService.isUserDeactivated(SUPPORT_MATRIX_ID)).thenReturn(true);
+
+    worker.revoke(SESSION_ID);
+
+    assertThat(session.getStatus()).isEqualTo(SupportAccessSessionStatus.CLOSED);
+    assertThat(session.getActiveLeaseKey()).isNull();
+  }
+
+  @Test
+  void revoke_Should_StayPending_WhenSynapseCannotSayWhetherTheIdentityIsDead() throws Exception {
+    var session = session(SupportAccessSessionStatus.REVOCATION_PENDING);
+    session.setMatrixRoomId(ROOM_ID);
+    session.setSupportAdminMatrixId(SUPPORT_MATRIX_ID);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(matrixSynapseService.deactivateUser(SUPPORT_MATRIX_ID)).thenReturn(true);
+    when(matrixSynapseService.purgeRoom(ROOM_ID)).thenReturn(true);
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of(SUPPORT_MATRIX_ID)));
+    // Unknown is not proof, and fail-closed means unproven withdrawal is not withdrawal.
+    when(matrixSynapseService.isUserDeactivated(SUPPORT_MATRIX_ID)).thenReturn(null);
 
     assertThatThrownBy(() -> worker.revoke(SESSION_ID)).isInstanceOf(IllegalStateException.class);
 

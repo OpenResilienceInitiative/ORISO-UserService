@@ -356,14 +356,26 @@ public class SupportAccessMatrixWorker {
   }
 
   /**
-   * After a purge the room is gone, so an absent member list is the expected success case. A list
-   * that still names the support identity means the withdrawal did not take effect.
+   * Proves that the support identity can no longer reach the room, and refuses to close the session
+   * on anything less.
+   *
+   * <p>After a purge the room is gone, so an absent member list is the expected success case. A
+   * list that still names the identity is not by itself evidence of surviving access: Synapse keeps
+   * the membership rows of a purged room, so that reading alone would leave every withdrawal
+   * REVOCATION_PENDING forever — an outage that never happened. What decides the question is the
+   * identity, which is single-use and per-session: a deactivated Matrix user holds no access token
+   * and can join nothing. So a lingering membership is only accepted once deactivation is
+   * confirmed, and an unknown answer counts as not withdrawn.
    */
   private void requireMembershipGone(String roomId, String supportMatrixId) {
     var members = matrixSynapseService.getRoomMembers(roomId);
-    if (members.isPresent() && supportMatrixId != null && members.get().contains(supportMatrixId)) {
+    if (members.isEmpty() || supportMatrixId == null || !members.get().contains(supportMatrixId)) {
+      return;
+    }
+    if (!Boolean.TRUE.equals(matrixSynapseService.isUserDeactivated(supportMatrixId))) {
       throw new IllegalStateException(
-          "Support identity is still a member of Matrix room %s".formatted(roomId));
+          "Support identity is still a member of Matrix room %s and not proven deactivated"
+              .formatted(roomId));
     }
   }
 

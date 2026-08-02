@@ -667,6 +667,52 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
+   * Asks Synapse whether an account is deactivated — the one fact that decides whether an identity
+   * can still reach anything, since a deactivated user holds no access token and can join no room.
+   *
+   * @return {@code TRUE}/{@code FALSE} as reported by Synapse, or {@code null} when Synapse could
+   *     not be asked. Null is deliberately not {@code false}: callers that fail closed must be able
+   *     to tell "still alive" from "don't know".
+   */
+  public Boolean isUserDeactivated(String matrixUserId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for reading Matrix user {}", matrixUserId);
+        return null;
+      }
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+
+      var request = new HttpEntity<>(getClientHttpHeaders(adminToken));
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      var body = response.getBody();
+      if (body == null) {
+        return null;
+      }
+      var deactivated = body.get("deactivated");
+      if (deactivated instanceof Boolean flag) {
+        return flag;
+      }
+      if (deactivated instanceof Number number) {
+        return number.intValue() != 0;
+      }
+      return null;
+    } catch (HttpClientErrorException.NotFound notFound) {
+      // Erased accounts disappear entirely; gone is as withdrawn as it gets.
+      return true;
+    } catch (Exception ex) {
+      log.warn("Could not read Matrix user {}: {}", matrixUserId, ex.getMessage());
+      return null;
+    }
+  }
+
+  /**
    * Purges a Matrix room and its message history via the Synapse admin API.
    *
    * @param matrixRoomId the Matrix room ID
