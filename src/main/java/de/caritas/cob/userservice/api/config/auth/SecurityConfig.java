@@ -237,7 +237,12 @@ public class SecurityConfig {
                     TENANT_ADMIN,
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    // ADR-018: a Global Support Admin is unusable until a second factor is
+                    // enrolled, so it has to be able to enrol one. Omitting it deadlocks the
+                    // account the way the platform admin was once deadlocked — encouraged to set
+                    // 2FA up, but forbidden from doing it.
+                    GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(

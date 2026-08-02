@@ -13,7 +13,7 @@ import de.caritas.cob.userservice.api.model.SupportAccessSession.SupportAccessSe
 import de.caritas.cob.userservice.api.port.out.HandshakeOutboxEventRepository;
 import de.caritas.cob.userservice.api.port.out.SupportAccessRevoker;
 import de.caritas.cob.userservice.api.port.out.SupportAccessSessionRepository;
-import de.caritas.cob.userservice.api.service.handshake.SupportAccessJobHandler;
+import de.caritas.cob.userservice.api.service.handshake.SupportAccessJob;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.Getter;
@@ -98,7 +98,7 @@ public class SupportAccessSessionService implements SupportAccessRevoker {
 
     if (session.getStatus().isTerminal()
         || session.getStatus() == SupportAccessSessionStatus.REVOCATION_PENDING) {
-      enqueue(SupportAccessJobHandler.PURGE_CALL_ROOM, session.getId());
+      enqueue(SupportAccessJob.PURGE_CALL_ROOM.name(), session.getId());
     }
   }
 
@@ -112,7 +112,7 @@ public class SupportAccessSessionService implements SupportAccessRevoker {
     if (sessionRepository.beginRevocation(sessionId, reason, nowInUtc()) != 1) {
       return false;
     }
-    enqueue(SupportAccessJobHandler.REVOKE_ACCESS, sessionId);
+    enqueue(SupportAccessJob.REVOKE_ACCESS.name(), sessionId);
     return true;
   }
 

@@ -16,7 +16,7 @@ import de.caritas.cob.userservice.api.model.SupportAccessSession.SupportAccessSe
 import de.caritas.cob.userservice.api.model.SupportAdminProfile;
 import de.caritas.cob.userservice.api.model.SupportAdminProfile.SupportAdminStatus;
 import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
-import de.caritas.cob.userservice.api.service.handshake.SupportAccessJobHandler;
+import de.caritas.cob.userservice.api.service.handshake.SupportAccessJob;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
@@ -161,19 +161,19 @@ class SupportAccessMariaDbIT {
   @Test
   void aSecondProvisioningJobForTheSameHandshake_Should_BeRejectedByTheDatabase() {
     var handshakeId = UUID.randomUUID().toString();
-    outboxRepository.saveAndFlush(job(handshakeId, SupportAccessJobHandler.PROVISION_ROOM));
+    outboxRepository.saveAndFlush(job(handshakeId, SupportAccessJob.PROVISION_ROOM.name()));
 
     assertThatThrownBy(
             () ->
                 outboxRepository.saveAndFlush(
-                    job(handshakeId, SupportAccessJobHandler.PROVISION_ROOM)))
+                    job(handshakeId, SupportAccessJob.PROVISION_ROOM.name())))
         .isInstanceOf(DataIntegrityViolationException.class);
 
     // A different job type for the same aggregate is legitimate — withdrawal follows provisioning.
     assertThatCode(
             () ->
                 outboxRepository.saveAndFlush(
-                    job(handshakeId, SupportAccessJobHandler.REVOKE_ACCESS)))
+                    job(handshakeId, SupportAccessJob.REVOKE_ACCESS.name())))
         .doesNotThrowAnyException();
   }
 

@@ -188,7 +188,7 @@ public class HandshakeService {
     handshakeOutboxEventRepository.save(
         HandshakeOutboxEvent.builder()
             .aggregateId(confirmed.getId())
-            .eventType(SupportAccessJobHandler.PROVISION_ROOM)
+            .eventType(SupportAccessJob.PROVISION_ROOM.name())
             .status(OutboxStatus.PENDING)
             .attempts(0)
             .createDate(now)

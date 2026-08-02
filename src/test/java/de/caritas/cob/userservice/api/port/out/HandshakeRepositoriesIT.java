@@ -12,7 +12,7 @@ import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
 import de.caritas.cob.userservice.api.model.SupportAccessSession;
 import de.caritas.cob.userservice.api.model.SupportAccessSession.SupportAccessSessionStatus;
 import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
-import de.caritas.cob.userservice.api.service.handshake.SupportAccessJobHandler;
+import de.caritas.cob.userservice.api.service.handshake.SupportAccessJob;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -37,7 +37,7 @@ class HandshakeRepositoriesIT {
         outboxRepository.saveAndFlush(
             HandshakeOutboxEvent.builder()
                 .aggregateId("hs-claim")
-                .eventType(SupportAccessJobHandler.PROVISION_ROOM)
+                .eventType(SupportAccessJob.PROVISION_ROOM.name())
                 .status(OutboxStatus.PENDING)
                 .attempts(0)
                 .createDate(now)

@@ -71,6 +71,7 @@ class SupportAccessAuthorizationIT {
   private static final String SESSIONS_ACTIVE = "/users/support-access/sessions/active";
   private static final String SESSION_TERMINATE = "/users/support-access/sessions/s-1/terminate";
   private static final String SESSION_CALL_ROOM = "/users/support-access/sessions/s-1/call-room";
+  private static final String TWO_FACTOR_APP = "/users/2fa/app";
 
   @Autowired private MockMvc mvc;
 
@@ -126,6 +127,26 @@ class SupportAccessAuthorizationIT {
               get(path).with(user("c").authorities(authority(AuthorityValue.CONSULTANT_DEFAULT))))
           .andExpect(status().isForbidden());
     }
+  }
+
+  /**
+   * A Global Support Admin is useless until a second factor is enrolled, so it MUST be able to
+   * reach the enrolment endpoint. Leaving it out deadlocks the account exactly the way the platform
+   * admin was once deadlocked: encouraged to set 2FA up, but forbidden from doing it.
+   */
+  @Test
+  void globalSupportAdmin_Should_BeAbleToEnrolItsSecondFactor() throws Exception {
+    var status =
+        mvc.perform(
+                request("PUT", TWO_FACTOR_APP)
+                    .with(user("gsa").authorities(authority(AuthorityValue.GLOBAL_SUPPORT_ADMIN))))
+            .andReturn()
+            .getResponse()
+            .getStatus();
+
+    org.assertj.core.api.Assertions.assertThat(status)
+        .as("a support admin must be allowed to set up its own second factor")
+        .isNotIn(401, 403);
   }
 
   /** And the mirror image: a support admin must not reach consultant or asker data. */

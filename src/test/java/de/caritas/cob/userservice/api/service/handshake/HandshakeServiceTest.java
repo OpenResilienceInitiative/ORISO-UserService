@@ -201,7 +201,7 @@ class HandshakeServiceTest {
 
     var captor = ArgumentCaptor.forClass(HandshakeOutboxEvent.class);
     verify(handshakeOutboxEventRepository).save(captor.capture());
-    assertThat(captor.getValue().getEventType()).isEqualTo(SupportAccessJobHandler.PROVISION_ROOM);
+    assertThat(captor.getValue().getEventType()).isEqualTo(SupportAccessJob.PROVISION_ROOM.name());
     assertThat(captor.getValue().getAggregateId()).isEqualTo(HANDSHAKE_ID);
     assertThat(item.getStatus()).isEqualTo("CONFIRMED");
   }
