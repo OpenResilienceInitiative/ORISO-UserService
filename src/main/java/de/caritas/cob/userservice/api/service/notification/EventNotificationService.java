@@ -370,10 +370,10 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, null)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getUser().getUserId(),
           "New message",
           text,
           buildMessageParams(session, senderLabel, contentClass, "user"),
@@ -386,10 +386,10 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, null)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getConsultant().getId(),
           "New message",
           text,
           buildMessageParams(session, senderLabel, contentClass, "consultant"),
@@ -467,10 +467,10 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getUser().getUserId(),
           "New thread reply",
           text,
           buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "user"),
@@ -483,10 +483,10 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getConsultant().getId(),
           "New thread reply",
           text,
           buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "consultant"),
@@ -505,7 +505,7 @@ public class EventNotificationService {
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
         eventNotificationRepository
-            .findByRecipientUserIdOrderByCreateDateDesc(recipientUserId, pageable)
+            .findByRecipientUserIdOrderByCreateDateDescIdDesc(recipientUserId, pageable)
             .stream()
             .map(this::toItem)
             .collect(Collectors.toList());
@@ -582,6 +582,48 @@ public class EventNotificationService {
         title,
         text,
         null,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /**
+   * #942: message-type events carry a deterministic deduplication key derived from the Matrix event
+   * id, so the Matrix sync listener and the frontend's {@code POST /message-events} for the same
+   * message collapse into one row per recipient. Without an event id (legacy callers) the event
+   * persists unconditionally, as before.
+   */
+  private void createMessageEventDeduplicated(
+      String eventType,
+      String matrixEventId,
+      String recipientUserId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    if (matrixEventId != null && !matrixEventId.isBlank()) {
+      createEventOnce(
+          eventType + ":" + matrixEventId,
+          recipientUserId,
+          eventType,
+          CATEGORY_MESSAGE,
+          title,
+          text,
+          params,
+          actionPath,
+          sourceSessionId,
+          tenantId);
+      return;
+    }
+    createEvent(
+        recipientUserId,
+        eventType,
+        CATEGORY_MESSAGE,
+        title,
+        text,
+        params,
         actionPath,
         sourceSessionId,
         tenantId);

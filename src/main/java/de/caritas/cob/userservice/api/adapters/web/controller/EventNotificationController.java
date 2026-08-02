@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -85,6 +86,17 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
+    // #942: the Matrix event id (when the client sends it) keys deduplication,
+    // so this producer and the server-side Matrix listener collapse into one
+    // row per recipient for the same message.
+    PrivacyEnvelope envelope =
+        request.getMatrixEventId() != null && !request.getMatrixEventId().isBlank()
+            ? PrivacyEnvelope.builder()
+                .messageId(request.getMatrixEventId())
+                .roomId(request.getRoomId())
+                .senderId(authenticatedUser.getUserId())
+                .build()
+            : null;
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
@@ -93,14 +105,16 @@ public class EventNotificationController {
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName(),
-          request.getThreadParentPreview());
+          request.getThreadParentPreview(),
+          envelope);
     } else {
       eventNotificationService.createMessageNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName());
+          request.getSenderDisplayName(),
+          envelope);
     }
 
     // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
@@ -182,8 +196,19 @@ public class EventNotificationController {
     private Boolean teamDiscussion;
     private java.util.List<String> mentionedUserIds;
 
+    /** Matrix event id of the message this event mirrors (#942, dedup key). */
+    private String matrixEventId;
+
     public Boolean getTeamDiscussion() {
       return teamDiscussion;
+    }
+
+    public String getMatrixEventId() {
+      return matrixEventId;
+    }
+
+    public void setMatrixEventId(String matrixEventId) {
+      this.matrixEventId = matrixEventId;
     }
 
     public void setTeamDiscussion(Boolean teamDiscussion) {
