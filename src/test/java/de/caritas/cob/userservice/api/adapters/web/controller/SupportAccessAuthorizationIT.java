@@ -149,6 +149,26 @@ class SupportAccessAuthorizationIT {
         .isNotIn(401, 403);
   }
 
+  /**
+   * The admin portal loads /users/data for every signed-in admin and hard-redirects the whole tab
+   * to access-denied on a 403. Excluding the support admin therefore did not merely hide a field —
+   * it bounced the account out of the portal its entire surface lives in.
+   */
+  @Test
+  void globalSupportAdmin_Should_BeAbleToReadItsOwnUserData() throws Exception {
+    var status =
+        mvc.perform(
+                get("/users/data")
+                    .with(user("gsa").authorities(authority(AuthorityValue.GLOBAL_SUPPORT_ADMIN))))
+            .andReturn()
+            .getResponse()
+            .getStatus();
+
+    org.assertj.core.api.Assertions.assertThat(status)
+        .as("a support admin must be able to read its own account data")
+        .isNotIn(401, 403);
+  }
+
   /** And the mirror image: a support admin must not reach consultant or asker data. */
   @Test
   void globalSupportAdmin_Should_NotReachConsultantSurfaces() throws Exception {

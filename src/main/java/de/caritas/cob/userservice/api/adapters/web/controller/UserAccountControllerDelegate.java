@@ -106,7 +106,7 @@ class UserAccountControllerDelegate {
       partialUserData = consultantDataProvider.retrieveData(consultant);
       enrichConsultantDisplayName(partialUserData);
       enrichConsultantAvailability(partialUserData);
-    } else if (isTenantAdmin() || isAgencyAdmin()) {
+    } else if (isTenantAdmin() || isAgencyAdmin() || authenticatedUser.isGlobalSupportAdmin()) {
       partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
       // Only ask a platform admin to set 2FA up when the OTP role policy would actually
       // let them finish. Encouraging it unconditionally deadlocks the admin UI: the

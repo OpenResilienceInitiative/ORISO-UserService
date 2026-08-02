@@ -189,7 +189,11 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    // ADR-018: the admin portal loads this for every signed-in admin and bounces
+                    // the whole tab to access-denied on a 403, so omitting the support admin locks
+                    // it out of the portal its entire surface lives in.
+                    GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
                 .requestMatchers(
