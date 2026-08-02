@@ -124,6 +124,8 @@ public class SecurityConfig {
                     "/users/magic-link/consume",
                     "/users/password-reset/request",
                     "/users/password-reset/confirm",
+                    "/users/account-invites/*",
+                    "/service/users/account-invites/*",
                     "/users/invitelinks/*/redeem")
                 .permitAll()
                 .requestMatchers(
@@ -136,6 +138,11 @@ public class SecurityConfig {
                     "/service/users/password-reset/request",
                     "/users/password-reset/confirm",
                     "/service/users/password-reset/confirm")
+                .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/account-invites/*/accept",
+                    "/service/users/account-invites/*/accept")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()

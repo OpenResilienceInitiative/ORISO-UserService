@@ -329,8 +329,14 @@ class UserAccountControllerDelegate {
       DeleteUserAccountDTO deleteUserAccountDTO) {
     var username = authenticatedUser.getUsername();
     var password = deleteUserAccountDTO.getPassword();
-    var encodedUsername = usernameTranscoder.encodeUsername(username);
-    if (!identityManager.validatePasswordIgnoring2fa(encodedUsername, password)) {
+    var passwordValid = identityManager.validatePasswordIgnoring2fa(username, password);
+    if (!passwordValid) {
+      var encodedUsername = usernameTranscoder.encodeUsername(username);
+      passwordValid =
+          !encodedUsername.equals(username)
+              && identityManager.validatePasswordIgnoring2fa(encodedUsername, password);
+    }
+    if (!passwordValid) {
       var message = String.format("Could not log in user %s into Keycloak", username);
       throw new BadRequestException(message);
     }

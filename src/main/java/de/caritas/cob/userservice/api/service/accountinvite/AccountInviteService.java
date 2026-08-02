@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_FREE_TEXT;
+
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
@@ -11,6 +13,10 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -44,6 +50,7 @@ public class AccountInviteService {
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull TenantService tenantService;
+  private final @NonNull MailService mailService;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -75,6 +82,7 @@ public class AccountInviteService {
             .departmentId(command.departmentId())
             .expiresAt(resolveExpiry(now, command.expiresInDays()))
             .status(AccountInviteStatus.DRAFT)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
             .emailVerificationStatus(EmailVerificationStatus.PENDING)
             .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
             .createdByUserId(authenticatedUser.getUserId())
@@ -192,6 +200,25 @@ public class AccountInviteService {
     return accountInviteRepository.save(invite);
   }
 
+  @Transactional
+  public AccountInvite requireActiveInvite(String rawToken) {
+    if (isBlank(rawToken)) {
+      throw new BadRequestException("Invite token is required");
+    }
+    AccountInvite invite =
+        accountInviteRepository
+            .findByTokenHash(hash(rawToken))
+            .orElseThrow(() -> new NotFoundException("Account invite not found"));
+    LocalDateTime now = LocalDateTime.now();
+    if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
+      throw new BadRequestException("Account invite expired");
+    }
+    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+      throw new BadRequestException("Account invite is not active");
+    }
+    return invite;
+  }
+
   public AccountAccessGateStatus calculateAccessGate(AccountInvite invite) {
     if (invite == null || invite.getStatus() != AccountInviteStatus.ACCEPTED) {
       return AccountAccessGateStatus.BLOCKED_INVITE;
@@ -277,19 +304,33 @@ public class AccountInviteService {
     invite.setUpdateDate(now);
     invite = accountInviteRepository.save(invite);
 
+    String renderedSubject = render(template.getSubject(), invite, acceptUrl);
+    String renderedBody = render(template.getBody(), invite, acceptUrl);
     InviteEmailDelivery delivery =
         InviteEmailDelivery.builder()
             .accountInviteId(invite.getId())
             .templateId(template.getId())
             .templateKind(template.getKind())
             .recipientSnapshot(invite.getRecipientEmail())
-            .subjectSnapshot(render(template.getSubject(), invite, acceptUrl))
-            .bodySnapshot(render(template.getBody(), invite, acceptUrl))
+            .subjectSnapshot(renderedSubject)
+            .bodySnapshot(renderedBody)
             .status(InviteEmailDeliveryStatus.SENT)
             .sentAt(now)
             .createDate(now)
             .build();
     delivery = deliveryRepository.save(delivery);
+    mailService.sendEmailNotification(
+        new MailsDTO()
+            .mails(
+                List.of(
+                    new MailDTO()
+                        .template(TEMPLATE_FREE_TEXT)
+                        .email(invite.getRecipientEmail())
+                        .templateData(
+                            List.of(
+                                new TemplateDataDTO().key("subject").value(renderedSubject),
+                                new TemplateDataDTO().key("text").value(renderedBody),
+                                new TemplateDataDTO().key("url").value(acceptUrl))))));
     return new InviteSendResult(invite, delivery, rawToken, acceptUrl);
   }
 

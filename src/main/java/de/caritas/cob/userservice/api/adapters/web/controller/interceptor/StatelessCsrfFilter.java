@@ -109,6 +109,11 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
             || lowerUri.endsWith("/users/password-reset/confirm")) {
           return true;
         }
+        // Account-invite acceptance is another public bootstrap endpoint. The random invite token
+        // is the bearer secret; the recipient does not have a login session or CSRF cookie yet.
+        if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
+          return true;
+        }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
       // hits it before any session / CSRF cookie exists.

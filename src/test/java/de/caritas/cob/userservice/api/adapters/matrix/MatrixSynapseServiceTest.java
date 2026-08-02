@@ -531,6 +531,70 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void createUser_reactivatesDeactivatedSynapseIdentityWhenLocalpartIsStillReserved()
+      throws Exception {
+    matrixConfig.setServerName("matrix.example.com");
+    stubAdminLogin();
+    when(restTemplate.getForEntity(REGISTER_URL, String.class))
+        .thenReturn(ResponseEntity.ok("{\"nonce\":\"nonce-abc\"}"));
+    when(restTemplate.postForEntity(
+            eq(REGISTER_URL), any(HttpEntity.class), eq(MatrixCreateUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"errcode\":\"M_USER_IN_USE\",\"error\":\"User ID already taken.\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/users/"
+                        + "%40newuser%3Amatrix.example.com")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("deactivated", true)));
+    var updateCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/users/"
+                        + "%40newuser%3Amatrix.example.com")),
+            eq(HttpMethod.PUT),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    var response = matrixSynapseService().createUser("newuser", "new-secret", "New User");
+
+    assertThat(response.getBody().getUserId()).isEqualTo("@newuser:matrix.example.com");
+    verify(restTemplate, times(2))
+        .exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/users/"
+                        + "%40newuser%3Amatrix.example.com")),
+            eq(HttpMethod.PUT),
+            updateCaptor.capture(),
+            eq(Map.class));
+    assertThat(updateCaptor.getAllValues().get(0).getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ADMIN_TOKEN);
+    assertThat(updateCaptor.getAllValues().get(0).getBody())
+        .usingRecursiveComparison()
+        .isEqualTo(
+            new de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixReactivateUserRequestDTO(
+                false));
+    assertThat(updateCaptor.getAllValues().get(1).getBody())
+        .isInstanceOf(MatrixPasswordUpdateRequestDTO.class);
+    var passwordUpdate =
+        (MatrixPasswordUpdateRequestDTO) updateCaptor.getAllValues().get(1).getBody();
+    assertThat(passwordUpdate.getPassword()).isEqualTo("new-secret");
+    assertThat(passwordUpdate.isLogoutDevices()).isFalse();
+  }
+
+  @Test
   void createUser_unexpectedError_throwsMatrixCreateUserException() {
     // Network failures during registration must not leak as unchecked exceptions.
     when(restTemplate.getForEntity(REGISTER_URL, String.class))

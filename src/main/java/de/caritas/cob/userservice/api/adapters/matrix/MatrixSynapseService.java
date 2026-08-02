@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixReactivateUserRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -233,6 +234,9 @@ public class MatrixSynapseService {
 
       return response;
     } catch (HttpClientErrorException ex) {
+      if (isReservedMatrixUserId(ex)) {
+        return reactivateDeletedUser(username, password);
+      }
       log.error(
           "Matrix Error: Could not create user ({}) in Matrix. Status: {}, Response: {}",
           username,
@@ -245,6 +249,66 @@ public class MatrixSynapseService {
       log.error("Matrix Error: Could not create user ({}) in Matrix. Reason", username, ex);
       throw new MatrixCreateUserException(
           String.format("Could not create user (%s) in Matrix", username));
+    }
+  }
+
+  private boolean isReservedMatrixUserId(HttpClientErrorException exception) {
+    return exception.getStatusCode().value() == 400
+        && exception.getResponseBodyAsString().contains("\"M_USER_IN_USE\"");
+  }
+
+  private ResponseEntity<MatrixCreateUserResponseDTO> reactivateDeletedUser(
+      String username, String password) throws MatrixCreateUserException {
+    String matrixUserId =
+        "@" + username.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    try {
+      String adminToken = getAdminAccessToken();
+      if (adminToken == null) {
+        throw new MatrixCreateUserException(
+            "Could not reactivate Matrix user without an admin token");
+      }
+
+      URI userUri =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var adminRequest = new HttpEntity<>(headers);
+      var existingUser =
+          restTemplate.exchange(
+              userUri, org.springframework.http.HttpMethod.GET, adminRequest, java.util.Map.class);
+      if (existingUser.getBody() == null
+          || !Boolean.TRUE.equals(existingUser.getBody().get("deactivated"))) {
+        throw new MatrixCreateUserException(
+            String.format("Matrix user (%s) is already active", username));
+      }
+
+      var reactivateRequest = new MatrixReactivateUserRequestDTO(false);
+      restTemplate.exchange(
+          userUri,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(reactivateRequest, headers),
+          java.util.Map.class);
+
+      var passwordRequest = new MatrixPasswordUpdateRequestDTO();
+      passwordRequest.setPassword(password);
+      passwordRequest.setLogoutDevices(false);
+      restTemplate.exchange(
+          userUri,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(passwordRequest, headers),
+          java.util.Map.class);
+
+      var body = new MatrixCreateUserResponseDTO();
+      body.setUserId(matrixUserId);
+      log.info("Successfully reactivated deleted Matrix user: {}", matrixUserId);
+      return ResponseEntity.ok(body);
+    } catch (MatrixCreateUserException exception) {
+      throw exception;
+    } catch (Exception exception) {
+      log.error("Matrix Error: Could not reactivate deleted user ({})", username, exception);
+      throw new MatrixCreateUserException(
+          String.format("Could not reactivate deleted Matrix user (%s)", username));
     }
   }
 

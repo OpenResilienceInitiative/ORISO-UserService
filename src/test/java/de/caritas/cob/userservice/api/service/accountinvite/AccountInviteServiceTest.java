@@ -23,6 +23,8 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
+import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,6 +48,7 @@ class AccountInviteServiceTest {
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private TenantService tenantService;
+  @Mock private MailService mailService;
 
   @InjectMocks private AccountInviteService service;
 
@@ -86,6 +89,46 @@ class AccountInviteServiceTest {
     assertThat(deliveryCaptor.getValue().getBodySnapshot()).contains(result.rawToken());
     assertThat(deliveryCaptor.getValue().getRecipientSnapshot()).isEqualTo("owner@example.org");
     assertThat(deliveryCaptor.getValue().getStatus()).isEqualTo(InviteEmailDeliveryStatus.SENT);
+  }
+
+  @Test
+  void sendInvite_Should_DeliverRenderedInvitationThroughMailService() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .recipientEmail("lisa.simpson@oriso.org")
+            .firstName("Lisa")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Willkommen {{firstName}}")
+            .body("Bitte registrieren: {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result =
+        service.sendInvite(new SendInviteCommand(10L, 20L, "http://localhost:3000/account-invite"));
+
+    ArgumentCaptor<MailsDTO> mailsCaptor = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(mailsCaptor.capture());
+    var mail = mailsCaptor.getValue().getMails().getFirst();
+    assertThat(mail.getEmail()).isEqualTo("lisa.simpson@oriso.org");
+    assertThat(mail.getTemplate()).isEqualTo("free-text");
+    assertThat(mail.getTemplateData())
+        .extracting("key", "value")
+        .contains(
+            org.assertj.core.groups.Tuple.tuple("subject", "Willkommen Lisa"),
+            org.assertj.core.groups.Tuple.tuple(
+                "text", "Bitte registrieren: " + result.acceptUrl()),
+            org.assertj.core.groups.Tuple.tuple("url", result.acceptUrl()));
   }
 
   @Test

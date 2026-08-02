@@ -709,12 +709,43 @@ class UserAccountControllerDelegateTest {
     var deleteUserAccountDTO = new DeleteUserAccountDTO();
     deleteUserAccountDTO.setPassword("correct");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(true);
 
     var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  @Test
+  void deactivateAndFlagUserAccountForDeletion_plainMatrixUsername_validatesPlainIdentity() {
+    var deleteUserAccountDTO = new DeleteUserAccountDTO();
+    deleteUserAccountDTO.setPassword("correct");
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(true);
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
+    verify(usernameTranscoder, never()).encodeUsername(USERNAME);
+    verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  @Test
+  void deactivateAndFlagUserAccountForDeletion_legacyEncodedUsername_fallsBackToEncodedIdentity() {
+    var deleteUserAccountDTO = new DeleteUserAccountDTO();
+    deleteUserAccountDTO.setPassword("correct");
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn("enc.username");
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(false);
+    when(identityManager.validatePasswordIgnoring2fa("enc.username", "correct")).thenReturn(true);
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
+    verify(identityManager).validatePasswordIgnoring2fa("enc.username", "correct");
     verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
   }
 }
