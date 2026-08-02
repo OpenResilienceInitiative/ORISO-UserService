@@ -92,7 +92,7 @@ class EventNotificationServiceTest {
     assertEquals(Long.valueOf(100L), first.getSourceSessionId());
     assertEquals(Long.valueOf(7L), first.getTenantId());
     assertEquals(
-        "/sessions/consultant/sessionView/!room-1:matrix.example/100", first.getActionPath());
+        "/sessions/consultant/sessionPreview/!room-1:matrix.example/100", first.getActionPath());
     assertEquals("consultant-a", first.getRecipientUserId());
     assertEquals("consultant-b", saved.get(1).getRecipientUserId());
 
@@ -154,7 +154,7 @@ class EventNotificationServiceTest {
     assertEquals("consultant-a", first.getRecipientUserId());
     assertEquals(Long.valueOf(100L), first.getSourceSessionId());
     assertEquals(
-        "/sessions/consultant/sessionView/!room-1:matrix.example/100", first.getActionPath());
+        "/sessions/consultant/sessionPreview/!room-1:matrix.example/100", first.getActionPath());
     assertEquals("consultant-b", eventCaptor.getAllValues().get(1).getRecipientUserId());
 
     JsonNode params = objectMapper.readTree(first.getParams());
@@ -169,6 +169,89 @@ class EventNotificationServiceTest {
         sessionMock(), Arrays.asList("consultant-a", null, "  ", "consultant-a", "consultant-b"));
 
     verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  @Test
+  void createWaitingRoomClientJoinedNotifications_linksTheEnquiryListWhenNoRoomExists() {
+    // #846: a waiting-room client has no Matrix room yet — the deep link must
+    // land on the enquiry list, never be null (the frontend turned null into
+    // the bare sessions root).
+    Session session = sessionMock();
+    when(session.getMatrixRoomId()).thenReturn(null);
+
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        session, List.of("consultant-a"));
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    assertEquals("/sessions/consultant/sessionPreview", eventCaptor.getValue().getActionPath());
+  }
+
+  @Test
+  void enquiryParamsCarryTheMatrixRoomReference() throws Exception {
+    // #846: the frontend resolves rooms from params.roomRef instead of
+    // string-splitting actionPath.
+    eventNotificationService.createNewClientRequestNotifications(
+        sessionMock(), List.of("consultant-a"));
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
+    assertEquals("!room-1:matrix.example", params.get("roomRef").asText());
+  }
+
+  @Test
+  void allEmittedParamKeysStayInsideTheSharedFrontendContract() throws Exception {
+    // #846 contract: every param key this service emits must be part of the
+    // shared whitelist mirrored in ORISO-Frontend
+    // (src/components/notificationsCenter/notificationActionTarget.ts,
+    // EVENT_PARAM_KEYS). Keys outside the set are silently dropped there.
+    java.util.Set<String> contract =
+        java.util.Set.of(
+            "sessionId",
+            "sourceSessionId",
+            "roomRef",
+            "roomId",
+            "agencyId",
+            "topicId",
+            "consultingTypeId",
+            "senderName",
+            "senderDisplayName",
+            "contentClass",
+            "recipientRole",
+            "threadRootId",
+            "mentioned",
+            "seriesId",
+            "occurrenceIndex",
+            "start",
+            "callRoomId",
+            "isVideo",
+            "forcedScopeKey");
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    eventNotificationService.createNewClientRequestNotifications(session, List.of("consultant-a"));
+    eventNotificationService.createWaitingRoomClientJoinedNotifications(
+        session, List.of("consultant-a"));
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "someone-else", "body");
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "!room-1:matrix.example", "someone-else", "body", "$thread-1");
+
+    verify(eventNotificationRepository, org.mockito.Mockito.atLeast(4)).save(eventCaptor.capture());
+    for (EventNotification saved : eventCaptor.getAllValues()) {
+      if (saved.getParams() == null) {
+        continue;
+      }
+      JsonNode params = objectMapper.readTree(saved.getParams());
+      params
+          .fieldNames()
+          .forEachRemaining(
+              key ->
+                  assertTrue(contract.contains(key), "param key outside shared contract: " + key));
+    }
   }
 
   @Test
