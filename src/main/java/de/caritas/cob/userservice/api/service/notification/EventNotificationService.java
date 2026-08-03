@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -42,6 +44,7 @@ public class EventNotificationService {
 
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
+  private static final long ACTIVE_VIEW_TTL_NANOS = Duration.ofSeconds(30).toNanos();
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull SessionRepository sessionRepository;
@@ -51,6 +54,7 @@ public class EventNotificationService {
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
+  private volatile LongSupplier monotonicNanos = System::nanoTime;
 
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
@@ -562,7 +566,12 @@ public class EventNotificationService {
       activeViewByUserId.remove(userId);
       return;
     }
-    activeViewByUserId.put(userId, new ActiveViewState(roomId, threadRootId));
+    activeViewByUserId.put(
+        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+  }
+
+  void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
+    this.monotonicNanos = monotonicNanos;
   }
 
   @Transactional
@@ -922,21 +931,31 @@ public class EventNotificationService {
 
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
-    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
-    if (activeView == null || roomId == null || roomId.isBlank()) {
-      return false;
-    }
-    if (!roomId.equals(activeView.roomId)) {
-      return false;
-    }
+    while (true) {
+      ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+      if (activeView == null || roomId == null || roomId.isBlank()) {
+        return false;
+      }
+      if (monotonicNanos.getAsLong() - activeView.lastHeartbeatNanos >= ACTIVE_VIEW_TTL_NANOS) {
+        if (activeViewByUserId.remove(recipientUserId, activeView)) {
+          return false;
+        }
+        // A concurrent heartbeat replaced the expired entry. Re-evaluate that
+        // fresh state so an active recipient remains correctly suppressed.
+        continue;
+      }
+      if (!roomId.equals(activeView.roomId)) {
+        return false;
+      }
 
-    // For room-level messages, suppress when recipient is on that room.
-    if (threadRootId == null || threadRootId.isBlank()) {
-      return true;
-    }
+      // For room-level messages, suppress when recipient is on that room.
+      if (threadRootId == null || threadRootId.isBlank()) {
+        return true;
+      }
 
-    // For thread replies, suppress only when recipient is actively inside same thread.
-    return threadRootId.equals(activeView.threadRootId);
+      // For thread replies, suppress only when recipient is actively inside same thread.
+      return threadRootId.equals(activeView.threadRootId);
+    }
   }
 
   private String buildSessionActionPath(Session session) {
@@ -1016,10 +1035,12 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId) {
+    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }
 
