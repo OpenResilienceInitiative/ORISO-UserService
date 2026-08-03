@@ -232,14 +232,18 @@ class AgencyPreAssignmentRoomServiceTest {
 
   @Test
   @DisplayName(
-      "FE#811: the agency's consultants join the fresh room, before any message can be sent")
-  void ensureHoldingRoom_joinsAgencyConsultantsAsSilentMembers() throws Exception {
+      "FE#811/#199: the agency's consultants join the fresh room BEFORE the asker is invited")
+  void ensureHoldingRoom_joinsAgencyConsultantsBeforeAsker() throws Exception {
     stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     underTest.ensureHoldingRoom(session, user);
 
     // Membership must be established while the room is still empty: a consultant joined after the
-    // first message holds no Megolm key for it (FE#811 / ADR-002 §1).
+    // first message holds no Megolm key for it (FE#811 / ADR-002 §1). The asker's client can see
+    // the room via /sync from the moment of their invite, so the department must already be in by
+    // then — consultants first, asker second, persist last.
     var inOrder =
         org.mockito.Mockito.inOrder(
             sessionRoomGateway, agencySilentMembershipService, sessionService);
@@ -247,7 +251,46 @@ class AgencyPreAssignmentRoomServiceTest {
     inOrder
         .verify(agencySilentMembershipService)
         .joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN);
+    inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    inOrder.verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
     inOrder.verify(sessionService).saveSession(session);
+  }
+
+  @Test
+  @DisplayName("a department without a single joinable consultant still gets the asker their room")
+  void ensureHoldingRoom_provisionsRoomForAsker_whenNoConsultantJoined() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    // AgencySilentMembershipService reports "nobody joined" (no consultants, or none usable).
+    when(agencySilentMembershipService.joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN))
+        .thenReturn(0);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(sessionService).saveSession(session);
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("an unexpected department-membership failure never costs the asker their enquiry")
+  void ensureHoldingRoom_provisionsRoomForAsker_whenSilentMembershipThrows() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    // Department membership runs BEFORE the asker's invite now, so a blow-up here (e.g. the
+    // consultant lookup) must be contained — it is a side effect, not a precondition.
+    when(agencySilentMembershipService.joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN))
+        .thenThrow(new RuntimeException("consultant lookup failed"));
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
+    verify(sessionService).saveSession(session);
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 
   @Test
