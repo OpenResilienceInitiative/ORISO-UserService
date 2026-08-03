@@ -21,4 +21,5 @@ public class EnquiryData {
   private final String language;
   private String type;
   private String consultantEmail;
+  private String matrixEventId;
 }

@@ -912,6 +912,38 @@ class MatrixSynapseServiceTest {
     assertThat(result.get("error")).asString().contains("room not found");
   }
 
+  @Test
+  void getRoomEvent_returnsRawEncryptedEventFromExactRoomAndEventPath() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    var event =
+        Map.<String, Object>of(
+            "event_id", "$encrypted", "sender", MATRIX_USER_ID, "type", "m.room.encrypted");
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(event));
+    var urlCaptor = ArgumentCaptor.forClass(URI.class);
+
+    var result = matrixSynapseService().getRoomEvent(MATRIX_ROOM_ID, "$encrypted", ACCESS_TOKEN);
+
+    assertThat(result).contains(event);
+    verify(restTemplate)
+        .exchange(urlCaptor.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    assertThat(urlCaptor.getValue().toString())
+        .isEqualTo(
+            "https://matrix.example/_matrix/client/v3/rooms/%21room%3Amatrix.example.com/event/%24encrypted");
+  }
+
+  @Test
+  void getRoomEvent_returnsEmptyWhenSynapseRejectsReference() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new RuntimeException("unknown event"));
+
+    assertThat(matrixSynapseService().getRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
+        .isEmpty();
+  }
+
   // -------------------------------------------------------------------------
   // findOnlineMatrixUserIds
   // -------------------------------------------------------------------------

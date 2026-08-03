@@ -176,11 +176,24 @@ class UserRegistrationControllerDelegate {
 
   ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
       Long sessionId, EnquiryMessageDTO enquiryMessage) {
+    if (enquiryMessage.getMatrixEventId() != null
+        && !enquiryMessage.getMatrixEventId().isBlank()
+        && enquiryMessage.getMessage() != null
+        && !enquiryMessage.getMessage().isBlank()) {
+      throw new BadRequestException(
+          "Encrypted enquiry finalization must not include plaintext message content");
+    }
     var user = this.userAccountProvider.retrieveValidatedUser();
     var language = consultantDtoMapper.languageOf(enquiryMessage.getLanguage());
     var enquiryData =
         new EnquiryData(
-            user, sessionId, enquiryMessage.getMessage(), language, enquiryMessage.getT(), null);
+            user,
+            sessionId,
+            enquiryMessage.getMessage(),
+            language,
+            enquiryMessage.getT(),
+            null,
+            enquiryMessage.getMatrixEventId());
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 

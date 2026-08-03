@@ -252,6 +252,19 @@ class UserRegistrationControllerDelegateTest {
   }
 
   @Test
+  void createEnquiryMessageRejectsPlaintextAlongsideEncryptedEventReference() {
+    var enquiryMessage = org.mockito.Mockito.mock(EnquiryMessageDTO.class);
+    when(enquiryMessage.getMatrixEventId()).thenReturn("$encrypted-event");
+    when(enquiryMessage.getMessage()).thenReturn("plaintext must not cross this boundary");
+
+    assertThatThrownBy(() -> delegate.createEnquiryMessage(SESSION_ID, enquiryMessage))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("must not include plaintext");
+
+    verifyNoInteractions(createEnquiryMessageFacade);
+  }
+
+  @Test
   void deleteSessionAndInactiveUserShouldDelegateSessionDeletion() {
     var response = delegate.deleteSessionAndInactiveUser(SESSION_ID);
 

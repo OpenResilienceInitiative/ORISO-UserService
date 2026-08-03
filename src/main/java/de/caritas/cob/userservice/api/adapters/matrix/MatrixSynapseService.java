@@ -53,6 +53,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
   private static final String ENDPOINT_SEND_MESSAGE =
       "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
+  private static final String ENDPOINT_ROOM_EVENT =
+      "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
@@ -1037,6 +1039,37 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Could not send message to room ({}). Reason: {}", roomId, ex.getMessage());
       return java.util.Map.of("error", ex.getMessage());
+    }
+  }
+
+  /**
+   * Reads one raw Matrix event from a room. Encrypted events remain encrypted here; this method is
+   * used only to validate event identity and metadata, never to access message plaintext.
+   */
+  public java.util.Optional<java.util.Map<String, Object>> getRoomEvent(
+      String roomId, String eventId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      HttpEntity<Void> request = new HttpEntity<>(headers);
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ROOM_EVENT,
+              java.util.Map.of("roomId", roomId, "eventId", eventId));
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+      if (response.getBody() == null) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(response.getBody());
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read event {} from room {}: {}",
+          eventId,
+          roomId,
+          ex.getMessage());
+      return java.util.Optional.empty();
     }
   }
 
