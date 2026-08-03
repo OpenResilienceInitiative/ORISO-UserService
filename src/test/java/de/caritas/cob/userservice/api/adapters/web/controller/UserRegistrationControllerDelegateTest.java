@@ -123,7 +123,7 @@ class UserRegistrationControllerDelegateTest {
   }
 
   @Test
-  void registerUserShouldDecodePasswordSetNewUserAndReturnCreated() {
+  void registerUserShouldKeepDeserializedPasswordSetNewUserAndReturnCreated() {
     var user = newUserDto();
     user.setPassword("pa%20ss");
     when(userHelper.isUsernameValid(USERNAME)).thenReturn(true);
@@ -133,7 +133,7 @@ class UserRegistrationControllerDelegateTest {
     var response = delegate.registerUser(user);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-    assertThat(user.getPassword()).isEqualTo("pa ss");
+    assertThat(user.getPassword()).isEqualTo("pa%20ss");
     assertThat(user.isNewUserAccount()).isTrue();
   }
 
