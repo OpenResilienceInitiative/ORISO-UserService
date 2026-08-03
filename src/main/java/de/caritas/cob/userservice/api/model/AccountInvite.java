@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.model;
 
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
@@ -82,6 +83,18 @@ public class AccountInvite {
   @Column(name = "status", nullable = false, length = 32)
   @Builder.Default
   private AccountInviteStatus status = AccountInviteStatus.DRAFT;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "provisioning_status", nullable = false, length = 32)
+  @Builder.Default
+  private AccountInviteProvisioningStatus provisioningStatus =
+      AccountInviteProvisioningStatus.PENDING;
+
+  @Column(name = "provisioned_user_id", length = 36)
+  private String provisionedUserId;
+
+  @Column(name = "provisioning_failure_reason", length = 1024)
+  private String provisioningFailureReason;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "email_verification_status", nullable = false, length = 32)
