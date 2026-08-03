@@ -9,11 +9,13 @@ import de.caritas.cob.userservice.api.adapters.web.controller.MatrixRtcCallPolic
 import de.caritas.cob.userservice.api.service.matrixrtc.CallMediaPolicy;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcCallPolicyService;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcPolicyTokenVerifier;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -69,15 +71,18 @@ class MatrixRtcCallPolicyControllerTest {
 
   @Test
   void bindsTheCanonicalEnvironmentCompatiblePropertyName() {
-    new ApplicationContextRunner()
-        .withBean(MatrixRtcPolicyTokenVerifier.class)
-        .withPropertyValues("matrixrtc.call.policy.token=expected-secret")
-        .run(
-            context ->
-                assertThat(
-                        context
-                            .getBean(MatrixRtcPolicyTokenVerifier.class)
-                            .isValid("expected-secret"))
-                    .isTrue());
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context
+          .getEnvironment()
+          .getPropertySources()
+          .addFirst(
+              new SystemEnvironmentPropertySource(
+                  "matrixrtc-test-env", Map.of("MATRIXRTC_CALL_POLICY_TOKEN", "expected-secret")));
+      context.registerBean(MatrixRtcPolicyTokenVerifier.class);
+      context.refresh();
+
+      assertThat(context.getBean(MatrixRtcPolicyTokenVerifier.class).isValid("expected-secret"))
+          .isTrue();
+    }
   }
 }
