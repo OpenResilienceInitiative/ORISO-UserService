@@ -226,13 +226,24 @@ class EventNotificationServiceTest {
             "start",
             "callRoomId",
             "isVideo",
-            "forcedScopeKey");
+            "forcedScopeKey",
+            // Content-only keys: not read by the frontend's action-target resolver
+            // (parseEventActionParams drops them by design) — they are rendered via
+            // the persisted title/text fallback. Listed here so the producer sweep
+            // below stays exhaustive and any NEW unlisted key still fails the test.
+            "consultantName",
+            "supervisorName",
+            "oldName",
+            "newName");
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
     when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
         .thenReturn(Optional.of(session));
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getFirstName()).thenReturn("Carla");
+    when(consultant.getLastName()).thenReturn("Consult");
 
     eventNotificationService.createNewClientRequestNotifications(session, List.of("consultant-a"));
     eventNotificationService.createWaitingRoomClientJoinedNotifications(
@@ -241,8 +252,15 @@ class EventNotificationServiceTest {
         "!room-1:matrix.example", "someone-else", "body");
     eventNotificationService.createThreadReplyNotificationFromRoom(
         "!room-1:matrix.example", "someone-else", "body", "$thread-1");
+    eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    eventNotificationService.createSupervisorAddedNotification(session, "asker-1", "Sue Pervisor");
+    eventNotificationService.createSupervisorAssignedNotification(session, "consultant-b");
+    eventNotificationService.createSupervisorRemovedNotification(
+        session, "asker-1", "Sue Pervisor");
+    eventNotificationService.createCounselorRenamedNotification(
+        session, "asker-1", "Old Name", "New Name");
 
-    verify(eventNotificationRepository, org.mockito.Mockito.atLeast(4)).save(eventCaptor.capture());
+    verify(eventNotificationRepository, org.mockito.Mockito.atLeast(9)).save(eventCaptor.capture());
     for (EventNotification saved : eventCaptor.getAllValues()) {
       if (saved.getParams() == null) {
         continue;
