@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -11,6 +12,8 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -34,6 +38,12 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Mock private SystemNotificationEmailSettingsService emailSettingsService;
   @Mock private UserService userService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
+  // Real instances rather than mocks: these tests exercise the whole send path,
+  // and the point of the port is that the path now produces a mail from the
+  // design system. A mock here would assert that a method was called; this
+  // asserts that a mail comes out.
+  @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
+  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
@@ -640,5 +650,63 @@ class SupervisorAddedEmailNotificationServiceTest {
   private SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings() {
     return new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
         "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
+  }
+
+  // ── the design system, and the anonymity rule it enforces ─────────────────
+
+  @Test
+  void teamChangeMailToAnAdviceSeekerNamesNobody() {
+    // The previous version put the supervisor's display name and the session
+    // number into a mail to an advice seeker. ADR-019 forbids that: a mail to
+    // an advice seeker says that something happened, the application says what.
+    String statement = service.askerStatementSupervisorJoined(LanguageCode.de);
+
+    assertThat(statement).doesNotContain("Frau Sandmann").doesNotContain("#");
+    assertThat(service.askerStatementSupervisorLeft(LanguageCode.de))
+        .doesNotContain("Frau Sandmann")
+        .doesNotContain("#");
+  }
+
+  @Test
+  void teamChangeMailToACounsellorMayCarryTheCaseReference() {
+    var email =
+        service.renderTeamChange(
+            LanguageCode.de,
+            service.staffStatementSupervisorAdded(LanguageCode.de),
+            "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
+            4711L,
+            "#1c4f8f");
+
+    assertThat(email.subject()).isEqualTo("Änderung in Ihrem Team");
+    assertThat(email.html())
+        .contains("Supervisor-Berater:in")
+        .contains("#4711")
+        .contains("https://app.oriso.org/sessions/consultant/sessionView/session/4711");
+    assertThat(email.text()).contains("Supervisor-Berater:in");
+  }
+
+  @Test
+  void teamChangeMailUsesTheDesignSystemSkeletonRatherThanTheOldInlineCard() {
+    var email =
+        service.renderTeamChange(
+            LanguageCode.de, "Etwas hat sich geändert.", "https://app.oriso.org", 1L, "#1c4f8f");
+
+    // The old inline card: a 620px table on #f6f7fb with an #e5e7eb border, in
+    // Arial. Checked by its own fingerprints — "620" on its own is no use,
+    // because the design system's mobile breakpoint is legitimately 620px.
+    assertThat(email.html())
+        .doesNotContain("#f6f7fb")
+        .doesNotContain("#e5e7eb")
+        .doesNotContain("width=\"620\"");
+    assertThat(email.html()).contains("#f2efef").contains("width=\"600\"").contains("Inter");
+  }
+
+  @Test
+  void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
+    var email =
+        service.renderTeamChange(
+            LanguageCode.de, "Etwas hat sich geändert.", "https://app.oriso.org", 1L, "#ffd400");
+
+    assertThat(email.html()).doesNotContain("#ffd400");
   }
 }

@@ -21,6 +21,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
@@ -49,6 +51,8 @@ class PasswordResetServiceTest {
   @Mock private RestTemplate restTemplate;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
   @Mock private ApplicationSettingsService applicationSettingsService;
+  @Mock private OrisoEmailRenderer emailRenderer;
+  @Mock private OrisoEmailBrand emailBrand;
 
   @InjectMocks private PasswordResetService passwordResetService;
 

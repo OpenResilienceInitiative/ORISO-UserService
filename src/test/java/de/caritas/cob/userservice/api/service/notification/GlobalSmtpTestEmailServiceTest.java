@@ -5,6 +5,8 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,6 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class GlobalSmtpTestEmailServiceTest {
 
   @Mock private ApplicationSettingsService applicationSettingsService;
+  @Mock private OrisoEmailRenderer emailRenderer;
+  @Mock private OrisoEmailBrand emailBrand;
 
   @InjectMocks private GlobalSmtpTestEmailService service;
 

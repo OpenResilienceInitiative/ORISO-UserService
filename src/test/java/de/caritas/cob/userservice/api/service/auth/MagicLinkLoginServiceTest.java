@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
@@ -43,6 +45,8 @@ class MagicLinkLoginServiceTest {
   @Mock private IdentitySessionExchange identitySessionExchange;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
   @Mock private ApplicationSettingsService applicationSettingsService;
+  @Mock private OrisoEmailRenderer emailRenderer;
+  @Mock private OrisoEmailBrand emailBrand;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
 

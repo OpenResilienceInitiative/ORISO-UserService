@@ -14,6 +14,9 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -27,6 +30,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -67,6 +71,8 @@ public class PasswordResetService {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull OrisoEmailRenderer emailRenderer;
+  private final @NonNull OrisoEmailBrand emailBrand;
 
   /**
    * Runs the (potentially slow) account lookup + mail dispatch off the request thread so the HTTP
@@ -352,13 +358,12 @@ public class PasswordResetService {
               }
             });
 
-    Message message = new MimeMessage(session);
+    var email = renderPasswordReset(locale, resetUrl, smtpSettings.getEmailThemeColor());
+    MimeMessage message = new MimeMessage(session);
     message.setFrom(new InternetAddress(smtpSettings.getFrom()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
-    message.setSubject(content.getSubject());
-    message.setContent(
-        buildHtml(content, resetUrl, smtpSettings.getEmailThemeColor()),
-        "text/html; charset=UTF-8");
+    message.setSubject(email.subject(), "UTF-8");
+    message.setContent(OrisoEmailMime.alternative(email));
     Transport.send(message);
   }
 
@@ -376,36 +381,25 @@ public class PasswordResetService {
         throws Exception;
   }
 
-  private String buildHtml(EmailContent content, String resetUrl, String emailThemeColor) {
-    String color =
-        isNotBlank(emailThemeColor) && emailThemeColor.matches("^#([A-Fa-f0-9]{6})$")
-            ? emailThemeColor
-            : "#d80003";
-
-    return "<!doctype html><html><body style=\"margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;\">"
-        + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:24px 0;\">"
-        + "<tr><td align=\"center\">"
-        + "<table role=\"presentation\" width=\"620\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;\">"
-        + "<tr><td style=\"background:"
-        + color
-        + ";padding:18px 24px;color:#ffffff;font-size:20px;font-weight:700;\">Caritas Online-Beratung</td></tr>"
-        + "<tr><td style=\"padding:28px 24px 8px 24px;color:#111827;font-size:22px;line-height:30px;font-weight:700;\">"
-        + content.getSubject()
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 14px 24px;color:#374151;font-size:16px;line-height:24px;\">"
-        + content.getIntro()
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 18px 24px;\"><a href=\""
-        + resetUrl
-        + "\" style=\"display:inline-block;background:"
-        + color
-        + ";color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;\">"
-        + content.getLinkLabel()
-        + "</a></td></tr>"
-        + "<tr><td style=\"padding:0 24px 24px 24px;color:#6b7280;font-size:14px;line-height:22px;\">"
-        + content.getExpiry()
-        + "</td></tr>"
-        + "</table></td></tr></table></body></html>";
+  /**
+   * Renders the password-reset mail from the design system.
+   *
+   * <p>Replaces the inline card this class used to concatenate. The subject, the button label and
+   * the expiry sentence now come from the template rather than from {@code EMAIL_CONTENT}, so the
+   * wording is reviewed in Storybook next to every other ORISO mail instead of in a string constant
+   * halfway down this file.
+   */
+  private OrisoEmailRenderer.RenderedEmail renderPasswordReset(
+      String locale, String resetUrl, String emailThemeColor) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.values(passwordResetFrontendBaseUrl, emailThemeColor));
+    values.put("resetUrl", resetUrl);
+    values.put("expiryHours", String.valueOf(Math.max(1, RESET_TOKEN_TTL.toHours())));
+    OrisoEmailRenderer.Tone tone =
+        "en".equalsIgnoreCase(locale)
+            ? OrisoEmailRenderer.Tone.EN
+            : OrisoEmailRenderer.Tone.DE_FORMAL;
+    return emailRenderer.render("passwort-zuruecksetzen", tone, values);
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
