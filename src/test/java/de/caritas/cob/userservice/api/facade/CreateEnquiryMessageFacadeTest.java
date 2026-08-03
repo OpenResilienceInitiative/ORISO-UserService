@@ -227,6 +227,26 @@ class CreateEnquiryMessageFacadeTest {
   }
 
   @Test
+  void rejectsMatrixResponseWithDifferentEventId() {
+    givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", "$different-event",
+                    "sender", MATRIX_USER_ID,
+                    "type", "m.room.encrypted")));
+
+    assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("did not match");
+
+    verify(sessionService, never()).saveSession(session);
+  }
+
+  @Test
   void provisionsMissingMatrixRoomBeforeSending() {
     session.setMatrixRoomId(null);
     givenExistingSession();
