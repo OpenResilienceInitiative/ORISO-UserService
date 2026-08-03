@@ -1,15 +1,16 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.constraints.Min;
 import java.lang.reflect.Method;
@@ -19,6 +20,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -135,8 +137,7 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
-    verify(eventNotificationService, never())
-        .createMessageNotificationFromRoom(any(), any(), any(), anyBoolean(), any());
+    verifyNoInteractions(eventNotificationService);
   }
 
   @Test
@@ -155,7 +156,39 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender");
+        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender", null);
+  }
+
+  @Test
+  void createMessageEventNotification_withMatrixEventIdPreservesOpaqueCorrelation() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("$event-2:matrix.example");
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq("room-2"), eq("u-1"), isNull(), eq(false), isNull(), envelopeCaptor.capture());
+    assertEquals("$event-2:matrix.example", envelopeCaptor.getValue().getMessageId());
+    assertEquals(null, envelopeCaptor.getValue().getContentClass());
+  }
+
+  @Test
+  void createMessageEventNotification_withBlankMatrixEventIdUsesLegacyNullEnvelope() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("   ");
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom("room-2", "u-1", null, false, null, null);
   }
 
   @Test
@@ -178,7 +211,33 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent");
+            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent", null);
+  }
+
+  @Test
+  void createThreadEventNotification_withMatrixEventIdPreservesOpaqueCorrelation() {
+    when(authenticatedUser.getUserId()).thenReturn("u-2");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-3");
+    request.setThreadRootId("thread-3");
+    request.setMatrixEventId("$reply-3:matrix.example");
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createThreadReplyNotificationFromRoom(
+            eq("room-3"),
+            eq("u-2"),
+            isNull(),
+            eq("thread-3"),
+            eq(false),
+            isNull(),
+            isNull(),
+            envelopeCaptor.capture());
+    assertEquals("$reply-3:matrix.example", envelopeCaptor.getValue().getMessageId());
+    assertEquals(null, envelopeCaptor.getValue().getContentClass());
   }
 
   @Test
@@ -210,6 +269,6 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null);
+        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null, null);
   }
 }

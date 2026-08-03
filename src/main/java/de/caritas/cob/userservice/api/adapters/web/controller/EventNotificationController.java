@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -85,6 +86,7 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
+    PrivacyEnvelope correlationEnvelope = correlationEnvelope(request.getMatrixEventId());
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
@@ -93,14 +95,16 @@ public class EventNotificationController {
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName(),
-          request.getThreadParentPreview());
+          request.getThreadParentPreview(),
+          correlationEnvelope);
     } else {
       eventNotificationService.createMessageNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName());
+          request.getSenderDisplayName(),
+          correlationEnvelope);
     }
 
     // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
@@ -116,6 +120,12 @@ public class EventNotificationController {
                 null));
 
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
+  private PrivacyEnvelope correlationEnvelope(String matrixEventId) {
+    return matrixEventId == null || matrixEventId.isBlank()
+        ? null
+        : PrivacyEnvelope.builder().messageId(matrixEventId).build();
   }
 
   /**
@@ -175,6 +185,7 @@ public class EventNotificationController {
   public static class MessageEventRequestDTO {
     @NotBlank private String roomId;
     private String messagePreview;
+    private String matrixEventId;
     private String threadRootId;
     private Boolean supervisorMessage;
     private String senderDisplayName;
@@ -212,6 +223,14 @@ public class EventNotificationController {
 
     public void setMessagePreview(String messagePreview) {
       this.messagePreview = messagePreview;
+    }
+
+    public String getMatrixEventId() {
+      return matrixEventId;
+    }
+
+    public void setMatrixEventId(String matrixEventId) {
+      this.matrixEventId = matrixEventId;
     }
 
     public String getThreadRootId() {

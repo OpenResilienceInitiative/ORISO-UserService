@@ -55,6 +55,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -1017,9 +1018,11 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(service, syncResult);
 
     verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), envelopeCaptor.capture());
+    assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-direct");
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
@@ -1048,12 +1051,11 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResult);
 
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            eq(MATRIX_ROOM_ID),
-            eq(ASKER_DOMAIN_ID),
-            eq("$root-thread"),
-            any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq("$root-thread"), envelopeCaptor.capture());
+    assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-thread");
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
