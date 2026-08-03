@@ -8,6 +8,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -79,10 +80,31 @@ public class OrisoEmailRenderer {
    *     report and a silent blank is not
    */
   public RenderedEmail render(String templateId, Tone tone, Map<String, String> values) {
+    values = withOccasionOnUnsubscribeLink(templateId, values);
     String html = substitute(read(templateId, tone, "html"), values, true);
     String text = substitute(read(templateId, tone, "txt"), values, false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
     return new RenderedEmail(subject, html, text);
+  }
+
+  /**
+   * Tells the unsubscribe link which mail it came from.
+   *
+   * <p>A footer link that lands on a settings screen full of switches leaves the recipient to work
+   * out which one produced the mail in their hand. Carrying the occasion lets the screen focus the
+   * right switch — see ORISO-Frontend#872, which is the other half of this.
+   *
+   * <p>A security or legal mail has no unsubscribe link at all, so there is nothing to decorate.
+   */
+  private Map<String, String> withOccasionOnUnsubscribeLink(
+      String templateId, Map<String, String> values) {
+    String link = values.get("unsubscribeUrl");
+    if (!isUnsubscribable(templateId) || link == null || link.isBlank()) {
+      return values;
+    }
+    Map<String, String> decorated = new LinkedHashMap<>(values);
+    decorated.put("unsubscribeUrl", link + (link.contains("?") ? "&" : "?") + "mail=" + templateId);
+    return decorated;
   }
 
   /** The subject line, from the generated catalogue rather than from the document. */

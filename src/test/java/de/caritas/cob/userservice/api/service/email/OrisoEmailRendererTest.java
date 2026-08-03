@@ -113,6 +113,32 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void tellsTheUnsubscribeLinkWhichMailItCameFrom() {
+    // A footer link that lands on a settings screen full of switches leaves the
+    // recipient to work out which one produced the mail in their hand.
+    Map<String, String> values = brand();
+    values.put("teamChangeStatement", "Etwas hat sich geändert.");
+    values.put("caseReference", "#1");
+    values.put("teamChangedAt", "heute");
+
+    var email = renderer.render("team-aenderung", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html())
+        .contains("https://example.org/settings/notifications?mail=team-aenderung");
+  }
+
+  @Test
+  void doesNotDecorateALinkASecurityMailNeverCarries() {
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    var email = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html()).doesNotContain("mail=anmeldelink");
+  }
+
+  @Test
   void saysWhichTemplateIsMissingRatherThanFailingObscurely() {
     assertThatThrownBy(
             () -> renderer.render("no-such-mail", OrisoEmailRenderer.Tone.DE_FORMAL, brand()))
