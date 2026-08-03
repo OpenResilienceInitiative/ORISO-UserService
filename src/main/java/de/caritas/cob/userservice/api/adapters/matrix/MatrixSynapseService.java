@@ -509,7 +509,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       }
 
       @SuppressWarnings("unchecked")
-      var responseBody = (java.util.Map<String, Object>) response.getBody();
+      var responseBody =
+          new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
+      responseBody.put("interactive_auth_password", transientPassword);
       return responseBody;
     } catch (Exception ex) {
       log.error(
