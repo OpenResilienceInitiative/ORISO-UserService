@@ -123,7 +123,7 @@ class UserRegistrationControllerDelegateTest {
   }
 
   @Test
-  void registerUserShouldDecodePasswordSetNewUserAndReturnCreated() {
+  void registerUserShouldKeepDeserializedPasswordSetNewUserAndReturnCreated() {
     var user = newUserDto();
     user.setPassword("pa%20ss");
     when(userHelper.isUsernameValid(USERNAME)).thenReturn(true);
@@ -133,7 +133,7 @@ class UserRegistrationControllerDelegateTest {
     var response = delegate.registerUser(user);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-    assertThat(user.getPassword()).isEqualTo("pa ss");
+    assertThat(user.getPassword()).isEqualTo("pa%20ss");
     assertThat(user.isNewUserAccount()).isTrue();
   }
 
@@ -249,6 +249,19 @@ class UserRegistrationControllerDelegateTest {
     assertThat(enquiryData.getMessage()).isEqualTo("message");
     assertThat(enquiryData.getLanguage()).isEqualTo("en");
     assertThat(enquiryData.getType()).isEqualTo("text");
+  }
+
+  @Test
+  void createEnquiryMessageRejectsPlaintextAlongsideEncryptedEventReference() {
+    var enquiryMessage = org.mockito.Mockito.mock(EnquiryMessageDTO.class);
+    when(enquiryMessage.getMatrixEventId()).thenReturn("$encrypted-event");
+    when(enquiryMessage.getMessage()).thenReturn("plaintext must not cross this boundary");
+
+    assertThatThrownBy(() -> delegate.createEnquiryMessage(SESSION_ID, enquiryMessage))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("must not include plaintext");
+
+    verifyNoInteractions(createEnquiryMessageFacade);
   }
 
   @Test

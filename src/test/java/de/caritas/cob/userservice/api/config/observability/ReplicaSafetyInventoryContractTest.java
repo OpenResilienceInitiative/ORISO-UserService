@@ -40,7 +40,9 @@ class ReplicaSafetyInventoryContractTest {
           "inactive-account-notification-scheduler",
           "account-deletion-scheduler",
           "anonymous-deletion-scheduler",
-          "registered-only-deletion-scheduler");
+          "registered-only-deletion-scheduler",
+          "handshake-expiry-scheduler",
+          "support-room-expiry-scheduler");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {
