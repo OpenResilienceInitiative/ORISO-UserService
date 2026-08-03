@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
 import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
@@ -70,6 +71,7 @@ public class CreateUserFacade {
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
+  private final @NonNull WelcomeEmailService welcomeEmailService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ProvisioningCompensator provisioningCompensator;
@@ -158,6 +160,11 @@ public class CreateUserFacade {
       } catch (Exception e) {
         log.error("Could not create registration statistics event", e);
       }
+
+      // The welcome mail carries the generated user name, which ORISO cannot
+      // recover. Sent after the account exists and deliberately not inside the
+      // provisioning try/rollback: a bounced mail must not undo a registration.
+      welcomeEmailService.sendWelcomeEmail(user, plainUsername);
 
       activeAttempt.complete();
       return registration.getSessionId();
