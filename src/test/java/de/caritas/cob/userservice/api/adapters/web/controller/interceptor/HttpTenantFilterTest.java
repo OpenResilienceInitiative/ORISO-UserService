@@ -44,6 +44,17 @@ class HttpTenantFilterTest {
   }
 
   @Test
+  void matrixRtcPolicyEndpointDoesNotRequireBrowserTenantContext()
+      throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verifyNoInteractions(tenantResolverService, tenantService);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
   void doFilterInternal_Should_Apply_When_DoesNotBelongBelongsToTenancyWhiteList()
       throws ServletException, IOException {
 

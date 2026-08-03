@@ -39,6 +39,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         "/actuator/loggers",
         "/swagger-ui.html",
         "/favicon.ico",
+        "/internal/matrixrtc/",
         "/users/askers/new",
         "/users/magic-link/",
         "/users/invitelinks/",
