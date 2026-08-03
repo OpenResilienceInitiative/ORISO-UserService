@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -474,6 +475,48 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void createMessageNotificationFromRoom_deliversWhenActiveViewHeartbeatExpired() {
+    AtomicLong nowNanos = new AtomicLong();
+    eventNotificationService.setMonotonicNanosForTesting(nowNanos::get);
+
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
+    nowNanos.set(java.time.Duration.ofSeconds(31).toNanos());
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "hello after browser close");
+
+    verify(eventNotificationRepository).save(any());
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_heartbeatRefreshExtendsActiveView() {
+    AtomicLong nowNanos = new AtomicLong();
+    eventNotificationService.setMonotonicNanosForTesting(nowNanos::get);
+
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
+    nowNanos.set(java.time.Duration.ofSeconds(20).toNanos());
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
+    nowNanos.set(java.time.Duration.ofSeconds(40).toNanos());
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "still actively viewed");
+
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
   void createMessageNotificationFromRoom_doesNotSuppressWhenUserIsInDifferentRoom() {
     eventNotificationService.updateActiveView("asker-1", "different-room", null, true);
 
@@ -545,6 +588,27 @@ class EventNotificationServiceTest {
         "!room-1:matrix.example", "sender", "reply", "thread-root-1");
 
     verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_deliversWhenActiveViewHeartbeatExpired() {
+    AtomicLong nowNanos = new AtomicLong();
+    eventNotificationService.setMonotonicNanosForTesting(nowNanos::get);
+    eventNotificationService.updateActiveView(
+        "asker-1", "!room-1:matrix.example", "thread-root-1", true);
+    nowNanos.set(java.time.Duration.ofSeconds(31).toNanos());
+
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "reply", "thread-root-1");
+
+    verify(eventNotificationRepository).save(any());
   }
 
   @Test
