@@ -47,10 +47,11 @@ class MatrixRtcCallPolicyServiceTest {
   void setUp() {
     service =
         new MatrixRtcCallPolicyService(
-            sessionRepository,
-            chatRepository,
-            sessionSupervisorRepository,
-            teamDiscussionRepository,
+            new MatrixRtcPolicyContextResolver(
+                sessionRepository,
+                chatRepository,
+                sessionSupervisorRepository,
+                teamDiscussionRepository),
             tenantService,
             matrixSynapseService);
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
@@ -220,6 +221,16 @@ class MatrixRtcCallPolicyServiceTest {
 
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
     verifyNoInteractions(tenantService);
+  }
+
+  @Test
+  void tenantServiceFailureFailsClosed() {
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenThrow(new IllegalStateException("tenant service unavailable"));
+
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
   }
 
   private Session session(ConversationType conversationType) {

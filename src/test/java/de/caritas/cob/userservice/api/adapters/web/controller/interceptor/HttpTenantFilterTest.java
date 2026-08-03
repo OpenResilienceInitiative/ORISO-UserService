@@ -55,6 +55,18 @@ class HttpTenantFilterTest {
   }
 
   @Test
+  void siblingMatrixRtcEndpointStillRequiresTenantContext() throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/future-endpoint");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verify(tenantResolverService).resolve(request);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
   void doFilterInternal_Should_Apply_When_DoesNotBelongBelongsToTenancyWhiteList()
       throws ServletException, IOException {
 

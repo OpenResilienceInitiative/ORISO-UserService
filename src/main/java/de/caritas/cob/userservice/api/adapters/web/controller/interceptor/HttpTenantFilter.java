@@ -27,6 +27,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Slf4j
 public class HttpTenantFilter extends OncePerRequestFilter {
 
+  private static final String MATRIX_RTC_CALL_POLICY_PATH = "/internal/matrixrtc/call-policy";
+
   private final @Nullable TenantResolverService tenantResolverService;
 
   private final @Nullable TenantService tenantService;
@@ -39,7 +41,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         "/actuator/loggers",
         "/swagger-ui.html",
         "/favicon.ico",
-        "/internal/matrixrtc/",
+        MATRIX_RTC_CALL_POLICY_PATH,
         "/users/askers/new",
         "/users/magic-link/",
         "/users/invitelinks/",
@@ -92,8 +94,13 @@ public class HttpTenantFilter extends OncePerRequestFilter {
     }
 
     private boolean belongsToWhitelist(HttpServletRequest request, List<String> tenantWhitelist) {
+      String requestUri = request.getRequestURI().toLowerCase();
       return tenantWhitelist.parallelStream()
-          .anyMatch(request.getRequestURI().toLowerCase()::contains);
+          .anyMatch(
+              whitelistUri ->
+                  MATRIX_RTC_CALL_POLICY_PATH.equals(whitelistUri)
+                      ? MATRIX_RTC_CALL_POLICY_PATH.equals(requestUri)
+                      : requestUri.contains(whitelistUri));
     }
   }
 }
