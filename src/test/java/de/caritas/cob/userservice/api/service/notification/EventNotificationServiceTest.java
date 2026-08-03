@@ -865,6 +865,31 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void overlongMatrixEventIdPersistsUnconditionallyInsteadOfSilentlyDropping() {
+    // #942 review: deduplication_key is VARCHAR(191). An oversized client-supplied
+    // event id must not reach createEventOnce, where the truncation failure would be
+    // misread as "already persisted" and the notification silently dropped.
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder()
+            .messageId("$" + "x".repeat(250))
+            .roomId("!room-1:matrix.example")
+            .senderId("someone-else")
+            .build();
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+
+    verify(eventNotificationRepository).save(any());
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
   void messageEventsWithoutAMatrixEventIdStillPersistUnconditionally() {
     Session session = sessionMock();
     User user = mock(User.class);

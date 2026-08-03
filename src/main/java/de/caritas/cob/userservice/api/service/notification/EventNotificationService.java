@@ -42,6 +42,9 @@ public class EventNotificationService {
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
 
+  /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
+  static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
+
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
   private static final long ACTIVE_VIEW_TTL_NANOS = Duration.ofSeconds(30).toNanos();
@@ -613,18 +616,27 @@ public class EventNotificationService {
       Long sourceSessionId,
       Long tenantId) {
     if (matrixEventId != null && !matrixEventId.isBlank()) {
-      createEventOnce(
-          eventType + ":" + matrixEventId,
-          recipientUserId,
+      String deduplicationKey = eventType + ":" + matrixEventId;
+      if (deduplicationKey.length() <= MAX_DEDUPLICATION_KEY_LENGTH) {
+        createEventOnce(
+            deduplicationKey,
+            recipientUserId,
+            eventType,
+            CATEGORY_MESSAGE,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId);
+        return;
+      }
+      // An oversized key would fail the insert with a truncation error that the
+      // dedup path misreads as "already persisted" — persist unconditionally instead.
+      log.warn(
+          "Deduplication key for event type {} exceeds {} chars; persisting without deduplication",
           eventType,
-          CATEGORY_MESSAGE,
-          title,
-          text,
-          params,
-          actionPath,
-          sourceSessionId,
-          tenantId);
-      return;
+          MAX_DEDUPLICATION_KEY_LENGTH);
     }
     createEvent(
         recipientUserId,
