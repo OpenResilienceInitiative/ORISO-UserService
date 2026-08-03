@@ -189,7 +189,13 @@ class UserRegistrationControllerDelegate {
     var language = consultantDtoMapper.languageOf(enquiryMessage.getLanguage());
     var enquiryData =
         new EnquiryData(
-            user, sessionId, enquiryMessage.getMessage(), language, enquiryMessage.getT(), null);
+            user,
+            sessionId,
+            enquiryMessage.getMessage(),
+            language,
+            enquiryMessage.getT(),
+            null,
+            enquiryMessage.getMatrixEventId());
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
