@@ -889,25 +889,31 @@ public class EventNotificationService {
 
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
-    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
-    if (activeView == null || roomId == null || roomId.isBlank()) {
-      return false;
-    }
-    if (monotonicNanos.getAsLong() - activeView.lastHeartbeatNanos >= ACTIVE_VIEW_TTL_NANOS) {
-      activeViewByUserId.remove(recipientUserId, activeView);
-      return false;
-    }
-    if (!roomId.equals(activeView.roomId)) {
-      return false;
-    }
+    while (true) {
+      ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+      if (activeView == null || roomId == null || roomId.isBlank()) {
+        return false;
+      }
+      if (monotonicNanos.getAsLong() - activeView.lastHeartbeatNanos >= ACTIVE_VIEW_TTL_NANOS) {
+        if (activeViewByUserId.remove(recipientUserId, activeView)) {
+          return false;
+        }
+        // A concurrent heartbeat replaced the expired entry. Re-evaluate that
+        // fresh state so an active recipient remains correctly suppressed.
+        continue;
+      }
+      if (!roomId.equals(activeView.roomId)) {
+        return false;
+      }
 
-    // For room-level messages, suppress when recipient is on that room.
-    if (threadRootId == null || threadRootId.isBlank()) {
-      return true;
-    }
+      // For room-level messages, suppress when recipient is on that room.
+      if (threadRootId == null || threadRootId.isBlank()) {
+        return true;
+      }
 
-    // For thread replies, suppress only when recipient is actively inside same thread.
-    return threadRootId.equals(activeView.threadRootId);
+      // For thread replies, suppress only when recipient is actively inside same thread.
+      return threadRootId.equals(activeView.threadRootId);
+    }
   }
 
   private String buildSessionActionPath(Session session) {

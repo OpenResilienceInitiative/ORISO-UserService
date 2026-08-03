@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -487,11 +488,44 @@ class EventNotificationServiceTest {
         .thenReturn(Optional.of(session));
 
     eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
-    nowNanos.set(java.time.Duration.ofSeconds(31).toNanos());
+    nowNanos.set(java.time.Duration.ofSeconds(30).toNanos());
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "hello after browser close");
 
     verify(eventNotificationRepository).save(any());
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_suppressesConcurrentHeartbeatAtExpiry() {
+    AtomicLong nowNanos = new AtomicLong();
+    AtomicBoolean refreshOnExpiryCheck = new AtomicBoolean();
+    AtomicBoolean refreshing = new AtomicBoolean();
+    eventNotificationService.setMonotonicNanosForTesting(
+        () -> {
+          if (refreshOnExpiryCheck.get() && refreshing.compareAndSet(false, true)) {
+            eventNotificationService.updateActiveView(
+                "asker-1", "!room-1:matrix.example", null, true);
+            refreshing.set(false);
+            refreshOnExpiryCheck.set(false);
+          }
+          return nowNanos.get();
+        });
+
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    eventNotificationService.updateActiveView("asker-1", "!room-1:matrix.example", null, true);
+    nowNanos.set(java.time.Duration.ofSeconds(30).toNanos());
+    refreshOnExpiryCheck.set(true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "heartbeat won expiry race");
+
+    verify(eventNotificationRepository, never()).save(any());
   }
 
   @Test
