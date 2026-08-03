@@ -134,6 +134,8 @@
     file="db/changelog/changeset/0078_handshake/0078_changeSet.xml" />
   <include
     file="db/changelog/changeset/0079_support_room/0079_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0081_support_room_repair/0081_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
