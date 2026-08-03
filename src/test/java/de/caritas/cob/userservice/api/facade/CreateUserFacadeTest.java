@@ -219,14 +219,19 @@ public class CreateUserFacadeTest {
     givenAFullyPersistedUser();
     givenMatrixProvisioningSucceeds();
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
+    PlainCredentialsHolder.set("plain-user", "plain-password");
+    try {
+      createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
-    verify(identityClient).createUser(any());
-    verify(matrixSynapseService).createUser(any(), any(), any());
-    verify(createNewSessionFacade)
-        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
-    // The plaintext password must not survive the registration.
-    assertThat(PlainCredentialsHolder.get(), nullValue());
+      verify(identityClient).createUser(any());
+      verify(matrixSynapseService).createUser(any(), any(), any());
+      verify(createNewSessionFacade)
+          .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+      // The plaintext password must not survive the registration.
+      assertThat(PlainCredentialsHolder.get(), nullValue());
+    } finally {
+      PlainCredentialsHolder.clear();
+    }
   }
 
   @Test
