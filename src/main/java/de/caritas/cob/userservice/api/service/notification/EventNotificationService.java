@@ -188,7 +188,7 @@ public class EventNotificationService {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -230,7 +230,7 @@ public class EventNotificationService {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -297,11 +297,20 @@ public class EventNotificationService {
     return serializeParams(params);
   }
 
-  /** Seed a params map with the session id every timeline event references. */
+  /**
+   * Seed a params map with the session id every timeline event references, plus the Matrix room
+   * reference when the session has one (#846) — the frontend resolves rooms from params instead of
+   * string-splitting actionPath.
+   */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
+    }
+    if (session != null
+        && session.getMatrixRoomId() != null
+        && !session.getMatrixRoomId().isBlank()) {
+      params.put("roomRef", session.getMatrixRoomId());
     }
     return params;
   }
@@ -972,6 +981,27 @@ public class EventNotificationService {
 
   private String buildSessionActionPath(Session session) {
     return buildSessionActionPath(session, null);
+  }
+
+  /**
+   * Deep link for enquiry-state events ({@code request.new}, {@code waiting_room.client.joined},
+   * #846): un-accepted enquiries render under the consultant's sessionPreview list, not
+   * sessionView. A waiting-room client has no Matrix room yet — link to the enquiry list itself
+   * instead of returning null (which the frontend turned into the bare sessions root).
+   */
+  private String buildEnquiryActionPath(Session session) {
+    String listPath = "/sessions/consultant/sessionPreview";
+    if (session == null || session.getId() == null) {
+      return listPath;
+    }
+    String roomRef =
+        session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()
+            ? session.getMatrixRoomId()
+            : null;
+    if (roomRef == null) {
+      return listPath;
+    }
+    return listPath + "/" + roomRef + "/" + session.getId();
   }
 
   private String buildSessionActionPathForRecipient(
