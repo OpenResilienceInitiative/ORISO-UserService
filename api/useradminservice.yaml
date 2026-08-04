@@ -1866,6 +1866,12 @@ components:
           $ref: '#/components/schemas/HalLink'
 
     AgencyLinks:
+      # type/required are declared here (in addition to the allOf) so contract
+      # diffing tools that do not flatten allOf still see AgencyLinks as an
+      # object requiring `self`. DefaultLinks supplies self/update/delete.
+      type: object
+      required:
+        - self
       allOf:
         - $ref: '#/components/schemas/DefaultLinks'
         - type: object
