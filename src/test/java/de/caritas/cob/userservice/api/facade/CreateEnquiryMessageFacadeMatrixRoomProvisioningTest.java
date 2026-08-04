@@ -52,7 +52,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  *        -> AgencyPreAssignmentRoomService.ensureHoldingRoom
  *           -> Matrix room created, enquiry user invited + joined (membership)
  *           -> session.matrixRoomId persisted
- *     -> Matrix enquiry message sent
+ *     -> browser-encrypted Matrix enquiry event validated
  *     -> session persisted (status NEW, groupId = matrix room id)
  * </pre>
  *
@@ -122,7 +122,11 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             gateway,
             sessionService,
             new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
-                consultantRepository, gateway, userHelper, usernameTranscoder));
+                consultantRepository,
+                gateway,
+                userHelper,
+                usernameTranscoder,
+                new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver()));
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();
@@ -174,23 +178,28 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     when(matrixSynapseService.inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN))
         .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
 
-    // Enquiry-message post + membership use the user's own token.
+    // Enquiry-event validation + membership use the user's own token.
     when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(matrixSynapseService.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
-    when(matrixSynapseService.sendMessage(NEW_ROOM_ID, MESSAGE, USER_TOKEN))
-        .thenReturn(Map.of("event_id", MATRIX_EVENT_ID));
+    when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", USER_MATRIX_ID,
+                    "type", "m.room.encrypted")));
 
-    var response =
-        createEnquiryMessageFacade.createEnquiryMessage(
-            new EnquiryData(user, SESSION_ID, MESSAGE, null));
+    var enquiryData = new EnquiryData(user, SESSION_ID, MESSAGE, null);
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     // Room provisioned: create -> invite -> membership.
     verify(matrixSynapseService).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
     verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, USER_TOKEN);
 
-    // Enquiry message posted to the provisioned room.
-    verify(matrixSynapseService).sendMessage(NEW_ROOM_ID, MESSAGE, USER_TOKEN);
+    // The already browser-encrypted event is validated in the provisioned room.
+    verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
     // Session persisted with the provisioned room id (once by the room service, once by the
     // facade).
@@ -207,8 +216,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   }
 
   @Test
-  @DisplayName(
-      "FE#811: the agency's counsellors are room members before the enquiry message is sent")
+  @DisplayName("FE#811: the agency's counsellors are room members before the enquiry is finalized")
   void createEnquiryMessage_joinsAgencyConsultantsBeforeSendingTheEnquiry() throws Exception {
     var consultantMatrixId = "@counsellor:oriso.org";
     var consultantToken = "counsellor-token";
@@ -242,21 +250,26 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     when(matrixSynapseService.loginAsUserAccessToken(consultantMatrixId))
         .thenReturn(consultantToken);
     when(matrixSynapseService.joinRoom(eq(NEW_ROOM_ID), anyString())).thenReturn(true);
-    when(matrixSynapseService.sendMessage(NEW_ROOM_ID, MESSAGE, USER_TOKEN))
-        .thenReturn(Map.of("event_id", MATRIX_EVENT_ID));
+    when(matrixSynapseService.getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", USER_MATRIX_ID,
+                    "type", "m.room.encrypted")));
 
-    createEnquiryMessageFacade.createEnquiryMessage(
-        new EnquiryData(user, SESSION_ID, MESSAGE, null));
+    var enquiryData = new EnquiryData(user, SESSION_ID, MESSAGE, null);
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     // The counsellor is a real member of the room...
     verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, consultantMatrixId, AGENCY_TOKEN);
     verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, consultantToken);
 
-    // ...and joined BEFORE the enquiry message exists. Reversing this order is exactly the bug:
-    // a member who joins later holds no Megolm key for what was sent before them.
+    // ...and joined before the backend finalizes the referenced encrypted enquiry event.
     var inOrder = Mockito.inOrder(matrixSynapseService);
     inOrder.verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, consultantToken);
-    inOrder.verify(matrixSynapseService).sendMessage(NEW_ROOM_ID, MESSAGE, USER_TOKEN);
+    inOrder.verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
     RequestContextHolder.resetRequestAttributes();
   }

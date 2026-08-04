@@ -10,11 +10,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
@@ -30,7 +30,7 @@ public class AskerUserAdminFacadeTest {
 
   @InjectMocks private AskerUserAdminFacade askerUserAdminFacade;
 
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityDeactivator identityDeactivator;
 
   @Mock private UserService userService;
 
@@ -78,7 +78,7 @@ public class AskerUserAdminFacadeTest {
 
     this.askerUserAdminFacade.markAskerForDeletion("user id");
 
-    verify(this.keycloakService, times(1)).deactivateUser("user id");
+    verify(this.identityDeactivator, times(1)).deactivateUser("user id");
     ArgumentCaptor<User> argumentCaptor = ArgumentCaptor.forClass(User.class);
     verify(this.userService, times(1)).saveUser(argumentCaptor.capture());
     assertThat(argumentCaptor.getValue().getDeleteDate(), notNullValue());

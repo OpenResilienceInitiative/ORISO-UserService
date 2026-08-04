@@ -25,9 +25,15 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
@@ -79,8 +85,14 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @MockitoBean(
       extraInterfaces = {
+        IdentityAccountRemover.class,
         IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
         IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
@@ -113,7 +125,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     agencyDTO.setConsultingType(0);
     agencyDTO.setTenantId(1L);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -152,7 +164,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
     AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
 

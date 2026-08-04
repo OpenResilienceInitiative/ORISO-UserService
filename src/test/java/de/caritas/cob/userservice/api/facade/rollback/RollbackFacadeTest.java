@@ -4,11 +4,11 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -24,7 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class RollbackFacadeTest {
 
   @InjectMocks private RollbackFacade rollbackFacade;
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private UserAgencyService userAgencyService;
   @Mock private SessionService sessionService;
   @Mock private UserService userService;
@@ -74,7 +74,7 @@ public class RollbackFacadeTest {
 
     rollbackFacade.rollBackUserAccount(rbUserInfo);
 
-    verify(keycloakService, times(1)).rollBackUser(USER_ID);
+    verify(identityAccountRemover, times(1)).rollbackUser(USER_ID);
   }
 
   @Test

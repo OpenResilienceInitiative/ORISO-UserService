@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -7,6 +8,7 @@ CONTROLLERS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/controller"
 )
+USERDATA_FACADES = ROOT / "src/main/java/de/caritas/cob/userservice/api/facade/userdata"
 WEB_MAPPINGS = (
     ROOT
     / "src/main/java/de/caritas/cob/userservice/api/adapters/web/mapping"
@@ -14,6 +16,49 @@ WEB_MAPPINGS = (
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
+    def test_identity_port_does_not_export_keycloak_or_framework_models(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        identity_results = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/identity"
+        )
+        sources = [identity_port, *sorted(identity_results.glob("*.java"))]
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak.",
+            "import org.keycloak.",
+            "import org.springframework.http.",
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)}: {line}"
+            for source in sources
+            for line in source.read_text().splitlines()
+            if line.startswith(forbidden_prefixes)
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The identity output port must expose application-owned results, not "
+            "Keycloak or framework transport models:\n" + "\n".join(offenders),
+        )
+
+    def test_identity_creation_validation_is_provider_neutral(self):
+        validator = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/"
+            "consultant/validation/UserAccountInputValidator.java"
+        )
+        source = validator.read_text()
+
+        self.assertNotIn(
+            "Keycloak",
+            source,
+            "Identity creation validation must use application-owned terminology "
+            "and exceptions.",
+        )
+
     def test_user_and_appointment_web_slices_depend_on_input_ports(self):
         sources = [
             CONTROLLERS / "AppointmentController.java",
@@ -277,6 +322,52 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "not expose the outbound-port package:\n" + "\n".join(offenders),
         )
 
+    def test_role_read_consumers_use_a_focused_identity_role_port(self):
+        focused_lookup_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/identity"
+            / "UserIdentitiesService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_lookup_import not in source.read_text()
+        ]
+        user_identities_service = consumers[1].read_text()
+        agency_relation_service = consumers[0].read_text()
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Realm-role readers must depend on a focused role-read port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;",
+            user_identities_service,
+            "UserIdentitiesService must not depend on the broad command client",
+        )
+        self.assertNotIn(
+            "identityClient.userHasRole(",
+            agency_relation_service,
+            "Agency role-set validation must use one focused realm-role read",
+        )
+        self.assertNotIn(
+            "getRealmRoles(",
+            identity_client,
+            "The broad identity command client must not own realm-role reads",
+        )
+
     def test_user_web_mappers_do_not_import_outbound_identity_client(self):
         forbidden_import = (
             "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
@@ -337,6 +428,439 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "The session-assignment application module must use outbound ports "
             "instead of concrete chat adapters or admin implementation services:\n"
             + "\n".join(offenders),
+        )
+
+    def test_dummy_email_consumer_uses_a_focused_provider_neutral_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdater.java"
+        )
+        value = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDummyEmailUpdate.java"
+        )
+        self.assertTrue(port.exists(), "Dummy-email updates need a focused output port")
+        self.assertTrue(value.exists(), "Dummy-email updates need provider-neutral values")
+        if not port.exists() or not value.exists():
+            return
+
+        for boundary in (port, value):
+            boundary_text = boundary.read_text()
+            self.assertNotIn(
+                "de.caritas.cob.userservice.api.adapters.",
+                boundary_text,
+            )
+            self.assertNotIn("org.keycloak.", boundary_text)
+
+        registration = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java"
+        ).read_text()
+        self.assertIn("IdentityDummyEmailUpdater", registration)
+        self.assertNotIn("identityClient.updateDummyEmail(", registration)
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updateDummyEmail(",
+            identity_client,
+            "The broad identity command client must not own dummy-email updates",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityDummyEmailUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused dummy-email port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
+    def test_shared_spring_identity_mocks_carry_every_keycloak_port(self):
+        """A @MockitoBean on IdentityClient replaces the whole keycloakService bean.
+
+        KeycloakService is the single implementation of every focused identity port, so a
+        mock that omits one of them makes the ApplicationContext unloadable for any test
+        whose graph injects that port — the failure is a BeanNotOfRequiredTypeException on
+        'keycloakService', hundreds of errors away from the file that caused it.
+
+        Splitting IdentityClient into focused ports has broken this three times (#791,
+        #820) because each split touched extraInterfaces by hand. Derive the required set
+        from KeycloakService instead, so adding a port fails here rather than in the suite.
+        """
+        keycloak_service = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        implements_clause = re.search(
+            r"\bclass\s+KeycloakService\b.*?\bimplements\b(.*?)\{",
+            keycloak_service,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            implements_clause, "KeycloakService must declare the identity ports it implements"
+        )
+
+        # IdentityClient is the mocked type itself, so it is never an extra interface.
+        required_ports = sorted(
+            {
+                port.strip()
+                for port in implements_clause.group(1).split(",")
+                if port.strip().startswith("Identity") and port.strip() != "IdentityClient"
+            }
+        )
+        self.assertIn(
+            "IdentityAuthentication",
+            required_ports,
+            "Expected KeycloakService to still implement the focused identity ports",
+        )
+
+        offenders = []
+        for source in sorted((ROOT / "src/test/java").rglob("*.java")):
+            text = source.read_text()
+            if "@MockitoBean" not in text or "IdentityClient identityClient" not in text:
+                continue
+            missing = [port for port in required_ports if f"{port}.class" not in text]
+            if missing:
+                offenders.append(f"{source.relative_to(ROOT)}: missing {', '.join(missing)}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "A @MockitoBean replacing keycloakService must list every port KeycloakService "
+            "implements in extraInterfaces, otherwise the ApplicationContext cannot be "
+            "built:\n" + "\n".join(offenders),
+        )
+
+    def test_identity_deactivation_consumers_use_a_focused_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityDeactivator.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Identity deactivation needs a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        port_text = port.read_text()
+        self.assertNotIn(
+            "de.caritas.cob.userservice.api.adapters.",
+            port_text,
+        )
+        self.assertNotIn("org.keycloak.", port_text)
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/actions/user/"
+            "DeactivateKeycloakUserActionCommand.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/facade/"
+            "AskerUserAdminFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/"
+            "delete/ConsultantPreDeletionService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/user/"
+            "UserAccountService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused deactivation port",
+            )
+            self.assertIn(
+                "identityDeactivator.deactivateUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must call the focused deactivation port",
+            )
+            self.assertNotIn(
+                "identityClient.deactivateUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client deactivation",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "deactivateUser(",
+            identity_client,
+            "The broad identity command client must not own deactivation",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityDeactivator.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused deactivation port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
+    def test_password_write_consumers_use_a_focused_identity_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityPasswordUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Identity password writes need a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        port_text = port.read_text()
+        self.assertNotIn(
+            ".adapters.web.",
+            port_text,
+            "The focused password port must not expose web DTOs",
+        )
+        self.assertNotIn(
+            "org.keycloak.",
+            port_text,
+            "The focused password port must not expose Keycloak types",
+        )
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/"
+            "create/CreateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/"
+            "create/CreateConsultantSaga.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/CreateUserFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/service/auth/"
+            "PasswordResetService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused password port",
+            )
+            self.assertIn(
+                "identityPasswordUpdater.updatePassword(",
+                source_text,
+                f"{source.relative_to(ROOT)} must call the focused password port",
+            )
+            self.assertNotIn(
+                "identityClient.updatePassword(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client password mutation",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "updatePassword(",
+            identity_client,
+            "The broad identity command client must not own password mutation",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityPasswordUpdater.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused password port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
+    def test_user_data_facades_use_a_focused_identity_profile_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityProfileLookup.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Authenticated profile reads need a focused provider-neutral output port",
+        )
+
+        broad_client_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClient;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in USERDATA_FACADES.glob("*.java")
+            if broad_client_import in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User-data facades must depend on the focused profile-read port:\n"
+            + "\n".join(offenders),
+        )
+        self.assertNotIn(
+            "getById(",
+            identity_client,
+            "The broad identity command client must not own profile reads",
+        )
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityProfileLookup" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused profile-read port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
+    def test_identity_account_removal_consumers_use_a_focused_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityAccountRemover.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Identity account removal needs a focused provider-neutral output port",
+        )
+        if not port.exists():
+            return
+
+        port_text = port.read_text()
+        self.assertNotIn(
+            "de.caritas.cob.userservice.api.adapters.",
+            port_text,
+        )
+        self.assertNotIn("org.keycloak.", port_text)
+
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/"
+            "DeleteKeycloakUserAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/asker/"
+            "DeleteKeycloakAskerAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/workflow/delete/action/consultant/"
+            "DeleteKeycloakConsultantAction.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/delete/"
+            "DeleteAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/facade/rollback/"
+            "RollbackFacade.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/create/"
+            "CreateAdminService.java",
+        )
+        focused_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;"
+        )
+        for source in consumers:
+            source_text = source.read_text()
+            self.assertIn(
+                focused_import,
+                source_text,
+                f"{source.relative_to(ROOT)} must use the focused account-removal port",
+            )
+            self.assertNotIn(
+                "identityClient.deleteUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client deletion",
+            )
+            self.assertNotIn(
+                "identityClient.rollBackUser(",
+                source_text,
+                f"{source.relative_to(ROOT)} must not use broad-client rollback",
+            )
+
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        self.assertNotIn(
+            "deleteUser(",
+            identity_client,
+            "The broad identity command client must not own account deletion",
+        )
+        self.assertNotIn(
+            "rollBackUser(",
+            identity_client,
+            "The broad identity command client must not own account rollback",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityAccountRemover.class" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must implement the focused removal port:\n"
+            + "\n".join(missing_test_interface),
         )
 
     def test_consultant_agency_fallback_does_not_retry_agency_service_per_id(self):

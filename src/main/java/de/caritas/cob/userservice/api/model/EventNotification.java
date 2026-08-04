@@ -84,10 +84,10 @@ public class EventNotification implements TenantAware {
   @Column(name = "deduplication_key", length = 191)
   private String deduplicationKey;
 
-  @Column(name = "read_date", columnDefinition = "datetime")
+  @Column(name = "read_date", columnDefinition = "datetime(3)")
   private LocalDateTime readDate;
 
-  @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
+  @Column(name = "create_date", nullable = false, columnDefinition = "datetime(3)")
   private LocalDateTime createDate;
 
   @Column(name = "tenant_id")

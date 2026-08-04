@@ -308,6 +308,28 @@
       "decision": "Lease execution and make provider cleanup idempotent.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
+    },
+    {
+      "id": "handshake-expiry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/handshake/HandshakeService.java",
+      "kind": "scheduler",
+      "owner": "support-access",
+      "risk": "duplicate-side-effect",
+      "components": ["sweepExpired", "purgeOldAuditEvents"],
+      "decision": "Prove expiry/purge updates are idempotent under concurrent execution or add a lease.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
+    },
+    {
+      "id": "support-room-expiry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/support/SupportRoomService.java",
+      "kind": "scheduler",
+      "owner": "support-access",
+      "risk": "duplicate-side-effect",
+      "components": ["sweepExpired"],
+      "decision": "Prove room close/leave effects are idempotent under concurrent execution or add a lease.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "blocker"
     }
   ]
 }

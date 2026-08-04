@@ -1,13 +1,11 @@
 package de.caritas.cob.userservice.api.port.out;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
-import java.util.List;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import java.util.Map;
 import java.util.Optional;
-import org.keycloak.representations.idm.UserRepresentation;
 
 public interface IdentityClient {
 
@@ -31,10 +29,9 @@ public interface IdentityClient {
 
   Map<String, String> finishEmailVerification(final String username, final String initialCode);
 
-  KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user);
+  CreatedIdentity createUser(final UserDTO user);
 
-  KeycloakCreateUserResponseDTO createKeycloakUser(
-      final UserDTO user, final String firstName, final String lastName);
+  CreatedIdentity createUser(final UserDTO user, final String firstName, final String lastName);
 
   void updateUserRole(final String userId);
 
@@ -46,29 +43,11 @@ public interface IdentityClient {
 
   void updateRole(final String userId, final String roleName);
 
-  void updatePassword(final String userId, final String password);
-
-  String updateDummyEmail(final String userId, UserDTO user);
-
-  void updateDummyEmail(String userId);
-
   void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
 
   void updateEmail(String userId, String emailAddress);
 
-  void rollBackUser(String userId);
-
-  void deleteUser(String userId);
-
   boolean userHasAuthority(String userId, String authority);
 
   boolean userHasRole(String userId, String userRole);
-
-  List<String> getRealmRoles(String userId);
-
-  List<UserRepresentation> findByUsername(String username);
-
-  void deactivateUser(String userId);
-
-  UserRepresentation getById(String userId);
 }
