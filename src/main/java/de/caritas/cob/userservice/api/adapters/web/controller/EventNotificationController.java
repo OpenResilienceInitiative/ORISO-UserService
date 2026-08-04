@@ -4,10 +4,15 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -70,7 +75,7 @@ public class EventNotificationController {
 
   @PostMapping("/message-events")
   public ResponseEntity<Void> createMessageEventNotification(
-      @RequestBody MessageEventRequestDTO request) {
+      @Valid @RequestBody MessageEventRequestDTO request) {
     if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
@@ -85,6 +90,22 @@ public class EventNotificationController {
       return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
+    // #942: the Matrix event id (when the client sends it) keys deduplication,
+    // so this producer and the server-side Matrix listener collapse into one
+    // row per recipient for the same message.
+    PrivacyEnvelope envelope =
+        request.getMatrixEventId() != null && !request.getMatrixEventId().isBlank()
+            ? PrivacyEnvelope.builder()
+                .messageId(request.getMatrixEventId())
+                .roomId(request.getRoomId())
+                .senderId(authenticatedUser.getUserId())
+                // Mirror MatrixEventListenerService#buildPrivacyEnvelope so the
+                // persisted row keeps the correct content class no matter which
+                // producer wins the dedup race.
+                .contentClass(normaliseContentClass(request.getContentClass()))
+                .hasAttachment(request.getHasAttachment() != null && request.getHasAttachment())
+                .build()
+            : null;
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
@@ -93,14 +114,16 @@ public class EventNotificationController {
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName(),
-          request.getThreadParentPreview());
+          request.getThreadParentPreview(),
+          envelope);
     } else {
       eventNotificationService.createMessageNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName());
+          request.getSenderDisplayName(),
+          envelope);
     }
 
     // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
@@ -116,6 +139,23 @@ public class EventNotificationController {
                 null));
 
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
+  /** Vocabulary of {@code MatrixEventListenerService#classifyContent}. */
+  private static final Set<String> KNOWN_CONTENT_CLASSES =
+      Set.of("TEXT", "IMAGE", "FILE", "AUDIO", "VIDEO", "NOTICE", "EMOTE", "OTHER", "UNKNOWN");
+
+  /**
+   * Keep the client-supplied content class inside the classification vocabulary of {@code
+   * MatrixEventListenerService#classifyContent} — it feeds notification fallback text and the
+   * structured params rendered for other users.
+   */
+  private static String normaliseContentClass(String contentClass) {
+    if (contentClass == null || contentClass.isBlank()) {
+      return null;
+    }
+    String normalised = contentClass.trim().toUpperCase(Locale.ROOT);
+    return KNOWN_CONTENT_CLASSES.contains(normalised) ? normalised : "OTHER";
   }
 
   /**
@@ -182,8 +222,48 @@ public class EventNotificationController {
     private Boolean teamDiscussion;
     private java.util.List<String> mentionedUserIds;
 
+    /**
+     * Matrix event id of the message this event mirrors (#942, dedup key). Matrix event ids are at
+     * most 255 chars; the bound keeps oversized values away from the 191-char dedup column.
+     */
+    @Size(max = 255)
+    private String matrixEventId;
+
+    /**
+     * Optional content class of the mirrored message, from the client's {@code msgtype} — mirrors
+     * {@code MatrixEventListenerService#classifyContent} (TEXT, IMAGE, FILE, AUDIO, VIDEO, ...).
+     */
+    private String contentClass;
+
+    /** Optional: whether the mirrored message carries an attachment. */
+    private Boolean hasAttachment;
+
     public Boolean getTeamDiscussion() {
       return teamDiscussion;
+    }
+
+    public String getMatrixEventId() {
+      return matrixEventId;
+    }
+
+    public void setMatrixEventId(String matrixEventId) {
+      this.matrixEventId = matrixEventId;
+    }
+
+    public String getContentClass() {
+      return contentClass;
+    }
+
+    public void setContentClass(String contentClass) {
+      this.contentClass = contentClass;
+    }
+
+    public Boolean getHasAttachment() {
+      return hasAttachment;
+    }
+
+    public void setHasAttachment(Boolean hasAttachment) {
+      this.hasAttachment = hasAttachment;
     }
 
     public void setTeamDiscussion(Boolean teamDiscussion) {

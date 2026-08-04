@@ -37,7 +37,7 @@ class EventNotificationServiceReplicaIT {
   @AfterEach
   void deleteReplicaProofNotification() {
     var notifications =
-        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(
+        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(
             RECIPIENT, Pageable.unpaged());
     eventNotificationRepository.deleteAll(notifications);
   }
@@ -63,7 +63,7 @@ class EventNotificationServiceReplicaIT {
     }
 
     var notifications =
-        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(
+        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(
             RECIPIENT, Pageable.unpaged());
     assertThat(notifications)
         .singleElement()
