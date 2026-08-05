@@ -798,7 +798,8 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
+                // exactly the frontend payload - newUserAccount is never sent by clients
+                .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated());
